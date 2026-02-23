@@ -141,6 +141,16 @@ import {
   OAuthListTool, OAuthConnectTool, OAuthDisconnectTool, OAuthApiTool,
 } from './clawser-oauth.js';
 
+import {
+  DEFAULT_ACTION_DELAY_MS, DEFAULT_WAIT_TIMEOUT_MS, DEFAULT_MAX_TABS,
+  SELECTOR_STRATEGIES, SENSITIVE_INPUT_TYPES,
+  generateSelector, extractArticleText, createPageSnapshot,
+  resolveElement, isSensitiveField, isDomainAllowed,
+  AutomationSession, AutomationManager, resetSessionCounter,
+  BrowserOpenTool, BrowserReadPageTool, BrowserClickTool, BrowserFillTool,
+  BrowserWaitTool, BrowserEvaluateTool, BrowserListTabsTool, BrowserCloseTabTool,
+} from './clawser-browser-auto.js';
+
 import { $, esc, state, on, off, emit, lsKey, setSending, setConversation, resetConversationState } from './clawser-state.js';
 
 import { ClawserAgent, AutonomyController, HookPipeline, HOOK_POINTS, createAuditLoggerHook } from './clawser-agent.js';
@@ -8393,6 +8403,128 @@ section('OAuth: Agent Tools');
   await mgr.disconnect('github');
   const r4 = await at.execute({ provider: 'github', path: '/user' });
   assert('api not connected', !r4.success);
+}
+
+// ── Block 18: Browser Automation ─────────────────────────────────
+
+section('BrowserAuto: Constants');
+{
+  assertEq('action delay', DEFAULT_ACTION_DELAY_MS, 1000);
+  assertEq('wait timeout', DEFAULT_WAIT_TIMEOUT_MS, 10_000);
+  assertEq('max tabs', DEFAULT_MAX_TABS, 10);
+  assert('strategies frozen', Object.isFrozen(SELECTOR_STRATEGIES));
+  assert('sensitive has password', SENSITIVE_INPUT_TYPES.includes('password'));
+}
+
+section('BrowserAuto: generateSelector');
+{
+  assertEq('with id', generateSelector({ id: 'foo', tagName: 'button' }), '#foo');
+  assertEq('null', generateSelector(null), '');
+}
+
+section('BrowserAuto: isDomainAllowed');
+{
+  assert('empty = all', isDomainAllowed('https://any.com', []));
+  assert('allowed', isDomainAllowed('https://github.com/x', ['github.com']));
+  assert('subdomain', isDomainAllowed('https://api.github.com/x', ['github.com']));
+  assert('blocked', !isDomainAllowed('https://evil.com', ['github.com']));
+  assert('invalid url', !isDomainAllowed('not-url', ['x.com']));
+}
+
+section('BrowserAuto: isSensitiveField');
+{
+  assert('password', isSensitiveField({ type: 'password' }));
+  assert('text safe', !isSensitiveField({ type: 'text' }));
+  assert('null safe', !isSensitiveField(null));
+}
+
+section('BrowserAuto: AutomationSession');
+{
+  resetSessionCounter();
+  const session = new AutomationSession({ tabId: 'tab1', url: 'https://test.com', actionDelay: 0 });
+  assert('has id', session.id.startsWith('session_'));
+  assertEq('tab id', session.tabId, 'tab1');
+  assert('active', session.active);
+
+  const r = await session.execute('click', { selector: '#btn' });
+  assert('action ok', r.success);
+  assertEq('action count', session.actionCount, 1);
+
+  session.close();
+  assert('closed', !session.active);
+  let err;
+  try { await session.execute('x'); } catch (e) { err = e; }
+  assert('throws on closed', !!err);
+}
+
+section('BrowserAuto: AutomationManager');
+{
+  resetSessionCounter();
+  const mgr = new AutomationManager({ domainAllowlist: ['example.com'], maxTabs: 2 });
+  assertEq('no sessions', mgr.sessionCount, 0);
+
+  const s1 = mgr.open('https://example.com/a');
+  assertEq('1 session', mgr.sessionCount, 1);
+
+  let err;
+  try { mgr.open('https://evil.com'); } catch (e) { err = e; }
+  assert('blocked domain', !!err);
+
+  mgr.open('https://example.com/b');
+  let err2;
+  try { mgr.open('https://example.com/c'); } catch (e) { err2 = e; }
+  assert('max tabs', !!err2);
+
+  const list = mgr.listSessions();
+  assertEq('list 2', list.length, 2);
+
+  assert('close ok', mgr.close(s1.id));
+  mgr.closeAll();
+  assertEq('all closed', mgr.sessionCount, 0);
+}
+
+section('BrowserAuto: Agent Tools');
+{
+  resetSessionCounter();
+  const mgr = new AutomationManager({ domainAllowlist: ['example.com'] });
+
+  const openT = new BrowserOpenTool(mgr);
+  assertEq('open name', openT.name, 'browser_open');
+  assertEq('open perm', openT.permission, 'approve');
+  const r1 = await openT.execute({ url: 'https://example.com' });
+  assert('open ok', r1.success);
+  const r1b = await openT.execute({ url: 'https://evil.com' });
+  assert('open blocked', !r1b.success);
+
+  const sessions = mgr.listSessions();
+
+  const readT = new BrowserReadPageTool(mgr);
+  assertEq('read name', readT.name, 'browser_read_page');
+  const r2 = await readT.execute({ session_id: sessions[0].id });
+  assert('read ok', r2.success);
+
+  const clickT = new BrowserClickTool(mgr);
+  assertEq('click name', clickT.name, 'browser_click');
+
+  const fillT = new BrowserFillTool(mgr);
+  assertEq('fill name', fillT.name, 'browser_fill');
+  const rf = await fillT.execute({ session_id: sessions[0].id, selector: '#x', value: 'v' });
+  assert('fill ok', rf.success);
+  const rf2 = await fillT.execute({ session_id: sessions[0].id, selector: '#pw', value: 's', field_type: 'password' });
+  assert('password blocked', !rf2.success);
+
+  const listT = new BrowserListTabsTool(mgr);
+  assertEq('list name', listT.name, 'browser_list_tabs');
+  assertEq('list perm', listT.permission, 'read');
+
+  const closeT = new BrowserCloseTabTool(mgr);
+  assertEq('close name', closeT.name, 'browser_close_tab');
+
+  const waitT = new BrowserWaitTool(mgr);
+  assertEq('wait name', waitT.name, 'browser_wait');
+
+  const evalT = new BrowserEvaluateTool(mgr);
+  assertEq('eval name', evalT.name, 'browser_evaluate');
 }
 
 // ═══════════════════════════════════════════════════════════════
