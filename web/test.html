@@ -106,6 +106,12 @@ import {
   HwListTool, HwConnectTool, HwSendTool, HwReadTool, HwDisconnectTool, HwInfoTool,
 } from './clawser-hardware.js';
 
+import {
+  COMMIT_TYPES, formatCommitMessage, parseCommitMessage,
+  GitBehavior, GitEpisodicMemory,
+  GitStatusTool, GitDiffTool, GitLogTool, GitCommitTool, GitBranchTool, GitRecallTool,
+} from './clawser-git.js';
+
 import { $, esc, state, on, off, emit, lsKey, setSending, setConversation, resetConversationState } from './clawser-state.js';
 
 import { ClawserAgent, AutonomyController, HookPipeline, HOOK_POINTS, createAuditLoggerHook } from './clawser-agent.js';
@@ -7544,6 +7550,209 @@ section('Hardware: Agent Tools');
   // hw_info not found
   const ir2 = await new HwInfoTool(new PeripheralManager({})).execute({ device: 'x' });
   assert('hw_info not found', !ir2.success);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  GIT AS AGENT BEHAVIOR
+// ═══════════════════════════════════════════════════════════════
+
+section('Git: Commit Message Convention');
+{
+  assertEq('COMMIT_TYPES.GOAL', COMMIT_TYPES.GOAL, 'goal');
+  assertEq('COMMIT_TYPES.EXPERIMENT', COMMIT_TYPES.EXPERIMENT, 'experiment');
+
+  const msg1 = formatCommitMessage({ type: 'goal', id: 'g_1', summary: 'implement auth' });
+  assert('format basic', msg1.startsWith('[goal:g_1]'));
+
+  const msg2 = formatCommitMessage({
+    type: 'goal', id: 'g_1', summary: 'auth',
+    trailers: { goalId: 'g_1', action: 47, cost: '$0.03' },
+  });
+  assert('format trailers', msg2.includes('Clawser-Goal: g_1'));
+  assert('format action', msg2.includes('Clawser-Action: 47'));
+
+  const p1 = parseCommitMessage('[goal:g_1] implement auth');
+  assertEq('parse type', p1.type, 'goal');
+  assertEq('parse id', p1.id, 'g_1');
+  assertEq('parse summary', p1.summary, 'implement auth');
+
+  assertEq('parse non-conventional', parseCommitMessage('regular msg'), null);
+
+  // Roundtrip
+  const msg3 = formatCommitMessage({
+    type: 'fix', id: 'f_1', summary: 'null check',
+    body: 'Added guard', trailers: { goalId: 'g_1' },
+  });
+  const p3 = parseCommitMessage(msg3);
+  assertEq('roundtrip type', p3.type, 'fix');
+  assert('roundtrip body', p3.body.includes('guard'));
+  assertEq('roundtrip trailer', p3.trailers.goal, 'g_1');
+}
+
+section('Git: GitBehavior');
+{
+  function mockOps() {
+    const commits = [];
+    let ctr = 0;
+    return {
+      add: async () => {},
+      commit: async (msg) => { const s = `sha_${++ctr}`; commits.push({ oid: s, message: msg, timestamp: Date.now() }); return s; },
+      log: async (depth) => commits.slice(-depth).reverse(),
+      diff: async () => ({ files: ['a.js'], additions: 10, deletions: 5, patch: '+x' }),
+      status: async () => [],
+      branch: async () => {},
+      checkout: async () => {},
+      merge: async () => {},
+      deleteBranch: async () => {},
+      _commits: commits,
+    };
+  }
+
+  // Goal checkpoint
+  const ops1 = mockOps();
+  const gb1 = new GitBehavior({ ops: ops1 });
+  const sha1 = await gb1.commitGoalCheckpoint('g_1', 'auth', { action: 5 });
+  assert('goal sha', sha1.startsWith('sha_'));
+  assert('goal msg', ops1._commits[0].message.includes('[goal:g_1]'));
+
+  // Micro commits
+  const ops2 = mockOps();
+  const gb2 = new GitBehavior({ ops: ops2, microCommits: true });
+  const ms = await gb2.microCommit('fs_write', 'config.json');
+  assert('micro sha', ms !== null);
+
+  const gb3 = new GitBehavior({ ops: mockOps(), microCommits: false });
+  assertEq('micro disabled', await gb3.microCommit('fs_write', 'x'), null);
+
+  // Experiment branching
+  const ops4 = mockOps();
+  const gb4 = new GitBehavior({ ops: ops4 });
+  const br = await gb4.branchExperiment('drizzle');
+  assertEq('branch name', br, 'experiment/drizzle');
+  assertEq('current branch', gb4.currentBranch, 'experiment/drizzle');
+
+  await gb4.mergeExperiment('experiment/drizzle');
+  assertEq('merged to main', gb4.currentBranch, 'main');
+
+  // Diff
+  const diff = await gb4.diffSince('HEAD~3');
+  assertEq('diff additions', diff.additions, 10);
+
+  // Log
+  const ops5 = mockOps();
+  const gb5 = new GitBehavior({ ops: ops5 });
+  await gb5.checkpoint('first');
+  await gb5.checkpoint('second');
+  const entries = await gb5.log({ depth: 10 });
+  assertEq('log count', entries.length, 2);
+
+  // Author
+  assertEq('default author', gb5.author.name, 'Clawser Agent');
+}
+
+section('Git: Episodic Memory');
+{
+  function mockOps() {
+    const commits = [];
+    return {
+      add: async () => {},
+      commit: async () => 'sha',
+      log: async () => [...commits].reverse(),
+      diff: async () => ({ files: [], additions: 0, deletions: 0 }),
+      _commits: commits,
+    };
+  }
+
+  const ops = mockOps();
+  const gb = new GitBehavior({ ops });
+  ops._commits.push(
+    { oid: 's1', message: '[goal:g_1] implement auth\n\nClawser-Goal: g_1', timestamp: 1 },
+    { oid: 's2', message: '[experiment:e_1] try OAuth', timestamp: 2 },
+    { oid: 's3', message: '[revert:e_1] nope', timestamp: 3 },
+    { oid: 's4', message: '[goal:g_2] dark mode\n\nClawser-Goal: g_2', timestamp: 4 },
+    { oid: 's5', message: '[experiment:e_2] CSS toggle', timestamp: 5 },
+  );
+
+  const mem = new GitEpisodicMemory(gb);
+
+  const byTopic = await mem.recallByTopic('auth');
+  assert('recallByTopic found', byTopic.length >= 1);
+
+  const byGoal = await mem.recallByGoal('g_1');
+  assert('recallByGoal found', byGoal.length >= 1);
+
+  const exps = await mem.recallExperiments();
+  assertEq('experiments count', exps.experiments.length, 2);
+  assertEq('reverts count', exps.reverts.length, 1);
+  assertEq('success rate', exps.successRate, 0.5);
+}
+
+section('Git: Agent Tools');
+{
+  function mockOps() {
+    const commits = [];
+    const statusEntries = [];
+    let ctr = 0;
+    return {
+      add: async () => {},
+      commit: async (msg) => { const s = `sha_${++ctr}`; commits.push({ oid: s, message: msg, timestamp: Date.now() }); return s; },
+      log: async (d) => commits.slice(-d).reverse(),
+      diff: async () => ({ files: ['a.js'], additions: 42, deletions: 10, patch: '+x\n-y' }),
+      status: async () => [...statusEntries],
+      branch: async () => {},
+      checkout: async () => {},
+      merge: async () => {},
+      deleteBranch: async () => {},
+      _commits: commits,
+      _addStatus: (p, s) => statusEntries.push({ path: p, status: s }),
+    };
+  }
+
+  // git_status
+  const ops1 = mockOps();
+  const gb1 = new GitBehavior({ ops: ops1 });
+  const st1 = await new GitStatusTool(gb1).execute();
+  assert('status clean', st1.success && st1.output.includes('clean'));
+
+  ops1._addStatus('file.js', 'modified');
+  const st2 = await new GitStatusTool(gb1).execute();
+  assert('status modified', st2.output.includes('file.js'));
+
+  // git_diff
+  const diff = await new GitDiffTool(gb1).execute();
+  assert('diff success', diff.success);
+  assert('diff additions', diff.output.includes('42'));
+
+  // git_log
+  await gb1.checkpoint('first');
+  const log = await new GitLogTool(gb1).execute();
+  assert('log success', log.success);
+  assert('log has sha', log.output.includes('sha_'));
+
+  // git_commit
+  const cr = await new GitCommitTool(gb1).execute({ message: 'test' });
+  assert('commit success', cr.success);
+  assert('commit output', cr.output.includes('Committed'));
+
+  // git_branch
+  const br1 = await new GitBranchTool(gb1).execute();
+  assert('branch list', br1.success && br1.output.includes('main'));
+
+  const br2 = await new GitBranchTool(gb1).execute({ action: 'create', name: 'test' });
+  assert('branch create', br2.success);
+  assert('branch name', br2.output.includes('experiment/test'));
+
+  // git_recall
+  const ops2 = mockOps();
+  const gb2 = new GitBehavior({ ops: ops2 });
+  ops2._commits.push(
+    { oid: 's1', message: '[goal:g_1] auth\n\nClawser-Goal: g_1', timestamp: 1 },
+    { oid: 's2', message: '[experiment:e_1] try OAuth', timestamp: 2 },
+  );
+  const mem = new GitEpisodicMemory(gb2);
+  const recall = await new GitRecallTool(mem).execute({ topic: 'auth' });
+  assert('recall success', recall.success);
+  assert('recall found', recall.output.includes('auth'));
 }
 
 // ═══════════════════════════════════════════════════════════════
