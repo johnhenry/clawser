@@ -123,6 +123,12 @@ import {
   RoutineCreateTool, RoutineListTool, RoutineDeleteTool, RoutineRunTool,
 } from './clawser-routines.js';
 
+import {
+  CHANNEL_TYPES, createInboundMessage, resetMessageCounter,
+  createChannelConfig, isMessageAllowed, formatForChannel,
+  ChannelManager, ChannelListTool, ChannelSendTool, ChannelHistoryTool,
+} from './clawser-channels.js';
+
 import { $, esc, state, on, off, emit, lsKey, setSending, setConversation, resetConversationState } from './clawser-state.js';
 
 import { ClawserAgent, AutonomyController, HookPipeline, HOOK_POINTS, createAuditLoggerHook } from './clawser-agent.js';
@@ -8001,6 +8007,115 @@ section('Routines: Agent Tools');
 
   const dr2 = await dt.execute({ id: 'nonexistent' });
   assert('delete not found', !dr2.success);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  MULTI-CHANNEL INPUT
+// ═══════════════════════════════════════════════════════════════
+
+section('Channels: Message & Config');
+{
+  assertEq('CHANNEL_TYPES.TELEGRAM', CHANNEL_TYPES.TELEGRAM, 'telegram');
+
+  resetMessageCounter();
+  const m = createInboundMessage({ channel: 'telegram', content: 'hi', sender: { name: 'A' } });
+  assert('msg id', m.id.startsWith('msg_'));
+  assertEq('msg channel', m.channel, 'telegram');
+
+  const c = createChannelConfig({ name: 'telegram', allowedUsers: ['@alice'] });
+  assertEq('config name', c.name, 'telegram');
+
+  // Allowlist checks
+  assert('disabled blocks', !isMessageAllowed(createChannelConfig({ name: 'x', enabled: false }), m));
+  assert('no restrictions allows', isMessageAllowed(createChannelConfig({ name: 'x' }), m));
+  assert('user allowed', isMessageAllowed(c, createInboundMessage({ sender: { username: '@alice' } })));
+  assert('user blocked', !isMessageAllowed(c, createInboundMessage({ sender: { username: '@bob' } })));
+}
+
+section('Channels: formatForChannel');
+{
+  assert('telegram bold', formatForChannel('telegram', '**hi**').includes('<b>'));
+  assertEq('discord passthrough', formatForChannel('discord', '**x**'), '**x**');
+  assertEq('slack bold', formatForChannel('slack', '**x**'), '*x*');
+  assertEq('email has subject', formatForChannel('email', 'Subject\nBody').subject, 'Subject');
+  assertEq('default passthrough', formatForChannel('webhook', 'text'), 'text');
+}
+
+section('Channels: ChannelManager');
+{
+  // Mock WebSocket
+  function mockWs() {
+    const sent = [];
+    return {
+      onopen: null, onmessage: null, onclose: null, onerror: null,
+      send(d) { sent.push(JSON.parse(d)); },
+      close() { if (this.onclose) this.onclose(); },
+      _open() { if (this.onopen) this.onopen(); },
+      _msg(d) { if (this.onmessage) this.onmessage({ data: JSON.stringify(d) }); },
+      _sent: sent,
+    };
+  }
+
+  // Config
+  const mgr1 = new ChannelManager();
+  mgr1.addChannel({ name: 'telegram' });
+  mgr1.addChannel({ name: 'discord', enabled: false });
+  assertEq('channel count', mgr1.channelCount, 2);
+  assert('remove', mgr1.removeChannel('discord'));
+
+  // Inbound
+  resetMessageCounter();
+  const received = [];
+  const mgr2 = new ChannelManager({ onMessage: m => received.push(m) });
+  mgr2.addChannel({ name: 'telegram', allowedUsers: ['@alice'] });
+  mgr2.handleInbound({ channel: 'telegram', sender: { username: '@alice' }, content: 'hi' });
+  assertEq('allowed msg', received.length, 1);
+  mgr2.handleInbound({ channel: 'telegram', sender: { username: '@bob' }, content: 'hey' });
+  assertEq('blocked msg', received.length, 1);
+
+  // History
+  assertEq('history count', mgr2.getHistory().length, 1);
+
+  // WebSocket send
+  let ws;
+  const mgr3 = new ChannelManager({ createWs: () => { ws = mockWs(); return ws; } });
+  mgr3.connect('ws://localhost');
+  ws._open();
+  assert('connected', mgr3.connected);
+  assert('send ok', mgr3.send('telegram', 'c1', '**bold**'));
+  assert('formatted', ws._sent[0].message.includes('<b>'));
+  mgr3.disconnect();
+  assert('disconnected', !mgr3.connected);
+
+  // buildPrompt
+  assertEq('empty prompt', new ChannelManager().buildPrompt(), '');
+  const mgr4 = new ChannelManager();
+  mgr4.addChannel({ name: 'telegram' });
+  assert('prompt has telegram', mgr4.buildPrompt().includes('telegram'));
+}
+
+section('Channels: Agent Tools');
+{
+  const mgr = new ChannelManager();
+  const lt = new ChannelListTool(mgr);
+  assertEq('list name', lt.name, 'channel_list');
+  const lr = await lt.execute();
+  assert('list empty', lr.success && lr.output.includes('No channels'));
+
+  mgr.addChannel({ name: 'telegram' });
+  const lr2 = await lt.execute();
+  assert('list has channel', lr2.output.includes('telegram'));
+
+  // Send not connected
+  const st = await new ChannelSendTool(mgr).execute({ channel: 'x', channel_id: 'c', message: 'm' });
+  assert('send not connected', !st.success);
+
+  // History
+  resetMessageCounter();
+  mgr.handleInbound({ channel: 'telegram', sender: { name: 'A' }, content: 'test' });
+  const ht = await new ChannelHistoryTool(mgr).execute();
+  assert('history success', ht.success);
+  assert('history has content', ht.output.includes('test'));
 }
 
 // ═══════════════════════════════════════════════════════════════
