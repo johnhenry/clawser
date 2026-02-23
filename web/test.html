@@ -85,6 +85,11 @@ import {
   SelfRepairStatusTool, SelfRepairConfigureTool,
 } from './clawser-self-repair.js';
 
+import {
+  resetTurnCounter, createCheckpoint, UndoManager,
+  UndoTool, UndoStatusTool,
+} from './clawser-undo.js';
+
 import { $, esc, state, on, off, emit, lsKey, setSending, setConversation, resetConversationState } from './clawser-state.js';
 
 import { ClawserAgent, AutonomyController, HookPipeline, HOOK_POINTS, createAuditLoggerHook } from './clawser-agent.js';
@@ -6738,6 +6743,163 @@ section('Self-Repair — Agent Tools');
   assert('config success', cr.success);
   assertEq('disabled', engine.enabled, false);
   assertEq('threshold updated', engine.detector.thresholds.toolTimeout, 30000);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  UNDO/REDO
+// ═══════════════════════════════════════════════════════════════
+
+section('Undo — createCheckpoint');
+
+resetTurnCounter();
+
+{
+  const cp = createCheckpoint({ historyLength: 10 });
+  assert('has turnId', cp.turnId.startsWith('turn_'));
+  assertEq('historyLength', cp.snapshot.historyLength, 10);
+  assertEq('empty memoryOps', cp.snapshot.memoryOps.length, 0);
+}
+
+section('Undo — UndoManager beginTurn & record');
+
+{
+  resetTurnCounter();
+  const mgr = new UndoManager();
+  assertEq('initially no undo', mgr.canUndo, false);
+  assertEq('initial depth 0', mgr.undoDepth, 0);
+
+  const cp = mgr.beginTurn({ historyLength: 0 });
+  assertEq('depth 1', mgr.undoDepth, 1);
+  assert('can undo', mgr.canUndo);
+
+  mgr.recordMemoryOp({ type: 'store', id: 'mem_1' });
+  mgr.recordFileOp({ type: 'write', path: '/a.js', previousContent: 'old' });
+  mgr.recordGoalOp({ type: 'status_change', goalId: 'g_1', from: 'active', to: 'completed' });
+  assertEq('1 memory op', cp.snapshot.memoryOps.length, 1);
+  assertEq('1 file op', cp.snapshot.fileOps.length, 1);
+  assertEq('1 goal op', cp.snapshot.goalOps.length, 1);
+}
+
+section('Undo — undo with handlers');
+
+{
+  resetTurnCounter();
+  const memOps = [];
+  const fileOps = [];
+  const goalOps = [];
+  const mgr = new UndoManager({
+    handlers: {
+      revertHistory: async (len) => 2,
+      revertMemory: async (op) => { memOps.push(op); },
+      revertFile: async (op) => { fileOps.push(op); },
+      revertGoal: async (op) => { goalOps.push(op); },
+    },
+  });
+
+  mgr.beginTurn({ historyLength: 0 });
+  mgr.recordMemoryOp({ type: 'store', id: 'm1' });
+  mgr.recordMemoryOp({ type: 'forget', id: 'm2' });
+  mgr.recordFileOp({ type: 'write', path: '/a.js' });
+  mgr.recordGoalOp({ type: 'status_change', goalId: 'g_1', from: 'active', to: 'done' });
+
+  const results = await mgr.undo(1);
+  assertEq('1 result', results.length, 1);
+  assert('reverted', results[0].reverted);
+  assertEq('memory reverted', results[0].details.memoryOpsReverted, 2);
+  assertEq('file reverted', results[0].details.fileOpsReverted, 1);
+  assertEq('goal reverted', results[0].details.goalOpsReverted, 1);
+  assertEq('reversed - first is forget', memOps[0].type, 'forget');
+  assertEq('depth 0 after undo', mgr.undoDepth, 0);
+}
+
+section('Undo — undo multiple turns & maxHistory');
+
+{
+  resetTurnCounter();
+  const mgr = new UndoManager({ maxHistory: 3 });
+  mgr.beginTurn({ historyLength: 0 });
+  mgr.beginTurn({ historyLength: 2 });
+  mgr.beginTurn({ historyLength: 4 });
+  mgr.beginTurn({ historyLength: 6 });
+  assertEq('trimmed to 3', mgr.undoDepth, 3);
+
+  const results = await mgr.undo(2);
+  assertEq('2 undone', results.length, 2);
+  assertEq('depth 1', mgr.undoDepth, 1);
+}
+
+section('Undo — previewUndo & checkpoints');
+
+{
+  resetTurnCounter();
+  const mgr = new UndoManager();
+  assertEq('nothing to undo', mgr.previewUndo(1), 'Nothing to undo.');
+
+  mgr.beginTurn({ historyLength: 0 });
+  mgr.recordMemoryOp({ type: 'store', id: 'm1' });
+  mgr.recordFileOp({ type: 'write', path: '/a.js' });
+
+  const preview = mgr.previewUndo(1);
+  assert('has turns', preview.includes('1 turn'));
+  assert('has memory', preview.includes('1 memory'));
+
+  const cps = mgr.checkpoints;
+  assertEq('1 checkpoint', cps.length, 1);
+  assertEq('memoryOps count', cps[0].memoryOps, 1);
+  assertEq('fileOps count', cps[0].fileOps, 1);
+
+  mgr.clear();
+  assertEq('cleared', mgr.undoDepth, 0);
+}
+
+section('Undo — Agent Tools');
+
+{
+  resetTurnCounter();
+  let reverted = false;
+  const mgr = new UndoManager({
+    handlers: { revertHistory: async () => { reverted = true; return 2; } },
+  });
+
+  const undoTool = new UndoTool(mgr);
+  assertEq('undo name', undoTool.name, 'undo');
+  assertEq('undo permission', undoTool.permission, 'approve');
+
+  const r1 = await undoTool.execute({ turns: 1 });
+  assert('nothing to undo', !r1.success);
+
+  mgr.beginTurn({ historyLength: 0 });
+  const r2 = await undoTool.execute({ turns: 1 });
+  assert('undo success', r2.success);
+  assert('output has Reverted', r2.output.includes('Reverted'));
+
+  const statusTool = new UndoStatusTool(mgr);
+  assertEq('status name', statusTool.name, 'undo_status');
+  assertEq('status permission', statusTool.permission, 'read');
+
+  mgr.beginTurn({ historyLength: 0 });
+  const sr = await statusTool.execute();
+  assert('status success', sr.success);
+  assert('shows depth', sr.output.includes('1 turn'));
+}
+
+section('Undo — handler errors resilience');
+
+{
+  resetTurnCounter();
+  const mgr = new UndoManager({
+    handlers: {
+      revertHistory: async () => { throw new Error('fail'); },
+      revertMemory: async () => { throw new Error('fail'); },
+    },
+  });
+  mgr.beginTurn({ historyLength: 0 });
+  mgr.recordMemoryOp({ type: 'store', id: 'm1' });
+
+  const results = await mgr.undo(1);
+  assertEq('still 1 result', results.length, 1);
+  assert('still reverted', results[0].reverted);
+  assertEq('messages 0', results[0].details.messagesRemoved, 0);
 }
 
 // ═══════════════════════════════════════════════════════════════
