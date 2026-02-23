@@ -95,6 +95,11 @@ import {
   BridgeManager, BridgeStatusTool, BridgeListToolsTool, BridgeFetchTool,
 } from './clawser-bridge.js';
 
+import {
+  DaemonPhase, DaemonState, CheckpointManager, TabCoordinator,
+  DaemonController, DaemonStatusTool, DaemonCheckpointTool,
+} from './clawser-daemon.js';
+
 import { $, esc, state, on, off, emit, lsKey, setSending, setConversation, resetConversationState } from './clawser-state.js';
 
 import { ClawserAgent, AutonomyController, HookPipeline, HOOK_POINTS, createAuditLoggerHook } from './clawser-agent.js';
@@ -7059,6 +7064,167 @@ section('Bridge — Agent Tools');
   const fr = await fetchTool.execute({ url: 'http://example.com' });
   assert('fetch success', fr.success);
   assert('fetch has body', fr.output.includes('test-body'));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  DAEMON MODE
+// ═══════════════════════════════════════════════════════════════
+
+section('Daemon — DaemonPhase & DaemonState');
+
+{
+  assert('DaemonPhase frozen', Object.isFrozen(DaemonPhase));
+  assertEq('STOPPED', DaemonPhase.STOPPED, 'stopped');
+  assertEq('RUNNING', DaemonPhase.RUNNING, 'running');
+
+  const ds = new DaemonState();
+  assertEq('initial stopped', ds.phase, 'stopped');
+  assert('not running', !ds.isRunning);
+  assert('stopped->starting', ds.transition('starting'));
+  assert('starting->running', ds.transition('running'));
+  assert('is running', ds.isRunning);
+  assert('running->paused', ds.transition('paused'));
+  assert('paused->running', ds.transition('running'));
+  assert('running->stopped', ds.transition('stopped'));
+  assert('invalid transition', !ds.transition('running'));
+  assert('has history', ds.history.length > 0);
+  ds.reset();
+  assertEq('reset', ds.phase, 'stopped');
+}
+
+section('Daemon — CheckpointManager');
+
+{
+  const storage = new Map();
+  const mgr = new CheckpointManager({
+    maxCheckpoints: 3,
+    writeFn: async (k, d) => storage.set(k, JSON.parse(JSON.stringify(d))),
+    readFn: async (k) => storage.get(k) || null,
+  });
+
+  assertEq('empty', mgr.size, 0);
+  const meta = await mgr.createCheckpoint({ history: [1, 2] }, 'test');
+  assert('has id', meta.id.startsWith('cp_'));
+  assertEq('size 1', mgr.size, 1);
+
+  const restored = await mgr.restoreLatest();
+  assert('restored', restored !== null);
+  assertEq('restored data', restored.state.history.length, 2);
+
+  // Trim
+  await mgr.createCheckpoint({ a: 2 }, 'auto');
+  await mgr.createCheckpoint({ a: 3 }, 'auto');
+  await mgr.createCheckpoint({ a: 4 }, 'auto');
+  assertEq('trimmed to 3', mgr.size, 3);
+
+  // Load index
+  const mgr2 = new CheckpointManager({ readFn: async (k) => storage.get(k) || null });
+  await mgr2.loadIndex();
+  assertEq('loaded', mgr2.size, 3);
+}
+
+section('Daemon — TabCoordinator');
+
+{
+  const channels = [];
+  function mockCh() {
+    const ch = {
+      onmessage: null,
+      postMessage(data) {
+        for (const o of channels) {
+          if (o !== ch && o.onmessage) o.onmessage({ data });
+        }
+      },
+      close() {},
+    };
+    channels.push(ch);
+    return ch;
+  }
+
+  const ch1 = mockCh(), ch2 = mockCh();
+  const c1 = new TabCoordinator({ channel: ch1, heartbeatMs: 100000 });
+  const c2 = new TabCoordinator({ channel: ch2, heartbeatMs: 100000 });
+
+  assert('has id', c1.tabId.startsWith('tab_'));
+  assertEq('initial count 1', c1.tabCount, 1);
+
+  c1.start();
+  assertEq('c2 sees c1', c2.tabCount, 2);
+  c2.start();
+  assertEq('c1 sees c2', c1.tabCount, 2);
+
+  let received = null;
+  const ch3 = mockCh();
+  const c3 = new TabCoordinator({ channel: ch3, onMessage: (m) => { received = m; } });
+  c1.broadcast({ type: 'custom', payload: 42 });
+  assert('custom received', received !== null);
+  assertEq('custom type', received.type, 'custom');
+
+  c1.stop();
+  c2.stop();
+  channels.length = 0;
+}
+
+section('Daemon — DaemonController');
+
+{
+  const storage = new Map();
+  const ctrl = new DaemonController({
+    checkpoints: new CheckpointManager({
+      writeFn: async (k, d) => storage.set(k, JSON.parse(JSON.stringify(d))),
+      readFn: async (k) => storage.get(k) || null,
+    }),
+    autoCheckpointMs: 0,
+    getStateFn: () => ({ test: true }),
+  });
+
+  assertEq('initial stopped', ctrl.phase, 'stopped');
+  assert('started', await ctrl.start());
+  assertEq('running', ctrl.phase, 'running');
+
+  const meta = await ctrl.checkpoint('test');
+  assert('checkpoint', meta !== null);
+  assertEq('back to running', ctrl.phase, 'running');
+
+  const restored = await ctrl.restore();
+  assert('restored', restored !== null);
+
+  assert('paused', ctrl.pause());
+  assert('resumed', ctrl.resume());
+
+  await ctrl.stop();
+  assertEq('stopped', ctrl.phase, 'stopped');
+
+  const prompt = ctrl.buildPrompt();
+  assert('prompt has daemon', prompt.includes('Daemon'));
+}
+
+section('Daemon — Agent Tools');
+
+{
+  const storage = new Map();
+  const ctrl = new DaemonController({
+    checkpoints: new CheckpointManager({
+      writeFn: async (k, d) => storage.set(k, d),
+      readFn: async (k) => storage.get(k) || null,
+    }),
+    autoCheckpointMs: 0,
+    getStateFn: () => ({ x: 1 }),
+  });
+  await ctrl.start();
+
+  const statusTool = new DaemonStatusTool(ctrl);
+  assertEq('status name', statusTool.name, 'daemon_status');
+  const sr = await statusTool.execute();
+  assert('status success', sr.success);
+
+  const cpTool = new DaemonCheckpointTool(ctrl);
+  assertEq('cp name', cpTool.name, 'daemon_checkpoint');
+  const cr = await cpTool.execute({ reason: 'user' });
+  assert('checkpoint success', cr.success);
+  assert('has id', cr.output.includes('cp_'));
+
+  await ctrl.stop();
 }
 
 // ═══════════════════════════════════════════════════════════════
