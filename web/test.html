@@ -112,6 +112,11 @@ import {
   GitStatusTool, GitDiffTool, GitLogTool, GitCommitTool, GitBranchTool, GitRecallTool,
 } from './clawser-git.js';
 
+import {
+  INTERVAL_WAKE, DEFAULT_HEARTBEAT, parseChecklist, ALERT_STRATEGIES,
+  HeartbeatRunner, HeartbeatStatusTool, HeartbeatRunTool,
+} from './clawser-heartbeat.js';
+
 import { $, esc, state, on, off, emit, lsKey, setSending, setConversation, resetConversationState } from './clawser-state.js';
 
 import { ClawserAgent, AutonomyController, HookPipeline, HOOK_POINTS, createAuditLoggerHook } from './clawser-agent.js';
@@ -7753,6 +7758,112 @@ section('Git: Agent Tools');
   const recall = await new GitRecallTool(mem).execute({ topic: 'auth' });
   assert('recall success', recall.success);
   assert('recall found', recall.output.includes('auth'));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  HEARTBEAT CHECKLIST
+// ═══════════════════════════════════════════════════════════════
+
+section('Heartbeat: parseChecklist');
+{
+  const checks = parseChecklist(`
+## Every 5 minutes
+- [ ] Check context
+- [ ] No stuck jobs
+
+## Every 30 minutes
+- [ ] Cost under cap → \`costs.today < 100\`
+
+## On wake
+- [ ] Provider reachable
+`);
+  assertEq('parse count', checks.length, 4);
+  assertEq('5min interval', checks[0].interval, 5 * 60_000);
+  assertEq('30min interval', checks[2].interval, 30 * 60_000);
+  assertEq('code parsed', checks[2].code, 'costs.today < 100');
+  assertEq('wake interval', checks[3].interval, INTERVAL_WAKE);
+  assertEq('no code', checks[0].code, null);
+  assertEq('empty string', parseChecklist('').length, 0);
+
+  const defaults = parseChecklist(DEFAULT_HEARTBEAT);
+  assert('default has checks', defaults.length >= 3);
+}
+
+section('Heartbeat: HeartbeatRunner');
+{
+  // Load and run
+  const runner1 = new HeartbeatRunner();
+  runner1.loadChecklist(`## Every 5 minutes\n- [ ] Check A\n- [ ] Check B`);
+  assertEq('checkCount', runner1.checkCount, 2);
+  assertEq('running', runner1.running, true);
+
+  const f1 = await runner1.runAll();
+  assertEq('no code checks pass', f1.length, 0);
+  assert('lastRun set', runner1.status[0].lastRun !== null);
+  runner1.stop();
+
+  // evalFn failures
+  const alerts = [];
+  const runner2 = new HeartbeatRunner({
+    evalFn: async (code) => code !== 'fail',
+    onAlert: (f) => alerts.push(f),
+  });
+  runner2.loadChecklist(`## Every 5 minutes\n- [ ] Pass → \`pass\`\n- [ ] Fail → \`fail\``);
+  const f2 = await runner2.runAll();
+  assertEq('one failure', f2.length, 1);
+  assertEq('alert fired', alerts.length, 1);
+  runner2.stop();
+
+  // Consecutive failures
+  const runner3 = new HeartbeatRunner({
+    evalFn: async () => false,
+    onAlert: () => {},
+  });
+  runner3.loadChecklist(`## Every 5 minutes\n- [ ] Always fail → \`x\``);
+  await runner3.runAll();
+  assertEq('consecutive 1', runner3.status[0].consecutiveFailures, 1);
+  await runner3.runAll();
+  assertEq('consecutive 2', runner3.status[0].consecutiveFailures, 2);
+  runner3.stop();
+
+  // onWake
+  const runner4 = new HeartbeatRunner();
+  runner4.loadChecklist(`## Every 5 minutes\n- [ ] Regular\n## On wake\n- [ ] Wake`);
+  await runner4.onWake();
+  const wake = runner4.status.find(s => s.description === 'Wake');
+  const reg = runner4.status.find(s => s.description === 'Regular');
+  assert('wake ran', wake.lastRun !== null);
+  assertEq('regular not run', reg.lastRun, null);
+  runner4.stop();
+
+  // Clear
+  const runner5 = new HeartbeatRunner();
+  runner5.loadDefault();
+  runner5.clear();
+  assertEq('cleared', runner5.checkCount, 0);
+  assertEq('stopped after clear', runner5.running, false);
+}
+
+section('Heartbeat: Agent Tools');
+{
+  const runner = new HeartbeatRunner();
+  const statusTool = new HeartbeatStatusTool(runner);
+  assertEq('status name', statusTool.name, 'heartbeat_status');
+  const r1 = await statusTool.execute();
+  assert('status no checks', r1.success && r1.output.includes('No heartbeat'));
+
+  runner.loadChecklist(`## Every 5 minutes\n- [ ] Check A`);
+  await runner.runAll();
+  const r2 = await statusTool.execute();
+  assert('status running', r2.output.includes('running'));
+  assert('status check listed', r2.output.includes('Check A'));
+
+  const runTool = new HeartbeatRunTool(runner);
+  assertEq('run name', runTool.name, 'heartbeat_run');
+  assertEq('run permission', runTool.permission, 'approve');
+  const r3 = await runTool.execute({ group: 'all' });
+  assert('run all passed', r3.success && r3.output.includes('passed'));
+  runner.stop();
 }
 
 // ═══════════════════════════════════════════════════════════════
