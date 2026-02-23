@@ -50,6 +50,11 @@ import {
   exportMetricsJSON, exportMetricsOTLP,
 } from './clawser-metrics.js';
 
+import {
+  createFallbackEntry, FallbackChain, FallbackExecutor, backoff,
+  ProviderHealth, ModelRouter, HINT_MODELS, costAwareSort,
+} from './clawser-fallback.js';
+
 import { $, esc, state, on, off, emit, lsKey, setSending, setConversation, resetConversationState } from './clawser-state.js';
 
 import { ClawserAgent, AutonomyController, HookPipeline, HOOK_POINTS, createAuditLoggerHook } from './clawser-agent.js';
@@ -5181,6 +5186,270 @@ section('Observability — export');
   assert('otlp hist found', !!histMetric);
   assert('otlp hist type', !!histMetric.histogram);
   assertEq('otlp hist count', histMetric.histogram.dataPoints[0].count, 2);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  FALLBACK — FallbackChain
+// ═══════════════════════════════════════════════════════════════
+
+section('Fallback — FallbackChain');
+
+{
+  const chain = new FallbackChain({
+    entries: [
+      createFallbackEntry({ providerId: 'openai', model: 'gpt-4o', priority: 0 }),
+      createFallbackEntry({ providerId: 'anthropic', model: 'claude-sonnet-4-6', priority: 1 }),
+      createFallbackEntry({ providerId: 'groq', model: 'llama-3.3-70b', priority: 2, enabled: false }),
+    ],
+    maxRetries: 2,
+  });
+
+  assertEq('chain length', chain.length, 3);
+  assertEq('maxRetries', chain.maxRetries, 2);
+  assertEq('entries sorted', chain.entries[0].providerId, 'openai');
+  assertEq('enabled entries', chain.enabledEntries().length, 2);
+
+  // Toggle
+  chain.toggle('groq', 'llama-3.3-70b', true);
+  assertEq('after toggle', chain.enabledEntries().length, 3);
+
+  // Remove
+  chain.remove('groq', 'llama-3.3-70b');
+  assertEq('after remove', chain.length, 2);
+
+  // Retryable check
+  assert('429 retryable', chain.isRetryable(new Error('429 Too Many Requests')));
+  assert('500 retryable', chain.isRetryable(new Error('500 Internal Server Error')));
+  assert('401 not retryable', !chain.isRetryable(new Error('401 Unauthorized')));
+
+  // Serialization
+  const json = chain.toJSON();
+  const restored = FallbackChain.fromJSON(json);
+  assertEq('restored length', restored.length, 2);
+  assertEq('restored maxRetries', restored.maxRetries, 2);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  FALLBACK — FallbackExecutor
+// ═══════════════════════════════════════════════════════════════
+
+section('Fallback — FallbackExecutor');
+
+{
+  // Success on first try
+  const chain1 = new FallbackChain({
+    entries: [
+      createFallbackEntry({ providerId: 'a', model: 'm1', priority: 0 }),
+      createFallbackEntry({ providerId: 'b', model: 'm2', priority: 1 }),
+    ],
+  });
+
+  const exec1 = new FallbackExecutor(chain1);
+  const r1 = await exec1.execute(async (pid, model) => {
+    return { content: `from ${pid}/${model}` };
+  });
+  assertEq('first try pid', r1.providerId, 'a');
+  assertEq('first try model', r1.model, 'm1');
+  assert('result has content', r1.result.content.includes('a/m1'));
+
+  // Fallback on retryable error
+  let callCount = 0;
+  const chain2 = new FallbackChain({
+    entries: [
+      createFallbackEntry({ providerId: 'bad', model: 'm1', priority: 0 }),
+      createFallbackEntry({ providerId: 'good', model: 'm2', priority: 1 }),
+    ],
+    maxRetries: 0, // No retries, just move to next
+  });
+
+  const exec2 = new FallbackExecutor(chain2);
+  const r2 = await exec2.execute(async (pid, model) => {
+    callCount++;
+    if (pid === 'bad') throw new Error('500 Server Error');
+    return { content: 'ok' };
+  });
+  assertEq('fallback pid', r2.providerId, 'good');
+  assertEq('call count', callCount, 2);
+
+  // All exhausted
+  const chain3 = new FallbackChain({
+    entries: [createFallbackEntry({ providerId: 'x', model: 'y', priority: 0 })],
+    maxRetries: 0,
+  });
+  const exec3 = new FallbackExecutor(chain3);
+  let exhaustedErr = null;
+  try {
+    await exec3.execute(async () => { throw new Error('500 error'); });
+  } catch (e) { exhaustedErr = e; }
+  assert('exhausted throws', exhaustedErr !== null);
+
+  // Non-retryable error thrown immediately
+  const chain4 = new FallbackChain({
+    entries: [
+      createFallbackEntry({ providerId: 'a', model: 'm1', priority: 0 }),
+      createFallbackEntry({ providerId: 'b', model: 'm2', priority: 1 }),
+    ],
+  });
+  const exec4 = new FallbackExecutor(chain4);
+  let authErr = null;
+  try {
+    await exec4.execute(async () => { throw new Error('401 Unauthorized'); });
+  } catch (e) { authErr = e; }
+  assert('auth error thrown', authErr !== null);
+  assert('auth error message', authErr.message.includes('401'));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  FALLBACK — FallbackExecutor streaming
+// ═══════════════════════════════════════════════════════════════
+
+section('Fallback — FallbackExecutor streaming');
+
+{
+  const chain = new FallbackChain({
+    entries: [
+      createFallbackEntry({ providerId: 'fail', model: 'm1', priority: 0 }),
+      createFallbackEntry({ providerId: 'ok', model: 'm2', priority: 1 }),
+    ],
+    maxRetries: 0,
+  });
+
+  const exec = new FallbackExecutor(chain);
+  const chunks = [];
+  for await (const { chunk, providerId } of exec.executeStream(async function* (pid, model) {
+    if (pid === 'fail') throw new Error('500 error');
+    yield { type: 'text', text: 'hello ' };
+    yield { type: 'text', text: 'world' };
+  })) {
+    chunks.push({ chunk, providerId });
+  }
+  assertEq('stream chunk count', chunks.length, 2);
+  assertEq('stream provider', chunks[0].providerId, 'ok');
+  assertEq('stream text', chunks[0].chunk.text, 'hello ');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  FALLBACK — ProviderHealth
+// ═══════════════════════════════════════════════════════════════
+
+section('Fallback — ProviderHealth');
+
+{
+  const health = new ProviderHealth({
+    failureThreshold: 3,
+    failureWindow: 60000,
+    cooldown: 30000,
+  });
+
+  // Record successes
+  health.recordSuccess('openai', 'gpt-4o', 150);
+  health.recordSuccess('openai', 'gpt-4o', 200);
+  const h = health.getHealth('openai', 'gpt-4o');
+  assertEq('success count', h.successCount, 2);
+  assertEq('failure count', h.failureCount, 0);
+  assert('avg latency', h.avgLatencyMs > 0);
+  assert('circuit closed', !h.circuitOpen);
+
+  // Record failures (below threshold)
+  health.recordFailure('anthropic', 'claude', 500);
+  health.recordFailure('anthropic', 'claude', 500);
+  assert('2 failures circuit closed', !health.isCircuitOpen('anthropic', 'claude'));
+
+  // Third failure trips circuit
+  health.recordFailure('anthropic', 'claude', 500);
+  assert('3 failures circuit open', health.isCircuitOpen('anthropic', 'claude'));
+
+  // Unknown provider not open
+  assert('unknown not open', !health.isCircuitOpen('unknown', 'model'));
+  assert('unknown health null', health.getHealth('unknown', 'model') === null);
+
+  // Reorder: circuit-open entries go to end
+  const entries = [
+    createFallbackEntry({ providerId: 'anthropic', model: 'claude', priority: 0 }),
+    createFallbackEntry({ providerId: 'openai', model: 'gpt-4o', priority: 1 }),
+  ];
+  const reordered = health.reorder(entries);
+  assertEq('reorder first', reordered[0].providerId, 'openai');
+  assertEq('reorder last', reordered[1].providerId, 'anthropic');
+
+  // Reset
+  health.reset();
+  assert('reset health', health.getHealth('openai', 'gpt-4o') === null);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  FALLBACK — ModelRouter
+// ═══════════════════════════════════════════════════════════════
+
+section('Fallback — ModelRouter');
+
+{
+  const router = new ModelRouter();
+
+  // Build defaults from available providers
+  router.buildDefaults(['openai', 'anthropic', 'groq']);
+
+  assert('has smart', router.hints.includes('smart'));
+  assert('has fast', router.hints.includes('fast'));
+  assert('has default', router.defaultChain !== null);
+
+  // Get specific chain
+  const smartChain = router.getChain('smart');
+  assert('smart chain', smartChain !== null);
+  assert('smart has entries', smartChain.enabledEntries().length > 0);
+
+  // Get fallback to default
+  const unknown = router.getChain('nonexistent');
+  assertEq('fallback to default', unknown, router.defaultChain);
+
+  // Custom chain
+  const custom = new FallbackChain({
+    entries: [createFallbackEntry({ providerId: 'ollama', model: 'llama3.2', priority: 0 })],
+  });
+  router.setChain('custom', custom);
+  assert('custom chain', router.getChain('custom') === custom);
+
+  // Serialization round-trip
+  const json = router.toJSON();
+  const restored = ModelRouter.fromJSON(json);
+  assert('restored has smart', restored.hints.includes('smart'));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  FALLBACK — Cost-aware sorting
+// ═══════════════════════════════════════════════════════════════
+
+section('Fallback — costAwareSort');
+
+{
+  const entries = [
+    createFallbackEntry({ providerId: 'openai', model: 'gpt-4o', priority: 0 }),
+    createFallbackEntry({ providerId: 'groq', model: 'llama-3.3-70b-versatile', priority: 1 }),
+    createFallbackEntry({ providerId: 'deepseek', model: 'deepseek-chat', priority: 2 }),
+  ];
+
+  const sorted = costAwareSort(entries);
+  // deepseek-chat is cheapest, then groq, then openai
+  assertEq('cheapest first', sorted[0].model, 'deepseek-chat');
+  assertEq('most expensive last', sorted[2].model, 'gpt-4o');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  FALLBACK — backoff helper
+// ═══════════════════════════════════════════════════════════════
+
+section('Fallback — backoff');
+
+{
+  const b0 = backoff(0, 500, 10000);
+  assert('backoff(0) >= 500', b0 >= 500);
+  assert('backoff(0) < 600', b0 < 600); // 500 + up to 10% jitter
+
+  const b1 = backoff(1, 500, 10000);
+  assert('backoff(1) >= 1000', b1 >= 1000);
+
+  const b5 = backoff(5, 500, 10000);
+  assert('backoff capped', b5 <= 11000); // max 10000 + 10% jitter
 }
 
 // ═══════════════════════════════════════════════════════════════
