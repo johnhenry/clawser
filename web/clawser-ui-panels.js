@@ -1,7 +1,20 @@
-// clawser-ui-panels.js — Secondary panel rendering: files, memory, goals, skills, MCP, security
-import { $, esc, state, emit } from './clawser-state.js';
+/**
+ * clawser-ui-panels.js — Secondary panel rendering and event binding
+ *
+ * Renders and manages all non-chat workspace panels:
+ *   - OPFS file browser (refreshFiles) with click-to-preview
+ *   - Memory search/edit/delete (renderMemoryResults, doMemorySearch)
+ *   - Goals list with status indicators (renderGoals)
+ *   - Tool registry with permission cycling (renderToolRegistry)
+ *   - MCP server list (renderMcpServers)
+ *   - Skills panel with enable/disable, export, delete (renderSkills)
+ *   - Workspace dropdown switcher (renderWsDropdown)
+ *   - Security settings: domain allowlist, max file size (applySecuritySettings)
+ *   - Slash command autocomplete on the chat input
+ */
+import { $, esc, state, emit, lsKey } from './clawser-state.js';
 import { modal } from './clawser-modal.js';
-import { addMsg, updateState, resetToolAndEventState } from './clawser-ui-chat.js';
+import { addMsg, addErrorMsg, updateState, resetToolAndEventState } from './clawser-ui-chat.js';
 import { loadWorkspaces, getActiveWorkspaceId, renameWorkspace, deleteWorkspace, createWorkspace, getWorkspaceName } from './clawser-workspaces.js';
 import { navigate } from './clawser-router.js';
 import { SkillStorage } from './clawser-skills.js';
@@ -9,6 +22,10 @@ import { SkillStorage } from './clawser-skills.js';
 // ── OPFS file browser ──────────────────────────────────────────
 const HIDDEN_DIRS = new Set(['.checkpoints', '.skills', '.conversations']);
 
+/** Render the OPFS file browser for the active workspace, with click-to-preview.
+ * @param {string} [path='/'] - Directory path relative to workspace root
+ * @param {HTMLElement} [el] - Container element (defaults to #fileList)
+ */
 export async function refreshFiles(path = '/', el = null) {
   if (!el) el = $('fileList');
   try {
@@ -61,7 +78,7 @@ export async function refreshFiles(path = '/', el = null) {
               el.insertAdjacentHTML('afterbegin',
                 `<div class="file-preview"><div class="file-preview-name">${esc(name)}</div>${esc(text.slice(0, 2000))}</div>`);
             }
-          } catch {}
+          } catch (e) { console.debug('[clawser] file preview error', e); }
         }
       });
       el.appendChild(d);
@@ -73,6 +90,10 @@ export async function refreshFiles(path = '/', el = null) {
 }
 
 // ── Memory management ──────────────────────────────────────────
+/** Render memory search results with edit/delete controls, applying category filter.
+ * @param {Array<Object>} results - Memory entries
+ * @param {HTMLElement} el - Container element
+ */
 export function renderMemoryResults(results, el) {
   const catFilter = $('memCatFilter').value;
   if (catFilter) results = results.filter(r => r.category === catFilter);
@@ -102,7 +123,7 @@ export function renderMemoryResults(results, el) {
     d.querySelector('.mem-edit').addEventListener('click', () => {
       d.querySelectorAll('.mem-edit-form').forEach(f => f.remove());
       const form = document.createElement('div');
-      form.className = 'mem-edit-form';
+      form.className = 'mem-form mem-edit-form';
       form.innerHTML = `
         <input type="text" class="edit-key" value="${esc(r.key)}" />
         <textarea class="edit-content">${esc(r.content || '')}</textarea>
@@ -140,7 +161,7 @@ export function renderMemoryResults(results, el) {
         updateState();
         doMemorySearch();
       } else {
-        addMsg('error', 'Failed to delete memory.');
+        addErrorMsg('Failed to delete memory.');
       }
     });
 
@@ -148,6 +169,7 @@ export function renderMemoryResults(results, el) {
   }
 }
 
+/** Execute a memory search using the query input and render results. */
 export function doMemorySearch() {
   if (!state.agent) return;
   const query = $('memQuery').value.trim();
@@ -155,6 +177,7 @@ export function doMemorySearch() {
 }
 
 // ── Goals ──────────────────────────────────────────────────────
+/** Render the goals list with status indicators and completion buttons. */
 export function renderGoals() {
   if (!state.agent) return;
   const agentState = state.agent.getState();
@@ -164,7 +187,7 @@ export function renderGoals() {
   for (const g of goals) {
     const d = document.createElement('div');
     d.className = 'goal-item';
-    d.innerHTML = `<span class="goal-dot ${g.status}">●</span><span>${esc(g.description)}</span>`;
+    d.innerHTML = `<span class="goal-dot ${esc(g.status)}">●</span><span>${esc(g.description)}</span>`;
     if (g.status === 'active') {
       const btn = document.createElement('button');
       btn.textContent = '✓';
@@ -177,6 +200,7 @@ export function renderGoals() {
 }
 
 // ── Tool registry ──────────────────────────────────────────────
+/** Render all registered tools with permission badges (click to cycle auto/approve/denied). */
 export function renderToolRegistry() {
   const el = $('toolRegistry');
   el.innerHTML = '';
@@ -193,7 +217,7 @@ export function renderToolRegistry() {
       const nextIdx = (levels.indexOf(perm) + 1) % levels.length;
       state.browserTools.setPermission(s.name, levels[nextIdx]);
       const wsId = state.agent?.getWorkspace() || 'default';
-      localStorage.setItem(`clawser_tool_perms_${wsId}`, JSON.stringify(state.browserTools.getAllPermissions()));
+      localStorage.setItem(lsKey.toolPerms(wsId), JSON.stringify(state.browserTools.getAllPermissions()));
       renderToolRegistry();
     });
     el.appendChild(d);
@@ -201,6 +225,7 @@ export function renderToolRegistry() {
 }
 
 // ── MCP servers ────────────────────────────────────────────────
+/** Render the list of connected MCP servers with tool counts. */
 export function renderMcpServers() {
   const el = $('mcpServers');
   el.innerHTML = '';
@@ -214,6 +239,7 @@ export function renderMcpServers() {
 }
 
 // ── Skills panel ────────────────────────────────────────────────
+/** Render the skills panel with enable/disable toggles, export, and delete controls. */
 export function renderSkills() {
   const el = $('skillList');
   el.innerHTML = '';
@@ -273,7 +299,7 @@ export function renderSkills() {
         a.click();
         URL.revokeObjectURL(url);
       } catch (err) {
-        addMsg('error', `Export failed: ${err.message}`);
+        addErrorMsg(`Export failed: ${err.message}`);
       }
     });
 
@@ -291,6 +317,7 @@ export function renderSkills() {
 }
 
 // ── Workspace dropdown ──────────────────────────────────────────
+/** Render the workspace switcher dropdown with rename/delete actions. */
 export function renderWsDropdown() {
   const list = loadWorkspaces();
   const activeId = getActiveWorkspaceId();
@@ -323,7 +350,7 @@ export function renderWsDropdown() {
         delBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
           if (await modal.confirm(`Delete workspace "${ws.name}"? This cannot be undone.`, { danger: true })) {
-            deleteWorkspace(ws.id);
+            await deleteWorkspace(ws.id);
             renderWsDropdown();
           }
         });
@@ -336,6 +363,7 @@ export function renderWsDropdown() {
 }
 
 // ── Security settings ──────────────────────────────────────────
+/** Apply domain allowlist and max file size from UI inputs to the browser tools and persist. */
 export function applySecuritySettings() {
   const raw = $('cfgDomainAllowlist').value.trim();
   const domains = raw ? raw.split(',').map(d => d.trim()).filter(Boolean) : null;
@@ -349,11 +377,12 @@ export function applySecuritySettings() {
 
   if (state.agent) {
     const wsId = state.agent.getWorkspace();
-    localStorage.setItem(`clawser_security_${wsId}`, JSON.stringify({ domains: raw, maxFileSizeMB: maxMB }));
+    localStorage.setItem(lsKey.security(wsId), JSON.stringify({ domains: raw, maxFileSizeMB: maxMB }));
   }
 }
 
 // ── Panel event listeners ───────────────────────────────────────
+/** Bind event listeners for all secondary panels (files, memory, goals, MCP, security, skills, workspace). */
 export function initPanelListeners() {
   // File browser
   $('refreshFiles').addEventListener('click', () => refreshFiles());
@@ -416,9 +445,8 @@ export function initPanelListeners() {
   $('mcpToggle').addEventListener('click', () => {
     const section = $('mcpSection');
     const arrow = $('mcpArrow');
-    const visible = section.style.display !== 'none';
-    section.style.display = visible ? 'none' : 'block';
-    arrow.innerHTML = visible ? '&#x25B6;' : '&#x25BC;';
+    section.classList.toggle('visible');
+    arrow.innerHTML = section.classList.contains('visible') ? '&#x25BC;' : '&#x25B6;';
   });
 
   $('mcpConnect').addEventListener('click', async () => {
@@ -432,7 +460,7 @@ export function initPanelListeners() {
       renderMcpServers();
       renderToolRegistry();
     } catch (e) {
-      addMsg('error', `MCP connection failed: ${e.message}`);
+      addErrorMsg(`MCP connection failed: ${e.message}`);
     }
   });
 
@@ -440,9 +468,8 @@ export function initPanelListeners() {
   $('securityToggle').addEventListener('click', () => {
     const section = $('securitySection');
     const arrow = $('securityArrow');
-    const visible = section.style.display !== 'none';
-    section.style.display = visible ? 'none' : 'block';
-    arrow.innerHTML = visible ? '&#x25B6;' : '&#x25BC;';
+    section.classList.toggle('visible');
+    arrow.innerHTML = section.classList.contains('visible') ? '&#x25BC;' : '&#x25B6;';
   });
 
   $('btnApplySecurity').addEventListener('click', () => {
@@ -456,19 +483,19 @@ export function initPanelListeners() {
     const wsName = getWorkspaceName(wsId);
     if (!await modal.confirm(`Clear all data for workspace "${wsName}" (memories, checkpoints, files, conversations, config)?`, { danger: true })) return;
 
-    localStorage.removeItem(`clawser_memories_${wsId}`);
-    localStorage.removeItem(`clawser_config_${wsId}`);
+    localStorage.removeItem(lsKey.memories(wsId));
+    localStorage.removeItem(lsKey.config(wsId));
     localStorage.removeItem(`clawser_conversations_${wsId}`);
 
     const root = await navigator.storage.getDirectory();
     try {
       const base = await root.getDirectoryHandle('clawser_workspaces');
       await base.removeEntry(wsId, { recursive: true });
-    } catch {}
+    } catch (e) { console.debug('[clawser] OPFS clear error', e); }
     try {
       const dir = await root.getDirectoryHandle('clawser_checkpoints');
       await dir.removeEntry(wsId, { recursive: true });
-    } catch {}
+    } catch (e) { console.debug('[clawser] OPFS clear error', e); }
 
     resetToolAndEventState();
 
@@ -488,7 +515,7 @@ export function initPanelListeners() {
     if (!file) return;
     e.target.value = '';
     state.pendingImportBlob = file;
-    $('skillScopeSelect').style.display = 'block';
+    $('skillScopeSelect').classList.add('visible');
   });
 
   document.querySelectorAll('.skill-scope-btn').forEach(btn => {
@@ -496,7 +523,7 @@ export function initPanelListeners() {
       if (!state.pendingImportBlob) return;
       const scope = btn.dataset.scope;
       const wsId = state.agent?.getWorkspace() || 'default';
-      $('skillScopeSelect').style.display = 'none';
+      $('skillScopeSelect').classList.remove('visible');
 
       try {
         const result = await state.skillRegistry.installFromZip(scope, wsId, state.pendingImportBlob);
@@ -505,14 +532,14 @@ export function initPanelListeners() {
         renderToolRegistry();
         addMsg('system', `Skill "${result.name}" imported (${scope}).`);
       } catch (err) {
-        addMsg('error', `Import failed: ${err.message}`);
+        addErrorMsg(`Import failed: ${err.message}`);
       }
       state.pendingImportBlob = null;
     });
   });
 
   $('skillScopeCancel').addEventListener('click', () => {
-    $('skillScopeSelect').style.display = 'none';
+    $('skillScopeSelect').classList.remove('visible');
     state.pendingImportBlob = null;
   });
 
@@ -578,12 +605,11 @@ export function initPanelListeners() {
   $('workspaceName').addEventListener('click', (e) => {
     e.stopPropagation();
     const wsDropdown = $('wsDropdown');
-    const visible = wsDropdown.style.display !== 'none';
-    wsDropdown.style.display = visible ? 'none' : 'block';
-    if (!visible) renderWsDropdown();
+    wsDropdown.classList.toggle('visible');
+    if (wsDropdown.classList.contains('visible')) renderWsDropdown();
   });
 
-  document.addEventListener('click', () => { $('wsDropdown').style.display = 'none'; });
+  document.addEventListener('click', () => { $('wsDropdown').classList.remove('visible'); });
   $('wsDropdown').addEventListener('click', (e) => e.stopPropagation());
 
   // Workspace logo → home

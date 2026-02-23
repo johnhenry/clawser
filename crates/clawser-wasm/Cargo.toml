@@ -1,0 +1,15 @@
+[package]
+name = "clawser-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "WASM entry point for Clawser browser-native AI agent OS"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+clawser-core = { path = "../clawser-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }

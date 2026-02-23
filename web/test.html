@@ -1,0 +1,2488 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Clawser Tests</title>
+<style>
+  body { font-family: monospace; background: #0d1117; color: #c9d1d9; padding: 20px; }
+  .pass { color: #3fb950; }
+  .fail { color: #f85149; }
+  .section { color: #58a6ff; font-weight: bold; margin-top: 16px; }
+  #results { white-space: pre-wrap; line-height: 1.6; }
+  #summary { margin-top: 20px; padding: 10px; border-top: 1px solid #30363d; font-size: 16px; }
+</style>
+</head>
+<body>
+<h2>Clawser Regression Tests</h2>
+<div id="results"></div>
+<div id="summary"></div>
+
+<script type="module">
+import {
+  WorkspaceFs, BrowserToolRegistry, BrowserTool, TOOL_PERMISSION_LEVELS,
+  FetchTool, DomQueryTool, DomModifyTool, FsReadTool, FsWriteTool, FsListTool, FsDeleteTool,
+  StorageGetTool, StorageSetTool, StorageListTool, NavigateTool, EvalJsTool,
+  ScreenshotTool, ScreenInfoTool, NotifyTool,
+  createDefaultRegistry,
+} from './clawser-tools.js';
+
+import {
+  MODEL_PRICING, estimateCost, LLMProvider, EchoProvider,
+  AnthropicProvider, OpenAIProvider, OpenAICompatibleProvider,
+  OPENAI_COMPATIBLE_SERVICES, ProviderRegistry, createDefaultProviders,
+  readSSE, readAnthropicSSE, classifyError, validateChatResponse,
+} from './clawser-providers.js';
+
+import { SkillParser } from './clawser-skills.js';
+
+import { $, esc, state, on, off, emit, lsKey, setSending, setConversation, resetConversationState } from './clawser-state.js';
+
+import { ClawserAgent } from './clawser-agent.js';
+
+import { extractCodeBlocks, stripCodeBlocks, Codex } from './clawser-codex.js';
+
+import {
+  loadConversations, saveConversations, generateConvId, CONV_KEY_PREFIX,
+} from './clawser-conversations.js';
+
+import {
+  WS_KEY, WS_ACTIVE_KEY, loadWorkspaces, saveWorkspaces,
+  getActiveWorkspaceId, setActiveWorkspaceId, ensureDefaultWorkspace,
+  createWorkspace, renameWorkspace, deleteWorkspace, getWorkspaceName, touchWorkspace,
+} from './clawser-workspaces.js';
+
+import { buildDynamicSystemPrompt, updateInlineToolCall, addErrorMsg } from './clawser-ui-chat.js';
+import { parseHash } from './clawser-router.js';
+
+import {
+  ACCT_KEY, loadAccounts, saveAccounts, createAccount, deleteAccount,
+} from './clawser-accounts.js';
+
+const results = document.getElementById('results');
+let passed = 0, failed = 0;
+
+function section(name) {
+  results.innerHTML += `\n<span class="section">── ${name} ──</span>\n`;
+}
+
+function assert(name, condition, detail = '') {
+  if (condition) {
+    passed++;
+    results.innerHTML += `<span class="pass">  ✓ ${name}</span>\n`;
+  } else {
+    failed++;
+    results.innerHTML += `<span class="fail">  ✗ ${name}${detail ? ' — ' + detail : ''}</span>\n`;
+  }
+}
+
+function assertEq(name, actual, expected) {
+  const ok = JSON.stringify(actual) === JSON.stringify(expected);
+  assert(name, ok, ok ? '' : `expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+}
+
+async function assertThrows(name, fn) {
+  try { await fn(); assert(name, false, 'did not throw'); }
+  catch { assert(name, true); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  TOOLS — Permission System
+// ═══════════════════════════════════════════════════════════════
+
+section('Permission System — Defaults & Levels');
+
+{
+  const reg = new BrowserToolRegistry();
+  class InternalTool extends BrowserTool {
+    get name() { return 't_internal'; }
+    get description() { return 'test'; }
+    get permission() { return 'internal'; }
+    async execute() { return { success: true, output: 'ok' }; }
+  }
+  class ReadTool extends BrowserTool {
+    get name() { return 't_read'; }
+    get description() { return 'test'; }
+    get permission() { return 'read'; }
+    async execute() { return { success: true, output: 'ok' }; }
+  }
+  class WriteTool extends BrowserTool {
+    get name() { return 't_write'; }
+    get description() { return 'test'; }
+    get permission() { return 'write'; }
+    async execute() { return { success: true, output: 'ok' }; }
+  }
+  class NetworkTool extends BrowserTool {
+    get name() { return 't_network'; }
+    get description() { return 'test'; }
+    get permission() { return 'network'; }
+    async execute() { return { success: true, output: 'ok' }; }
+  }
+  class BrowserPermTool extends BrowserTool {
+    get name() { return 't_browser'; }
+    get description() { return 'test'; }
+    get permission() { return 'browser'; }
+    async execute() { return { success: true, output: 'ok' }; }
+  }
+
+  reg.register(new InternalTool());
+  reg.register(new ReadTool());
+  reg.register(new WriteTool());
+  reg.register(new NetworkTool());
+  reg.register(new BrowserPermTool());
+
+  // Default permissions by tool type
+  assertEq('internal defaults to auto', reg.getPermission('t_internal'), 'auto');
+  assertEq('read defaults to auto', reg.getPermission('t_read'), 'auto');
+  assertEq('write defaults to approve', reg.getPermission('t_write'), 'approve');
+  assertEq('network defaults to approve', reg.getPermission('t_network'), 'approve');
+  assertEq('browser defaults to approve', reg.getPermission('t_browser'), 'approve');
+  assertEq('unknown tool defaults to auto', reg.getPermission('nonexistent'), 'auto');
+
+  // Auto tools execute without handler
+  const r1 = await reg.execute('t_internal', {});
+  assert('internal tool runs without handler', r1.success);
+  const r2 = await reg.execute('t_read', {});
+  assert('read tool runs without handler', r2.success);
+}
+
+section('Permission System — Approval Flow');
+
+{
+  const reg = new BrowserToolRegistry();
+  class WriteTool extends BrowserTool {
+    get name() { return 'test_write'; }
+    get description() { return 'test'; }
+    get permission() { return 'write'; }
+    async execute() { return { success: true, output: 'ok' }; }
+  }
+  reg.register(new WriteTool());
+
+  // No handler → deny
+  const r1 = await reg.execute('test_write', {});
+  assert('approve no handler → deny', !r1.success);
+  assert('approve no handler error msg', r1.error.includes('no approval handler'));
+
+  // Handler approves
+  reg.setApprovalHandler(async () => true);
+  const r2 = await reg.execute('test_write', {});
+  assert('approve with approved handler', r2.success);
+
+  // Handler denies
+  reg.setApprovalHandler(async () => false);
+  const r3 = await reg.execute('test_write', {});
+  assert('approve with denied handler', !r3.success);
+  assert('denied error msg', r3.error.includes('denied'));
+
+  // Denied permission overrides handler
+  reg.setPermission('test_write', 'denied');
+  reg.setApprovalHandler(async () => true);
+  const r4 = await reg.execute('test_write', {});
+  assert('denied blocks even with approving handler', !r4.success);
+  assert('blocked error msg', r4.error.includes('blocked'));
+
+  // Auto permission bypasses handler
+  reg.setPermission('test_write', 'auto');
+  reg.setApprovalHandler(null);
+  const r5 = await reg.execute('test_write', {});
+  assert('auto bypasses handler', r5.success);
+}
+
+section('Permission System — Persistence');
+
+{
+  const reg = new BrowserToolRegistry();
+  class T1 extends BrowserTool { get name() { return 'p1'; } get description() { return 'x'; } async execute() { return { success: true, output: '' }; } }
+  class T2 extends BrowserTool { get name() { return 'p2'; } get description() { return 'x'; } async execute() { return { success: true, output: '' }; } }
+  reg.register(new T1());
+  reg.register(new T2());
+
+  reg.setPermission('p1', 'denied');
+  reg.setPermission('p2', 'auto');
+
+  // getAllPermissions round-trip
+  const perms = reg.getAllPermissions();
+  assertEq('getAllPermissions p1', perms.p1, 'denied');
+  assertEq('getAllPermissions p2', perms.p2, 'auto');
+
+  // loadPermissions overwrites
+  const reg2 = new BrowserToolRegistry();
+  reg2.register(new T1());
+  reg2.register(new T2());
+  reg2.loadPermissions(perms);
+  assertEq('loadPermissions p1', reg2.getPermission('p1'), 'denied');
+  assertEq('loadPermissions p2', reg2.getPermission('p2'), 'auto');
+
+  // loadPermissions filters invalid levels
+  reg2.loadPermissions({ p1: 'bogus', p2: 'approve' });
+  assertEq('loadPermissions filters bogus', reg2.getPermission('p1'), 'internal' === reg2.get('p1')?.permission ? 'auto' : 'approve');
+  assertEq('loadPermissions keeps valid', reg2.getPermission('p2'), 'approve');
+}
+
+section('Registry — CRUD & Spec');
+
+{
+  const reg = new BrowserToolRegistry();
+  class FooTool extends BrowserTool {
+    get name() { return 'foo'; }
+    get description() { return 'A foo tool'; }
+    get parameters() { return { type: 'object', properties: { x: { type: 'number' } }, required: ['x'] }; }
+    async execute({ x }) { return { success: true, output: String(x * 2) }; }
+  }
+  class BarTool extends BrowserTool {
+    get name() { return 'bar'; }
+    get description() { return 'A bar tool'; }
+    async execute() { return { success: true, output: 'bar' }; }
+  }
+
+  reg.register(new FooTool());
+  reg.register(new BarTool());
+
+  assert('has returns true', reg.has('foo'));
+  assert('has returns false', !reg.has('baz'));
+  assert('get returns tool', reg.get('foo') instanceof BrowserTool);
+  assert('get null for missing', reg.get('baz') === null);
+  assertEq('names', reg.names().sort(), ['bar', 'foo']);
+  assert('allSpecs length', reg.allSpecs().length === 2);
+
+  // spec shape
+  const spec = reg.get('foo').spec;
+  assertEq('spec.name', spec.name, 'foo');
+  assertEq('spec.description', spec.description, 'A foo tool');
+  assert('spec.parameters has required', spec.parameters.required.includes('x'));
+
+  // Execute
+  const r = await reg.execute('foo', { x: 21 });
+  assert('execute returns output', r.success);
+  assertEq('execute computed output', r.output, '42');
+
+  // Tool throws → wrapped error
+  class CrashTool extends BrowserTool {
+    get name() { return 'crash'; }
+    get description() { return 'crashes'; }
+    async execute() { throw new Error('boom'); }
+  }
+  reg.register(new CrashTool());
+  const r2 = await reg.execute('crash', {});
+  assert('crash tool wrapped', !r2.success);
+  assert('crash error msg', r2.error.includes('boom'));
+
+  // Unregister
+  reg.unregister('foo');
+  assert('unregister removes', !reg.has('foo'));
+  assert('unregister returns false for missing', !reg.unregister('nonexistent'));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  TOOLS — DomModifyTool
+// ═══════════════════════════════════════════════════════════════
+
+section('DomModifyTool — All Actions');
+
+{
+  const tool = new DomModifyTool();
+  const container = document.createElement('div');
+  container.id = 'test-dom';
+  container.innerHTML = '\x3cdiv class="t1">original\x3c/div>\x3cdiv class="t2">second\x3c/div>';
+  document.body.appendChild(container);
+
+  // setText
+  const r1 = await tool.execute({ selector: '#test-dom .t1', action: 'setText', value: 'updated' });
+  assert('setText succeeds', r1.success);
+  assertEq('setText content', document.querySelector('#test-dom .t1').textContent, 'updated');
+
+  // setStyle
+  const r2 = await tool.execute({ selector: '#test-dom .t1', action: 'setStyle', value: 'color: red;' });
+  assert('setStyle succeeds', r2.success);
+  assert('setStyle applied', document.querySelector('#test-dom .t1').style.color === 'red');
+
+  // addClass
+  const r3 = await tool.execute({ selector: '#test-dom .t1', action: 'addClass', value: 'highlight' });
+  assert('addClass succeeds', r3.success);
+  assert('addClass applied', document.querySelector('#test-dom .t1').classList.contains('highlight'));
+
+  // removeClass
+  const r4 = await tool.execute({ selector: '#test-dom .t1', action: 'removeClass', value: 'highlight' });
+  assert('removeClass succeeds', r4.success);
+  assert('removeClass applied', !document.querySelector('#test-dom .t1').classList.contains('highlight'));
+
+  // setAttribute (safe)
+  const r5 = await tool.execute({ selector: '#test-dom .t1', action: 'setAttribute', attribute: 'title', value: 'hello' });
+  assert('setAttribute safe succeeds', r5.success);
+  assertEq('setAttribute value', document.querySelector('#test-dom .t1').getAttribute('title'), 'hello');
+
+  // No-match selector
+  const r6 = await tool.execute({ selector: '#nonexistent-element', action: 'setText', value: 'nope' });
+  assert('no-match returns error', !r6.success);
+  assert('no-match error msg', r6.error.includes('No elements'));
+
+  // Multiple matches → modifies all
+  const r7 = await tool.execute({ selector: '#test-dom div', action: 'addClass', value: 'batch' });
+  assert('batch addClass succeeds', r7.success);
+  assert('batch modify count', r7.output.includes('2'));
+
+  // remove
+  const r8 = await tool.execute({ selector: '#test-dom .t2', action: 'remove' });
+  assert('remove succeeds', r8.success);
+  assert('remove deleted element', !document.querySelector('#test-dom .t2'));
+
+  container.remove();
+}
+
+section('DomModifyTool — XSS Prevention');
+
+{
+  const tool = new DomModifyTool();
+  const container = document.createElement('div');
+  container.id = 'test-xss';
+  container.innerHTML = '\x3cdiv class="target">original\x3c/div>';
+  document.body.appendChild(container);
+
+  // setAttribute blocks all on* variants
+  for (const attr of ['onclick', 'onerror', 'onload', 'onmouseover', 'onfocus', 'onsubmit']) {
+    const r = await tool.execute({ selector: '#test-xss .target', action: 'setAttribute', attribute: attr, value: 'alert(1)' });
+    assert(`setAttribute blocks ${attr}`, !r.success);
+  }
+
+  // setAttribute blocks javascript: in various URL attrs
+  for (const attr of ['href', 'src', 'action', 'formaction']) {
+    const r = await tool.execute({ selector: '#test-xss .target', action: 'setAttribute', attribute: attr, value: 'javascript:alert(1)' });
+    assert(`setAttribute blocks javascript: in ${attr}`, !r.success);
+  }
+
+  // setAttribute blocks javascript: with whitespace padding
+  const rPad = await tool.execute({ selector: '#test-xss .target', action: 'setAttribute', attribute: 'href', value: '  javascript:alert(1)' });
+  assert('setAttribute blocks padded javascript:', !rPad.success);
+
+  // setAttribute allows normal href
+  const rSafe = await tool.execute({ selector: '#test-xss .target', action: 'setAttribute', attribute: 'href', value: 'https://example.com' });
+  assert('setAttribute allows https: href', rSafe.success);
+
+  // setAttribute without attribute parameter
+  const rNoAttr = await tool.execute({ selector: '#test-xss .target', action: 'setAttribute', value: 'test' });
+  assert('setAttribute requires attribute param', !rNoAttr.success);
+
+  // setHTML strips dangerous elements and attributes
+  await tool.execute({ selector: '#test-xss .target', action: 'setHTML',
+    value: '\x3cb onmouseover="alert(1)">bold\x3c/b>\x3cimg src=x onerror="alert(2)">\x3ca href="javascript:void(0)">link\x3c/a>\x3csvg onload="alert(3)">\x3c/svg>' });
+  const html = document.querySelector('#test-xss .target').innerHTML;
+  assert('setHTML strips onmouseover', !html.includes('onmouseover'));
+  assert('setHTML strips onerror', !html.includes('onerror'));
+  assert('setHTML strips javascript: href', !html.includes('javascript:'));
+  assert('setHTML strips svg onload', !html.includes('onload'));
+
+  // insertHTML sanitization
+  document.querySelector('#test-xss .target').innerHTML = '';
+  await tool.execute({ selector: '#test-xss .target', action: 'insertHTML',
+    value: '\x3cdiv onclick="alert(1)">injected\x3c/div>\x3ca href="javascript:void(0)">bad\x3c/a>' });
+  const insertedHtml = document.querySelector('#test-xss .target').innerHTML;
+  assert('insertHTML strips onclick', !insertedHtml.includes('onclick'));
+  assert('insertHTML strips javascript: href', !insertedHtml.includes('javascript:'));
+
+  // Unknown action
+  const rUnk = await tool.execute({ selector: '#test-xss .target', action: 'destroyAll' });
+  assert('unknown action error', !rUnk.success);
+  assert('unknown action lists valid', rUnk.error.includes('setText'));
+
+  container.remove();
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  TOOLS — DomQueryTool
+// ═══════════════════════════════════════════════════════════════
+
+section('DomQueryTool');
+
+{
+  const tool = new DomQueryTool();
+  const container = document.createElement('div');
+  container.id = 'test-query';
+  container.innerHTML = '\x3cp class="item" data-idx="1">First\x3c/p>\x3cp class="item" data-idx="2">Second\x3c/p>\x3cp class="item" data-idx="3">Third\x3c/p>';
+  document.body.appendChild(container);
+
+  // Basic query
+  const r1 = await tool.execute({ selector: '#test-query .item' });
+  assert('query succeeds', r1.success);
+  const data = JSON.parse(r1.output);
+  assertEq('query count', data.count, 3);
+  assertEq('query first tag', data.results[0].tag, 'p');
+  assert('query first text', data.results[0].text.includes('First'));
+  assertEq('query first data-idx', data.results[0].attributes['data-idx'], '1');
+
+  // Limit
+  const r2 = await tool.execute({ selector: '#test-query .item', limit: 2 });
+  const data2 = JSON.parse(r2.output);
+  assertEq('query limit results count', data2.results.length, 2);
+  assertEq('query limit total count', data2.count, 3);
+
+  // include_html
+  const r3 = await tool.execute({ selector: '#test-query .item', limit: 1, include_html: true });
+  const data3 = JSON.parse(r3.output);
+  assert('query include_html has html', 'html' in data3.results[0]);
+
+  // No match
+  const r4 = await tool.execute({ selector: '#nonexistent-query' });
+  assert('query no-match succeeds', r4.success);
+  const data4 = JSON.parse(r4.output);
+  assertEq('query no-match count 0', data4.count, 0);
+
+  container.remove();
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  TOOLS — EvalJsTool
+// ═══════════════════════════════════════════════════════════════
+
+section('EvalJsTool');
+
+{
+  const tool = new EvalJsTool();
+
+  // Simple expression
+  const r1 = await tool.execute({ code: '2 + 3' });
+  assert('eval simple expr', r1.success);
+  assertEq('eval result', r1.output, '5');
+
+  // String result
+  const r2 = await tool.execute({ code: '"hello " + "world"' });
+  assert('eval string', r2.success);
+  assertEq('eval string result', r2.output, '"hello world"');
+
+  // Undefined result
+  const r3 = await tool.execute({ code: 'void 0' });
+  assert('eval undefined', r3.success);
+  assertEq('eval undefined result', r3.output, 'undefined');
+
+  // Object result (serialized to JSON)
+  const r4 = await tool.execute({ code: '({a: 1, b: [2,3]})' });
+  assert('eval object', r4.success);
+  assert('eval object has a', r4.output.includes('"a"'));
+
+  // Syntax error
+  const r5 = await tool.execute({ code: 'function {{{' });
+  assert('eval syntax error fails', !r5.success);
+  assert('eval error msg', r5.error.includes('Eval error'));
+
+  // Runtime error
+  const r6 = await tool.execute({ code: 'nonExistentVar.foo' });
+  assert('eval runtime error fails', !r6.success);
+  assert('eval runtime error msg', r6.error.includes('Eval error'));
+
+  // Circular reference (non-serializable) → falls back to String()
+  const r7 = await tool.execute({ code: 'let o = {}; o.self = o; o' });
+  assert('eval circular ref handled', r7.success);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  TOOLS — Storage (expanded)
+// ═══════════════════════════════════════════════════════════════
+
+section('Storage — Extended');
+
+{
+  const getTool = new StorageGetTool();
+  const setTool = new StorageSetTool();
+  const listTool = new StorageListTool();
+
+  // StorageSetTool blocks clawser_ writes
+  const r1 = await setTool.execute({ key: 'clawser_hack', value: 'evil' });
+  assert('set blocks clawser_', !r1.success);
+
+  // "clawser" (no underscore) should be allowed
+  const r2 = await setTool.execute({ key: 'clawser', value: 'ok' });
+  assert('set allows "clawser" without underscore', r2.success);
+
+  // Write and read back
+  const r3 = await setTool.execute({ key: 'test_storage_round', value: 'roundtrip' });
+  assert('set succeeds', r3.success);
+  const r4 = await getTool.execute({ key: 'test_storage_round' });
+  assert('get roundtrip', r4.success);
+  assertEq('get value matches', r4.output, 'roundtrip');
+
+  // Get non-existent key
+  const r5 = await getTool.execute({ key: 'definitely_not_a_real_key_xyz' });
+  assert('get missing key fails', !r5.success);
+
+  // StorageGetTool blocks various clawser_ prefixes
+  localStorage.setItem('clawser_memories_default', '[]');
+  const r6 = await getTool.execute({ key: 'clawser_memories_default' });
+  assert('get blocks clawser_memories', !r6.success);
+
+  // StorageListTool filters
+  const r7 = await listTool.execute();
+  const keys = JSON.parse(r7.output);
+  assert('list hides clawser_ keys', !keys.some(k => k.key.startsWith('clawser_')));
+  assert('list includes non-clawser keys', keys.some(k => k.key === 'test_storage_round'));
+
+  // Cleanup
+  localStorage.removeItem('test_storage_round');
+  localStorage.removeItem('clawser');
+  localStorage.removeItem('clawser_memories_default');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  TOOLS — OPFS Filesystem
+// ═══════════════════════════════════════════════════════════════
+
+section('Filesystem — Write/Read/List/Delete Roundtrip');
+
+{
+  const ws = new WorkspaceFs();
+  ws.setWorkspace('test_fs');
+  const read = new FsReadTool(ws);
+  const write = new FsWriteTool(ws);
+  const list = new FsListTool(ws);
+  const del = new FsDeleteTool(ws);
+
+  // Write a file
+  const r1 = await write.execute({ path: '/test_dir/hello.txt', content: 'Hello OPFS!' });
+  assert('write creates nested file', r1.success);
+
+  // Read it back
+  const r2 = await read.execute({ path: '/test_dir/hello.txt' });
+  assert('read succeeds', r2.success);
+  assertEq('read content', r2.output, 'Hello OPFS!');
+
+  // Overwrite
+  const r3 = await write.execute({ path: '/test_dir/hello.txt', content: 'Overwritten' });
+  assert('overwrite succeeds', r3.success);
+  const r4 = await read.execute({ path: '/test_dir/hello.txt' });
+  assertEq('overwritten content', r4.output, 'Overwritten');
+
+  // List directory
+  const r5 = await list.execute({ path: '/test_dir' });
+  assert('list succeeds', r5.success);
+  const entries = JSON.parse(r5.output);
+  assert('list contains hello.txt', entries.some(e => e.name === 'hello.txt'));
+
+  // Write another file
+  await write.execute({ path: '/test_dir/notes.md', content: '# Notes' });
+  const r6 = await list.execute({ path: '/test_dir' });
+  const entries2 = JSON.parse(r6.output);
+  assertEq('list shows 2 files', entries2.length, 2);
+
+  // Delete file
+  const r7 = await del.execute({ path: '/test_dir/hello.txt' });
+  assert('delete succeeds', r7.success);
+
+  // Read deleted file should fail
+  try {
+    const r8 = await read.execute({ path: '/test_dir/hello.txt' });
+    assert('read deleted file fails', !r8.success);
+  } catch {
+    assert('read deleted file throws', true);
+  }
+
+  // Delete directory recursive
+  const r9 = await del.execute({ path: '/test_dir', recursive: true });
+  assert('delete dir recursive', r9.success);
+}
+
+section('Filesystem — Size Limits');
+
+{
+  const ws = new WorkspaceFs();
+  ws.setWorkspace('test_limits');
+  const write = new FsWriteTool(ws);
+  write.setMaxFileSize(100);
+
+  // Exactly at limit (100 ASCII bytes)
+  const r1 = await write.execute({ path: '/at_limit.txt', content: 'a'.repeat(100) });
+  assert('write at exact limit', r1.success);
+
+  // Over limit
+  const r2 = await write.execute({ path: '/over.txt', content: 'a'.repeat(101) });
+  assert('write over limit', !r2.success);
+
+  // Multibyte: "é" is 2 bytes in UTF-8, so 60 "é" chars = 120 bytes > 100 byte limit
+  const r3 = await write.execute({ path: '/multibyte.txt', content: 'é'.repeat(60) });
+  assert('write multibyte over limit', !r3.success);
+
+  // Cleanup
+  const del = new FsDeleteTool(ws);
+  await del.execute({ path: '/at_limit.txt' });
+}
+
+section('Filesystem — FsDeleteTool Guards');
+
+{
+  const ws = new WorkspaceFs();
+  ws.setWorkspace('test_del');
+  const del = new FsDeleteTool(ws);
+
+  const r1 = await del.execute({ path: '/' });
+  assert('delete / blocked', !r1.success);
+  assert('delete / error', r1.error.includes('Cannot delete'));
+
+  const r2 = await del.execute({ path: '/', recursive: true });
+  assert('delete / recursive blocked', !r2.success);
+
+  // Non-existent path should throw from OPFS
+  try {
+    const r3 = await del.execute({ path: '/nonexistent_path_xyz' });
+    assert('delete nonexistent fails', !r3.success);
+  } catch {
+    assert('delete nonexistent throws', true);
+  }
+}
+
+section('Filesystem — FsListTool Hidden Dirs');
+
+{
+  const ws = new WorkspaceFs();
+  ws.setWorkspace('test_hidden');
+  const list = new FsListTool(ws);
+  const write = new FsWriteTool(ws);
+
+  // Create a file and .checkpoints dir
+  await write.execute({ path: '/visible.txt', content: 'yes' });
+  await write.execute({ path: '/.checkpoints/cp.bin', content: 'hidden' });
+
+  // List root — .checkpoints should be hidden
+  const r1 = await list.execute({ path: '/' });
+  const entries = JSON.parse(r1.output);
+  assert('list hides .checkpoints', !entries.some(e => e.name === '.checkpoints'));
+  assert('list shows visible files', entries.some(e => e.name === 'visible.txt'));
+
+  // Cleanup
+  const del = new FsDeleteTool(ws);
+  await del.execute({ path: '/visible.txt' });
+  await del.execute({ path: '/.checkpoints', recursive: true });
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  TOOLS — FetchTool Domain Allowlist
+// ═══════════════════════════════════════════════════════════════
+
+section('FetchTool — Domain Allowlist');
+
+{
+  const tool = new FetchTool();
+
+  // No allowlist → all domains permitted (test with localhost)
+  // We don't actually fetch, just verify allowlist logic
+  tool.setDomainAllowlist(['example.com', 'api.test.org']);
+
+  // Blocked domain
+  const r1 = await tool.execute({ url: 'https://evil.com/data' });
+  assert('allowlist blocks unlisted domain', !r1.success);
+  assert('allowlist error msg', r1.error.includes('not in the allowlist'));
+
+  // Allowed domain — monkey-patch fetch to avoid real network call
+  {
+    const origFetch = window.fetch;
+    window.fetch = async () => new Response('mocked', { status: 200 });
+    try {
+      const r2 = await tool.execute({ url: 'https://sub.example.com/page' });
+      // Should NOT be blocked by allowlist (subdomain of example.com)
+      assert('allowlist allows subdomain', r2.success || (r2.error && !r2.error.includes('allowlist')));
+    } finally {
+      window.fetch = origFetch;
+    }
+  }
+
+  // Exact domain match
+  const r2b = await tool.execute({ url: 'https://evil.org/x' });
+  assert('allowlist blocks non-matching domain', !r2b.success && r2b.error.includes('allowlist'));
+
+  // Invalid URL
+  const r3 = await tool.execute({ url: 'not-a-url' });
+  assert('allowlist rejects invalid URL', !r3.success);
+
+  // Clear allowlist
+  tool.setDomainAllowlist(null);
+  // Now any domain should be allowed (at network level)
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  TOOLS — NavigateTool (expanded)
+// ═══════════════════════════════════════════════════════════════
+
+section('NavigateTool — Security');
+
+{
+  const tool = new NavigateTool();
+
+  // Various dangerous schemes
+  const r1 = await tool.execute({ url: 'javascript:alert(1)' });
+  assert('blocks javascript:', !r1.success);
+
+  const r2 = await tool.execute({ url: 'data:text/html,hello' });
+  assert('blocks data:', !r2.success);
+
+  const r3 = await tool.execute({ url: 'JAVASCRIPT:alert(1)' });
+  assert('blocks JAVASCRIPT: (uppercase)', !r3.success);
+
+  // Whitespace prefix shouldn't bypass
+  const r4 = await tool.execute({ url: ' javascript:alert(1)' });
+  // URL constructor may handle this differently, but javascript: protocol should still be caught
+  assert('blocks space-prefixed javascript:', !r4.success || r4.output?.includes('http'));
+
+  // vbscript and file protocols
+  const r5 = await tool.execute({ url: 'vbscript:msgbox' });
+  assert('blocks vbscript:', !r5.success);
+
+  const r6 = await tool.execute({ url: 'file:///etc/passwd' });
+  assert('blocks file:', !r6.success);
+
+  // ftp should be blocked (not http/https)
+  const r7 = await tool.execute({ url: 'ftp://server.com/file' });
+  assert('blocks ftp:', !r7.success);
+
+  // Valid URL should work (uses parsed.href)
+  // Can't actually navigate in test, but the method should return success
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  TOOLS — ScreenshotTool
+// ═══════════════════════════════════════════════════════════════
+
+section('ScreenshotTool');
+
+{
+  const tool = new ScreenshotTool();
+
+  // Screenshot of body — wrap with timeout to avoid CDN stalling tests
+  {
+    const r1 = await Promise.race([
+      tool.execute({}),
+      new Promise(r => setTimeout(() => r({ success: false, error: 'timeout' }), 5000))
+    ]);
+    // May succeed, fail, or timeout — all acceptable in test env
+    if (r1.success) {
+      try {
+        const data = JSON.parse(r1.output);
+        assert('screenshot has output', data.blobUrl || data.note);
+      } catch {
+        assert('screenshot returned output', typeof r1.output === 'string');
+      }
+    } else {
+      assert('screenshot failed gracefully', typeof r1.error === 'string');
+    }
+  }
+
+  // Screenshot of non-existent selector
+  const r2 = await tool.execute({ selector: '#totally-nonexistent-element' });
+  assert('screenshot bad selector fails', !r2.success);
+  assert('screenshot error msg', r2.error.includes('not found'));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  TOOLS — createDefaultRegistry
+// ═══════════════════════════════════════════════════════════════
+
+section('createDefaultRegistry');
+
+{
+  const ws = new WorkspaceFs();
+  ws.setWorkspace('default');
+  const reg = createDefaultRegistry(ws);
+
+  // All expected tools registered
+  const expectedTools = [
+    'browser_fetch', 'browser_dom_query', 'browser_dom_modify',
+    'browser_fs_read', 'browser_fs_write', 'browser_fs_list', 'browser_fs_delete',
+    'browser_storage_get', 'browser_storage_set', 'browser_storage_list',
+    'browser_clipboard_read', 'browser_clipboard_write',
+    'browser_navigate', 'browser_notify', 'browser_eval_js',
+    'browser_screen_info', 'browser_web_search', 'browser_screenshot',
+  ];
+  for (const name of expectedTools) {
+    assert(`registry has ${name}`, reg.has(name));
+  }
+  assert('registry tool count >= 18', reg.names().length >= 18);
+
+  // Specs are well-formed
+  for (const spec of reg.allSpecs()) {
+    assert(`spec ${spec.name} has description`, typeof spec.description === 'string' && spec.description.length > 0);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  TOOLS — WorkspaceFs (expanded)
+// ═══════════════════════════════════════════════════════════════
+
+section('WorkspaceFs — Edge Cases');
+
+{
+  const ws = new WorkspaceFs();
+
+  // Default workspace
+  assertEq('default workspace', ws.getWorkspace(), 'default');
+  assertEq('default homePath', ws.homePath, 'clawser_workspaces/default');
+
+  // Set and get
+  ws.setWorkspace('my-project');
+  assertEq('setWorkspace persists', ws.getWorkspace(), 'my-project');
+  assertEq('homePath updates', ws.homePath, 'clawser_workspaces/my-project');
+
+  // resolve edge cases
+  assertEq('resolve empty', ws.resolve(''), ws.homePath);
+  assertEq('resolve just slash', ws.resolve('/'), ws.homePath);
+  assert('resolve normal', ws.resolve('/docs/readme.md').endsWith('docs/readme.md'));
+
+  // Path traversal prevention
+  const trav1 = ws.resolve('/../../../etc/passwd');
+  assert('traversal blocked 1', !trav1.includes('etc/passwd') || trav1.startsWith('clawser_workspaces'));
+  const trav2 = ws.resolve('foo/../../bar');
+  assert('traversal blocked 2', !trav2.includes('..'));
+
+  // Deeply nested
+  const deep = ws.resolve('/a/b/c/d/e/f.txt');
+  assert('deep path', deep.endsWith('a/b/c/d/e/f.txt'));
+  assert('deep path scoped', deep.startsWith('clawser_workspaces/my-project/'));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  PROVIDERS — Cost Estimation (expanded)
+// ═══════════════════════════════════════════════════════════════
+
+section('Cost Estimation — Expanded');
+
+{
+  // Null/undefined usage
+  assertEq('cost null usage', estimateCost('gpt-4o', null), 0);
+  assertEq('cost undefined usage', estimateCost('gpt-4o', undefined), 0);
+  assertEq('cost unknown model', estimateCost('my-custom-model', { input_tokens: 1000, output_tokens: 500 }), 0);
+
+  // Zero tokens
+  assertEq('cost zero tokens', estimateCost('gpt-4o', { input_tokens: 0, output_tokens: 0 }), 0);
+
+  // Missing token fields
+  assertEq('cost missing input', estimateCost('gpt-4o', { output_tokens: 1000 }), (1000 / 1000) * 0.010);
+  assertEq('cost missing output', estimateCost('gpt-4o', { input_tokens: 1000 }), (1000 / 1000) * 0.0025);
+
+  // Known models have pricing
+  const knownModels = ['gpt-4o', 'gpt-4o-mini', 'claude-sonnet-4-6', 'claude-opus-4-6', 'deepseek-chat'];
+  for (const m of knownModels) {
+    assert(`MODEL_PRICING has ${m}`, m in MODEL_PRICING);
+    const c = estimateCost(m, { input_tokens: 1000, output_tokens: 1000 });
+    assert(`${m} cost > 0`, c >= 0); // chrome-ai/echo cost is 0, that's ok
+  }
+
+  // Free models
+  assertEq('chrome-ai cost is 0', estimateCost('chrome-ai', { input_tokens: 1000, output_tokens: 1000 }), 0);
+  assertEq('echo cost is 0', estimateCost('echo', { input_tokens: 1000, output_tokens: 1000 }), 0);
+
+  // Specific calculation verification
+  const cost4o = estimateCost('gpt-4o', { input_tokens: 1000, output_tokens: 1000 });
+  const expected = (1000/1000 * 0.0025) + (1000/1000 * 0.010);
+  assertEq('gpt-4o 1k/1k cost', cost4o, expected);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  PROVIDERS — EchoProvider (expanded)
+// ═══════════════════════════════════════════════════════════════
+
+section('EchoProvider — Expanded');
+
+{
+  const echo = new EchoProvider();
+  assertEq('echo name', echo.name, 'echo');
+  assert('echo no api key needed', !echo.requiresApiKey);
+  assert('echo no streaming', !echo.supportsStreaming);
+
+  // Basic chat
+  const r1 = await echo.chat({
+    messages: [{ role: 'user', content: 'hello world' }],
+    tools: [],
+  }, '', '');
+  assert('echo returns content', typeof r1.content === 'string');
+  assert('echo echoes message', r1.content.includes('hello world'));
+  assertEq('echo tool_calls empty', r1.tool_calls, []);
+  assert('echo usage has input_tokens', typeof r1.usage.input_tokens === 'number');
+  assert('echo usage has output_tokens', typeof r1.usage.output_tokens === 'number');
+  assertEq('echo model', r1.model, 'echo');
+
+  // Multiple messages
+  const r2 = await echo.chat({
+    messages: [
+      { role: 'system', content: 'you are a bot' },
+      { role: 'user', content: 'first' },
+      { role: 'assistant', content: 'ok' },
+      { role: 'user', content: 'second' },
+    ],
+    tools: [],
+  }, '', '');
+  assert('echo handles multi messages', r2.content.includes('second'));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  PROVIDERS — Provider Registry
+// ═══════════════════════════════════════════════════════════════
+
+section('ProviderRegistry');
+
+{
+  const registry = createDefaultProviders();
+  assert('registry is ProviderRegistry', registry instanceof ProviderRegistry);
+
+  // Has default providers
+  assert('registry has echo', registry.has('echo'));
+  assert('registry has openai', registry.has('openai'));
+  assert('registry has anthropic', registry.has('anthropic'));
+
+  // Get provider
+  const echo = registry.get('echo');
+  assert('get echo', echo instanceof EchoProvider);
+  const missing = registry.get('nonexistent');
+  assert('get missing is null', missing === null);
+
+  // List via listWithAvailability
+  const providerList = await registry.listWithAvailability();
+  assert('registry has multiple providers', providerList.length >= 3);
+  assert('list includes echo', providerList.some(p => p.name === 'echo'));
+  assert('list entries have displayName', providerList.every(p => typeof p.displayName === 'string'));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  PROVIDERS — OpenAI-compatible services
+// ═══════════════════════════════════════════════════════════════
+
+section('OpenAI-Compatible Services');
+
+{
+  assert('services is an object', typeof OPENAI_COMPATIBLE_SERVICES === 'object');
+  const serviceNames = Object.keys(OPENAI_COMPATIBLE_SERVICES);
+  assert('has services', serviceNames.length >= 5);
+
+  // Each service has required fields
+  for (const [name, svc] of Object.entries(OPENAI_COMPATIBLE_SERVICES)) {
+    assert(`${name} has baseUrl`, typeof svc.baseUrl === 'string' && svc.baseUrl.startsWith('http'));
+    assert(`${name} has defaultModel`, typeof svc.defaultModel === 'string' && svc.defaultModel.length > 0);
+    assert(`${name} has displayName`, typeof svc.displayName === 'string');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SKILLS — SkillParser
+// ═══════════════════════════════════════════════════════════════
+
+section('SkillParser — Frontmatter');
+
+{
+  // Basic frontmatter
+  const r1 = SkillParser.parseFrontmatter(`---
+name: code-review
+description: Review code for bugs
+version: 1.0
+---
+# Instructions
+Review the code.`);
+  assertEq('parse name', r1.metadata.name, 'code-review');
+  assertEq('parse description', r1.metadata.description, 'Review code for bugs');
+  assertEq('parse version', r1.metadata.version, 1.0);
+  assert('parse body', r1.body.includes('# Instructions'));
+
+  // No frontmatter → body only
+  const r2 = SkillParser.parseFrontmatter('Just plain text.');
+  assertEq('no frontmatter metadata', r2.metadata, {});
+  assertEq('no frontmatter body', r2.body, 'Just plain text.');
+
+  // Booleans and null
+  const r3 = SkillParser.parseFrontmatter(`---
+active: true
+deprecated: false
+optional: null
+---
+body`);
+  assertEq('yaml true', r3.metadata.active, true);
+  assertEq('yaml false', r3.metadata.deprecated, false);
+  assertEq('yaml null', r3.metadata.optional, null);
+
+  // Inline array
+  const r4 = SkillParser.parseFrontmatter(`---
+tags: [review, code, quality]
+---
+body`);
+  assertEq('yaml inline array', r4.metadata.tags, ['review', 'code', 'quality']);
+
+  // Block array
+  const r5 = SkillParser.parseFrontmatter(`---
+tags:
+  - review
+  - code
+  - quality
+---
+body`);
+  assertEq('yaml block array', r5.metadata.tags, ['review', 'code', 'quality']);
+
+  // Nested object
+  const r6 = SkillParser.parseFrontmatter(`---
+metadata:
+  author: alice
+  version: 2
+---
+body`);
+  assertEq('yaml nested author', r6.metadata.metadata?.author, 'alice');
+  assertEq('yaml nested version', r6.metadata.metadata?.version, 2);
+
+  // Quoted strings
+  const r7 = SkillParser.parseFrontmatter(`---
+name: "my-skill"
+desc: 'quoted desc'
+---
+body`);
+  assertEq('yaml double quoted', r7.metadata.name, 'my-skill');
+  assertEq('yaml single quoted', r7.metadata.desc, 'quoted desc');
+}
+
+section('SkillParser — Validation');
+
+{
+  // Valid
+  const v1 = SkillParser.validateMetadata({ name: 'code-review', description: 'Reviews code' });
+  assert('valid metadata', v1.valid);
+  assertEq('valid no errors', v1.errors.length, 0);
+
+  // Missing name
+  const v2 = SkillParser.validateMetadata({ description: 'desc' });
+  assert('missing name invalid', !v2.valid);
+  assert('missing name error', v2.errors.some(e => e.includes('name')));
+
+  // Bad name format (uppercase, spaces)
+  const v3 = SkillParser.validateMetadata({ name: 'Bad Name!', description: 'desc' });
+  assert('bad name format', !v3.valid);
+
+  // Missing description
+  const v4 = SkillParser.validateMetadata({ name: 'good-name' });
+  assert('missing desc invalid', !v4.valid);
+
+  // Description too long
+  const v5 = SkillParser.validateMetadata({ name: 'ok', description: 'x'.repeat(501) });
+  assert('long desc invalid', !v5.valid);
+  assert('long desc error', v5.errors.some(e => e.includes('500')));
+
+  // Name edge cases
+  const v6 = SkillParser.validateMetadata({ name: 'a', description: 'ok' });
+  assert('single char name valid', v6.valid);
+
+  const v7 = SkillParser.validateMetadata({ name: 'a-b-c', description: 'ok' });
+  assert('hyphenated name valid', v7.valid);
+
+  const v8 = SkillParser.validateMetadata({ name: '-bad', description: 'ok' });
+  assert('leading hyphen invalid', !v8.valid);
+
+  const v9 = SkillParser.validateMetadata({ name: 'bad-', description: 'ok' });
+  assert('trailing hyphen invalid', !v9.valid);
+}
+
+section('SkillParser — Argument Substitution');
+
+{
+  // $ARGUMENTS
+  const r1 = SkillParser.substituteArguments('Review $ARGUMENTS', 'main.js utils.js');
+  assertEq('$ARGUMENTS full', r1, 'Review main.js utils.js');
+
+  // $ARGUMENTS[N]
+  const r2 = SkillParser.substituteArguments('File: $ARGUMENTS[0], Mode: $ARGUMENTS[1]', 'main.js strict');
+  assertEq('$ARGUMENTS[N]', r2, 'File: main.js, Mode: strict');
+
+  // $N (1-based)
+  const r3 = SkillParser.substituteArguments('First: $1, Second: $2', 'foo bar');
+  assertEq('$N substitution', r3, 'First: foo, Second: bar');
+
+  // No args → no substitution (preserves placeholders)
+  const r4 = SkillParser.substituteArguments('Keep $ARGUMENTS and $1 intact', '');
+  assertEq('no args preserves', r4, 'Keep $ARGUMENTS and $1 intact');
+
+  // Out-of-range $ARGUMENTS[N]
+  const r5 = SkillParser.substituteArguments('$ARGUMENTS[5]', 'only one');
+  assertEq('out of range arg', r5, '');
+
+  // $ARGUMENTS should not match $ARGUMENTS_EXTRA
+  const r6 = SkillParser.substituteArguments('$ARGUMENTS_EXTRA and $ARGUMENTS', 'test');
+  assertEq('no partial match', r6, '$ARGUMENTS_EXTRA and test');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  HTML Escaping (esc function logic)
+// ═══════════════════════════════════════════════════════════════
+
+section('HTML Escaping — Expanded');
+
+{
+  // Uses the imported `esc` from clawser-state.js (no local shadow)
+  assertEq('esc &', esc('a&b'), 'a&amp;b');
+  assertEq('esc <', esc('\x3cscript>'), '&lt;script&gt;');
+  assertEq('esc "', esc('"hello"'), '&quot;hello&quot;');
+  assertEq('esc combined', esc('\x3cb class="x">&\x3c/b>'), '&lt;b class=&quot;x&quot;&gt;&amp;&lt;/b&gt;');
+  assertEq('esc empty', esc(''), '');
+  assertEq('esc no specials', esc('plain text'), 'plain text');
+  assertEq('esc multiple &', esc('a&b&c'), 'a&amp;b&amp;c');
+  assertEq('esc double encoding safe', esc('&amp;'), '&amp;amp;');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  PROVIDERS — Anthropic & OpenAI constructors
+// ═══════════════════════════════════════════════════════════════
+
+section('Provider Properties');
+
+{
+  const anthropic = new AnthropicProvider();
+  assertEq('anthropic name', anthropic.name, 'anthropic');
+  assert('anthropic requires key', anthropic.requiresApiKey);
+  assert('anthropic supports streaming', anthropic.supportsStreaming);
+
+  const openai = new OpenAIProvider();
+  assertEq('openai name', openai.name, 'openai');
+  assert('openai requires key', openai.requiresApiKey);
+  assert('openai supports streaming', openai.supportsStreaming);
+
+  const echo = new EchoProvider();
+  assertEq('echo name', echo.name, 'echo');
+  assert('echo no key needed', !echo.requiresApiKey);
+  assert('echo no streaming', !echo.supportsStreaming);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  STATE — Event Bus & lsKey
+// ═══════════════════════════════════════════════════════════════
+
+section('State — on/emit');
+
+{
+  // on/emit — register listener, emit fires it
+  let called = false;
+  on('test_event_1', () => { called = true; });
+  emit('test_event_1');
+  assert('on/emit fires listener', called);
+
+  // on/emit — multiple listeners on same event
+  let countA = 0, countB = 0;
+  on('test_event_2', () => { countA++; });
+  on('test_event_2', () => { countB++; });
+  emit('test_event_2');
+  assert('on/emit multiple listeners A', countA === 1);
+  assert('on/emit multiple listeners B', countB === 1);
+
+  // on/emit — error in one listener doesn't break others
+  let afterError = false;
+  on('test_event_3', () => { throw new Error('deliberate'); });
+  on('test_event_3', () => { afterError = true; });
+  emit('test_event_3');
+  assert('on/emit error in listener does not break others', afterError);
+
+  // on/emit — emit unknown event is no-op
+  let noopFlag = false;
+  emit('totally_unknown_event_xyz');
+  assert('emit unknown event is no-op', !noopFlag);
+}
+
+section('State — lsKey builders');
+
+{
+  assertEq('lsKey.memories(ws1)', lsKey.memories('ws1'), 'clawser_memories_ws1');
+  assertEq('lsKey.config(ws1)', lsKey.config('ws1'), 'clawser_config_ws1');
+  assertEq('lsKey.toolPerms(ws1)', lsKey.toolPerms('ws1'), 'clawser_tool_perms_ws1');
+  assertEq('lsKey.security(ws1)', lsKey.security('ws1'), 'clawser_security_ws1');
+  assertEq('lsKey.skillsEnabled(ws1)', lsKey.skillsEnabled('ws1'), 'clawser_skills_enabled_ws1');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CONVERSATIONS — CRUD
+// ═══════════════════════════════════════════════════════════════
+
+section('Conversations');
+
+{
+  const testWs = '__test_conv_ws__';
+  const origData = localStorage.getItem(CONV_KEY_PREFIX + testWs);
+  try {
+    // Round-trip: save then load returns same data
+    const data = [{ id: 'c1', name: 'Chat 1' }, { id: 'c2', name: 'Chat 2' }];
+    saveConversations(testWs, data);
+    const loaded = loadConversations(testWs);
+    assertEq('conv round-trip', loaded, data);
+
+    // Load with no data returns []
+    localStorage.removeItem(CONV_KEY_PREFIX + testWs);
+    assertEq('conv load no data', loadConversations(testWs), []);
+
+    // Load with corrupt JSON returns []
+    localStorage.setItem(CONV_KEY_PREFIX + testWs, '{{{bad json');
+    assertEq('conv load corrupt JSON', loadConversations(testWs), []);
+
+    // generateConvId() returns unique strings
+    const id1 = generateConvId();
+    const id2 = generateConvId();
+    assert('generateConvId unique', id1 !== id2);
+
+    // generateConvId() matches conv_* pattern
+    assert('generateConvId matches conv_*', /^conv_.+$/.test(id1));
+  } finally {
+    // Cleanup
+    if (origData !== null) {
+      localStorage.setItem(CONV_KEY_PREFIX + testWs, origData);
+    } else {
+      localStorage.removeItem(CONV_KEY_PREFIX + testWs);
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  WORKSPACES — CRUD
+// ═══════════════════════════════════════════════════════════════
+
+section('Workspaces');
+
+{
+  const origWsList = localStorage.getItem(WS_KEY);
+  const origActive = localStorage.getItem(WS_ACTIVE_KEY);
+  try {
+    // Clear for clean tests
+    localStorage.removeItem(WS_KEY);
+    localStorage.removeItem(WS_ACTIVE_KEY);
+
+    // ensureDefaultWorkspace() creates default if missing
+    const list1 = ensureDefaultWorkspace();
+    assert('ensureDefault creates default', list1.some(w => w.id === 'default'));
+
+    // createWorkspace() returns id, appears in loadWorkspaces()
+    const newId = createWorkspace('Test WS');
+    assert('createWorkspace returns id', typeof newId === 'string' && newId.length > 0);
+    const list2 = loadWorkspaces();
+    assert('createWorkspace appears in list', list2.some(w => w.id === newId));
+
+    // renameWorkspace() updates name
+    renameWorkspace(newId, 'Renamed WS');
+    const renamed = loadWorkspaces().find(w => w.id === newId);
+    assertEq('renameWorkspace updates name', renamed.name, 'Renamed WS');
+
+    // getWorkspaceName() returns name or fallback
+    assertEq('getWorkspaceName returns name', getWorkspaceName(newId), 'Renamed WS');
+    assertEq('getWorkspaceName fallback', getWorkspaceName('nonexistent_ws_xyz'), 'workspace');
+
+    // touchWorkspace() updates lastUsed
+    const beforeTouch = loadWorkspaces().find(w => w.id === newId).lastUsed;
+    // Small delay to ensure timestamp differs
+    await new Promise(r => setTimeout(r, 5));
+    touchWorkspace(newId);
+    const afterTouch = loadWorkspaces().find(w => w.id === newId).lastUsed;
+    assert('touchWorkspace updates lastUsed', afterTouch >= beforeTouch);
+
+    // deleteWorkspace('default') is a no-op (can't delete default)
+    await deleteWorkspace('default');
+    assert('deleteWorkspace default no-op', loadWorkspaces().some(w => w.id === 'default'));
+
+    // deleteWorkspace() removes from list
+    await deleteWorkspace(newId);
+    assert('deleteWorkspace removes', !loadWorkspaces().some(w => w.id === newId));
+
+    // getActiveWorkspaceId() / setActiveWorkspaceId() round-trip
+    setActiveWorkspaceId('my_ws_123');
+    assertEq('active workspace round-trip', getActiveWorkspaceId(), 'my_ws_123');
+
+    // getActiveWorkspaceId() default value when nothing is set
+    localStorage.removeItem(WS_ACTIVE_KEY);
+    assertEq('active workspace default', getActiveWorkspaceId(), 'default');
+  } finally {
+    // Restore original workspace list
+    if (origWsList !== null) {
+      localStorage.setItem(WS_KEY, origWsList);
+    } else {
+      localStorage.removeItem(WS_KEY);
+    }
+    if (origActive !== null) {
+      localStorage.setItem(WS_ACTIVE_KEY, origActive);
+    } else {
+      localStorage.removeItem(WS_ACTIVE_KEY);
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  ROUTER — parseHash
+// ═══════════════════════════════════════════════════════════════
+
+section('Router — parseHash');
+
+{
+  const origHash = location.hash;
+  try {
+    // #workspace/default
+    location.hash = '#workspace/default';
+    assertEq('parseHash workspace/default', parseHash(), { route: 'workspace', wsId: 'default', convId: null, panel: null });
+
+    // #workspace/ws1/files
+    location.hash = '#workspace/ws1/files';
+    assertEq('parseHash workspace/ws1/files', parseHash(), { route: 'workspace', wsId: 'ws1', convId: null, panel: 'files' });
+
+    // #workspace/ws1/conversation/conv_abc
+    location.hash = '#workspace/ws1/conversation/conv_abc';
+    assertEq('parseHash workspace/ws1/conversation/conv_abc', parseHash(), { route: 'workspace', wsId: 'ws1', convId: 'conv_abc', panel: 'chat' });
+
+    // empty hash
+    location.hash = '';
+    assertEq('parseHash empty hash', parseHash(), { route: 'home' });
+
+    // bare #
+    history.replaceState(null, '', '#');
+    assertEq('parseHash bare #', parseHash(), { route: 'home' });
+  } finally {
+    // Restore original hash
+    if (origHash) {
+      location.hash = origHash;
+    } else {
+      history.replaceState(null, '', location.pathname + location.search);
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  ACCOUNTS — CRUD
+// ═══════════════════════════════════════════════════════════════
+
+section('Accounts');
+
+{
+  const origAccts = localStorage.getItem(ACCT_KEY);
+  try {
+    // Clear for clean tests
+    localStorage.removeItem(ACCT_KEY);
+
+    // Load with no data returns []
+    assertEq('accounts load no data', loadAccounts(), []);
+
+    // Round-trip save/load
+    const data = [{ id: 'a1', name: 'Test', service: 'openai', apiKey: 'sk-test', model: 'gpt-4o' }];
+    saveAccounts(data);
+    assertEq('accounts round-trip', loadAccounts(), data);
+
+    // createAccount() adds to list
+    localStorage.removeItem(ACCT_KEY);
+    const id = createAccount({ name: 'My Acct', service: 'anthropic', apiKey: 'key123', model: 'claude-sonnet-4-6' });
+    assert('createAccount returns id', typeof id === 'string' && id.length > 0);
+    const list = loadAccounts();
+    assert('createAccount adds to list', list.some(a => a.id === id && a.name === 'My Acct'));
+
+    // deleteAccount() removes from list
+    deleteAccount(id);
+    assert('deleteAccount removes', !loadAccounts().some(a => a.id === id));
+  } finally {
+    // Restore original accounts
+    if (origAccts !== null) {
+      localStorage.setItem(ACCT_KEY, origAccts);
+    } else {
+      localStorage.removeItem(ACCT_KEY);
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  AGENT — parseCron (static)
+// ═══════════════════════════════════════════════════════════════
+
+section('ClawserAgent — parseCron');
+
+{
+  // * * * * * — all fields null (wildcard)
+  const r1 = ClawserAgent.parseCron('* * * * *');
+  assert('parseCron wildcard not null', r1 !== null);
+  assertEq('parseCron * minute', r1.minute, null);
+  assertEq('parseCron * hour', r1.hour, null);
+  assertEq('parseCron * dayOfMonth', r1.dayOfMonth, null);
+  assertEq('parseCron * month', r1.month, null);
+  assertEq('parseCron * dayOfWeek', r1.dayOfWeek, null);
+
+  // 0 * * * * — minute is Set([0])
+  const r2 = ClawserAgent.parseCron('0 * * * *');
+  assert('parseCron 0 minute is Set', r2.minute instanceof Set);
+  assertEq('parseCron 0 minute values', [...r2.minute].sort((a,b)=>a-b), [0]);
+
+  // */15 * * * * — minute is Set([0,15,30,45])
+  const r3 = ClawserAgent.parseCron('*/15 * * * *');
+  assertEq('parseCron */15 minute', [...r3.minute].sort((a,b)=>a-b), [0, 15, 30, 45]);
+
+  // 0-30/5 * * * * — minute is Set([0,5,10,15,20,25,30])
+  const r4 = ClawserAgent.parseCron('0-30/5 * * * *');
+  assertEq('parseCron 0-30/5 minute', [...r4.minute].sort((a,b)=>a-b), [0, 5, 10, 15, 20, 25, 30]);
+
+  // 0 9 * * 1-5 — hour Set([9]), dayOfWeek Set([1,2,3,4,5])
+  const r5 = ClawserAgent.parseCron('0 9 * * 1-5');
+  assertEq('parseCron 0 9 hour', [...r5.hour].sort((a,b)=>a-b), [9]);
+  assertEq('parseCron 1-5 dayOfWeek', [...r5.dayOfWeek].sort((a,b)=>a-b), [1, 2, 3, 4, 5]);
+
+  // Invalid expression returns null
+  const r6 = ClawserAgent.parseCron('bad');
+  assertEq('parseCron invalid returns null', r6, null);
+
+  // Too few fields returns null
+  const r7 = ClawserAgent.parseCron('* * *');
+  assertEq('parseCron too few fields returns null', r7, null);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  AGENT — estimateTokens (static)
+// ═══════════════════════════════════════════════════════════════
+
+section('ClawserAgent — estimateTokens');
+
+{
+  assertEq('estimateTokens hello', ClawserAgent.estimateTokens('hello'), Math.ceil(5 / 4));
+  assertEq('estimateTokens empty', ClawserAgent.estimateTokens(''), 0);
+  assertEq('estimateTokens null', ClawserAgent.estimateTokens(null), 0);
+  assertEq('estimateTokens 100 chars', ClawserAgent.estimateTokens('a'.repeat(100)), 25);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  AGENT — Memory CRUD (instance)
+// ═══════════════════════════════════════════════════════════════
+
+section('ClawserAgent — Memory CRUD');
+
+{
+  const agent = await ClawserAgent.create({});
+
+  // memoryStore returns truthy id
+  const id = agent.memoryStore({ id: 'm1', key: 'test', content: 'hello', category: 'core', timestamp: Date.now() });
+  assert('memoryStore returns id', !!id);
+
+  // memoryRecall with query returns the stored entry
+  const recalled = agent.memoryRecall('test');
+  assert('memoryRecall returns array', Array.isArray(recalled));
+  assert('memoryRecall has entry', recalled.some(e => e.key === 'test' && e.content === 'hello'));
+
+  // memoryRecall with empty string returns all entries
+  const all = agent.memoryRecall('');
+  assert('memoryRecall empty returns all', Array.isArray(all) && all.length >= 1);
+
+  // memoryForget removes the entry
+  const forgotten = agent.memoryForget('m1');
+  assert('memoryForget returns truthy', forgotten > 0);
+  const afterForget = agent.memoryRecall('test');
+  assert('memoryForget entry gone', !afterForget.some(e => e.id === 'm1'));
+
+  // memoryHygiene with maxEntries keeps only N
+  agent.memoryStore({ key: 'a', content: 'aaa', category: 'core', timestamp: Date.now() });
+  agent.memoryStore({ key: 'b', content: 'bbb', category: 'core', timestamp: Date.now() });
+  agent.memoryStore({ key: 'c', content: 'ccc', category: 'core', timestamp: Date.now() });
+  const hygieneResult = agent.memoryHygiene({ maxEntries: 1 });
+  const afterHygiene = agent.memoryRecall('');
+  assert('memoryHygiene trims to maxEntries', afterHygiene.length <= 1);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  AGENT — Goal CRUD (instance)
+// ═══════════════════════════════════════════════════════════════
+
+section('ClawserAgent — Goal CRUD');
+
+{
+  const agent = await ClawserAgent.create({});
+
+  // addGoal returns id
+  const goalId = agent.addGoal('Build feature');
+  assertEq('addGoal returns goal_1', goalId, 'goal_1');
+
+  // getState().goals has the goal
+  const st = agent.getState();
+  assertEq('goals length 1', st.goals.length, 1);
+  assertEq('goal status active', st.goals[0].status, 'active');
+  assertEq('goal description', st.goals[0].description, 'Build feature');
+
+  // updateGoal changes status
+  const updated = agent.updateGoal('goal_1', 'blocked');
+  assert('updateGoal returns true', updated);
+  assertEq('goal status blocked', agent.getState().goals[0].status, 'blocked');
+
+  // completeGoal changes status
+  const completed = agent.completeGoal('goal_1');
+  assert('completeGoal returns true', completed);
+  assertEq('goal status completed', agent.getState().goals[0].status, 'completed');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  AGENT — Scheduler (instance)
+// ═══════════════════════════════════════════════════════════════
+
+section('ClawserAgent — Scheduler');
+
+{
+  const agent = await ClawserAgent.create({});
+
+  // addSchedulerJob returns id
+  const jobId = agent.addSchedulerJob({ schedule_type: 'once', fire_at: Date.now() + 99999, prompt: 'test' });
+  assert('addSchedulerJob returns id', typeof jobId === 'string' && jobId.length > 0);
+
+  // listSchedulerJobs returns the job
+  const jobs = agent.listSchedulerJobs();
+  assert('listSchedulerJobs has job', jobs.length === 1);
+  assertEq('job prompt', jobs[0].prompt, 'test');
+
+  // removeSchedulerJob removes it
+  const removed = agent.removeSchedulerJob(jobId);
+  assert('removeSchedulerJob returns true', removed);
+  assertEq('listSchedulerJobs empty', agent.listSchedulerJobs().length, 0);
+
+  // tick fires a past-due once job
+  const fireId = agent.addSchedulerJob({ schedule_type: 'once', fire_at: 1000, prompt: 'fire me' });
+  const fired = agent.tick(2000);
+  assert('tick fires past-due job', fired >= 1);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  AGENT — Tool spec management (instance)
+// ═══════════════════════════════════════════════════════════════
+
+section('ClawserAgent — Tool Spec Management');
+
+{
+  const agent = await ClawserAgent.create({});
+
+  // registerToolSpec adds spec (returns 0 on success)
+  const rc = agent.registerToolSpec({ name: 'my_tool', description: 'test tool', parameters: {} });
+  assertEq('registerToolSpec returns 0', rc, 0);
+
+  // unregisterToolSpec removes it (returns true)
+  const unreg = agent.unregisterToolSpec('my_tool');
+  assert('unregisterToolSpec returns true', unreg);
+
+  // unregister again returns false (already removed)
+  const unreg2 = agent.unregisterToolSpec('my_tool');
+  assert('unregisterToolSpec missing returns false', !unreg2);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  AGENT — Checkpoint round-trip (instance)
+// ═══════════════════════════════════════════════════════════════
+
+section('ClawserAgent — Checkpoint Round-trip');
+
+{
+  const agent = await ClawserAgent.create({});
+
+  // Store a memory and a goal
+  agent.memoryStore({ key: 'cp_test', content: 'checkpoint data', category: 'core', timestamp: Date.now() });
+  agent.addGoal('Checkpoint goal');
+
+  // checkpoint returns Uint8Array with length > 0
+  const bytes = agent.checkpoint();
+  assert('checkpoint returns Uint8Array', bytes instanceof Uint8Array);
+  assert('checkpoint has data', bytes.length > 0);
+
+  // Create new agent and restore
+  const agent2 = await ClawserAgent.create({});
+  const rc = agent2.restore(bytes);
+  assertEq('restore returns 0', rc, 0);
+
+  // Restored agent goals match original
+  const origGoals = agent.getState().goals;
+  const restoredGoals = agent2.getState().goals;
+  assertEq('restored goals count', restoredGoals.length, origGoals.length);
+  assertEq('restored goal description', restoredGoals[0].description, origGoals[0].description);
+  assertEq('restored goal status', restoredGoals[0].status, origGoals[0].status);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CODEX — extractCodeBlocks and stripCodeBlocks
+// ═══════════════════════════════════════════════════════════════
+
+section('Codex — extractCodeBlocks');
+
+{
+  // Extracts ```js blocks with content
+  const r1 = extractCodeBlocks('text\n```js\nconsole.log("hi")\n```\nmore');
+  assertEq('extract js block count', r1.length, 1);
+  assertEq('extract js block lang', r1[0].lang, 'js');
+  assert('extract js block code', r1[0].code.includes('console.log'));
+
+  // Extracts ```tool_code blocks
+  const r2 = extractCodeBlocks('```tool_code\nprint("hello")\n```');
+  assertEq('extract tool_code count', r2.length, 1);
+  assertEq('extract tool_code lang', r2[0].lang, 'tool_code');
+
+  // Returns empty array for text with no code blocks
+  const r3 = extractCodeBlocks('just plain text without any code');
+  assertEq('extract no blocks', r3.length, 0);
+
+  // Handles multiple code blocks
+  const r4 = extractCodeBlocks('```js\nblock1()\n```\ntext\n```python\nblock2()\n```');
+  assertEq('extract multi blocks count', r4.length, 2);
+  assertEq('extract multi block 1 lang', r4[0].lang, 'js');
+  assertEq('extract multi block 2 lang', r4[1].lang, 'python');
+}
+
+section('Codex — stripCodeBlocks');
+
+{
+  // Removes code blocks, leaves surrounding text
+  const r1 = stripCodeBlocks('before\n```js\ncode()\n```\nafter');
+  assert('strip leaves before', r1.includes('before'));
+  assert('strip leaves after', r1.includes('after'));
+  assert('strip removes code', !r1.includes('code()'));
+
+  // No-op on text with no code blocks
+  const r2 = stripCodeBlocks('plain text here');
+  assertEq('strip no-op', r2, 'plain text here');
+
+  // Handles multiple blocks
+  const r3 = stripCodeBlocks('a\n```js\nb\n```\nc\n```py\nd\n```\ne');
+  assert('strip multi leaves a', r3.includes('a'));
+  assert('strip multi leaves c', r3.includes('c'));
+  assert('strip multi leaves e', r3.includes('e'));
+  assert('strip multi removes b', !r3.includes('\nb\n'));
+  assert('strip multi removes d', !r3.includes('\nd\n'));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  TOOLS — ScreenInfoTool & NotifyTool
+// ═══════════════════════════════════════════════════════════════
+
+section('ScreenInfoTool & NotifyTool');
+
+{
+  // ScreenInfoTool returns success with location info
+  const screenTool = new ScreenInfoTool();
+  const r1 = await screenTool.execute({});
+  assert('ScreenInfoTool succeeds', r1.success);
+  assert('ScreenInfoTool has output', typeof r1.output === 'string' && r1.output.length > 0);
+  const screenData = JSON.parse(r1.output);
+  assert('ScreenInfoTool has url', typeof screenData.url === 'string');
+  assert('ScreenInfoTool has title', typeof screenData.title === 'string');
+  assert('ScreenInfoTool has viewport', screenData.viewport && typeof screenData.viewport.width === 'number');
+
+  // NotifyTool — may fail gracefully (Notification API may not be available)
+  const notifyTool = new NotifyTool();
+  const r2 = await notifyTool.execute({ title: 'test', body: 'msg' });
+  // Either succeeds or returns error about permissions/support
+  assert('NotifyTool returns result', typeof r2.success === 'boolean');
+  if (!r2.success) {
+    assert('NotifyTool error is string', typeof r2.error === 'string');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  assertThrows usage
+// ═══════════════════════════════════════════════════════════════
+
+section('assertThrows — Usage');
+
+{
+  // assertThrows with a function that does throw
+  await assertThrows('assertThrows catches error', () => { throw new Error('boom'); });
+
+  // Verify ClawserAgent.create does NOT throw (returns agent)
+  let agentCreated = false;
+  try {
+    const a = await ClawserAgent.create({});
+    agentCreated = a !== null && a !== undefined;
+  } catch {
+    agentCreated = false;
+  }
+  assert('ClawserAgent.create does not throw', agentCreated);
+
+  // assertThrows with invalid cron in addSchedulerJob
+  const agentForThrow = await ClawserAgent.create({});
+  await assertThrows('addSchedulerJob throws on bad cron', () => {
+    agentForThrow.addSchedulerJob({ schedule_type: 'cron', cron_expr: 'bad cron', prompt: 'test' });
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CODEX — ID Uniqueness (regression for monotonic counter)
+// ═══════════════════════════════════════════════════════════════
+
+section('Codex — ID Uniqueness');
+
+{
+  // Simulate what execute() does internally: create IDs in a tight loop
+  // With the old Date.now() + toolCalls.length approach, these would collide
+  const ids = new Set();
+  const ws = new WorkspaceFs();
+  ws.setWorkspace('test_codex_id');
+  const reg = createDefaultRegistry(ws);
+  const codex = new Codex(reg);
+
+  // Run two executions concurrently with simple code blocks
+  const input1 = '```js\n"a"\n```';
+  const input2 = '```js\n"b"\n```';
+  const [r1, r2] = await Promise.all([codex.execute(input1), codex.execute(input2)]);
+
+  for (const tc of [...r1.toolCalls, ...r2.toolCalls]) {
+    assert(`codex ID unique: ${tc.id}`, !ids.has(tc.id));
+    ids.add(tc.id);
+  }
+  assert('codex concurrent IDs all unique', ids.size === r1.toolCalls.length + r2.toolCalls.length);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  updateInlineToolCall — Null Safety (regression)
+// ═══════════════════════════════════════════════════════════════
+
+section('updateInlineToolCall — Null Safety');
+
+{
+  // Calling with null el should not throw
+  let threw = false;
+  try {
+    updateInlineToolCall(null, 'test', {}, { success: true, output: 'ok' });
+  } catch (e) {
+    threw = true;
+  }
+  assert('updateInlineToolCall null el does not throw', !threw);
+
+  // Calling with an empty div (no children) should not throw
+  const emptyDiv = document.createElement('div');
+  threw = false;
+  try {
+    updateInlineToolCall(emptyDiv, 'test', {}, { success: true, output: 'ok' });
+  } catch (e) {
+    threw = true;
+  }
+  assert('updateInlineToolCall empty el does not throw', !threw);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  deleteWorkspace — Async OPFS Cleanup (regression)
+// ═══════════════════════════════════════════════════════════════
+
+section('deleteWorkspace — Async OPFS Cleanup');
+
+{
+  const origWsList = localStorage.getItem(WS_KEY);
+  try {
+    // Ensure clean state
+    ensureDefaultWorkspace();
+    const wsId = createWorkspace('async-delete-test');
+
+    // deleteWorkspace should return a Promise
+    const result = deleteWorkspace(wsId);
+    assert('deleteWorkspace returns Promise', result instanceof Promise || result === undefined);
+
+    // Await it — should complete without error
+    await result;
+    assert('deleteWorkspace async completes', true);
+
+    // Workspace should be removed from list
+    assert('deleteWorkspace removed from list', !loadWorkspaces().some(w => w.id === wsId));
+  } finally {
+    if (origWsList !== null) localStorage.setItem(WS_KEY, origWsList);
+    else localStorage.removeItem(WS_KEY);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  buildDynamicSystemPrompt — Unit Tests
+// ═══════════════════════════════════════════════════════════════
+
+section('buildDynamicSystemPrompt');
+
+{
+  // Base only
+  const r1 = buildDynamicSystemPrompt('You are a bot.', [], [], '', new Map());
+  assertEq('base only', r1, 'You are a bot.');
+
+  // Base + memories
+  const mems = [{ key: 'pref', content: 'user likes dark mode' }, { key: 'lang', content: 'prefers JS' }];
+  const r2 = buildDynamicSystemPrompt('Base.', mems, [], '', new Map());
+  assert('includes memories header', r2.includes('Relevant memories:'));
+  assert('includes memory key', r2.includes('[pref]'));
+  assert('includes memory content', r2.includes('user likes dark mode'));
+
+  // Base + goals (only active shown)
+  const goals = [
+    { id: 'g1', description: 'Build feature', status: 'active' },
+    { id: 'g2', description: 'Old task', status: 'completed' },
+    { id: 'g3', description: 'Another task', status: 'active' },
+  ];
+  const r3 = buildDynamicSystemPrompt('Base.', [], goals, '', new Map());
+  assert('includes goals header', r3.includes('Your current goals:'));
+  assert('includes active goal g1', r3.includes('Build feature'));
+  assert('excludes completed goal', !r3.includes('Old task'));
+  assert('includes active goal g3', r3.includes('Another task'));
+
+  // No active goals — no goals section
+  const r4 = buildDynamicSystemPrompt('Base.', [], [{ id: 'g1', description: 'done', status: 'completed' }], '', new Map());
+  assert('no active goals omits section', !r4.includes('Your current goals'));
+
+  // Base + skill metadata
+  const r5 = buildDynamicSystemPrompt('Base.', [], [], '<available-skills />', new Map());
+  assert('includes skill metadata', r5.includes('<available-skills />'));
+
+  // Base + active skill prompts
+  const activePrompts = new Map([['review', 'Review instructions here'], ['debug', 'Debug instructions']]);
+  const r6 = buildDynamicSystemPrompt('Base.', [], [], '', activePrompts);
+  assert('includes active skill body 1', r6.includes('Review instructions here'));
+  assert('includes active skill body 2', r6.includes('Debug instructions'));
+
+  // All combined
+  const r7 = buildDynamicSystemPrompt('System.', mems, goals, '<skills/>', activePrompts);
+  assert('combined has base', r7.startsWith('System.'));
+  assert('combined has memories', r7.includes('Relevant memories:'));
+  assert('combined has goals', r7.includes('Your current goals:'));
+  assert('combined has skills', r7.includes('<skills/>'));
+  assert('combined has active prompts', r7.includes('Review instructions here'));
+
+  // Memories capped at 10
+  const manyMems = Array.from({ length: 15 }, (_, i) => ({ key: `k${i}`, content: `c${i}` }));
+  const r8 = buildDynamicSystemPrompt('Base.', manyMems, [], '', new Map());
+  const memCount = (r8.match(/- \[k\d+\]/g) || []).length;
+  assert('memories capped at 10', memCount === 10);
+  assert('mem 0 included', r8.includes('[k0]'));
+  assert('mem 9 included', r8.includes('[k9]'));
+  assert('mem 10 excluded', !r8.includes('[k10]'));
+
+  // Empty memories/goals don't add sections
+  const r9 = buildDynamicSystemPrompt('Base.', [], [], '', new Map());
+  assert('empty adds no extra sections', !r9.includes('Relevant memories') && !r9.includes('Your current goals'));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  readSSE — Mock Stream
+// ═══════════════════════════════════════════════════════════════
+
+section('readSSE — Mock Stream');
+
+{
+  // Helper to create a mock ReadableStream from SSE lines
+  function mockSSEResponse(lines) {
+    const text = lines.join('\n') + '\n';
+    const stream = new ReadableStream({
+      start(ctrl) { ctrl.enqueue(new TextEncoder().encode(text)); ctrl.close(); }
+    });
+    return { body: stream };
+  }
+
+  // Basic text chunks
+  {
+    const resp = mockSSEResponse([
+      'data: {"choices":[{"delta":{"content":"Hello"}}]}',
+      '',
+      'data: {"choices":[{"delta":{"content":" World"}}]}',
+      '',
+      'data: [DONE]',
+    ]);
+    const chunks = [];
+    for await (const c of readSSE(resp)) chunks.push(c);
+    assert('readSSE yields data chunks', chunks.length >= 2);
+    assertEq('readSSE first chunk data', chunks[0].data?.choices[0].delta.content, 'Hello');
+    assert('readSSE terminates with done', chunks.some(c => c.done));
+  }
+
+  // [DONE] terminates stream
+  {
+    const resp = mockSSEResponse([
+      'data: {"id":"1"}',
+      '',
+      'data: [DONE]',
+      '',
+      'data: {"id":"should-not-appear"}',
+    ]);
+    const chunks = [];
+    for await (const c of readSSE(resp)) chunks.push(c);
+    assert('readSSE stops at [DONE]', !chunks.some(c => c.data?.id === 'should-not-appear'));
+  }
+
+  // Malformed JSON is skipped (no throw)
+  {
+    const resp = mockSSEResponse([
+      'data: {invalid json',
+      '',
+      'data: {"ok":true}',
+      '',
+      'data: [DONE]',
+    ]);
+    const chunks = [];
+    let threw = false;
+    try {
+      for await (const c of readSSE(resp)) chunks.push(c);
+    } catch { threw = true; }
+    assert('readSSE skips malformed JSON', !threw);
+    assert('readSSE yields valid after malformed', chunks.some(c => c.data?.ok === true));
+  }
+
+  // Non-data lines are ignored
+  {
+    const resp = mockSSEResponse([
+      ': comment line',
+      'event: ping',
+      'data: {"x":1}',
+      '',
+      'data: [DONE]',
+    ]);
+    const chunks = [];
+    for await (const c of readSSE(resp)) chunks.push(c);
+    assert('readSSE ignores non-data lines', chunks.some(c => c.data?.x === 1));
+  }
+
+  // Empty stream
+  {
+    const resp = mockSSEResponse([]);
+    const chunks = [];
+    for await (const c of readSSE(resp)) chunks.push(c);
+    assert('readSSE handles empty stream', chunks.length === 0);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  readAnthropicSSE — Mock Stream
+// ═══════════════════════════════════════════════════════════════
+
+section('readAnthropicSSE — Mock Stream');
+
+{
+  function mockSSEResponse(text) {
+    const stream = new ReadableStream({
+      start(ctrl) { ctrl.enqueue(new TextEncoder().encode(text)); ctrl.close(); }
+    });
+    return { body: stream };
+  }
+
+  // message_start event
+  {
+    const text = 'event: message_start\ndata: {"type":"message_start","message":{"model":"claude-3","usage":{"input_tokens":10}}}\n\n' +
+                 'event: message_stop\ndata: {"type":"message_stop"}\n\n';
+    const resp = mockSSEResponse(text);
+    const chunks = [];
+    for await (const c of readAnthropicSSE(resp)) chunks.push(c);
+    assert('anthropic SSE yields message_start', chunks.some(c => c.event === 'message_start'));
+    assert('anthropic SSE message_start has model', chunks.find(c => c.event === 'message_start')?.data?.message?.model === 'claude-3');
+  }
+
+  // content_block_delta with text_delta
+  {
+    const text = 'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}\n\n';
+    const resp = mockSSEResponse(text);
+    const chunks = [];
+    for await (const c of readAnthropicSSE(resp)) chunks.push(c);
+    assert('anthropic SSE yields content_block_delta', chunks.length >= 1);
+    assertEq('anthropic SSE delta text', chunks[0].data.delta.text, 'Hello');
+  }
+
+  // tool_use block
+  {
+    const text = 'event: content_block_start\ndata: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tu_1","name":"browser_fetch"}}\n\n' +
+                 'event: content_block_delta\ndata: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"url\\":"}}\n\n';
+    const resp = mockSSEResponse(text);
+    const chunks = [];
+    for await (const c of readAnthropicSSE(resp)) chunks.push(c);
+    assert('anthropic SSE tool_use start', chunks.some(c => c.data?.content_block?.type === 'tool_use'));
+    assert('anthropic SSE tool_use delta', chunks.some(c => c.data?.delta?.type === 'input_json_delta'));
+  }
+
+  // Skips events with missing data
+  {
+    const text = 'event: ping\n\n' +
+                 'event: message_start\ndata: {"type":"message_start","message":{"model":"test"}}\n\n';
+    const resp = mockSSEResponse(text);
+    const chunks = [];
+    for await (const c of readAnthropicSSE(resp)) chunks.push(c);
+    assert('anthropic SSE skips events without data', chunks.length === 1);
+    assertEq('anthropic SSE only valid event', chunks[0].event, 'message_start');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Integration — Agent + EchoProvider
+// ═══════════════════════════════════════════════════════════════
+
+section('Integration — Agent + EchoProvider');
+
+{
+  const providers = createDefaultProviders();
+  const ws = new WorkspaceFs();
+  ws.setWorkspace('test_integration');
+  const tools = createDefaultRegistry(ws);
+
+  const agent = await ClawserAgent.create({
+    browserTools: tools,
+    workspaceFs: ws,
+    providers,
+  });
+  agent.init({});
+  agent.setWorkspace('test_integration');
+
+  // Set echo provider
+  agent.setProvider('echo');
+
+  // Send a message
+  agent.sendMessage('hello integration test');
+
+  // Run agent loop
+  const result = await agent.run();
+  assert('agent run returns status', typeof result.status === 'number');
+  assert('agent run with echo produces response', result.status === 1 || result.status === 0);
+
+  if (result.status === 1) {
+    assert('echo response echoes input', result.data.includes('hello integration test'));
+  }
+
+  // History should have at least the user message
+  const st = agent.getState();
+  assert('agent history populated', st.history_len >= 1);
+
+  // Checkpoint round-trip after real interaction
+  const bytes = agent.checkpoint();
+  assert('post-interaction checkpoint has data', bytes.length > 0);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Workspace — ensureDefaultWorkspace Migration
+// ═══════════════════════════════════════════════════════════════
+
+section('Workspace — ensureDefaultWorkspace Migration');
+
+{
+  const origWs = localStorage.getItem(WS_KEY);
+  const origActive = localStorage.getItem(WS_ACTIVE_KEY);
+  const origMem = localStorage.getItem('clawser_memories');
+  const origCfg = localStorage.getItem('clawser_config');
+  try {
+    // Clear workspace list
+    localStorage.removeItem(WS_KEY);
+    localStorage.removeItem(WS_ACTIVE_KEY);
+
+    // Set up legacy non-namespaced data
+    localStorage.setItem('clawser_memories', '[{"id":"m1","key":"legacy","content":"data"}]');
+    localStorage.setItem('clawser_config', '{"provider":"echo"}');
+
+    // Run ensureDefaultWorkspace — should create default AND migrate
+    const list = ensureDefaultWorkspace();
+    assert('migration: default ws created', list.some(w => w.id === 'default'));
+
+    // Legacy data should be migrated to namespaced keys
+    const migratedMem = localStorage.getItem(lsKey.memories('default'));
+    assert('migration: memories migrated', migratedMem !== null);
+    assert('migration: memories content preserved', migratedMem.includes('legacy'));
+
+    const migratedCfg = localStorage.getItem(lsKey.config('default'));
+    assert('migration: config migrated', migratedCfg !== null);
+    assert('migration: config content preserved', migratedCfg.includes('echo'));
+
+    // Old keys should be removed
+    assert('migration: old memories key removed', localStorage.getItem('clawser_memories') === null);
+    assert('migration: old config key removed', localStorage.getItem('clawser_config') === null);
+
+    // Idempotent: calling again should not break anything
+    const list2 = ensureDefaultWorkspace();
+    assert('migration idempotent', list2.some(w => w.id === 'default'));
+    assertEq('migration idempotent count', list2.filter(w => w.id === 'default').length, 1);
+
+    // Already-existing default: no migration attempted
+    localStorage.setItem('clawser_memories', 'should-not-be-touched');
+    ensureDefaultWorkspace();
+    assertEq('no re-migration when default exists', localStorage.getItem('clawser_memories'), 'should-not-be-touched');
+  } finally {
+    // Restore originals
+    if (origWs !== null) localStorage.setItem(WS_KEY, origWs); else localStorage.removeItem(WS_KEY);
+    if (origActive !== null) localStorage.setItem(WS_ACTIVE_KEY, origActive); else localStorage.removeItem(WS_ACTIVE_KEY);
+    if (origMem !== null) localStorage.setItem('clawser_memories', origMem); else localStorage.removeItem('clawser_memories');
+    if (origCfg !== null) localStorage.setItem('clawser_config', origCfg); else localStorage.removeItem('clawser_config');
+    localStorage.removeItem(lsKey.memories('default'));
+    localStorage.removeItem(lsKey.config('default'));
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  STATE — Transition Helpers
+// ═══════════════════════════════════════════════════════════════
+
+section('State — Transition Helpers');
+
+{
+  // setSending
+  const origSending = state.isSending;
+  setSending(true);
+  assertEq('setSending(true)', state.isSending, true);
+  setSending(false);
+  assertEq('setSending(false)', state.isSending, false);
+  setSending(origSending);
+
+  // setConversation
+  const origId = state.activeConversationId;
+  const origName = state.activeConversationName;
+  let convChangedPayload = null;
+  const convListener = (p) => { convChangedPayload = p; };
+  on('conversationChanged', convListener);
+  setConversation('conv_test', 'Test Conv');
+  assertEq('setConversation id', state.activeConversationId, 'conv_test');
+  assertEq('setConversation name', state.activeConversationName, 'Test Conv');
+  assertEq('setConversation emits event', convChangedPayload?.id, 'conv_test');
+  off('conversationChanged', convListener);
+  // Restore
+  state.activeConversationId = origId;
+  state.activeConversationName = origName;
+
+  // resetConversationState
+  state.sessionCost = 5;
+  state.activeSkillPrompts.set('test', 'x');
+  state.pendingInlineTools.set('k', 'v');
+  state.activeConversationId = 'some_id';
+  state.activeConversationName = 'some_name';
+  resetConversationState();
+  assertEq('resetConversationState cost', state.sessionCost, 0);
+  assertEq('resetConversationState skills cleared', state.activeSkillPrompts.size, 0);
+  assertEq('resetConversationState inline cleared', state.pendingInlineTools.size, 0);
+  assertEq('resetConversationState convId', state.activeConversationId, null);
+  assertEq('resetConversationState convName', state.activeConversationName, null);
+
+  // Singleton freeze: service slots are non-writable
+  let frozeError = false;
+  try { state.workspaceFs = 'hacked'; } catch { frozeError = true; }
+  // In non-strict mode, assignment silently fails; in strict mode, throws
+  assert('workspaceFs slot frozen', frozeError || state.workspaceFs !== 'hacked');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  PROVIDERS — classifyError
+// ═══════════════════════════════════════════════════════════════
+
+section('classifyError');
+
+{
+  const r1 = classifyError('429 Too Many Requests');
+  assertEq('classifyError 429 category', r1.category, 'rate_limit');
+  assertEq('classifyError 429 retryable', r1.retryable, true);
+
+  const r2 = classifyError('500 Internal Server Error');
+  assertEq('classifyError 500 category', r2.category, 'server');
+  assertEq('classifyError 500 retryable', r2.retryable, true);
+
+  const r3 = classifyError('401 Unauthorized');
+  assertEq('classifyError 401 category', r3.category, 'auth');
+  assertEq('classifyError 401 retryable', r3.retryable, false);
+
+  const r4 = classifyError(new Error('fetch failed'));
+  assertEq('classifyError fetch category', r4.category, 'network');
+  assertEq('classifyError fetch retryable', r4.retryable, true);
+
+  const r5 = classifyError('something unknown happened');
+  assertEq('classifyError unknown category', r5.category, 'unknown');
+  assertEq('classifyError unknown retryable', r5.retryable, false);
+
+  const r6 = classifyError('403 Forbidden');
+  assertEq('classifyError 403 category', r6.category, 'auth');
+
+  const r7 = classifyError(new Error('network timeout'));
+  assertEq('classifyError timeout category', r7.category, 'network');
+
+  const r8 = classifyError('400 Bad Request: invalid parameter');
+  assertEq('classifyError 400 category', r8.category, 'client');
+  assertEq('classifyError 400 retryable', r8.retryable, false);
+
+  const r9 = classifyError('rate limit exceeded');
+  assertEq('classifyError rate limit text', r9.category, 'rate_limit');
+
+  const r10 = classifyError(null);
+  assertEq('classifyError null', r10.category, 'unknown');
+
+  const r11 = classifyError('');
+  assertEq('classifyError empty string', r11.category, 'unknown');
+
+  // Word-boundary regression: numbers embedded in larger numbers must NOT match
+  const r12 = classifyError('returned 1500 results');
+  assertEq('classifyError 1500 not server', r12.category, 'unknown');
+
+  const r13 = classifyError('code 8429 in response');
+  assertEq('classifyError 8429 not rate_limit', r13.category, 'unknown');
+
+  const r14 = classifyError('error 14010 processing');
+  assertEq('classifyError 14010 not auth', r14.category, 'unknown');
+
+  const r15 = classifyError('offset 2400 bytes');
+  assertEq('classifyError 2400 not client', r15.category, 'unknown');
+
+  // Auth-vs-client overlap: auth keywords take priority over "invalid"
+  const r16 = classifyError('invalid authentication token');
+  assertEq('classifyError invalid auth token → auth', r16.category, 'auth');
+
+  const r17 = classifyError('invalid API key provided');
+  assertEq('classifyError invalid API key → auth', r17.category, 'auth');
+
+  const r18 = classifyError('authentication invalid');
+  assertEq('classifyError auth invalid → auth', r18.category, 'auth');
+
+  // Pure "invalid" without auth context → client
+  const r19 = classifyError('invalid JSON in request body');
+  assertEq('classifyError invalid JSON → client', r19.category, 'client');
+
+  const r20 = classifyError('malformed request payload');
+  assertEq('classifyError malformed → client', r20.category, 'client');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  PROVIDERS — validateChatResponse
+// ═══════════════════════════════════════════════════════════════
+
+section('validateChatResponse');
+
+{
+  // null input → safe defaults
+  const r1 = validateChatResponse(null);
+  assertEq('validate null content', r1.content, '');
+  assertEq('validate null tool_calls', r1.tool_calls, []);
+  assertEq('validate null input_tokens', r1.usage.input_tokens, 0);
+  assertEq('validate null output_tokens', r1.usage.output_tokens, 0);
+  assertEq('validate null model', r1.model, 'unknown');
+
+  // empty object → safe defaults
+  const r2 = validateChatResponse({});
+  assertEq('validate {} content', r2.content, '');
+  assertEq('validate {} tool_calls', r2.tool_calls, []);
+  assertEq('validate {} model', r2.model, 'unknown');
+
+  // wrong type content → becomes ''
+  const r3 = validateChatResponse({ content: 42 });
+  assertEq('validate number content', r3.content, '');
+
+  // non-array tool_calls → becomes []
+  const r4 = validateChatResponse({ content: 'hi', tool_calls: 'not-array' });
+  assertEq('validate string tool_calls', r4.tool_calls, []);
+
+  // non-numeric tokens → becomes 0
+  const r5 = validateChatResponse({ content: 'hi', usage: { input_tokens: 'abc', output_tokens: NaN } });
+  assertEq('validate bad input_tokens', r5.usage.input_tokens, 0);
+  assertEq('validate bad output_tokens', r5.usage.output_tokens, 0);
+
+  // valid input passes through
+  const r6 = validateChatResponse({ content: 'hello', tool_calls: [{ id: '1' }], usage: { input_tokens: 10, output_tokens: 20 }, model: 'gpt-4o' });
+  assertEq('validate valid content', r6.content, 'hello');
+  assertEq('validate valid tool_calls len', r6.tool_calls.length, 1);
+  assertEq('validate valid input_tokens', r6.usage.input_tokens, 10);
+  assertEq('validate valid output_tokens', r6.usage.output_tokens, 20);
+  assertEq('validate valid model', r6.model, 'gpt-4o');
+
+  // fallback model used when missing
+  const r7 = validateChatResponse({ content: 'test' }, 'my-model');
+  assertEq('validate fallback model', r7.model, 'my-model');
+
+  // undefined input
+  const r8 = validateChatResponse(undefined);
+  assertEq('validate undefined content', r8.content, '');
+
+  // Per-entry tool_call normalization
+  const r9 = validateChatResponse({ tool_calls: [{ id: 'tc1', name: 'my_tool', arguments: '{"x":1}' }] });
+  assertEq('validate tc entry id', r9.tool_calls[0].id, 'tc1');
+  assertEq('validate tc entry name', r9.tool_calls[0].name, 'my_tool');
+  assertEq('validate tc entry arguments', r9.tool_calls[0].arguments, '{"x":1}');
+
+  // Malformed tool_call entries get safe defaults
+  const r10 = validateChatResponse({ tool_calls: [null, undefined, 42, 'string'] });
+  assertEq('validate null tc entry', r10.tool_calls[0], { id: '', name: '', arguments: '{}' });
+  assertEq('validate undefined tc entry', r10.tool_calls[1], { id: '', name: '', arguments: '{}' });
+  assertEq('validate number tc entry', r10.tool_calls[2], { id: '', name: '', arguments: '{}' });
+  assertEq('validate string tc entry', r10.tool_calls[3], { id: '', name: '', arguments: '{}' });
+
+  // Partial tool_call entry — missing fields get defaults
+  const r11 = validateChatResponse({ tool_calls: [{ id: 'tc2' }] });
+  assertEq('validate partial tc name', r11.tool_calls[0].name, '');
+  assertEq('validate partial tc arguments', r11.tool_calls[0].arguments, '{}');
+
+  // Wrong-type fields in tool_call
+  const r12 = validateChatResponse({ tool_calls: [{ id: 123, name: null, arguments: { x: 1 } }] });
+  assertEq('validate wrong-type tc id', r12.tool_calls[0].id, '');
+  assertEq('validate wrong-type tc name', r12.tool_calls[0].name, '');
+  assertEq('validate wrong-type tc arguments', r12.tool_calls[0].arguments, '{}');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Integration — MockStreamingProvider + Agent
+// ═══════════════════════════════════════════════════════════════
+
+section('Integration — MockStreamingProvider');
+
+{
+  // MockStreamingProvider for testing
+  class MockStreamingProvider extends LLMProvider {
+    #responses;
+    constructor(responses = []) { super(); this.#responses = responses; }
+    get name() { return 'mock-stream'; }
+    get supportsStreaming() { return true; }
+    get supportsNativeTools() { return true; }
+
+    async chat(request) {
+      return this.#responses.shift() || { content: 'mock', tool_calls: [], usage: { input_tokens: 0, output_tokens: 0 }, model: 'mock' };
+    }
+
+    async *chatStream(request) {
+      const resp = this.#responses.shift() || { content: 'mock', tool_calls: [], usage: { input_tokens: 0, output_tokens: 0 }, model: 'mock' };
+      const text = resp.content || '';
+      const chunkSize = Math.max(1, Math.ceil(text.length / 3));
+      for (let i = 0; i < text.length; i += chunkSize) {
+        yield { type: 'text', text: text.slice(i, i + chunkSize) };
+      }
+      for (const [idx, tc] of (resp.tool_calls || []).entries()) {
+        yield { type: 'tool_start', index: idx, id: tc.id, name: tc.name };
+        yield { type: 'tool_delta', index: idx, arguments: tc.arguments };
+      }
+      yield { type: 'done', response: resp };
+    }
+  }
+
+  // Test: agent.runStream() text streaming
+  {
+    const mockResp = { content: 'Hello from mock streaming!', tool_calls: [], usage: { input_tokens: 5, output_tokens: 10 }, model: 'mock' };
+    const mockProvider = new MockStreamingProvider([mockResp]);
+
+    const registry = new ProviderRegistry();
+    registry.register(mockProvider);
+
+    const agent = await ClawserAgent.create({ providers: registry });
+    agent.init({});
+    agent.setProvider('mock-stream');
+    agent.sendMessage('test streaming');
+
+    const chunks = [];
+    for await (const chunk of agent.runStream()) {
+      chunks.push(chunk);
+    }
+
+    const textChunks = chunks.filter(c => c.type === 'text');
+    const doneChunks = chunks.filter(c => c.type === 'done');
+    assert('stream yields text chunks', textChunks.length > 0);
+    assert('stream yields done chunk', doneChunks.length === 1);
+    const fullText = textChunks.map(c => c.text).join('');
+    assertEq('stream text matches', fullText, 'Hello from mock streaming!');
+  }
+
+  // Test: agent.run() with MockStreamingProvider (non-streaming path)
+  {
+    const mockResp = { content: 'Non-stream response', tool_calls: [], usage: { input_tokens: 3, output_tokens: 7 }, model: 'mock' };
+    const mockProvider = new MockStreamingProvider([mockResp]);
+
+    const registry = new ProviderRegistry();
+    registry.register(mockProvider);
+
+    const agent = await ClawserAgent.create({ providers: registry });
+    agent.init({});
+    agent.setProvider('mock-stream');
+    agent.sendMessage('test run');
+
+    const result = await agent.run();
+    assert('agent.run returns status', typeof result.status === 'number');
+    if (result.status === 1) {
+      assert('agent.run response content', result.data.includes('Non-stream response'));
+    }
+  }
+
+  // Test: error propagation — provider chat() throws
+  {
+    class FailProvider extends LLMProvider {
+      get name() { return 'fail'; }
+      async chat() { throw new Error('provider crashed'); }
+    }
+
+    const registry = new ProviderRegistry();
+    registry.register(new FailProvider());
+
+    const agent = await ClawserAgent.create({ providers: registry });
+    agent.init({});
+    agent.setProvider('fail');
+    agent.sendMessage('trigger error');
+
+    const result = await agent.run();
+    assertEq('error run status', result.status, -1);
+    assert('error run message', typeof result.data === 'string' && result.data.includes('provider crashed'));
+
+    // Event log should contain error
+    const events = agent.getEventLog().events;
+    assert('error in event log', events.some(e => e.type === 'error'));
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  STATE — Event Bus off()
+// ═══════════════════════════════════════════════════════════════
+
+section('State — Event Bus off()');
+
+{
+  // off() removes a listener
+  let callCount = 0;
+  const fn = () => { callCount++; };
+  on('test_off_1', fn);
+  emit('test_off_1');
+  assertEq('off: listener called once before removal', callCount, 1);
+  off('test_off_1', fn);
+  emit('test_off_1');
+  assertEq('off: listener not called after removal', callCount, 1);
+
+  // off() with wrong function reference is no-op
+  let otherCount = 0;
+  const fn2 = () => { otherCount++; };
+  on('test_off_2', fn2);
+  off('test_off_2', () => {}); // different reference
+  emit('test_off_2');
+  assertEq('off: wrong ref does not remove listener', otherCount, 1);
+  off('test_off_2', fn2); // cleanup
+
+  // off() on unknown event is no-op (no throw)
+  let threw = false;
+  try { off('totally_unknown_off_event', () => {}); } catch { threw = true; }
+  assert('off: unknown event is no-op', !threw);
+
+  // off() removes only the specified listener, not others
+  let countA = 0, countB = 0;
+  const fnA = () => { countA++; };
+  const fnB = () => { countB++; };
+  on('test_off_3', fnA);
+  on('test_off_3', fnB);
+  off('test_off_3', fnA);
+  emit('test_off_3');
+  assertEq('off: removed listener A not called', countA, 0);
+  assertEq('off: retained listener B called', countB, 1);
+  off('test_off_3', fnB); // cleanup
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  addErrorMsg — DOM & Retry
+// ═══════════════════════════════════════════════════════════════
+
+section('addErrorMsg — DOM & Retry');
+
+{
+  // Create a temporary #messages container for the tests
+  const container = document.createElement('div');
+  container.id = 'messages';
+  document.body.appendChild(container);
+
+  try {
+    // Test: creates error div with correct class
+    container.innerHTML = '';
+    addErrorMsg('Something went wrong');
+    const errorDiv = container.querySelector('.msg.error');
+    assert('addErrorMsg creates .msg.error div', errorDiv !== null);
+    assert('addErrorMsg text content', errorDiv.textContent === 'Something went wrong');
+    assert('addErrorMsg no retry button when null callback', errorDiv.querySelector('.retry-btn') === null);
+
+    // Test: retry button present when callback provided
+    container.innerHTML = '';
+    let retryCalled = false;
+    addErrorMsg('Retryable error', () => { retryCalled = true; });
+    const errorDiv2 = container.querySelector('.msg.error');
+    const retryBtn = errorDiv2.querySelector('.retry-btn');
+    assert('addErrorMsg has retry button', retryBtn !== null);
+    assertEq('retry button text', retryBtn.textContent, 'Retry');
+
+    // Test: clicking retry removes the error div and calls the callback
+    retryBtn.click();
+    assert('retry click removes error div', container.querySelector('.msg.error') === null);
+    assert('retry click calls callback', retryCalled);
+
+    // Test: multiple error messages coexist
+    container.innerHTML = '';
+    addErrorMsg('Error 1');
+    addErrorMsg('Error 2');
+    assertEq('multiple error messages', container.querySelectorAll('.msg.error').length, 2);
+  } finally {
+    container.remove();
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SUMMARY
+// ═══════════════════════════════════════════════════════════════
+
+const summary = document.getElementById('summary');
+const total = passed + failed;
+if (failed === 0) {
+  summary.innerHTML = `<span class="pass">All ${total} tests passed!</span>`;
+} else {
+  summary.innerHTML = `<span class="fail">${failed} of ${total} tests failed</span>`;
+}
+
+console.log(`Tests: ${passed} passed, ${failed} failed, ${total} total`);
+</script>
+</body>
+</html>

@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>clawser — browser agent workspace</title>
+  <link rel="manifest" href="./manifest.json">
+  <meta name="theme-color" content="#58a6ff">
+  <link rel="stylesheet" href="./clawser.css">
+</head>
+<body>
+
+<div id="viewHome">
+  <header>
+    <span class="logo">clawser</span>
+    <span class="spacer"></span>
+  </header>
+  <div class="home-content">
+    <div class="home-inner">
+      <!-- Workspaces -->
+      <section class="home-section">
+        <h2>Workspaces</h2>
+        <div class="home-create-row">
+          <input type="text" id="homeWsNewName" placeholder="New workspace..."
+            class="home-ws-input" />
+          <button id="homeWsCreate" class="btn-sm home-ws-create-btn">+ Create</button>
+        </div>
+        <div id="homeWsList"></div>
+      </section>
+
+      <!-- Global Accounts -->
+      <section class="home-section">
+        <h2>Accounts</h2>
+        <div id="homeAcctList"></div>
+        <button id="homeAcctAddToggle" class="btn-sm home-acct-toggle">+ Add Account</button>
+        <div id="homeAcctAddForm" class="home-acct-form">
+          <div class="config-group">
+            <label>Service</label>
+            <select id="homeAcctService">
+              <option value="anthropic">Anthropic</option>
+              <option value="openai">OpenAI</option>
+              <option value="groq">Groq</option>
+              <option value="openrouter">OpenRouter</option>
+              <option value="together">Together AI</option>
+              <option value="fireworks">Fireworks AI</option>
+              <option value="mistral">Mistral AI</option>
+              <option value="deepseek">DeepSeek</option>
+              <option value="xai">xAI (Grok)</option>
+              <option value="perplexity">Perplexity</option>
+              <option value="ollama">Ollama (local)</option>
+              <option value="lmstudio">LM Studio (local)</option>
+            </select>
+          </div>
+          <div class="config-group">
+            <label>Name</label>
+            <input type="text" id="homeAcctName" placeholder="e.g. My Anthropic" />
+          </div>
+          <div class="config-group">
+            <label>API Key</label>
+            <input type="password" id="homeAcctKey" placeholder="sk-..." />
+          </div>
+          <div class="config-group">
+            <label>Model</label>
+            <input type="text" id="homeAcctModel" list="homeModelSuggestions" />
+            <datalist id="homeModelSuggestions"></datalist>
+          </div>
+          <div class="btn-row">
+            <button class="btn-sm" id="homeAcctSave">Save</button>
+            <button class="btn-sm btn-surface2" id="homeAcctCancel">Cancel</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<div id="viewWorkspace">
+<header>
+  <span class="logo">clawser</span>
+  <span class="sep">/</span>
+  <span class="mode ws-name-wrap" id="workspaceName" title="Click to switch workspace">workspace</span>
+  <span class="sep" id="providerSep">·</span>
+  <span class="mode provider-label" id="providerLabel"></span>
+  <span class="spacer"></span>
+  <span id="costDisplay" class="cost-display" title="Session cost estimate"></span>
+  <div class="status">
+    <span class="dot" id="statusDot"></span>
+    <span id="statusText">loading...</span>
+  </div>
+</header>
+
+<!-- Workspace dropdown (hidden by default) -->
+<div id="wsDropdown" class="ws-dropdown">
+  <div id="wsList"></div>
+  <div class="ws-dd-create-row">
+    <input type="text" id="wsNewName" placeholder="New workspace..." class="ws-dd-input" />
+    <button id="wsCreate" class="ws-dd-create-btn">+</button>
+  </div>
+</div>
+
+<div class="workspace">
+  <!-- Sidebar navigation -->
+  <nav class="sidebar">
+    <button class="active" data-panel="chat" title="Chat">💬</button>
+    <button data-panel="tools" title="Tool Calls">🔧</button>
+    <button data-panel="files" title="Files (OPFS)">📁</button>
+    <span class="sep-line"></span>
+    <button data-panel="memory" title="Memory">🧠</button>
+    <button data-panel="goals" title="Goals">🎯</button>
+    <button data-panel="events" title="Events">📡</button>
+    <button data-panel="skills" title="Skills">🧩</button>
+    <span class="sep-line"></span>
+    <button data-panel="config" title="Settings">⚙️</button>
+  </nav>
+
+  <div class="panels">
+    <!-- Chat -->
+    <div class="panel active-panel" id="panelChat">
+      <div class="panel-header panel-header-flush">
+        <div class="conv-bar conv-bar-wrap">
+          <span class="conv-label">Conversation</span>
+          <span class="conv-name" id="convName" title="New conversation">New conversation</span>
+          <span class="spacer"></span>
+          <button class="btn-new" id="convNew" title="New conversation">+ New</button>
+          <button class="btn-save" id="convRename" title="Rename conversation">Rename</button>
+          <button class="btn-hist" id="convHist" title="Conversation history">History</button>
+          <!-- Conversation history dropdown -->
+          <div class="conv-dropdown" id="convDropdown"></div>
+        </div>
+      </div>
+      <div class="panel-body messages" id="messages">
+        <div class="msg system">Initializing agent...</div>
+      </div>
+      <div class="input-row input-row-wrap">
+        <div class="slash-autocomplete" id="slashAutocomplete"></div>
+        <input type="text" id="userInput" placeholder="Message the agent..." disabled />
+        <button id="cmdPaletteBtn" class="cmd-palette-btn-style" title="Command Palette (⌘K)" disabled>⚡</button>
+        <button id="sendBtn" disabled>Send</button>
+      </div>
+    </div>
+
+    <!-- Tool Calls -->
+    <div class="panel" id="panelTools">
+      <div class="panel-header">Tool Calls <span class="badge" id="toolCount">0</span></div>
+      <div class="panel-body" id="toolCalls"></div>
+    </div>
+
+    <!-- Files (OPFS) -->
+    <div class="panel" id="panelFiles">
+      <div class="panel-header">Files (OPFS) <button class="btn-sm ml-auto" id="refreshFiles">Refresh</button></div>
+      <div class="panel-body panel-mono" id="fileList"></div>
+    </div>
+
+    <!-- Memory -->
+    <div class="panel" id="panelMemory">
+      <div class="panel-header">Memory <span class="badge" id="memCount">0</span><span class="spacer"></span><button class="btn-sm ml-auto" id="memAddToggle">+ Add</button></div>
+      <!-- Add memory form (hidden by default) -->
+      <div class="mem-form mem-add-form" id="memAddForm">
+        <input type="text" id="memNewKey" placeholder="Key (e.g. user_preference)" />
+        <textarea id="memNewContent" placeholder="Content..."></textarea>
+        <div class="mem-form-row">
+          <select id="memNewCat"><option value="core">core</option><option value="learned">learned</option><option value="user">user</option><option value="context">context</option></select>
+          <button class="btn-sm" id="memNewSave">Save</button>
+          <button class="btn-sm btn-surface2" id="memNewCancel">Cancel</button>
+        </div>
+      </div>
+      <div class="config-group mem-filter-row">
+        <div class="flex-1">
+          <input type="text" id="memQuery" placeholder="Search memories..." />
+        </div>
+        <select id="memCatFilter" class="mem-cat-filter">
+          <option value="">all categories</option>
+          <option value="core">core</option>
+          <option value="learned">learned</option>
+          <option value="user">user</option>
+          <option value="context">context</option>
+        </select>
+        <button class="btn-sm" id="memSearch">Search</button>
+        <button class="btn-sm btn-surface2" id="memListAll">All</button>
+      </div>
+      <div class="panel-body panel-mono" id="memResults"></div>
+    </div>
+
+    <!-- Goals -->
+    <div class="panel" id="panelGoals">
+      <div class="panel-header">Goals <span class="badge" id="goalCount">0</span></div>
+      <div class="config-group">
+        <input type="text" id="goalInput" placeholder="Add a goal..." />
+        <button class="btn-sm" id="goalAdd">Add</button>
+      </div>
+      <div class="panel-body panel-mono" id="goalList"></div>
+    </div>
+
+    <!-- Events -->
+    <div class="panel" id="panelEvents">
+      <div class="panel-header">Event Stream <span class="badge" id="eventCount">0</span></div>
+      <div class="panel-body" id="eventLog"></div>
+    </div>
+
+    <!-- Skills -->
+    <div class="panel" id="panelSkills">
+      <div class="panel-header">
+        Skills <span class="badge" id="skillCount">0</span>
+        <span class="spacer"></span>
+        <button class="btn-sm" id="skillRefresh">Refresh</button>
+        <label class="btn-sm skill-import-label">
+          Import <input type="file" id="skillImportFile" accept=".zip" style="display:none;" />
+        </label>
+      </div>
+      <div id="skillScopeSelect" class="skill-scope-bar">
+        <label class="skill-scope-label">Install scope:</label>
+        <div class="skill-scope-btns">
+          <button class="btn-sm skill-scope-btn flex-1" data-scope="global">Global</button>
+          <button class="btn-sm skill-scope-btn btn-surface2 flex-1" data-scope="workspace">Workspace</button>
+          <button class="btn-sm skill-scope-cancel" id="skillScopeCancel">Cancel</button>
+        </div>
+      </div>
+      <div class="panel-body panel-mono" id="skillList"></div>
+    </div>
+
+    <!-- Config -->
+    <div class="panel" id="panelConfig">
+      <div class="panel-header">Configuration</div>
+      <div class="panel-body panel-body-flush">
+        <div class="config-group">
+          <label>Provider</label>
+          <select id="providerSelect"></select>
+        </div>
+        <div class="config-group">
+          <label>Accounts <button class="btn-sm acct-toggle" id="acctAddToggle">+ Add</button></label>
+        </div>
+        <!-- Account add form -->
+        <div id="acctAddForm" class="acct-form">
+          <div class="config-group">
+            <label>Service</label>
+            <select id="acctService">
+              <option value="anthropic">Anthropic</option>
+              <option value="openai">OpenAI</option>
+              <option value="groq">Groq</option>
+              <option value="openrouter">OpenRouter</option>
+              <option value="together">Together AI</option>
+              <option value="fireworks">Fireworks AI</option>
+              <option value="mistral">Mistral AI</option>
+              <option value="deepseek">DeepSeek</option>
+              <option value="xai">xAI (Grok)</option>
+              <option value="perplexity">Perplexity</option>
+              <option value="ollama">Ollama (local)</option>
+              <option value="lmstudio">LM Studio (local)</option>
+            </select>
+          </div>
+          <div class="config-group">
+            <label>Name</label>
+            <input type="text" id="acctName" placeholder="e.g. My Anthropic" />
+          </div>
+          <div class="config-group">
+            <label>API Key</label>
+            <input type="password" id="acctKey" placeholder="sk-..." />
+          </div>
+          <div class="config-group">
+            <label>Model</label>
+            <input type="text" id="acctModel" list="modelSuggestions" />
+            <datalist id="modelSuggestions"></datalist>
+          </div>
+          <div class="btn-row">
+            <button class="btn-sm" id="acctSave">Save</button>
+            <button class="btn-sm btn-surface2" id="acctCancel">Cancel</button>
+          </div>
+        </div>
+        <!-- Account list -->
+        <div id="acctList"></div>
+        <div class="config-group">
+          <label>System Prompt</label>
+          <textarea id="systemPrompt">You are clawser, a browser-native AI agent. Respond conversationally to normal messages. Only use tools when the user asks you to perform an action (fetch a page, read a file, interact with the browser, etc.). When you do need tools, write JavaScript in a ```js or ```tool_code block using the available functions.</textarea>
+        </div>
+
+        <div class="config-group">
+          <label>Registered Tools</label>
+        </div>
+        <div class="panel-body tool-list tool-registry-scroll" id="toolRegistry"></div>
+
+        <!-- State dashboard -->
+        <div class="config-group"><label>Agent State</label></div>
+        <div class="state-grid-wrap">
+          <div class="state-grid" id="stateGrid">
+            <div class="state-card"><div class="val" id="stHistory">-</div><div class="lbl">History</div></div>
+            <div class="state-card"><div class="val" id="stMemory">-</div><div class="lbl">Memory</div></div>
+            <div class="state-card"><div class="val" id="stGoals">-</div><div class="lbl">Goals</div></div>
+            <div class="state-card"><div class="val" id="stJobs">-</div><div class="lbl">Jobs</div></div>
+          </div>
+        </div>
+
+        <!-- MCP (advanced, collapsed by default) -->
+        <div class="config-group config-toggle" id="mcpToggle">
+          <label class="config-toggle">MCP Servers (advanced) <span id="mcpArrow" class="config-arrow">&#x25B6;</span></label>
+        </div>
+        <div id="mcpSection" class="config-section-hidden">
+          <div class="config-group">
+            <input type="text" id="mcpEndpoint" placeholder="http://localhost:3000/mcp" />
+            <button class="btn-sm" id="mcpConnect">Connect</button>
+          </div>
+          <div id="mcpServers" class="mcp-servers-wrap"></div>
+        </div>
+
+        <!-- Security settings -->
+        <div class="config-group config-toggle" id="securityToggle">
+          <label class="config-toggle">Security <span id="securityArrow" class="config-arrow">&#x25B6;</span></label>
+        </div>
+        <div id="securitySection" class="config-section-hidden">
+          <div class="config-group">
+            <label>Domain Allowlist <small class="domain-hint">(comma-separated, blank = allow all)</small></label>
+            <input type="text" id="cfgDomainAllowlist" placeholder="e.g. example.com, api.github.com" />
+          </div>
+          <div class="config-group">
+            <label>Max File Size (MB)</label>
+            <input type="number" id="cfgMaxFileSize" class="cfg-narrow" min="1" max="100" value="10" />
+          </div>
+          <div class="security-apply-wrap">
+            <button class="btn-sm" id="btnApplySecurity">Apply</button>
+          </div>
+        </div>
+
+        <!-- Persistence -->
+        <div class="config-group">
+          <label>Data</label>
+          <button class="btn-sm btn-danger" id="btnClearData">Clear All Local Data</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Command Palette Modal -->
+<div id="cmdPalette" class="modal-overlay cmd-overlay">
+  <div class="modal-box cmd-box">
+    <div class="cmd-search-row">
+      <span class="cmd-icon">⚡</span>
+      <input type="text" id="cmdSearch" class="modal-input cmd-search-input" placeholder="Search tools..." />
+    </div>
+    <div id="cmdToolList" class="cmd-tool-scroll"></div>
+    <div id="cmdParamArea" class="cmd-param-scroll"></div>
+    <div class="modal-btns">
+      <button class="modal-btn modal-btn-cancel" id="cmdCancel">Cancel</button>
+      <button class="modal-btn modal-btn-ok" id="cmdRun" disabled>Run</button>
+    </div>
+  </div>
+</div>
+</div><!-- /viewWorkspace -->
+
+<script type="module" src="./clawser-app.js"></script>
+</body>
+</html>

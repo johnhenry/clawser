@@ -1,12 +1,13 @@
 // clawser-ui-chat.js — Core messaging UI: chat, streaming, conversations, replay
-import { $, esc, state, emit } from './clawser-state.js';
+import { $, esc, state, emit, setSending, setConversation, resetConversationState } from './clawser-state.js';
 import { modal } from './clawser-modal.js';
 import { loadConversations, saveConversations, generateConvId } from './clawser-conversations.js';
 import { loadAccounts } from './clawser-accounts.js';
 import { updateRouteHash } from './clawser-router.js';
-import { estimateCost } from './clawser-providers.js';
+import { estimateCost, classifyError } from './clawser-providers.js';
 
 // ── Reset helpers (shared for clearing tool/event + message state) ──
+/** Clear tool call log, event log, and their DOM elements. */
 export function resetToolAndEventState() {
   state.toolCallLog = [];
   state.eventLog = [];
@@ -17,18 +18,21 @@ export function resetToolAndEventState() {
   $('eventLog').innerHTML = '';
 }
 
+/** Clear all chat messages and reset tool/event state. */
 export function resetChatUI() {
   $('messages').innerHTML = '';
   resetToolAndEventState();
 }
 
 // ── Status ──────────────────────────────────────────────────────
+/** Update the status indicator dot and text. @param {string} statusState - CSS class ('ready'|'busy'|'error') @param {string} text */
 export function setStatus(statusState, text) {
   $('statusDot').className = `dot ${statusState}`;
   $('statusText').textContent = text;
 }
 
 // ── Message display ─────────────────────────────────────────────
+/** Append a message to the chat panel and auto-scroll. @param {'user'|'agent'|'system'|'error'} type @param {string} text */
 export function addMsg(type, text) {
   const messagesEl = $('messages');
   const d = document.createElement('div');
@@ -40,7 +44,32 @@ export function addMsg(type, text) {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
+/**
+ * Display an error message with an optional retry button.
+ * @param {string} text - Error message
+ * @param {Function|null} onRetry - If provided, adds a "Retry" button that calls this function
+ */
+export function addErrorMsg(text, onRetry = null) {
+  const messagesEl = $('messages');
+  const d = document.createElement('div');
+  d.className = 'msg error';
+  d.textContent = text;
+  if (onRetry) {
+    const btn = document.createElement('button');
+    btn.className = 'retry-btn';
+    btn.textContent = 'Retry';
+    btn.addEventListener('click', () => {
+      d.remove();
+      onRetry();
+    });
+    d.appendChild(btn);
+  }
+  messagesEl.appendChild(d);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
 // ── Tool call tracking ──────────────────────────────────────────
+/** Record a tool call in the sidebar log (capped at 100 entries). @param {string} name @param {Object} params @param {Object|null} result */
 export function addToolCall(name, params, result) {
   const entry = { name, params, result, time: new Date().toLocaleTimeString() };
   state.toolCallLog.unshift(entry);
@@ -48,6 +77,7 @@ export function addToolCall(name, params, result) {
   renderToolCalls();
 }
 
+/** Re-render the tool calls sidebar from the in-memory log. */
 export function renderToolCalls() {
   $('toolCount').textContent = state.toolCallLog.length;
   const el = $('toolCalls');
@@ -74,6 +104,10 @@ export function renderToolCalls() {
 }
 
 // ── Inline tool calls (in chat flow) ────────────────────────────
+/** Add a collapsible tool call inline in the chat flow (pending or complete).
+ * @param {string} name @param {Object} params @param {Object|null} result - null for pending
+ * @returns {HTMLElement} The tool call element (for later update via updateInlineToolCall)
+ */
 export function addInlineToolCall(name, params, result) {
   const messagesEl = $('messages');
   const displayName = name === '_codex_eval' ? 'code eval' : name;
@@ -110,6 +144,7 @@ export function addInlineToolCall(name, params, result) {
   return div;
 }
 
+/** Update a pending inline tool call element with its result. @param {HTMLElement} el @param {string} name @param {Object} params @param {Object} result */
 export function updateInlineToolCall(el, name, params, result) {
   if (!el) return;
   const messagesEl = $('messages');
@@ -123,6 +158,7 @@ export function updateInlineToolCall(el, name, params, result) {
   const paramStr = params ? JSON.stringify(params, null, 2) : '{}';
 
   const head = el.querySelector('.tool-inline-head');
+  if (!head) return;
   head.innerHTML = `
     ${iconHtml}
     <span class="ti-name">${esc(displayName)}</span>
@@ -131,11 +167,14 @@ export function updateInlineToolCall(el, name, params, result) {
   // Note: click listener from addInlineToolCall still lives on head — no need to re-add
 
   const detail = el.querySelector('.tool-inline-detail');
-  detail.textContent = `Params: ${paramStr}\n\nResult: ${output}`;
+  if (detail) {
+    detail.textContent = `Params: ${paramStr}\n\nResult: ${output}`;
+  }
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
 // ── Event log ───────────────────────────────────────────────────
+/** Log an event to the events sidebar panel (capped at 200 entries). @param {string} topic @param {*} payload */
 export function addEvent(topic, payload) {
   const str = typeof payload === 'string' ? payload : JSON.stringify(payload);
   state.eventCount++;
@@ -151,6 +190,7 @@ export function addEvent(topic, payload) {
 }
 
 // ── Agent state display ─────────────────────────────────────────
+/** Refresh the agent state display (history len, memory count, goals, jobs). */
 export function updateState() {
   if (!state.agent) return;
   try {
@@ -161,10 +201,11 @@ export function updateState() {
     $('stJobs').textContent = s.scheduler_jobs ?? '-';
     $('goalCount').textContent = s.goals?.length ?? 0;
     $('memCount').textContent = s.memory_count ?? 0;
-  } catch {}
+  } catch (e) { console.warn('[clawser] updateState error', e); }
 }
 
 // ── Cost display ────────────────────────────────────────────────
+/** Update the session cost display, formatting as cents or dollars. */
 export function updateCostDisplay() {
   const el = $('costDisplay');
   if (state.sessionCost <= 0) {
@@ -177,6 +218,7 @@ export function updateCostDisplay() {
 }
 
 // ── Streaming message helpers ───────────────────────────────────
+/** Create a new agent message element with a blinking cursor for streaming. @returns {HTMLElement} */
 export function createStreamingMsg() {
   const messagesEl = $('messages');
   const d = document.createElement('div');
@@ -187,6 +229,7 @@ export function createStreamingMsg() {
   return d;
 }
 
+/** Append a text chunk to a streaming message, repositioning the cursor. @param {HTMLElement} el @param {string} text */
 export function appendToStreamingMsg(el, text) {
   const messagesEl = $('messages');
   const cursor = el.querySelector('.streaming-cursor');
@@ -198,12 +241,14 @@ export function appendToStreamingMsg(el, text) {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
+/** Remove the blinking cursor from a completed streaming message. @param {HTMLElement} el */
 export function finalizeStreamingMsg(el) {
   const cursor = el.querySelector('.streaming-cursor');
   if (cursor) cursor.remove();
 }
 
 // ── Persist active conversation (preserves created timestamp) ────
+/** Save the active conversation's history and events to OPFS, preserving the created timestamp. */
 export async function persistActiveConversation() {
   if (!state.agent || !state.activeConversationId) return;
   const wsId = state.agent.getWorkspace();
@@ -216,12 +261,14 @@ export async function persistActiveConversation() {
 }
 
 // ── Conversation name display ───────────────────────────────────
+/** Update the conversation name header element from state. */
 export function updateConvNameDisplay() {
   const el = $('convName');
   el.textContent = state.activeConversationName || 'New conversation';
   el.title = state.activeConversationName || 'New conversation';
 }
 
+/** Rename the active conversation in both localStorage and OPFS. @param {string} name */
 export async function renameCurrentConversation(name) {
   if (!state.agent || !state.activeConversationId || !name) return;
   const wsId = state.agent.getWorkspace();
@@ -233,7 +280,7 @@ export async function renameCurrentConversation(name) {
     saveConversations(wsId, list);
   }
 
-  state.activeConversationName = name;
+  setConversation(state.activeConversationId, name);
   updateConvNameDisplay();
 
   await persistActiveConversation();
@@ -241,6 +288,7 @@ export async function renameCurrentConversation(name) {
 }
 
 // ── New conversation ────────────────────────────────────────────
+/** Start a fresh conversation: persist current, reinit agent, clear UI, reset cost/skills. */
 export async function newConversation() {
   if (!state.agent) return;
 
@@ -257,18 +305,9 @@ export async function newConversation() {
   state.agent.setSystemPrompt($('systemPrompt').value);
 
   resetChatUI();
-
-  state.activeSkillPrompts.clear();
-  for (const name of [...state.skillRegistry.activeSkills.keys()]) {
-    state.skillRegistry.deactivate(name);
-  }
+  resetConversationState();
   emit('renderSkills');
-
-  state.sessionCost = 0;
   updateCostDisplay();
-
-  state.activeConversationId = null;
-  state.activeConversationName = null;
   updateConvNameDisplay();
   updateState();
   addMsg('system', 'New conversation started. Memories preserved.');
@@ -277,6 +316,7 @@ export async function newConversation() {
 }
 
 // ── Switch conversation ─────────────────────────────────────────
+/** Switch to an existing conversation by ID, restoring its history and events. @param {string} convId */
 export async function switchConversation(convId) {
   if (!state.agent) return;
   const wsId = state.agent.getWorkspace();
@@ -286,11 +326,10 @@ export async function switchConversation(convId) {
   }
 
   setStatus('busy', 'loading conversation...');
-  $('convDropdown').style.display = 'none';
+  $('convDropdown').classList.remove('visible');
 
-  state.sessionCost = 0;
+  resetConversationState();
   updateCostDisplay();
-  state.activeSkillPrompts.clear();
 
   state.agent.reinit({});
   state.agent.restoreMemories();
@@ -308,8 +347,7 @@ export async function switchConversation(convId) {
 
   const list = loadConversations(wsId);
   const conv = list.find(c => c.id === convId);
-  state.activeConversationId = convId;
-  state.activeConversationName = conv?.name || convId;
+  setConversation(convId, conv?.name || convId);
   updateConvNameDisplay();
 
   if (conv) { conv.lastUsed = Date.now(); saveConversations(wsId, list); }
@@ -324,6 +362,7 @@ export async function switchConversation(convId) {
 }
 
 // ── Delete conversation ─────────────────────────────────────────
+/** Delete a conversation from OPFS and localStorage, resetting UI if it was active. @param {string} convId */
 export async function deleteConversationEntry(convId) {
   if (!state.agent) return;
   const wsId = state.agent.getWorkspace();
@@ -335,8 +374,7 @@ export async function deleteConversationEntry(convId) {
   saveConversations(wsId, list);
 
   if (state.activeConversationId === convId) {
-    state.activeConversationId = null;
-    state.activeConversationName = null;
+    setConversation(null, null);
     updateConvNameDisplay();
 
     state.agent.reinit({});
@@ -353,6 +391,7 @@ export async function deleteConversationEntry(convId) {
 }
 
 // ── Conversation list ───────────────────────────────────────────
+/** Render the conversation history dropdown, sorted by last used. */
 export function renderConversationList() {
   if (!state.agent) return;
   const wsId = state.agent.getWorkspace();
@@ -387,6 +426,9 @@ export function renderConversationList() {
 }
 
 // ── Replay session history (checkpoint-based, legacy) ───────────
+/** Replay chat messages from a checkpoint-based session history array (legacy format).
+ * @param {Array<Object>} history - Array of {role, content, tool_calls?} messages
+ */
 export function replaySessionHistory(history) {
   const pendingReplay = new Map();
   for (const msg of history) {
@@ -421,6 +463,9 @@ export function replaySessionHistory(history) {
 }
 
 // ── Replay from events (v2 — single source of truth) ────────────
+/** Replay the chat UI from an event log array (v2 event-sourced format).
+ * @param {Array<Object>} events - EventLog entries with type and data
+ */
 export function replayFromEvents(events) {
   resetChatUI();
 
@@ -457,7 +502,7 @@ export function replayFromEvents(events) {
         break;
       }
       case 'error':
-        addMsg('error', evt.data.message);
+        addErrorMsg(evt.data.message);
         break;
     }
 
@@ -467,18 +512,80 @@ export function replayFromEvents(events) {
   renderToolCalls();
 }
 
+// ── Dynamic system prompt builder ────────────────────────────────
+/**
+ * Build dynamic system prompt from base + memories + goals + skill metadata + active skill bodies.
+ * Pure function extracted for testability — no DOM or state access.
+ * @param {string} basePrompt - The base system prompt text
+ * @param {Array<{key:string,content:string}>} memories - Relevant memory entries (max 10 used)
+ * @param {Array<{id:string,description:string,status:string}>} goals - Agent goals (only 'active' are included)
+ * @param {string} skillMetadata - XML block of available skill metadata (may be empty)
+ * @param {Map<string,string>} activeSkillPrompts - Map of skill name → activation prompt body
+ * @returns {string} Complete system prompt with all dynamic sections appended
+ */
+export function buildDynamicSystemPrompt(basePrompt, memories, goals, skillMetadata, activeSkillPrompts) {
+  const parts = [basePrompt];
+
+  if (memories.length > 0) {
+    const memLines = memories.slice(0, 10).map(m => `- [${m.key}] ${m.content}`).join('\n');
+    parts.push(`\nRelevant memories:\n${memLines}`);
+  }
+
+  const activeGoals = goals.filter(g => g.status === 'active');
+  if (activeGoals.length > 0) {
+    const goalLines = activeGoals.map(g => `- (${g.id}) ${g.description}`).join('\n');
+    parts.push(`\nYour current goals:\n${goalLines}\nWork toward these goals when relevant. Use the agent_goal_update tool to mark goals completed or failed.`);
+  }
+
+  if (skillMetadata) parts.push(skillMetadata);
+
+  for (const [, prompt] of activeSkillPrompts) {
+    parts.push(prompt);
+  }
+
+  return parts.join('\n');
+}
+
 // ── Send message ────────────────────────────────────────────────
+/**
+ * Send user input to the agent and render the response.
+ *
+ * Pipeline:
+ * 1. Detect /skill-name prefix → activate skill via SkillRegistry
+ * 2. Build dynamic system prompt (memories + goals + skills) via buildDynamicSystemPrompt
+ * 3. Auto-compact context if estimated tokens exceed 12K
+ * 4. Send message to agent, then run streaming or non-streaming path based on provider
+ * 5. Track cost (estimateCost) and update session cost display
+ * 6. Persist: memories, checkpoint, config, conversation list + OPFS event log
+ * 7. Re-render goals, files, and state display
+ */
 export async function sendMessage() {
   if (state.isSending) return;
   let text = $('userInput').value.trim();
   if (!text || !state.agent) return;
-  state.isSending = true;
+  setSending(true);
 
   $('userInput').value = '';
   $('slashAutocomplete').classList.remove('visible');
 
-  // Detect /skill-name args prefix → activate skill
+  // Capture context for retry closures — conversation may change between error and click
   const originalText = text;
+  const retryConvId = state.activeConversationId;
+
+  /** Build a retry function that verifies conversation context before retrying. */
+  const makeRetryFn = (classified) => {
+    if (!classified.retryable) return null;
+    return () => {
+      if (state.activeConversationId !== retryConvId) {
+        addErrorMsg('Cannot retry: conversation has changed since the error.');
+        return;
+      }
+      $('userInput').value = originalText;
+      sendMessage();
+    };
+  };
+
+  // Detect /skill-name args prefix → activate skill
   const slashMatch = text.match(/^\/([a-z0-9][a-z0-9-]*)\s*(.*)/s);
   if (slashMatch) {
     const [, skillName, skillArgs] = slashMatch;
@@ -500,30 +607,11 @@ export async function sendMessage() {
   try {
     // Build dynamic system prompt with goals + memory + skills context
     const basePrompt = $('systemPrompt').value;
-    const parts = [basePrompt];
-
     const memories = state.agent.memoryRecall(originalText);
-    if (memories.length > 0) {
-      const memLines = memories.slice(0, 10).map(m => `- [${m.key}] ${m.content}`).join('\n');
-      parts.push(`\nRelevant memories:\n${memLines}`);
-    }
-
     const agentState = state.agent.getState();
     const goals = agentState.goals || [];
-    const activeGoals = goals.filter(g => g.status === 'active');
-    if (activeGoals.length > 0) {
-      const goalLines = activeGoals.map(g => `- (${g.id}) ${g.description}`).join('\n');
-      parts.push(`\nYour current goals:\n${goalLines}\nWork toward these goals when relevant. Use the agent_goal_update tool to mark goals completed or failed.`);
-    }
-
     const skillMeta = state.skillRegistry.buildMetadataPrompt();
-    if (skillMeta) parts.push(skillMeta);
-
-    for (const [, prompt] of state.activeSkillPrompts) {
-      parts.push(prompt);
-    }
-
-    state.agent.setSystemPrompt(parts.join('\n'));
+    state.agent.setSystemPrompt(buildDynamicSystemPrompt(basePrompt, memories, goals, skillMeta, state.activeSkillPrompts));
 
     // Auto-compact context if getting large
     const estTokens = state.agent.estimateHistoryTokens();
@@ -566,7 +654,9 @@ export async function sendMessage() {
           }
         } else if (chunk.type === 'error') {
           finalizeStreamingMsg(streamEl);
-          addMsg('error', `Error: ${chunk.error}`);
+          const classified = classifyError(chunk.error);
+          addErrorMsg(`Error (${classified.category}): ${classified.message}`, makeRetryFn(classified));
+          emit('error', classified);
         }
       }
 
@@ -588,13 +678,20 @@ export async function sendMessage() {
       switch (result.status) {
         case 0: addMsg('system', '(idle — no response)'); break;
         case 1: addMsg('agent', result.data); break;
-        case -1: addMsg('error', `Error: ${result.data}`); break;
+        case -1: {
+          const classified = classifyError(result.data);
+          addErrorMsg(`Error (${classified.category}): ${classified.message}`, makeRetryFn(classified));
+          emit('error', classified);
+          break;
+        }
         default: addMsg('system', `Status ${result.status}: ${result.data}`);
       }
     }
   } catch (e) {
-    addMsg('error', `Runtime error: ${e.message}`);
-    state.agent.recordEvent('error', { message: e.message }, 'system');
+    const classified = classifyError(e);
+    addErrorMsg(`Error (${classified.category}): ${classified.message}`, makeRetryFn(classified));
+    state.agent.recordEvent('error', { message: e.message, category: classified.category }, 'system');
+    emit('error', classified);
     console.error(e);
   } finally {
     try {
@@ -610,8 +707,7 @@ export async function sendMessage() {
 
       let convList = loadConversations(wsId);
       if (!state.activeConversationId) {
-        state.activeConversationId = generateConvId();
-        state.activeConversationName = text.slice(0, 40) + (text.length > 40 ? '...' : '');
+        setConversation(generateConvId(), text.slice(0, 40) + (text.length > 40 ? '...' : ''));
         convList.push({ id: state.activeConversationId, name: state.activeConversationName, created: Date.now(), lastUsed: Date.now(), messageCount: msgCount, preview });
         saveConversations(wsId, convList);
         updateConvNameDisplay();
@@ -639,12 +735,13 @@ export async function sendMessage() {
     $('userInput').disabled = false;
     $('sendBtn').disabled = false;
     $('cmdPaletteBtn').disabled = false;
-    state.isSending = false;
+    setSending(false);
     $('userInput').focus();
   }
 }
 
 // ── Chat event listeners ────────────────────────────────────────
+/** Bind event listeners for chat input, send button, conversation controls, and system prompt. */
 export function initChatListeners() {
   $('sendBtn').addEventListener('click', sendMessage);
   $('userInput').addEventListener('keydown', e => {
@@ -668,16 +765,15 @@ export function initChatListeners() {
   $('convHist').addEventListener('click', (e) => {
     e.stopPropagation();
     const dd = $('convDropdown');
-    const visible = dd.style.display !== 'none';
-    dd.style.display = visible ? 'none' : 'block';
-    if (!visible) renderConversationList();
+    dd.classList.toggle('visible');
+    if (dd.classList.contains('visible')) renderConversationList();
   });
 
   // Close conversation dropdown on outside click
   document.addEventListener('click', (e) => {
     const dd = $('convDropdown');
     if (!dd.contains(e.target) && e.target.id !== 'convHist') {
-      dd.style.display = 'none';
+      dd.classList.remove('visible');
     }
   });
   $('convDropdown').addEventListener('click', (e) => e.stopPropagation());

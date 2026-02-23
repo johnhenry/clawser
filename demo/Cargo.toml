@@ -1,0 +1,41 @@
+[package]
+name = "clawser-demos"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+clawser-core = { path = "../crates/clawser-core" }
+serde_json = { workspace = true }
+
+[[bin]]
+name = "health_investigation"
+path = "health_investigation/main.rs"
+
+[[bin]]
+name = "code_refactoring"
+path = "code_refactoring/main.rs"
+
+[[bin]]
+name = "trip_planning"
+path = "trip_planning/main.rs"
+
+[[bin]]
+name = "security_sentinel"
+path = "security_sentinel/main.rs"
+
+[[bin]]
+name = "writing_companion"
+path = "writing_companion/main.rs"
+
+[[bin]]
+name = "skill_learning"
+path = "skill_learning/main.rs"
+
+[[bin]]
+name = "research_lab"
+path = "research_lab/main.rs"
+
+[[bin]]
+name = "digital_maintenance"
+path = "digital_maintenance/main.rs"

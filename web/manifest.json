@@ -1,0 +1,16 @@
+{
+  "name": "Clawser — Browser Agent Workspace",
+  "short_name": "Clawser",
+  "description": "Browser-native AI agent with tools, memory, and goals",
+  "start_url": "/web/index.html",
+  "display": "standalone",
+  "background_color": "#0d1117",
+  "theme_color": "#58a6ff",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='80' font-size='80'>🦀</text></svg>",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

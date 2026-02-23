@@ -1,26 +1,37 @@
-// clawser-cmd-palette.js — Command palette: tool search, parameter input, direct execution
+/**
+ * clawser-cmd-palette.js — Command palette (Cmd+K) overlay
+ *
+ * Provides direct tool execution outside the chat flow:
+ *   - Open/close: openCommandPalette/closeCommandPalette, triggered by Cmd+K
+ *   - Tool search: renderCmdToolList filters browser + MCP tools by name/description
+ *   - Parameter form: selectCmdTool renders typed inputs from tool spec (string, number, boolean, enum, object)
+ *   - Execution: runCmdTool collects params, executes tool, records events, updates inline tool call UI
+ */
 import { $, esc, state, emit } from './clawser-state.js';
 import { addInlineToolCall, updateInlineToolCall, addToolCall, addEvent, setStatus, persistActiveConversation } from './clawser-ui-chat.js';
 
 // ── Open / Close ─────────────────────────────────────────────────
+/** Open the command palette overlay and reset its state. */
 export function openCommandPalette() {
   const palette = $('cmdPalette');
-  palette.style.display = 'flex';
+  palette.classList.add('visible');
   state.cmdSelectedSpec = null;
   $('cmdSearch').value = '';
-  $('cmdParamArea').style.display = 'none';
+  $('cmdParamArea').classList.remove('visible');
   $('cmdParamArea').innerHTML = '';
   $('cmdRun').disabled = true;
   renderCmdToolList('');
   $('cmdSearch').focus();
 }
 
+/** Close the command palette overlay. */
 export function closeCommandPalette() {
-  $('cmdPalette').style.display = 'none';
+  $('cmdPalette').classList.remove('visible');
   state.cmdSelectedSpec = null;
 }
 
 // ── Tool list ────────────────────────────────────────────────────
+/** Render the filterable tool list in the command palette. @param {string} filter - Search string to filter by name/description */
 export function renderCmdToolList(filter) {
   const el = $('cmdToolList');
   el.innerHTML = '';
@@ -50,6 +61,7 @@ export function renderCmdToolList(filter) {
 }
 
 // ── Select tool ──────────────────────────────────────────────────
+/** Select a tool in the palette and render its parameter input form. @param {Object} spec - Tool specification */
 export function selectCmdTool(spec) {
   state.cmdSelectedSpec = spec;
 
@@ -102,11 +114,12 @@ export function selectCmdTool(spec) {
     }
   }
 
-  area.style.display = 'block';
+  area.classList.add('visible');
   $('cmdRun').disabled = false;
 }
 
 // ── Run tool ─────────────────────────────────────────────────────
+/** Execute the selected tool with user-provided parameters, recording events and updating UI. */
 export async function runCmdTool() {
   if (!state.cmdSelectedSpec || !state.agent) return;
 
@@ -170,6 +183,7 @@ export async function runCmdTool() {
 }
 
 // ── Listeners ────────────────────────────────────────────────────
+/** Bind event listeners for command palette (open/close, search, run, Cmd+K shortcut). */
 export function initCmdPaletteListeners() {
   $('cmdPaletteBtn').addEventListener('click', openCommandPalette);
   $('cmdSearch').addEventListener('input', () => renderCmdToolList($('cmdSearch').value));
@@ -182,13 +196,13 @@ export function initCmdPaletteListeners() {
     if (state.currentRoute !== 'workspace') return;
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
       e.preventDefault();
-      if ($('cmdPalette').style.display === 'none' || !$('cmdPalette').style.display) {
+      if (!$('cmdPalette').classList.contains('visible')) {
         openCommandPalette();
       } else {
         closeCommandPalette();
       }
     }
-    if (e.key === 'Escape' && $('cmdPalette').style.display !== 'none' && $('cmdPalette').style.display) {
+    if (e.key === 'Escape' && $('cmdPalette').classList.contains('visible')) {
       closeCommandPalette();
     }
   });

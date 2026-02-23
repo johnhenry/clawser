@@ -1,11 +1,24 @@
-// clawser-app.js — Orchestrator: init, workspace switching, routing, home view
-import { $, esc, state, on, emit } from './clawser-state.js';
+/**
+ * clawser-app.js — Application orchestrator
+ *
+ * State machine lifecycle:
+ *   1. Module-level singleton creation (providers, tools, skills, MCP)
+ *   2. startup() → initListeners + ensureDefaultWorkspace + handleRoute
+ *   3. handleRoute() reads the URL hash:
+ *      - #home → showView('viewHome'), render workspace/account lists
+ *      - #workspace/:id → initWorkspace (first load) or switchWorkspace (subsequent)
+ *   4. initWorkspace() bootstraps a fresh agent, registers tools, restores state
+ *   5. switchWorkspace() saves current, reinits agent, restores target workspace
+ *
+ * All cross-module coordination flows through the event bus (on/emit).
+ */
+import { $, esc, state, on, emit, lsKey, setSending, setConversation, resetConversationState } from './clawser-state.js';
 import { modal } from './clawser-modal.js';
 import { loadWorkspaces, setActiveWorkspaceId, ensureDefaultWorkspace, createWorkspace, renameWorkspace, deleteWorkspace, getWorkspaceName, touchWorkspace } from './clawser-workspaces.js';
 import { loadConversations } from './clawser-conversations.js';
 import { SERVICES, loadAccounts, createAccount, deleteAccount, saveConfig, applyRestoredConfig, rebuildProviderDropdown, setupProviders, initAccountListeners } from './clawser-accounts.js';
 import { parseHash, navigate, showView, updateRouteHash, activatePanel, initRouterListeners } from './clawser-router.js';
-import { setStatus, addMsg, addToolCall, addInlineToolCall, updateInlineToolCall, addEvent, updateState, updateCostDisplay, replaySessionHistory, replayFromEvents, updateConvNameDisplay, persistActiveConversation, switchConversation, initChatListeners, renderToolCalls, resetChatUI } from './clawser-ui-chat.js';
+import { setStatus, addMsg, addErrorMsg, addToolCall, addInlineToolCall, updateInlineToolCall, addEvent, updateState, updateCostDisplay, replaySessionHistory, replayFromEvents, updateConvNameDisplay, persistActiveConversation, switchConversation, initChatListeners, renderToolCalls, resetChatUI } from './clawser-ui-chat.js';
 import { refreshFiles, renderGoals, renderToolRegistry, renderSkills, applySecuritySettings, initPanelListeners } from './clawser-ui-panels.js';
 import { initCmdPaletteListeners } from './clawser-cmd-palette.js';
 
@@ -22,6 +35,12 @@ state.providers = createDefaultProviders();
 state.mcpManager = new McpManager({
   onLog: (level, msg) => console.log(`[mcp] ${msg}`),
 });
+
+// Freeze service singleton slots to prevent accidental reassignment
+Object.defineProperty(state, 'workspaceFs', { value: state.workspaceFs, writable: false, configurable: false });
+Object.defineProperty(state, 'browserTools', { value: state.browserTools, writable: false, configurable: false });
+Object.defineProperty(state, 'providers', { value: state.providers, writable: false, configurable: false });
+Object.defineProperty(state, 'mcpManager', { value: state.mcpManager, writable: false, configurable: false });
 
 // ── Skills ──────────────────────────────────────────────────────
 state.skillRegistry = new SkillRegistry({
@@ -54,9 +73,13 @@ on('renderSkills', () => renderSkills());
 on('saveConfig', () => saveConfig());
 
 // ── Switch workspace ────────────────────────────────────────────
+/** Save current workspace state, switch to a new workspace, and restore its agent/UI/conversation state.
+ * @param {string} newId - Target workspace ID
+ * @param {string} [convId] - Optional conversation ID to open after switching
+ */
 async function switchWorkspace(newId, convId) {
   if (!state.agent) return;
-  $('wsDropdown').style.display = 'none';
+  $('wsDropdown').classList.remove('visible');
   setStatus('busy', 'switching workspace...');
   history.replaceState(null, '', '#workspace/' + newId);
 
@@ -78,16 +101,12 @@ async function switchWorkspace(newId, convId) {
   $('goalList').innerHTML = '';
 
   // Clear skills state
-  state.activeSkillPrompts.clear();
   for (const name of [...state.skillRegistry.activeSkills.keys()]) {
     state.skillRegistry.deactivate(name);
   }
 
-  state.sessionCost = 0;
+  resetConversationState();
   updateCostDisplay();
-
-  state.activeConversationId = null;
-  state.activeConversationName = null;
   updateConvNameDisplay();
 
   // Restore new workspace state
@@ -103,14 +122,10 @@ async function switchWorkspace(newId, convId) {
   let wsRestored = false;
   const targetConvId = convId || savedConfig?.activeConversationId;
   if (targetConvId) {
-    state.activeConversationId = targetConvId;
-    if (convId) {
-      const convList = loadConversations(newId);
-      const conv = convList.find(c => c.id === convId);
-      state.activeConversationName = conv?.name || null;
-    } else {
-      state.activeConversationName = savedConfig?.activeConversationName || null;
-    }
+    const convName = convId
+      ? (loadConversations(newId).find(c => c.id === convId)?.name || null)
+      : (savedConfig?.activeConversationName || null);
+    setConversation(targetConvId, convName);
     updateConvNameDisplay();
 
     const convData = await state.agent.restoreConversation(state.activeConversationId);
@@ -166,8 +181,12 @@ async function switchWorkspace(newId, convId) {
 }
 
 // ── Init workspace ──────────────────────────────────────────────
+/** Bootstrap a workspace from scratch: create agent, register tools, restore state, discover skills.
+ * @param {string} wsId - Workspace ID to initialize
+ * @param {string} [convId] - Optional conversation ID to restore
+ */
 async function initWorkspace(wsId, convId) {
-  if (state._updateInterval) clearInterval(state._updateInterval);
+  if (state._updateInterval) { clearInterval(state._updateInterval); state._updateInterval = null; }
   setStatus('busy', 'initializing...');
 
   try {
@@ -186,26 +205,32 @@ async function initWorkspace(wsId, convId) {
         const methods = ['debug','debug','info','warn','error'];
         console[methods[level] || 'log'](`[clawser] ${msg}`);
       },
-      onToolCall: (name, params, result) => {
-        addToolCall(name, params, result);
-        if (result === null) {
-          const el = addInlineToolCall(name, params, null);
-          state.pendingInlineTools.set(name + '_' + Date.now(), el);
-        } else {
-          let found = false;
-          for (const [key, el] of state.pendingInlineTools) {
-            if (key.startsWith(name + '_')) {
-              updateInlineToolCall(el, name, params, result);
-              state.pendingInlineTools.delete(key);
-              found = true;
-              break;
+      onToolCall: (() => {
+        let _toolSeq = 0;
+        return (name, params, result) => {
+          addToolCall(name, params, result);
+          if (result === null) {
+            const key = `${name}_${++_toolSeq}`;
+            const el = addInlineToolCall(name, params, null);
+            el._pendingKey = key;
+            state.pendingInlineTools.set(key, el);
+          } else {
+            // Find the oldest pending entry for this tool name (FIFO)
+            let found = false;
+            for (const [key, el] of state.pendingInlineTools) {
+              if (key.startsWith(name + '_')) {
+                updateInlineToolCall(el, name, params, result);
+                state.pendingInlineTools.delete(key);
+                found = true;
+                break;
+              }
+            }
+            if (!found) {
+              addInlineToolCall(name, params, result);
             }
           }
-          if (!found) {
-            addInlineToolCall(name, params, result);
-          }
-        }
-      },
+        };
+      })(),
     });
 
     addMsg('system', 'Initializing agent...');
@@ -228,16 +253,16 @@ async function initWorkspace(wsId, convId) {
     });
 
     try {
-      const savedPerms = JSON.parse(localStorage.getItem(`clawser_tool_perms_${activeWsId}`) || '{}');
+      const savedPerms = JSON.parse(localStorage.getItem(lsKey.toolPerms(activeWsId)) || '{}');
       state.browserTools.loadPermissions(savedPerms);
-    } catch {}
+    } catch (e) { console.warn('[clawser] failed to parse saved tool permissions', e); }
 
     try {
-      const sec = JSON.parse(localStorage.getItem(`clawser_security_${activeWsId}`) || '{}');
+      const sec = JSON.parse(localStorage.getItem(lsKey.security(activeWsId)) || '{}');
       if (sec.domains) $('cfgDomainAllowlist').value = sec.domains;
       if (sec.maxFileSizeMB) $('cfgMaxFileSize').value = sec.maxFileSizeMB;
       applySecuritySettings();
-    } catch {}
+    } catch (e) { console.warn('[clawser] failed to parse saved security config', e); }
 
     state.agent.setWorkspace(activeWsId);
     touchWorkspace(activeWsId);
@@ -256,14 +281,10 @@ async function initWorkspace(wsId, convId) {
     let restored = false;
     const targetConvId = convId || savedConfig?.activeConversationId;
     if (targetConvId) {
-      state.activeConversationId = targetConvId;
-      if (convId) {
-        const convList = loadConversations(activeWsId);
-        const conv = convList.find(c => c.id === convId);
-        state.activeConversationName = conv?.name || null;
-      } else {
-        state.activeConversationName = savedConfig?.activeConversationName || null;
-      }
+      const convName = convId
+        ? (loadConversations(activeWsId).find(c => c.id === convId)?.name || null)
+        : (savedConfig?.activeConversationName || null);
+      setConversation(targetConvId, convName);
       updateConvNameDisplay();
 
       const convData = await state.agent.restoreConversation(state.activeConversationId);
@@ -329,13 +350,14 @@ async function initWorkspace(wsId, convId) {
 
     state._updateInterval = setInterval(() => updateState(), 5000);
   } catch (e) {
-    addMsg('error', `Init failed: ${e.message}`);
+    addErrorMsg(`Init failed: ${e.message}`);
     setStatus('error', 'init failed');
     console.error(e);
   }
 }
 
 // ── Route handler ───────────────────────────────────────────────
+/** Handle hash-based routing: show home view or init/switch workspace based on URL fragment. */
 async function handleRoute() {
   if (state.switchingViaRouter) return;
   const parsed = parseHash();
@@ -389,6 +411,7 @@ async function handleRoute() {
 window.addEventListener('hashchange', () => handleRoute());
 
 // ── Home view rendering ─────────────────────────────────────────
+/** Render the workspace card list on the home screen with rename/delete actions and click-to-open. */
 function renderHomeWorkspaceList() {
   const list = loadWorkspaces();
   const el = $('homeWsList');
@@ -416,7 +439,7 @@ function renderHomeWorkspaceList() {
       delBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
         if (await modal.confirm(`Delete workspace "${ws.name}"?`, { danger: true })) {
-          deleteWorkspace(ws.id);
+          await deleteWorkspace(ws.id);
           renderHomeWorkspaceList();
         }
       });
@@ -432,6 +455,7 @@ function renderHomeWorkspaceList() {
   }
 }
 
+/** Render the account list on the home screen with delete actions. */
 function renderHomeAccountList() {
   const list = loadAccounts();
   const el = $('homeAcctList');
@@ -457,6 +481,7 @@ function renderHomeAccountList() {
 }
 
 // ── Home view event listeners ───────────────────────────────────
+/** Bind event listeners for the home view: workspace create, account CRUD, service selector. */
 function initHomeListeners() {
   $('homeWsCreate').addEventListener('click', () => {
     const name = $('homeWsNewName').value.trim();
@@ -472,8 +497,8 @@ function initHomeListeners() {
 
   $('homeAcctAddToggle').addEventListener('click', () => {
     const form = $('homeAcctAddForm');
-    form.style.display = form.style.display === 'none' ? 'block' : 'none';
-    if (form.style.display === 'block') {
+    form.classList.toggle('visible');
+    if (form.classList.contains('visible')) {
       $('homeAcctName').value = '';
       $('homeAcctKey').value = '';
       const svc = SERVICES[$('homeAcctService').value];
@@ -500,12 +525,12 @@ function initHomeListeners() {
     const model = $('homeAcctModel').value.trim();
     if (!name || !apiKey || !model) return;
     createAccount({ name, service, apiKey, model });
-    $('homeAcctAddForm').style.display = 'none';
+    $('homeAcctAddForm').classList.remove('visible');
     renderHomeAccountList();
   });
 
   $('homeAcctCancel').addEventListener('click', () => {
-    $('homeAcctAddForm').style.display = 'none';
+    $('homeAcctAddForm').classList.remove('visible');
   });
 }
 
