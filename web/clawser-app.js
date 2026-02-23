@@ -24,7 +24,7 @@ import { initCmdPaletteListeners } from './clawser-cmd-palette.js';
 
 import { ClawserAgent } from './clawser-agent.js';
 import { createDefaultRegistry, WorkspaceFs, registerAgentTools } from './clawser-tools.js';
-import { createDefaultProviders } from './clawser-providers.js';
+import { createDefaultProviders, ResponseCache } from './clawser-providers.js';
 import { McpManager } from './clawser-mcp.js';
 import { SkillRegistry, SkillStorage, ActivateSkillTool, DeactivateSkillTool } from './clawser-skills.js';
 import { ClawserShell, ShellTool } from './clawser-shell.js';
@@ -37,11 +37,14 @@ state.mcpManager = new McpManager({
   onLog: (level, msg) => console.log(`[mcp] ${msg}`),
 });
 
+state.responseCache = new ResponseCache();
+
 // Freeze service singleton slots to prevent accidental reassignment
 Object.defineProperty(state, 'workspaceFs', { value: state.workspaceFs, writable: false, configurable: false });
 Object.defineProperty(state, 'browserTools', { value: state.browserTools, writable: false, configurable: false });
 Object.defineProperty(state, 'providers', { value: state.providers, writable: false, configurable: false });
 Object.defineProperty(state, 'mcpManager', { value: state.mcpManager, writable: false, configurable: false });
+Object.defineProperty(state, 'responseCache', { value: state.responseCache, writable: false, configurable: false });
 
 // ── Skills ──────────────────────────────────────────────────────
 state.skillRegistry = new SkillRegistry({
@@ -212,6 +215,7 @@ async function initWorkspace(wsId, convId) {
       workspaceFs: state.workspaceFs,
       providers: state.providers,
       mcpManager: state.mcpManager,
+      responseCache: state.responseCache,
       onEvent: (topic, payload) => addEvent(topic, payload),
       onLog: (level, msg) => {
         const methods = ['debug','debug','info','warn','error'];

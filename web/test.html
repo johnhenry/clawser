@@ -31,6 +31,7 @@ import {
   AnthropicProvider, OpenAIProvider, OpenAICompatibleProvider,
   OPENAI_COMPATIBLE_SERVICES, ProviderRegistry, createDefaultProviders,
   readSSE, readAnthropicSSE, classifyError, validateChatResponse,
+  ResponseCache,
 } from './clawser-providers.js';
 
 import { SkillParser } from './clawser-skills.js';
@@ -3060,6 +3061,192 @@ section('Shell — MemoryFs');
   // read nonexistent
   try { await fs.readFile('/nope.txt'); assert('MemoryFs read nonexistent throws', false); }
   catch { assert('MemoryFs read nonexistent throws', true); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  ResponseCache
+// ═══════════════════════════════════════════════════════════════
+
+section('ResponseCache — hash & cacheKey');
+{
+  // hash produces consistent output
+  const h1 = ResponseCache.hash('hello');
+  const h2 = ResponseCache.hash('hello');
+  assertEq('hash deterministic', h1, h2);
+
+  // different inputs produce different hashes
+  const h3 = ResponseCache.hash('world');
+  assert('hash different inputs', h1 !== h3);
+
+  // hash returns a base-36 string
+  assert('hash is base36', /^[0-9a-z]+$/.test(h1));
+
+  // cacheKey strips system messages
+  const msgs1 = [
+    { role: 'system', content: 'You are an AI' },
+    { role: 'user', content: 'Hello' },
+  ];
+  const msgs2 = [
+    { role: 'system', content: 'Different system prompt' },
+    { role: 'user', content: 'Hello' },
+  ];
+  assertEq('cacheKey ignores system', ResponseCache.cacheKey(msgs1, 'gpt-4'), ResponseCache.cacheKey(msgs2, 'gpt-4'));
+
+  // cacheKey differs by model
+  const k1 = ResponseCache.cacheKey(msgs1, 'gpt-4');
+  const k2 = ResponseCache.cacheKey(msgs1, 'claude-3');
+  assert('cacheKey differs by model', k1 !== k2);
+
+  // cacheKey differs by user content
+  const msgs3 = [{ role: 'user', content: 'Goodbye' }];
+  assert('cacheKey differs by content', ResponseCache.cacheKey(msgs1, 'gpt-4') !== ResponseCache.cacheKey(msgs3, 'gpt-4'));
+}
+
+section('ResponseCache — get/set basics');
+{
+  const cache = new ResponseCache({ maxEntries: 5, ttlMs: 60000 });
+
+  const resp = { content: 'Hello!', tool_calls: [], usage: { input_tokens: 10, output_tokens: 5 }, model: 'echo' };
+
+  // miss on empty cache
+  assertEq('empty get returns null', cache.get('key1'), null);
+  assertEq('initial size 0', cache.size, 0);
+
+  // set and get
+  cache.set('key1', resp, 'echo');
+  assertEq('size after set', cache.size, 1);
+  const hit = cache.get('key1');
+  assertEq('hit content', hit.content, 'Hello!');
+  assertEq('hit model', hit.model, 'echo');
+
+  // stats track hits and misses
+  const stats = cache.stats;
+  assertEq('stats hits', stats.totalHits, 1);
+  assertEq('stats misses', stats.totalMisses, 1); // the initial miss
+  assert('stats hitRate > 0', stats.hitRate > 0);
+}
+
+section('ResponseCache — tool_calls bypass');
+{
+  const cache = new ResponseCache();
+  const respWithTools = { content: 'result', tool_calls: [{ id: 'tc1', name: 'fetch', arguments: '{}' }], usage: { input_tokens: 5, output_tokens: 3 }, model: 'echo' };
+
+  cache.set('tools_key', respWithTools, 'echo');
+  assertEq('tool_calls not cached', cache.size, 0);
+  assertEq('tool_calls get null', cache.get('tools_key'), null);
+}
+
+section('ResponseCache — LRU eviction');
+{
+  const cache = new ResponseCache({ maxEntries: 3, ttlMs: 60000 });
+  const mkResp = (c) => ({ content: c, tool_calls: [], usage: { input_tokens: 1, output_tokens: 1 }, model: 'echo' });
+
+  cache.set('a', mkResp('A'), 'echo');
+  cache.set('b', mkResp('B'), 'echo');
+  cache.set('c', mkResp('C'), 'echo');
+  assertEq('full cache size', cache.size, 3);
+
+  // Adding a 4th should evict the oldest (a)
+  cache.set('d', mkResp('D'), 'echo');
+  assertEq('evicted size', cache.size, 3);
+  assertEq('oldest evicted', cache.get('a'), null);
+  assertEq('newest present', cache.get('d').content, 'D');
+
+  // Accessing 'b' promotes it, so 'c' becomes oldest
+  cache.get('b');
+  cache.set('e', mkResp('E'), 'echo');
+  assertEq('LRU promotes accessed', cache.get('b').content, 'B');
+  assertEq('LRU evicts least recent', cache.get('c'), null);
+}
+
+section('ResponseCache — TTL expiration');
+{
+  const cache = new ResponseCache({ maxEntries: 10, ttlMs: 50 }); // 50ms TTL
+  const resp = { content: 'temp', tool_calls: [], usage: { input_tokens: 1, output_tokens: 1 }, model: 'echo' };
+
+  cache.set('ttl_key', resp, 'echo');
+  assertEq('before TTL', cache.get('ttl_key').content, 'temp');
+
+  // Wait for TTL to expire
+  await new Promise(r => setTimeout(r, 60));
+  assertEq('after TTL expired', cache.get('ttl_key'), null);
+  assertEq('expired entry removed', cache.size, 0);
+}
+
+section('ResponseCache — enable/disable');
+{
+  const cache = new ResponseCache();
+  const resp = { content: 'data', tool_calls: [], usage: { input_tokens: 1, output_tokens: 1 }, model: 'echo' };
+
+  cache.enabled = false;
+  cache.set('disabled_key', resp, 'echo');
+  assertEq('disabled set ignored', cache.size, 0);
+  assertEq('disabled get null', cache.get('disabled_key'), null);
+
+  cache.enabled = true;
+  cache.set('enabled_key', resp, 'echo');
+  assertEq('enabled set works', cache.size, 1);
+  assertEq('enabled get works', cache.get('enabled_key').content, 'data');
+}
+
+section('ResponseCache — clear');
+{
+  const cache = new ResponseCache();
+  const resp = { content: 'data', tool_calls: [], usage: { input_tokens: 5, output_tokens: 3 }, model: 'echo' };
+
+  cache.set('k1', resp, 'echo');
+  cache.set('k2', resp, 'echo');
+  cache.get('k1'); // register a hit
+  assertEq('pre-clear size', cache.size, 2);
+  assert('pre-clear hits', cache.stats.totalHits >= 1);
+
+  cache.clear();
+  assertEq('post-clear size', cache.size, 0);
+  assertEq('post-clear hits reset', cache.stats.totalHits, 0);
+  assertEq('post-clear misses reset', cache.stats.totalMisses, 0);
+}
+
+section('ResponseCache — delete');
+{
+  const cache = new ResponseCache();
+  const resp = { content: 'data', tool_calls: [], usage: { input_tokens: 1, output_tokens: 1 }, model: 'echo' };
+
+  cache.set('del_key', resp, 'echo');
+  assertEq('pre-delete size', cache.size, 1);
+  cache.delete('del_key');
+  assertEq('post-delete size', cache.size, 0);
+  assertEq('post-delete get', cache.get('del_key'), null);
+}
+
+section('ResponseCache — integration with agent');
+{
+  const cache = new ResponseCache();
+  const providers = createDefaultProviders();
+
+  // Create agent with cache
+  const agent = await ClawserAgent.create({
+    providers,
+    responseCache: cache,
+    onEvent: () => {},
+  });
+
+  agent.init({});
+  agent.setActiveProvider('echo');
+  agent.setSystemPrompt('test');
+  agent.sendMessage('cache test message');
+
+  // First call — cache miss
+  const r1 = await agent.run();
+  assertEq('first call success', r1.status, 1);
+  assert('first call not cached', !r1.cached);
+  assert('cache has entry', cache.size >= 1);
+
+  // Second call with same message — cache hit
+  agent.sendMessage('cache test message');
+  const r2 = await agent.run();
+  assertEq('second call success', r2.status, 1);
+  assertEq('second call cached', r2.cached, true);
+  assert('cache hit count', cache.stats.totalHits >= 1);
 }
 
 // ═══════════════════════════════════════════════════════════════

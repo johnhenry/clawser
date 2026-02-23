@@ -227,6 +227,149 @@ export function validateChatResponse(raw, fallbackModel = 'unknown') {
   };
 }
 
+// ── Response Cache ────────────────────────────────────────────────
+
+/**
+ * LRU response cache with TTL expiration for LLM API responses.
+ * Skips caching for responses that contain tool calls (side effects).
+ */
+export class ResponseCache {
+  /** @type {Map<string, {response: object, model: string, timestamp: number, hitCount: number, tokensSaved: {input: number, output: number}}>} */
+  #cache = new Map();
+  #maxEntries;
+  #ttlMs;
+  #totalHits = 0;
+  #totalMisses = 0;
+  #totalTokensSaved = { input: 0, output: 0 };
+  #totalCostSaved = 0;
+  #enabled = true;
+
+  /**
+   * @param {object} [opts]
+   * @param {number} [opts.maxEntries=500] - Maximum cache entries before LRU eviction
+   * @param {number} [opts.ttlMs=1800000] - Time-to-live in ms (default 30 min)
+   */
+  constructor(opts = {}) {
+    this.#maxEntries = opts.maxEntries ?? 500;
+    this.#ttlMs = opts.ttlMs ?? 30 * 60_000;
+  }
+
+  /** Enable or disable the cache. */
+  set enabled(v) { this.#enabled = !!v; }
+  get enabled() { return this.#enabled; }
+
+  /** FNV-1a hash — fast, non-cryptographic */
+  static hash(str) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+    return (h >>> 0).toString(36);
+  }
+
+  /**
+   * Generate a cache key from messages + model.
+   * Strips the system prompt (varies per session) and uses only
+   * user/assistant/tool message content for the key.
+   */
+  static cacheKey(messages, model) {
+    const significant = messages
+      .filter(m => m.role !== 'system')
+      .map(m => `${m.role}:${m.content || ''}`)
+      .join('|');
+    return `${model}::${ResponseCache.hash(significant)}`;
+  }
+
+  /**
+   * Look up a cached response.
+   * @param {string} key
+   * @returns {object|null} Cached ChatResponse or null
+   */
+  get(key) {
+    if (!this.#enabled) return null;
+    const entry = this.#cache.get(key);
+    if (!entry) { this.#totalMisses++; return null; }
+
+    // TTL check
+    if (Date.now() - entry.timestamp > this.#ttlMs) {
+      this.#cache.delete(key);
+      this.#totalMisses++;
+      return null;
+    }
+
+    // LRU: move to end
+    this.#cache.delete(key);
+    this.#cache.set(key, entry);
+
+    entry.hitCount++;
+    this.#totalHits++;
+    this.#totalTokensSaved.input += entry.tokensSaved.input;
+    this.#totalTokensSaved.output += entry.tokensSaved.output;
+    this.#totalCostSaved += estimateCost(entry.model, entry.tokensSaved);
+    return entry.response;
+  }
+
+  /**
+   * Store a response in the cache.
+   * @param {string} key
+   * @param {object} response - ChatResponse
+   * @param {string} model
+   */
+  set(key, response, model) {
+    if (!this.#enabled) return;
+
+    // Never cache responses with tool calls (side effects)
+    if (response.tool_calls?.length > 0) return;
+
+    // LRU eviction
+    if (this.#cache.size >= this.#maxEntries) {
+      const oldest = this.#cache.keys().next().value;
+      this.#cache.delete(oldest);
+    }
+
+    this.#cache.set(key, {
+      response,
+      model,
+      timestamp: Date.now(),
+      hitCount: 0,
+      tokensSaved: {
+        input: response.usage?.input_tokens || 0,
+        output: response.usage?.output_tokens || 0,
+      },
+    });
+  }
+
+  /** Remove a specific entry. */
+  delete(key) { this.#cache.delete(key); }
+
+  /** Clear all entries and reset stats. */
+  clear() {
+    this.#cache.clear();
+    this.#totalHits = 0;
+    this.#totalMisses = 0;
+    this.#totalTokensSaved = { input: 0, output: 0 };
+    this.#totalCostSaved = 0;
+  }
+
+  /** @returns {number} Current entry count */
+  get size() { return this.#cache.size; }
+
+  /** Cache statistics */
+  get stats() {
+    return {
+      entries: this.#cache.size,
+      maxEntries: this.#maxEntries,
+      ttlMs: this.#ttlMs,
+      totalHits: this.#totalHits,
+      totalMisses: this.#totalMisses,
+      hitRate: this.#totalHits / (this.#totalHits + this.#totalMisses) || 0,
+      tokensSaved: { ...this.#totalTokensSaved },
+      costSaved: Math.round(this.#totalCostSaved * 10000) / 10000,
+    };
+  }
+}
+
 // ── Base class ────────────────────────────────────────────────────
 
 export class LLMProvider {

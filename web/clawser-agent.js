@@ -233,6 +233,8 @@ export class ClawserAgent {
   #workspaceFs = null;
   /** @type {Codex} */
   #codex = null;
+  /** @type {import('./clawser-providers.js').ResponseCache|null} */
+  #responseCache = null;
 
   // ── Workspace ────────────────────────────────────────────────
   #workspaceId = 'default';
@@ -251,6 +253,7 @@ export class ClawserAgent {
    * @param {import('./clawser-tools.js').WorkspaceFs} [opts.workspaceFs]
    * @param {import('./clawser-providers.js').ProviderRegistry} [opts.providers]
    * @param {import('./clawser-mcp.js').McpManager} [opts.mcpManager]
+   * @param {import('./clawser-providers.js').ResponseCache} [opts.responseCache]
    * @param {Function} [opts.onEvent]
    * @param {Function} [opts.onLog]
    * @param {Function} [opts.onToolCall]
@@ -266,6 +269,7 @@ export class ClawserAgent {
     agent.#workspaceFs = opts.workspaceFs || null;
     agent.#mcpManager = opts.mcpManager || null;
     agent.#providers = opts.providers || null;
+    agent.#responseCache = opts.responseCache || null;
     agent.#onToolCall = opts.onToolCall || (() => {});
 
     if (agent.#browserTools) {
@@ -648,6 +652,20 @@ export class ClawserAgent {
       const provider = this.#providers.get(this.#activeProvider);
       if (!provider) throw new Error(`Provider not found: ${this.#activeProvider}`);
 
+      // Response cache lookup (skip on first iteration when tools may be pending)
+      let cacheKey = null;
+      if (this.#responseCache) {
+        const { ResponseCache } = await import('./clawser-providers.js');
+        cacheKey = ResponseCache.cacheKey(request.messages, this.#model);
+        const cached = this.#responseCache.get(cacheKey);
+        if (cached) {
+          this.#eventLog.append('cache_hit', { key: cacheKey }, 'system');
+          this.#history.push({ role: 'assistant', content: cached.content });
+          this.#eventLog.append('agent_message', { content: cached.content }, 'agent');
+          return { status: 1, data: cached.content, usage: cached.usage, model: cached.model, cached: true };
+        }
+      }
+
       let response;
       try {
         response = await provider.chat(request, this.#apiKey, this.#model);
@@ -670,6 +688,10 @@ export class ClawserAgent {
 
       // No tool calls — plain text response
       if (!response.tool_calls || response.tool_calls.length === 0) {
+        // Store in response cache
+        if (this.#responseCache && cacheKey) {
+          this.#responseCache.set(cacheKey, response, response.model);
+        }
         this.#history.push({ role: 'assistant', content: response.content });
         this.#eventLog.append('agent_message', { content: response.content }, 'agent');
         return { status: 1, data: response.content, usage: response.usage, model: response.model };
@@ -760,6 +782,22 @@ export class ClawserAgent {
       const provider = this.#providers.get(this.#activeProvider);
       if (!provider) throw new Error(`Provider not found: ${this.#activeProvider}`);
 
+      // Response cache lookup
+      let cacheKey = null;
+      if (this.#responseCache) {
+        const { ResponseCache } = await import('./clawser-providers.js');
+        cacheKey = ResponseCache.cacheKey(request.messages, this.#model);
+        const cached = this.#responseCache.get(cacheKey);
+        if (cached) {
+          this.#eventLog.append('cache_hit', { key: cacheKey }, 'system');
+          this.#history.push({ role: 'assistant', content: cached.content });
+          this.#eventLog.append('agent_message', { content: cached.content }, 'agent');
+          yield { type: 'text', text: cached.content };
+          yield { type: 'done', response: cached };
+          return;
+        }
+      }
+
       // Check if streaming is supported
       if (!provider.supportsStreaming) {
         // Fall back to non-streaming but yield intermediate events so UI stays informed
@@ -780,6 +818,9 @@ export class ClawserAgent {
 
         // No tool calls — plain text
         if (!response.tool_calls || response.tool_calls.length === 0) {
+          if (this.#responseCache && cacheKey) {
+            this.#responseCache.set(cacheKey, response, response.model);
+          }
           this.#history.push({ role: 'assistant', content: response.content });
           this.#eventLog.append('agent_message', { content: response.content }, 'agent');
           yield { type: 'text', text: response.content };
@@ -849,6 +890,9 @@ export class ClawserAgent {
 
       // No tool calls — done
       if (fullToolCalls.length === 0) {
+        if (this.#responseCache && cacheKey) {
+          this.#responseCache.set(cacheKey, fullResponse, fullResponse.model);
+        }
         this.#history.push({ role: 'assistant', content: fullContent });
         this.#eventLog.append('agent_message', { content: fullContent }, 'agent');
         return;

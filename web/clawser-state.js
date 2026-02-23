@@ -43,6 +43,7 @@ export const state = {
   pendingImportBlob: null,
   skillRegistry: null,
   shell: null,
+  responseCache: null,
   // Service singletons (set by clawser-app.js)
   workspaceFs: null,
   browserTools: null,
