@@ -129,6 +129,13 @@ import {
   ChannelManager, ChannelListTool, ChannelSendTool, ChannelHistoryTool,
 } from './clawser-channels.js';
 
+import {
+  DEFAULT_CODE_LENGTH, DEFAULT_CODE_EXPIRY_MS, DEFAULT_TOKEN_EXPIRY_MS, DEFAULT_RATE_LIMIT,
+  generatePairingCode, generateToken,
+  PairingManager, RateLimiter, GatewayClient,
+  RemoteStatusTool, RemotePairTool, RemoteRevokeTool,
+} from './clawser-remote.js';
+
 import { $, esc, state, on, off, emit, lsKey, setSending, setConversation, resetConversationState } from './clawser-state.js';
 
 import { ClawserAgent, AutonomyController, HookPipeline, HOOK_POINTS, createAuditLoggerHook } from './clawser-agent.js';
@@ -8116,6 +8123,144 @@ section('Channels: Agent Tools');
   const ht = await new ChannelHistoryTool(mgr).execute();
   assert('history success', ht.success);
   assert('history has content', ht.output.includes('test'));
+}
+
+// ── Block 15: Remote Access Gateway ──────────────────────────────
+
+section('Remote: Constants & Generators');
+{
+  assertEq('code length const', DEFAULT_CODE_LENGTH, 6);
+  assertEq('code expiry const', DEFAULT_CODE_EXPIRY_MS, 300_000);
+  assertEq('token expiry const', DEFAULT_TOKEN_EXPIRY_MS, 86_400_000);
+  assertEq('rate limit const', DEFAULT_RATE_LIMIT, 60);
+  const code = generatePairingCode();
+  assert('code 6 digits', /^\d{6}$/.test(code));
+  const code4 = generatePairingCode(4);
+  assertEq('code custom length', code4.length, 4);
+  const tok = generateToken();
+  assert('token prefix', tok.startsWith('bearer_'));
+  assert('token format', /^bearer_[a-zA-Z0-9]{32}$/.test(tok));
+}
+
+section('Remote: PairingManager');
+{
+  const logs = [];
+  const pm = new PairingManager({ onLog: m => logs.push(m) });
+  const code = pm.createCode();
+  assertEq('code created', pm.codeCount, 1);
+  assert('logged creation', logs.length > 0);
+
+  // Invalid code
+  assert('invalid code null', pm.exchangeCode('000000') === null);
+
+  // Valid exchange
+  const result = pm.exchangeCode(code, { device: 'phone' });
+  assert('exchange ok', result !== null);
+  assert('has token', result.token.startsWith('bearer_'));
+  assert('has expires', result.expires > Date.now());
+  assertEq('sessions after exchange', pm.sessionCount, 1);
+
+  // One-time use
+  assert('second exchange null', pm.exchangeCode(code) === null);
+
+  // Validate token
+  assert('token valid', pm.validateToken(result.token));
+  assert('fake invalid', !pm.validateToken('nope'));
+
+  // Revoke
+  assert('revoke ok', pm.revokeToken(result.token));
+  assert('revoked invalid', !pm.validateToken(result.token));
+
+  // List sessions
+  const c2 = pm.createCode();
+  pm.exchangeCode(c2, { device: 'laptop' });
+  const sessions = pm.listSessions();
+  assertEq('session listed', sessions.length, 1);
+  assertEq('session device', sessions[0].device, 'laptop');
+  assert('token truncated', sessions[0].token.endsWith('...'));
+
+  // Revoke all
+  pm.revokeAll();
+  assertEq('all revoked', pm.sessionCount, 0);
+  assertEq('codes cleared', pm.codeCount, 0);
+}
+
+section('Remote: RateLimiter');
+{
+  const rl = new RateLimiter(3);
+  assertEq('max', rl.maxPerMinute, 3);
+  assert('allow 1', rl.allow('t'));
+  assert('allow 2', rl.allow('t'));
+  assert('allow 3', rl.allow('t'));
+  assert('deny 4', !rl.allow('t'));
+  assertEq('remaining 0', rl.remaining('t'), 0);
+  assert('other token ok', rl.allow('t2'));
+  assertEq('fresh remaining', rl.remaining('new'), 3);
+}
+
+section('Remote: GatewayClient');
+{
+  // Constructor
+  const gc0 = new GatewayClient({ baseUrl: 'https://gw.test/' });
+  assertEq('url trimmed', gc0.baseUrl, 'https://gw.test');
+  assert('not authed', !gc0.authenticated);
+
+  // Pair
+  let lastUrl, lastOpts;
+  const mockFetch = async (url, opts) => {
+    lastUrl = url; lastOpts = opts;
+    return { ok: true, json: async () => ({ token: 'bearer_abc', expires: 99999 }) };
+  };
+  const gc = new GatewayClient({ baseUrl: 'https://gw.test', fetchFn: mockFetch });
+  await gc.pair('123456');
+  assertEq('pair url', lastUrl, 'https://gw.test/pair');
+  assertEq('pair method', lastOpts.method, 'POST');
+  assert('authed after pair', gc.authenticated);
+
+  // SendMessage
+  await gc.sendMessage('hello');
+  assertEq('msg url', lastUrl, 'https://gw.test/message');
+  assert('auth header', lastOpts.headers['Authorization'] === 'Bearer bearer_abc');
+
+  // GetStatus
+  const gc2 = new GatewayClient({ baseUrl: 'https://gw.test', fetchFn: async () => ({
+    ok: true, json: async () => ({ running: true }),
+  })});
+  const st = await gc2.getStatus();
+  assert('status ok', st.running);
+
+  // Pair failure
+  const gcFail = new GatewayClient({ baseUrl: 'x', fetchFn: async () => ({ ok: false, status: 401 }) });
+  let err;
+  try { await gcFail.pair('000000'); } catch (e) { err = e; }
+  assert('pair throws', err instanceof Error);
+
+  // Disconnect
+  gc.disconnect();
+  assert('disconnected', !gc.authenticated);
+}
+
+section('Remote: Agent Tools');
+{
+  const pm = new PairingManager();
+  const st = new RemoteStatusTool(pm);
+  assertEq('status name', st.name, 'remote_status');
+  assertEq('status perm', st.permission, 'read');
+  const r1 = await st.execute();
+  assert('status 0 sessions', r1.output.includes('Active sessions: 0'));
+
+  const pt = new RemotePairTool(pm);
+  assertEq('pair name', pt.name, 'remote_pair');
+  const r2 = await pt.execute();
+  assert('pair output', /Pairing code: \d{6}/.test(r2.output));
+
+  const code = pm.createCode();
+  pm.exchangeCode(code);
+  const rt = new RemoteRevokeTool(pm);
+  assertEq('revoke name', rt.name, 'remote_revoke');
+  const r3 = await rt.execute({ all: true });
+  assert('revoke all', r3.output.includes('All remote sessions revoked'));
+  assertEq('revoked count', pm.sessionCount, 0);
 }
 
 // ═══════════════════════════════════════════════════════════════
