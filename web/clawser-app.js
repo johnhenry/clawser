@@ -27,6 +27,7 @@ import { createDefaultRegistry, WorkspaceFs, registerAgentTools } from './clawse
 import { createDefaultProviders } from './clawser-providers.js';
 import { McpManager } from './clawser-mcp.js';
 import { SkillRegistry, SkillStorage, ActivateSkillTool, DeactivateSkillTool } from './clawser-skills.js';
+import { ClawserShell, ShellTool } from './clawser-shell.js';
 
 // ── Create service singletons ───────────────────────────────────
 state.workspaceFs = new WorkspaceFs();
@@ -66,11 +67,19 @@ state.skillRegistry = new SkillRegistry({
   },
 });
 
+// ── Shell session management ─────────────────────────────────────
+/** Create a fresh shell session for the current workspace. Sources .clawserrc. */
+async function createShellSession() {
+  state.shell = new ClawserShell({ workspaceFs: state.workspaceFs });
+  await state.shell.source('/.clawserrc');
+}
+
 // ── Cross-module event bus ──────────────────────────────────────
 on('refreshFiles', () => refreshFiles());
 on('renderGoals', () => renderGoals());
 on('renderSkills', () => renderSkills());
 on('saveConfig', () => saveConfig());
+on('newShellSession', () => createShellSession());
 
 // ── Switch workspace ────────────────────────────────────────────
 /** Save current workspace state, switch to a new workspace, and restore its agent/UI/conversation state.
@@ -94,6 +103,9 @@ async function switchWorkspace(newId, convId) {
   state.agent.setWorkspace(newId);
   setActiveWorkspaceId(newId);
   touchWorkspace(newId);
+
+  // Create fresh shell session for new workspace
+  await createShellSession();
 
   // Clear UI
   resetChatUI();
@@ -246,6 +258,9 @@ async function initWorkspace(wsId, convId) {
       renderSkills();
     }));
 
+    // Register shell tool (reads current shell from state.shell)
+    state.browserTools.register(new ShellTool(() => state.shell));
+
     state.agent.refreshToolSpecs();
 
     state.browserTools.setApprovalHandler(async (toolName, params) => {
@@ -266,6 +281,9 @@ async function initWorkspace(wsId, convId) {
 
     state.agent.setWorkspace(activeWsId);
     touchWorkspace(activeWsId);
+
+    // Create initial shell session for this workspace
+    await createShellSession();
 
     const savedConfig = state.agent.restoreConfig();
     const memCount = state.agent.restoreMemories();

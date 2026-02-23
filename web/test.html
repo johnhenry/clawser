@@ -58,6 +58,11 @@ import {
   ACCT_KEY, loadAccounts, saveAccounts, createAccount, deleteAccount,
 } from './clawser-accounts.js';
 
+import {
+  tokenize, parse, normalizePath, ShellState, CommandRegistry,
+  execute, registerBuiltins, ClawserShell, ShellTool, MemoryFs,
+} from './clawser-shell.js';
+
 const results = document.getElementById('results');
 let passed = 0, failed = 0;
 
@@ -2468,6 +2473,593 @@ section('addErrorMsg — DOM & Retry');
   } finally {
     container.remove();
   }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SHELL — Tokenizer
+// ═══════════════════════════════════════════════════════════════
+
+section('Shell — Tokenizer');
+
+{
+  // Simple command
+  const t1 = tokenize('echo hello world');
+  assertEq('tokenize simple command', t1.map(t => t.value), ['echo', 'hello', 'world', '']);
+
+  // Pipe
+  const t2 = tokenize('ls | grep foo');
+  assertEq('tokenize pipe', t2.map(t => t.type), ['WORD', 'PIPE', 'WORD', 'WORD', 'EOF']);
+
+  // AND / OR
+  const t3 = tokenize('a && b || c');
+  assertEq('tokenize && and ||', t3.map(t => t.type), ['WORD', 'AND', 'WORD', 'OR', 'WORD', 'EOF']);
+
+  // Semicolon
+  const t4 = tokenize('a ; b');
+  assertEq('tokenize semicolon', t4.map(t => t.type), ['WORD', 'SEMI', 'WORD', 'EOF']);
+
+  // Redirects
+  const t5 = tokenize('echo hi > out.txt');
+  assertEq('tokenize redirect >', t5.map(t => t.type), ['WORD', 'WORD', 'REDIRECT_OUT', 'WORD', 'EOF']);
+  const t6 = tokenize('echo hi >> log.txt');
+  assertEq('tokenize redirect >>', t6.map(t => t.type), ['WORD', 'WORD', 'REDIRECT_APPEND', 'WORD', 'EOF']);
+
+  // Double-quoted strings
+  const t7 = tokenize('echo "hello world" done');
+  assertEq('tokenize double quotes', t7.map(t => t.value), ['echo', 'hello world', 'done', '']);
+
+  // Single-quoted strings
+  const t8 = tokenize("echo 'hello world'");
+  assertEq('tokenize single quotes', t8.map(t => t.value), ['echo', 'hello world', '']);
+
+  // Backslash escape
+  const t9 = tokenize('echo hello\\ world');
+  assertEq('tokenize backslash escape', t9.map(t => t.value), ['echo', 'hello world', '']);
+
+  // Escape in double quotes
+  const t10 = tokenize('echo "say \\"hi\\""');
+  assertEq('tokenize escape in double quotes', t10[1].value, 'say "hi"');
+
+  // Empty input
+  const t11 = tokenize('');
+  assertEq('tokenize empty', t11.length, 1);
+  assertEq('tokenize empty is EOF', t11[0].type, 'EOF');
+
+  // Multiple pipes
+  const t12 = tokenize('a | b | c');
+  assertEq('tokenize multiple pipes', t12.filter(t => t.type === 'PIPE').length, 2);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SHELL — Parser
+// ═══════════════════════════════════════════════════════════════
+
+section('Shell — Parser');
+
+{
+  // Simple command
+  const ast1 = parse('echo hello world');
+  assertEq('parse simple command type', ast1.type, 'command');
+  assertEq('parse simple command name', ast1.name, 'echo');
+  assertEq('parse simple command args', ast1.args, ['hello', 'world']);
+
+  // Pipeline
+  const ast2 = parse('ls | grep foo | head -5');
+  assertEq('parse pipeline type', ast2.type, 'pipeline');
+  assertEq('parse pipeline command count', ast2.commands.length, 3);
+  assertEq('parse pipeline cmd names', ast2.commands.map(c => c.name), ['ls', 'grep', 'head']);
+
+  // Pipeline with redirect
+  const ast3 = parse('ls | grep foo > results.txt');
+  assertEq('parse pipeline+redirect type', ast3.type, 'pipeline');
+  assertEq('parse pipeline redirect', ast3.redirect.type, 'write');
+  assertEq('parse pipeline redirect path', ast3.redirect.path, 'results.txt');
+
+  // Append redirect
+  const ast4 = parse('echo hi >> log.txt');
+  assertEq('parse append redirect type', ast4.type, 'pipeline');
+  assertEq('parse append redirect', ast4.redirect.type, 'append');
+
+  // List with &&
+  const ast5 = parse('build && test');
+  assertEq('parse list type', ast5.type, 'list');
+  assertEq('parse list operators', ast5.operators, ['&&']);
+  assertEq('parse list command count', ast5.commands.length, 2);
+
+  // List with mixed operators
+  const ast6 = parse('a && b || c ; d');
+  assertEq('parse mixed list operators', ast6.operators, ['&&', '||', ';']);
+  assertEq('parse mixed list cmd count', ast6.commands.length, 4);
+
+  // Empty input
+  const ast7 = parse('');
+  assertEq('parse empty input', ast7, null);
+
+  // Trailing semicolon
+  const ast8 = parse('echo hi;');
+  assertEq('parse trailing semicolon', ast8.type, 'command');
+
+  // Syntax error: pipe with no following command
+  try { parse('echo hi |'); assert('parse error on trailing pipe', false); }
+  catch (e) { assert('parse error on trailing pipe', e instanceof SyntaxError); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SHELL — normalizePath
+// ═══════════════════════════════════════════════════════════════
+
+section('Shell — normalizePath');
+
+{
+  assertEq('normalize root', normalizePath('/'), '/');
+  assertEq('normalize simple', normalizePath('/foo/bar'), '/foo/bar');
+  assertEq('normalize trailing slash', normalizePath('/foo/bar/'), '/foo/bar');
+  assertEq('normalize double slash', normalizePath('//foo//bar'), '/foo/bar');
+  assertEq('normalize dot', normalizePath('/foo/./bar'), '/foo/bar');
+  assertEq('normalize dotdot', normalizePath('/foo/bar/..'), '/foo');
+  assertEq('normalize dotdot past root', normalizePath('/foo/../..'), '/');
+  assertEq('normalize complex', normalizePath('/a/b/../c/./d'), '/a/c/d');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SHELL — ShellState
+// ═══════════════════════════════════════════════════════════════
+
+section('Shell — ShellState');
+
+{
+  const st = new ShellState();
+  assertEq('ShellState initial cwd', st.cwd, '/');
+  assertEq('ShellState initial lastExitCode', st.lastExitCode, 0);
+  assert('ShellState initial env is Map', st.env instanceof Map);
+  assert('ShellState initial history is array', Array.isArray(st.history));
+  assertEq('ShellState pipefail default', st.pipefail, true);
+
+  // resolvePath
+  assertEq('resolvePath absolute', st.resolvePath('/foo/bar'), '/foo/bar');
+  assertEq('resolvePath relative from root', st.resolvePath('foo'), '/foo');
+  assertEq('resolvePath empty returns cwd', st.resolvePath(''), '/');
+  assertEq('resolvePath null returns cwd', st.resolvePath(null), '/');
+
+  st.cwd = '/home';
+  assertEq('resolvePath relative from /home', st.resolvePath('docs'), '/home/docs');
+  assertEq('resolvePath .. from /home', st.resolvePath('..'), '/');
+  assertEq('resolvePath absolute ignores cwd', st.resolvePath('/tmp'), '/tmp');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SHELL — Built-in Commands (echo, true, false, pwd, env, export)
+// ═══════════════════════════════════════════════════════════════
+
+section('Shell — Built-in Commands (basic)');
+
+{
+  const reg = new CommandRegistry();
+  registerBuiltins(reg);
+  const st = new ShellState();
+
+  // echo
+  const echo1 = await reg.get('echo')({ args: ['hello', 'world'], stdin: '', state: st, registry: reg });
+  assertEq('echo output', echo1.stdout, 'hello world\n');
+  assertEq('echo exit 0', echo1.exitCode, 0);
+
+  // true / false
+  const t = await reg.get('true')({ args: [], stdin: '', state: st, registry: reg });
+  assertEq('true exit 0', t.exitCode, 0);
+  const f = await reg.get('false')({ args: [], stdin: '', state: st, registry: reg });
+  assertEq('false exit 1', f.exitCode, 1);
+
+  // pwd
+  st.cwd = '/home/user';
+  const pwd = await reg.get('pwd')({ args: [], stdin: '', state: st, registry: reg });
+  assertEq('pwd output', pwd.stdout, '/home/user\n');
+
+  // env (empty)
+  const env1 = await reg.get('env')({ args: [], stdin: '', state: st, registry: reg });
+  assertEq('env empty', env1.stdout, '');
+
+  // export + env
+  await reg.get('export')({ args: ['FOO=bar', 'BAZ=qux'], stdin: '', state: st, registry: reg });
+  assertEq('export sets env', st.env.get('FOO'), 'bar');
+  assertEq('export sets env 2', st.env.get('BAZ'), 'qux');
+  const env2 = await reg.get('env')({ args: [], stdin: '', state: st, registry: reg });
+  assert('env output includes vars', env2.stdout.includes('FOO=bar'));
+
+  // which
+  const wh1 = await reg.get('which')({ args: ['echo'], stdin: '', state: st, registry: reg });
+  assertEq('which found', wh1.exitCode, 0);
+  assert('which output', wh1.stdout.includes('built-in'));
+  const wh2 = await reg.get('which')({ args: ['nonexistent'], stdin: '', state: st, registry: reg });
+  assertEq('which not found', wh2.exitCode, 1);
+
+  // help
+  const help = await reg.get('help')({ args: [], stdin: '', state: st, registry: reg });
+  assertEq('help exit 0', help.exitCode, 0);
+  assert('help includes echo', help.stdout.includes('echo'));
+  assert('help includes grep', help.stdout.includes('grep'));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SHELL — Built-in Commands (text processing: head, tail, grep, wc, sort, uniq)
+// ═══════════════════════════════════════════════════════════════
+
+section('Shell — Built-in Commands (text processing)');
+
+{
+  const reg = new CommandRegistry();
+  registerBuiltins(reg);
+  const st = new ShellState();
+  const input = 'line1\nline2\nline3\nline4\nline5\n';
+
+  // head default (10 lines, our input has 5)
+  const head1 = await reg.get('head')({ args: [], stdin: input, state: st, registry: reg });
+  assert('head default', head1.stdout.includes('line1'));
+
+  // head -3
+  const head2 = await reg.get('head')({ args: ['-3'], stdin: input, state: st, registry: reg });
+  assertEq('head -3', head2.stdout, 'line1\nline2\nline3\n');
+
+  // head -n 2
+  const head3 = await reg.get('head')({ args: ['-n', '2'], stdin: input, state: st, registry: reg });
+  assertEq('head -n 2', head3.stdout, 'line1\nline2\n');
+
+  // tail -2
+  const tail1 = await reg.get('tail')({ args: ['-2'], stdin: input, state: st, registry: reg });
+  assertEq('tail -2', tail1.stdout, 'line4\nline5\n');
+
+  // grep
+  const grep1 = await reg.get('grep')({ args: ['line3'], stdin: input, state: st, registry: reg });
+  assertEq('grep match', grep1.stdout, 'line3\n');
+  assertEq('grep match exit 0', grep1.exitCode, 0);
+
+  const grep2 = await reg.get('grep')({ args: ['nope'], stdin: input, state: st, registry: reg });
+  assertEq('grep no match exit 1', grep2.exitCode, 1);
+
+  // grep -i (case insensitive)
+  const grep3 = await reg.get('grep')({ args: ['-i', 'LINE1'], stdin: input, state: st, registry: reg });
+  assertEq('grep -i', grep3.stdout, 'line1\n');
+
+  // grep -v (invert)
+  const grep4 = await reg.get('grep')({ args: ['-v', 'line[12]'], stdin: input, state: st, registry: reg });
+  assert('grep -v', grep4.stdout.includes('line3') && !grep4.stdout.includes('line1'));
+
+  // grep -c (count)
+  const grep5 = await reg.get('grep')({ args: ['-c', 'line'], stdin: input, state: st, registry: reg });
+  assertEq('grep -c', grep5.stdout, '5\n');
+
+  // wc
+  const wc1 = await reg.get('wc')({ args: [], stdin: input, state: st, registry: reg });
+  assertEq('wc default (lines)', wc1.stdout.trim().startsWith('5'), true);
+
+  const wc2 = await reg.get('wc')({ args: ['-l'], stdin: input, state: st, registry: reg });
+  assertEq('wc -l', wc2.stdout, '5\n');
+
+  const wc3 = await reg.get('wc')({ args: ['-w'], stdin: 'hello world\n', state: st, registry: reg });
+  assertEq('wc -w', wc3.stdout, '2\n');
+
+  // sort
+  const sortInput = 'banana\napple\ncherry\n';
+  const sort1 = await reg.get('sort')({ args: [], stdin: sortInput, state: st, registry: reg });
+  assertEq('sort', sort1.stdout, 'apple\nbanana\ncherry\n');
+
+  const sort2 = await reg.get('sort')({ args: ['-r'], stdin: sortInput, state: st, registry: reg });
+  assertEq('sort -r', sort2.stdout, 'cherry\nbanana\napple\n');
+
+  const sort3 = await reg.get('sort')({ args: ['-n'], stdin: '10\n2\n1\n', state: st, registry: reg });
+  assertEq('sort -n', sort3.stdout, '1\n2\n10\n');
+
+  // uniq
+  const uniqInput = 'a\na\nb\nb\nb\nc\n';
+  const uniq1 = await reg.get('uniq')({ args: [], stdin: uniqInput, state: st, registry: reg });
+  assertEq('uniq', uniq1.stdout, 'a\nb\nc\n');
+
+  const uniq2 = await reg.get('uniq')({ args: ['-c'], stdin: uniqInput, state: st, registry: reg });
+  assert('uniq -c', uniq2.stdout.includes('2 a') && uniq2.stdout.includes('3 b'));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SHELL — Built-in Commands (filesystem: ls, cat, mkdir, rm, cp, mv, cd)
+// ═══════════════════════════════════════════════════════════════
+
+section('Shell — Built-in Commands (filesystem)');
+
+{
+  const reg = new CommandRegistry();
+  registerBuiltins(reg);
+  const st = new ShellState();
+  const fs = new MemoryFs();
+
+  // Setup test files
+  await fs.writeFile('/hello.txt', 'Hello World');
+  await fs.writeFile('/data/users.json', '{"users":[]}');
+  await fs.mkdir('/empty-dir');
+
+  // ls
+  const ls1 = await reg.get('ls')({ args: [], stdin: '', state: st, registry: reg, fs });
+  assert('ls root includes hello.txt', ls1.stdout.includes('hello.txt'));
+  assert('ls root includes data/', ls1.stdout.includes('data'));
+
+  // cat
+  const cat1 = await reg.get('cat')({ args: ['hello.txt'], stdin: '', state: st, registry: reg, fs });
+  assertEq('cat reads file', cat1.stdout, 'Hello World');
+  assertEq('cat exit 0', cat1.exitCode, 0);
+
+  const cat2 = await reg.get('cat')({ args: ['nonexistent'], stdin: '', state: st, registry: reg, fs });
+  assertEq('cat missing file exit 1', cat2.exitCode, 1);
+
+  // cat passthrough (no args)
+  const cat3 = await reg.get('cat')({ args: [], stdin: 'from pipe', state: st, registry: reg, fs });
+  assertEq('cat passthrough', cat3.stdout, 'from pipe');
+
+  // mkdir
+  const mkdir1 = await reg.get('mkdir')({ args: ['newdir'], stdin: '', state: st, registry: reg, fs });
+  assertEq('mkdir exit 0', mkdir1.exitCode, 0);
+  const stat1 = await fs.stat('/newdir');
+  assertEq('mkdir created dir', stat1.kind, 'directory');
+
+  // cd
+  const cd1 = await reg.get('cd')({ args: ['data'], stdin: '', state: st, registry: reg, fs });
+  assertEq('cd exit 0', cd1.exitCode, 0);
+  assertEq('cd changed cwd', st.cwd, '/data');
+
+  const cd2 = await reg.get('cd')({ args: ['..'], stdin: '', state: st, registry: reg, fs });
+  assertEq('cd .. works', st.cwd, '/');
+
+  // cp
+  const cp1 = await reg.get('cp')({ args: ['hello.txt', 'copy.txt'], stdin: '', state: st, registry: reg, fs });
+  assertEq('cp exit 0', cp1.exitCode, 0);
+  const cpContent = await fs.readFile('/copy.txt');
+  assertEq('cp content', cpContent, 'Hello World');
+
+  // mv
+  const mv1 = await reg.get('mv')({ args: ['copy.txt', 'moved.txt'], stdin: '', state: st, registry: reg, fs });
+  assertEq('mv exit 0', mv1.exitCode, 0);
+  const mvContent = await fs.readFile('/moved.txt');
+  assertEq('mv content', mvContent, 'Hello World');
+  const mvOld = await fs.stat('/copy.txt');
+  assertEq('mv deleted source', mvOld, null);
+
+  // rm
+  const rm1 = await reg.get('rm')({ args: ['moved.txt'], stdin: '', state: st, registry: reg, fs });
+  assertEq('rm exit 0', rm1.exitCode, 0);
+  const rmStat = await fs.stat('/moved.txt');
+  assertEq('rm deleted file', rmStat, null);
+
+  // rm -r directory
+  await fs.writeFile('/to-delete/file.txt', 'x');
+  const rm2 = await reg.get('rm')({ args: ['-r', 'to-delete'], stdin: '', state: st, registry: reg, fs });
+  assertEq('rm -r exit 0', rm2.exitCode, 0);
+
+  // tee
+  const tee1 = await reg.get('tee')({ args: ['tee-out.txt'], stdin: 'piped data', state: st, registry: reg, fs });
+  assertEq('tee stdout passthrough', tee1.stdout, 'piped data');
+  const teeContent = await fs.readFile('/tee-out.txt');
+  assertEq('tee wrote file', teeContent, 'piped data');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SHELL — Executor (pipeline, list, redirect)
+// ═══════════════════════════════════════════════════════════════
+
+section('Shell — Executor');
+
+{
+  const reg = new CommandRegistry();
+  registerBuiltins(reg);
+  const st = new ShellState();
+  const fs = new MemoryFs();
+
+  // Pipeline: echo | grep
+  const pipe1 = await execute(
+    parse('echo hello world | grep hello'),
+    st, reg, { fs }
+  );
+  assertEq('pipeline echo|grep stdout', pipe1.stdout, 'hello world\n');
+  assertEq('pipeline echo|grep exit 0', pipe1.exitCode, 0);
+
+  // Pipeline: echo | head
+  const pipe2 = await execute(
+    parse('echo "line1\nline2\nline3" | head -2'),
+    st, reg, { fs }
+  );
+  assertEq('pipeline echo|head', pipe2.stdout, 'line1\nline2\n');
+
+  // Redirect: echo > file
+  await execute(parse('echo redirect-test > /redirected.txt'), st, reg, { fs });
+  const rContent = await fs.readFile('/redirected.txt');
+  assertEq('redirect > writes file', rContent, 'redirect-test\n');
+
+  // Redirect append: echo >> file
+  await execute(parse('echo line2 >> /redirected.txt'), st, reg, { fs });
+  const rContent2 = await fs.readFile('/redirected.txt');
+  assertEq('redirect >> appends', rContent2, 'redirect-test\nline2\n');
+
+  // List with &&: true && echo should run
+  const and1 = await execute(parse('true && echo success'), st, reg, { fs });
+  assertEq('&& runs on success', and1.stdout, 'success\n');
+
+  // List with &&: false && echo should NOT run
+  const and2 = await execute(parse('false && echo nope'), st, reg, { fs });
+  assertEq('&& skips on failure exit', and2.exitCode, 1);
+  assertEq('&& skips on failure no output', and2.stdout, '');
+
+  // List with ||: false || echo should run
+  const or1 = await execute(parse('false || echo fallback'), st, reg, { fs });
+  assertEq('|| runs on failure', or1.stdout, 'fallback\n');
+
+  // List with ||: true || echo should NOT run
+  const or2 = await execute(parse('true || echo nope'), st, reg, { fs });
+  assertEq('|| skips on success', or2.stdout, '');
+
+  // Semicolon: always runs
+  const semi1 = await execute(parse('echo a ; echo b'), st, reg, { fs });
+  assertEq('; last command runs', semi1.stdout, 'b\n');
+
+  // Command not found
+  const notfound = await execute(parse('nonexistent'), st, reg, { fs });
+  assertEq('command not found exit 127', notfound.exitCode, 127);
+  assert('command not found stderr', notfound.stderr.includes('command not found'));
+
+  // Pipefail: false | echo should fail with pipefail
+  st.pipefail = true;
+  const pf1 = await execute(parse('false | echo bypassed'), st, reg, { fs });
+  assertEq('pipefail aborts pipeline', pf1.exitCode, 1);
+
+  // Pipefail disabled: false | echo should succeed
+  st.pipefail = false;
+  const pf2 = await execute(parse('false | echo bypassed'), st, reg, { fs });
+  assertEq('pipefail disabled succeeds', pf2.exitCode, 0);
+  st.pipefail = true; // restore
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SHELL — ClawserShell Integration
+// ═══════════════════════════════════════════════════════════════
+
+section('Shell — ClawserShell Integration');
+
+{
+  const fs = new MemoryFs();
+  const shell = new ClawserShell({ fs });
+
+  // Basic exec
+  const r1 = await shell.exec('echo hello');
+  assertEq('shell exec echo', r1.stdout, 'hello\n');
+  assertEq('shell exec exit 0', r1.exitCode, 0);
+
+  // History recording
+  assertEq('shell history recorded', shell.state.history.length, 1);
+  assertEq('shell history content', shell.state.history[0], 'echo hello');
+
+  // Empty command
+  const r2 = await shell.exec('');
+  assertEq('shell empty command', r2.exitCode, 0);
+
+  // Syntax error
+  const r3 = await shell.exec('echo hi |');
+  assertEq('shell syntax error exit 2', r3.exitCode, 2);
+  assert('shell syntax error stderr', r3.stderr.includes('syntax error'));
+
+  // Shell state: cd + pwd
+  await shell.exec('mkdir /project');
+  await shell.exec('cd /project');
+  assertEq('shell cd changes cwd', shell.state.cwd, '/project');
+  const r4 = await shell.exec('pwd');
+  assertEq('shell pwd after cd', r4.stdout, '/project\n');
+
+  // Shell state: export + env
+  await shell.exec('export MY_VAR=42');
+  assertEq('shell export', shell.state.env.get('MY_VAR'), '42');
+
+  // Shell state: $? (lastExitCode)
+  await shell.exec('true');
+  assertEq('shell $? after true', shell.state.lastExitCode, 0);
+  await shell.exec('false');
+  assertEq('shell $? after false', shell.state.lastExitCode, 1);
+
+  // Complex pipeline
+  await fs.writeFile('/names.txt', 'Charlie\nAlice\nBob\nAlice\n');
+  const r5 = await shell.exec('cat /names.txt | sort | uniq');
+  assertEq('shell complex pipeline', r5.stdout, 'Alice\nBob\nCharlie\n');
+
+  // .clawserrc sourcing
+  await fs.writeFile('/.clawserrc', '# Config\nexport SHELL_INIT=done\nexport APP=clawser\n');
+  const shell2 = new ClawserShell({ fs });
+  await shell2.source('/.clawserrc');
+  assertEq('source .clawserrc sets env', shell2.state.env.get('SHELL_INIT'), 'done');
+  assertEq('source .clawserrc second var', shell2.state.env.get('APP'), 'clawser');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SHELL — ShellTool
+// ═══════════════════════════════════════════════════════════════
+
+section('Shell — ShellTool');
+
+{
+  const fs = new MemoryFs();
+  const shell = new ClawserShell({ fs });
+  const tool = new ShellTool(() => shell);
+
+  // Tool spec
+  assertEq('ShellTool name', tool.name, 'shell');
+  assert('ShellTool description', tool.description.includes('pipe'));
+  assertEq('ShellTool permission', tool.permission, 'internal');
+
+  // Execute success
+  const r1 = await tool.execute({ command: 'echo hello from tool' });
+  assertEq('ShellTool success', r1.success, true);
+  assert('ShellTool output', r1.output.includes('hello from tool'));
+
+  // Execute failure
+  const r2 = await tool.execute({ command: 'false' });
+  assertEq('ShellTool failure', r2.success, false);
+
+  // No shell
+  const nullTool = new ShellTool(() => null);
+  const r3 = await nullTool.execute({ command: 'echo test' });
+  assertEq('ShellTool no shell', r3.success, false);
+  assert('ShellTool no shell error', r3.error.includes('No active shell'));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SHELL — MemoryFs
+// ═══════════════════════════════════════════════════════════════
+
+section('Shell — MemoryFs');
+
+{
+  const fs = new MemoryFs();
+
+  // Write and read
+  await fs.writeFile('/test.txt', 'hello');
+  const content = await fs.readFile('/test.txt');
+  assertEq('MemoryFs write+read', content, 'hello');
+
+  // Auto-create parent dirs
+  await fs.writeFile('/a/b/c.txt', 'deep');
+  const deep = await fs.readFile('/a/b/c.txt');
+  assertEq('MemoryFs auto-create parents', deep, 'deep');
+
+  // listDir
+  await fs.writeFile('/dir/file1.txt', '1');
+  await fs.writeFile('/dir/file2.txt', '2');
+  const entries = await fs.listDir('/dir');
+  assertEq('MemoryFs listDir count', entries.length, 2);
+  assert('MemoryFs listDir names', entries.some(e => e.name === 'file1.txt'));
+
+  // mkdir
+  await fs.mkdir('/newdir');
+  const stat = await fs.stat('/newdir');
+  assertEq('MemoryFs mkdir', stat.kind, 'directory');
+
+  // delete file
+  await fs.delete('/test.txt');
+  const gone = await fs.stat('/test.txt');
+  assertEq('MemoryFs delete file', gone, null);
+
+  // delete non-empty dir without recursive
+  await fs.writeFile('/notempty/child.txt', 'x');
+  try { await fs.delete('/notempty'); assert('MemoryFs delete non-empty throws', false); }
+  catch { assert('MemoryFs delete non-empty throws', true); }
+
+  // delete non-empty dir with recursive
+  await fs.delete('/notempty', true);
+  assertEq('MemoryFs delete recursive', await fs.stat('/notempty'), null);
+
+  // copy
+  await fs.writeFile('/src.txt', 'copy me');
+  await fs.copy('/src.txt', '/dst.txt');
+  assertEq('MemoryFs copy', await fs.readFile('/dst.txt'), 'copy me');
+
+  // move
+  await fs.move('/dst.txt', '/moved.txt');
+  assertEq('MemoryFs move read', await fs.readFile('/moved.txt'), 'copy me');
+  assertEq('MemoryFs move source gone', await fs.stat('/dst.txt'), null);
+
+  // read nonexistent
+  try { await fs.readFile('/nope.txt'); assert('MemoryFs read nonexistent throws', false); }
+  catch { assert('MemoryFs read nonexistent throws', true); }
 }
 
 // ═══════════════════════════════════════════════════════════════

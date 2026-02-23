@@ -306,6 +306,7 @@ export async function newConversation() {
 
   resetChatUI();
   resetConversationState();
+  emit('newShellSession');
   emit('renderSkills');
   updateCostDisplay();
   updateConvNameDisplay();
@@ -329,6 +330,7 @@ export async function switchConversation(convId) {
   $('convDropdown').classList.remove('visible');
 
   resetConversationState();
+  emit('newShellSession');
   updateCostDisplay();
 
   state.agent.reinit({});

@@ -42,6 +42,7 @@ export const state = {
   slashSelectedIdx: -1,
   pendingImportBlob: null,
   skillRegistry: null,
+  shell: null,
   // Service singletons (set by clawser-app.js)
   workspaceFs: null,
   browserTools: null,
@@ -96,6 +97,7 @@ export function resetConversationState() {
 //   'renderSkills'        — ui-chat              → app (calls renderSkills())
 //   'saveConfig'          — ui-chat              → app (calls saveConfig())
 //   'conversationChanged' — transitions          → consumers (signals conv switch)
+//   'newShellSession'     — ui-chat              → app (creates fresh shell)
 //   'error'               — ui-chat              → consumers (error occurred)
 const _listeners = {};
 
