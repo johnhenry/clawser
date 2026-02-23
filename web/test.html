@@ -38,7 +38,7 @@ import { SkillParser } from './clawser-skills.js';
 
 import { $, esc, state, on, off, emit, lsKey, setSending, setConversation, resetConversationState } from './clawser-state.js';
 
-import { ClawserAgent, AutonomyController } from './clawser-agent.js';
+import { ClawserAgent, AutonomyController, HookPipeline, HOOK_POINTS, createAuditLoggerHook } from './clawser-agent.js';
 
 import {
   deriveKey, encryptSecret, decryptSecret,
@@ -3595,6 +3595,236 @@ section('Autonomy — agent integration');
   const r2 = await agent2.run();
   assertEq('cost blocked agent fails', r2.status, -1);
   assert('cost blocked message', r2.data.includes('Cost limit'));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  HookPipeline
+// ═══════════════════════════════════════════════════════════════
+
+section('Hooks — HOOK_POINTS constant');
+{
+  assertEq('6 hook points', HOOK_POINTS.length, 6);
+  assert('has beforeInbound', HOOK_POINTS.includes('beforeInbound'));
+  assert('has beforeToolCall', HOOK_POINTS.includes('beforeToolCall'));
+  assert('has beforeOutbound', HOOK_POINTS.includes('beforeOutbound'));
+  assert('has transformResponse', HOOK_POINTS.includes('transformResponse'));
+  assert('has onSessionStart', HOOK_POINTS.includes('onSessionStart'));
+  assert('has onSessionEnd', HOOK_POINTS.includes('onSessionEnd'));
+}
+
+section('Hooks — register and list');
+{
+  const pipeline = new HookPipeline();
+  assertEq('empty pipeline size', pipeline.size, 0);
+
+  pipeline.register({
+    name: 'test-hook',
+    point: 'beforeInbound',
+    priority: 50,
+    execute: async () => ({ action: 'continue' }),
+  });
+
+  assertEq('size after register', pipeline.size, 1);
+  const list = pipeline.list();
+  assertEq('list length', list.length, 1);
+  assertEq('list name', list[0].name, 'test-hook');
+  assertEq('list point', list[0].point, 'beforeInbound');
+  assertEq('list priority', list[0].priority, 50);
+  assertEq('list enabled', list[0].enabled, true);
+
+  // Invalid hook point
+  try {
+    pipeline.register({ name: 'bad', point: 'invalidPoint', execute: async () => ({}) });
+    assert('invalid point throws', false);
+  } catch (e) {
+    assert('invalid point throws', e.message.includes('Invalid hook point'));
+  }
+}
+
+section('Hooks — run continue');
+{
+  const pipeline = new HookPipeline();
+  pipeline.register({
+    name: 'pass-through',
+    point: 'beforeInbound',
+    execute: async (ctx) => ({ action: 'continue' }),
+  });
+
+  const result = await pipeline.run('beforeInbound', { message: 'hello' });
+  assertEq('not blocked', result.blocked, false);
+  assertEq('context preserved', result.ctx.message, 'hello');
+}
+
+section('Hooks — run block');
+{
+  const pipeline = new HookPipeline();
+  pipeline.register({
+    name: 'blocker',
+    point: 'beforeToolCall',
+    execute: async () => ({ action: 'block', reason: 'not allowed' }),
+  });
+
+  const result = await pipeline.run('beforeToolCall', { toolName: 'fs_write', args: {} });
+  assertEq('blocked', result.blocked, true);
+  assertEq('reason', result.reason, 'not allowed');
+}
+
+section('Hooks — run modify');
+{
+  const pipeline = new HookPipeline();
+  pipeline.register({
+    name: 'modifier',
+    point: 'beforeInbound',
+    execute: async (ctx) => ({ action: 'modify', data: { message: ctx.message.toUpperCase() } }),
+  });
+
+  const result = await pipeline.run('beforeInbound', { message: 'hello' });
+  assertEq('not blocked', result.blocked, false);
+  assertEq('message modified', result.ctx.message, 'HELLO');
+}
+
+section('Hooks — priority ordering');
+{
+  const pipeline = new HookPipeline();
+  const order = [];
+
+  pipeline.register({
+    name: 'second',
+    point: 'beforeInbound',
+    priority: 200,
+    execute: async () => { order.push('second'); return { action: 'continue' }; },
+  });
+  pipeline.register({
+    name: 'first',
+    point: 'beforeInbound',
+    priority: 10,
+    execute: async () => { order.push('first'); return { action: 'continue' }; },
+  });
+
+  await pipeline.run('beforeInbound', {});
+  assertEq('first hook runs first', order[0], 'first');
+  assertEq('second hook runs second', order[1], 'second');
+}
+
+section('Hooks — disabled hooks skipped');
+{
+  const pipeline = new HookPipeline();
+  let called = false;
+
+  pipeline.register({
+    name: 'disabled-hook',
+    point: 'beforeInbound',
+    enabled: false,
+    execute: async () => { called = true; return { action: 'block', reason: 'should not reach' }; },
+  });
+
+  const result = await pipeline.run('beforeInbound', {});
+  assertEq('disabled not blocked', result.blocked, false);
+  assert('disabled not called', !called);
+
+  // Enable it
+  pipeline.setEnabled('disabled-hook', true);
+  const result2 = await pipeline.run('beforeInbound', {});
+  assert('enabled blocks', result2.blocked);
+}
+
+section('Hooks — unregister');
+{
+  const pipeline = new HookPipeline();
+  pipeline.register({ name: 'temp', point: 'beforeToolCall', execute: async () => ({ action: 'block' }) });
+  assertEq('registered', pipeline.size, 1);
+
+  pipeline.unregister('temp', 'beforeToolCall');
+  assertEq('unregistered', pipeline.size, 0);
+
+  // Run should pass through with no hooks
+  const result = await pipeline.run('beforeToolCall', {});
+  assertEq('no hooks = not blocked', result.blocked, false);
+}
+
+section('Hooks — error handling (fail-open)');
+{
+  const pipeline = new HookPipeline();
+  pipeline.register({
+    name: 'crasher',
+    point: 'beforeInbound',
+    execute: async () => { throw new Error('hook crashed'); },
+  });
+  pipeline.register({
+    name: 'after-crash',
+    point: 'beforeInbound',
+    priority: 200,
+    execute: async () => ({ action: 'continue' }),
+  });
+
+  // Should not throw, fail-open behavior
+  const result = await pipeline.run('beforeInbound', { message: 'test' });
+  assertEq('fail-open not blocked', result.blocked, false);
+}
+
+section('Hooks — audit logger');
+{
+  const logs = [];
+  const hook = createAuditLoggerHook((name, args, ts) => logs.push({ name, args, ts }));
+
+  const pipeline = new HookPipeline();
+  pipeline.register(hook);
+
+  await pipeline.run('beforeToolCall', { toolName: 'fs_read', args: { path: '/test' } });
+  assertEq('audit log count', logs.length, 1);
+  assertEq('audit log name', logs[0].name, 'fs_read');
+  assert('audit log timestamp', typeof logs[0].ts === 'number');
+}
+
+section('Hooks — agent integration (beforeInbound)');
+{
+  const providers = createDefaultProviders();
+  const hooks = new HookPipeline();
+
+  // Register a hook that uppercases input
+  hooks.register({
+    name: 'uppercaser',
+    point: 'beforeInbound',
+    execute: async (ctx) => ({ action: 'modify', data: { message: ctx.message.toUpperCase() } }),
+  });
+
+  const agent = await ClawserAgent.create({ providers, hooks, onEvent: () => {} });
+  agent.init({});
+  agent.setProvider('echo');
+  agent.setSystemPrompt('test');
+  agent.sendMessage('hello world');
+
+  const r = await agent.run();
+  assertEq('agent with hook works', r.status, 1);
+  // Echo provider echoes back the (modified) message
+  assert('hook modified message echoed', r.data.includes('HELLO WORLD'));
+}
+
+section('Hooks — agent integration (beforeInbound block)');
+{
+  const providers = createDefaultProviders();
+  const hooks = new HookPipeline();
+
+  hooks.register({
+    name: 'content-filter',
+    point: 'beforeInbound',
+    execute: async (ctx) => {
+      if (ctx.message.includes('blocked-word')) {
+        return { action: 'block', reason: 'content filtered' };
+      }
+      return { action: 'continue' };
+    },
+  });
+
+  const agent = await ClawserAgent.create({ providers, hooks, onEvent: () => {} });
+  agent.init({});
+  agent.setProvider('echo');
+  agent.setSystemPrompt('test');
+  agent.sendMessage('this has blocked-word in it');
+
+  const r = await agent.run();
+  assertEq('blocked message fails', r.status, -1);
+  assert('blocked reason', r.data.includes('content filtered'));
 }
 
 // ═══════════════════════════════════════════════════════════════

@@ -197,6 +197,148 @@ class EventLog {
   }
 }
 
+// ── HookPipeline ──────────────────────────────────────────────
+// Lifecycle hooks allow intercepting the agent pipeline at 6 points:
+//   beforeInbound, beforeToolCall, beforeOutbound, transformResponse,
+//   onSessionStart, onSessionEnd
+
+/** @typedef {'beforeInbound'|'beforeToolCall'|'beforeOutbound'|'transformResponse'|'onSessionStart'|'onSessionEnd'} HookPoint */
+/** @typedef {{action: 'continue'|'block'|'modify'|'skip', reason?: string, data?: object}} HookResult */
+
+export const HOOK_POINTS = ['beforeInbound', 'beforeToolCall', 'beforeOutbound', 'transformResponse', 'onSessionStart', 'onSessionEnd'];
+
+export class HookPipeline {
+  /** @type {Map<string, Array<{name: string, point: string, priority: number, enabled: boolean, execute: Function}>>} */
+  #hooks = new Map();
+
+  /**
+   * Register a hook at a specific pipeline point.
+   * @param {{name: string, point: HookPoint, priority?: number, enabled?: boolean, execute: Function}} hook
+   */
+  register(hook) {
+    if (!HOOK_POINTS.includes(hook.point)) {
+      throw new Error(`Invalid hook point: ${hook.point}`);
+    }
+    const entry = {
+      name: hook.name,
+      point: hook.point,
+      priority: hook.priority ?? 100,
+      enabled: hook.enabled !== false,
+      execute: hook.execute,
+    };
+    const list = this.#hooks.get(hook.point) || [];
+    list.push(entry);
+    list.sort((a, b) => a.priority - b.priority);
+    this.#hooks.set(hook.point, list);
+  }
+
+  /**
+   * Remove a hook by name and point.
+   * @param {string} name
+   * @param {HookPoint} point
+   */
+  unregister(name, point) {
+    const list = this.#hooks.get(point);
+    if (!list) return;
+    const idx = list.findIndex(h => h.name === name);
+    if (idx !== -1) list.splice(idx, 1);
+  }
+
+  /**
+   * Enable or disable a hook by name.
+   * @param {string} name
+   * @param {boolean} enabled
+   */
+  setEnabled(name, enabled) {
+    for (const list of this.#hooks.values()) {
+      for (const h of list) {
+        if (h.name === name) h.enabled = enabled;
+      }
+    }
+  }
+
+  /**
+   * Run all hooks at a given pipeline point.
+   * Hooks run in priority order (lower = first). A `block` result halts the pipeline.
+   * A `modify` result merges data into the context for subsequent hooks.
+   * @param {HookPoint} point
+   * @param {object} ctx - Context object specific to the hook point
+   * @returns {Promise<{blocked: boolean, reason?: string, ctx: object}>}
+   */
+  async run(point, ctx) {
+    const hooks = this.#hooks.get(point) || [];
+    let currentCtx = { ...ctx };
+
+    for (const hook of hooks) {
+      if (!hook.enabled) continue;
+      let result;
+      try {
+        result = await hook.execute(currentCtx);
+      } catch (e) {
+        // Fail-open: hook errors don't block the pipeline
+        console.error(`[hook:${hook.name}]`, e);
+        continue;
+      }
+
+      if (!result || typeof result !== 'object') continue;
+
+      switch (result.action) {
+        case 'block':
+          return { blocked: true, reason: result.reason || hook.name, ctx: currentCtx };
+        case 'modify':
+          if (result.data && typeof result.data === 'object') {
+            currentCtx = { ...currentCtx, ...result.data };
+          }
+          break;
+        case 'skip':
+        case 'continue':
+        default:
+          break;
+      }
+    }
+
+    return { blocked: false, ctx: currentCtx };
+  }
+
+  /**
+   * List all registered hooks.
+   * @returns {Array<{name: string, point: string, priority: number, enabled: boolean}>}
+   */
+  list() {
+    const result = [];
+    for (const list of this.#hooks.values()) {
+      for (const h of list) {
+        result.push({ name: h.name, point: h.point, priority: h.priority, enabled: h.enabled });
+      }
+    }
+    return result;
+  }
+
+  /** Get count of registered hooks across all points. */
+  get size() {
+    let total = 0;
+    for (const list of this.#hooks.values()) total += list.length;
+    return total;
+  }
+}
+
+/**
+ * Built-in audit logger hook. Records all tool calls to the event log.
+ * @param {Function} onLog - Called with (toolName, args, timestamp) on each tool call
+ * @returns {object} Hook definition for HookPipeline.register()
+ */
+export function createAuditLoggerHook(onLog) {
+  return {
+    name: 'audit-logger',
+    point: 'beforeToolCall',
+    priority: 10,
+    execute: async (ctx) => {
+      onLog(ctx.toolName, ctx.args, Date.now());
+      return { action: 'continue' };
+    },
+  };
+}
+
 // ── AutonomyController ─────────────────────────────────────────
 // Enforces autonomy levels (readonly, supervised, full) and rate/cost limits.
 
@@ -365,6 +507,8 @@ export class ClawserAgent {
   #responseCache = null;
   /** @type {AutonomyController} */
   #autonomy = new AutonomyController();
+  /** @type {HookPipeline} */
+  #hooks = new HookPipeline();
 
   // ── Workspace ────────────────────────────────────────────────
   #workspaceId = 'default';
@@ -402,6 +546,7 @@ export class ClawserAgent {
     agent.#providers = opts.providers || null;
     agent.#responseCache = opts.responseCache || null;
     if (opts.autonomy) agent.#autonomy = opts.autonomy;
+    if (opts.hooks) agent.#hooks = opts.hooks;
     agent.#onToolCall = opts.onToolCall || (() => {});
 
     if (agent.#browserTools) {
@@ -510,6 +655,9 @@ export class ClawserAgent {
   /** Get the autonomy controller for level/limit management */
   get autonomy() { return this.#autonomy; }
 
+  /** Get the hook pipeline for registering lifecycle hooks */
+  get hooks() { return this.#hooks; }
+
   /** Get available providers with availability info */
   async getProviders() {
     if (!this.#providers) return [];
@@ -592,6 +740,23 @@ export class ClawserAgent {
       }
 
       let result;
+
+      // Lifecycle hook: beforeToolCall
+      const hookResult = await this.#hooks.run('beforeToolCall', {
+        toolName: call.name,
+        args: params,
+        conversationId: null,
+      });
+      if (hookResult.blocked) {
+        result = { success: false, output: '', error: `Blocked by hook: ${hookResult.reason}` };
+        this.#onToolCall(call.name, params, result);
+        results.push({ id: call.id, name: call.name, result });
+        continue;
+      }
+      // Hooks may modify args
+      if (hookResult.ctx.args !== params) {
+        params = hookResult.ctx.args;
+      }
 
       // Autonomy: check if tool is allowed at current level
       const toolObj = this.#browserTools?.get(call.name);
@@ -783,6 +948,18 @@ export class ClawserAgent {
       return { status: -1, data: limitsCheck.reason };
     }
 
+    // Lifecycle hook: beforeInbound (last user message)
+    const lastUserMsg = this.#history.findLast(m => m.role === 'user');
+    if (lastUserMsg) {
+      const inbound = await this.#hooks.run('beforeInbound', { message: lastUserMsg.content });
+      if (inbound.blocked) {
+        return { status: -1, data: `Blocked: ${inbound.reason}` };
+      }
+      if (inbound.ctx.message !== lastUserMsg.content) {
+        lastUserMsg.content = inbound.ctx.message;
+      }
+    }
+
     let maxIterations = this.#config.maxToolIterations || 20;
     let codexDone = false;
 
@@ -928,6 +1105,19 @@ export class ClawserAgent {
       this.#eventLog.append('autonomy_blocked', { reason: limitsCheck.reason }, 'system');
       yield { type: 'error', error: limitsCheck.reason };
       return;
+    }
+
+    // Lifecycle hook: beforeInbound
+    const lastUserMsg = this.#history.findLast(m => m.role === 'user');
+    if (lastUserMsg) {
+      const inbound = await this.#hooks.run('beforeInbound', { message: lastUserMsg.content });
+      if (inbound.blocked) {
+        yield { type: 'error', error: `Blocked: ${inbound.reason}` };
+        return;
+      }
+      if (inbound.ctx.message !== lastUserMsg.content) {
+        lastUserMsg.content = inbound.ctx.message;
+      }
     }
 
     let maxIterations = this.#config.maxToolIterations || 20;
