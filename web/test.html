@@ -151,6 +151,13 @@ import {
   BrowserWaitTool, BrowserEvaluateTool, BrowserListTabsTool, BrowserCloseTabTool,
 } from './clawser-browser-auto.js';
 
+import {
+  SANDBOX_TIERS, CAPABILITIES, SANDBOX_LIMITS,
+  CapabilityGate, WORKER_CODE,
+  WorkerSandbox, WasmSandbox, SandboxManager,
+  SandboxRunTool, SandboxStatusTool,
+} from './clawser-sandbox.js';
+
 import { $, esc, state, on, off, emit, lsKey, setSending, setConversation, resetConversationState } from './clawser-state.js';
 
 import { ClawserAgent, AutonomyController, HookPipeline, HOOK_POINTS, createAuditLoggerHook } from './clawser-agent.js';
@@ -8525,6 +8532,165 @@ section('BrowserAuto: Agent Tools');
 
   const evalT = new BrowserEvaluateTool(mgr);
   assertEq('eval name', evalT.name, 'browser_evaluate');
+}
+
+// ── Block 28: WASM Tool Sandbox ──────────────────────────────────
+
+section('Sandbox: Constants');
+{
+  assertEq('TRUSTED', SANDBOX_TIERS.TRUSTED, 0);
+  assertEq('WORKER', SANDBOX_TIERS.WORKER, 1);
+  assertEq('WASM', SANDBOX_TIERS.WASM, 2);
+  assert('tiers frozen', Object.isFrozen(SANDBOX_TIERS));
+  assert('caps frozen', Object.isFrozen(CAPABILITIES));
+  assert('net:fetch tier 1', CAPABILITIES['net:fetch'].tier === 1);
+  assert('dom:read tier 0', CAPABILITIES['dom:read'].tier === 0);
+  assert('worker timeout', SANDBOX_LIMITS[1].timeout === 10_000);
+  assert('wasm fuel', SANDBOX_LIMITS[2].fuelLimit === 1_000_000);
+}
+
+section('Sandbox: CapabilityGate');
+{
+  const gate = new CapabilityGate(['time:now', 'crypto:random']);
+  assert('has time:now', gate.has('time:now'));
+  assert('no net:fetch', !gate.has('net:fetch'));
+  assertEq('size', gate.size, 2);
+
+  let threw = false;
+  try { gate.check('time:now'); } catch { threw = true; }
+  assert('allowed no throw', !threw);
+
+  let err;
+  try { gate.check('net:fetch'); } catch (e) { err = e; }
+  assert('denied throws', !!err);
+
+  gate.grant('net:fetch');
+  assert('granted', gate.has('net:fetch'));
+  gate.revoke('net:fetch');
+  assert('revoked', !gate.has('net:fetch'));
+
+  // Tier validation
+  const g2 = new CapabilityGate(['dom:read']);
+  const v = g2.validateForTier(2);
+  assert('dom:read invalid at tier 2', !v.valid);
+
+  // Proxy
+  let called = false;
+  const proxy = gate.createProxy({ 'time:now': () => { called = true; } });
+  proxy.time_now();
+  assert('proxy called', called);
+}
+
+section('Sandbox: WorkerSandbox');
+{
+  function mockWorker() {
+    const w = {
+      onmessage: null,
+      postMessage(data) {
+        setTimeout(() => {
+          try {
+            const fn = new Function('args', data.code);
+            const result = fn(data.args);
+            if (w.onmessage) w.onmessage({ data: { id: data.id, result } });
+          } catch (e) {
+            if (w.onmessage) w.onmessage({ data: { id: data.id, error: e.message } });
+          }
+        }, 1);
+      },
+      terminate() {},
+    };
+    return w;
+  }
+
+  const sb = new WorkerSandbox({ createWorkerFn: mockWorker });
+  assert('active', sb.active);
+  const result = await sb.execute('return args.x + args.y', { x: 3, y: 4 });
+  assertEq('worker result', result, 7);
+  assert('log entry', sb.getLog().length >= 1);
+
+  sb.terminate();
+  assert('terminated', !sb.active);
+}
+
+section('Sandbox: WasmSandbox');
+{
+  const sb = new WasmSandbox({
+    evalFn: async (code, args) => { const fn = new Function('args', code); return fn(args); },
+  });
+  assert('active', sb.active);
+  const r = await sb.execute('return args.a * args.b', { a: 6, b: 7 });
+  assertEq('wasm result', r, 42);
+  assert('fuel used', sb.fuelConsumed > 0);
+  sb.resetFuel();
+  assertEq('fuel reset', sb.fuelConsumed, 0);
+  sb.terminate();
+  assert('terminated', !sb.active);
+}
+
+section('Sandbox: SandboxManager');
+{
+  const logs = [];
+  function mockWorker() {
+    const w = {
+      onmessage: null,
+      postMessage(d) { setTimeout(() => { if (w.onmessage) w.onmessage({ data: { id: d.id, result: 'ok' } }); }, 1); },
+      terminate() {},
+    };
+    return w;
+  }
+
+  const mgr = new SandboxManager({
+    onLog: m => logs.push(m),
+    createWorkerFn: mockWorker,
+    wasmEvalFn: async (code, args) => { const fn = new Function('args', code); return fn(args); },
+  });
+
+  assertEq('empty', mgr.count, 0);
+
+  mgr.create('worker_tool', { tier: SANDBOX_TIERS.WORKER, capabilities: ['net:fetch'] });
+  mgr.create('wasm_tool', { tier: SANDBOX_TIERS.WASM, capabilities: ['time:now'] });
+  assertEq('2 sandboxes', mgr.count, 2);
+
+  const wr = await mgr.execute('worker_tool', 'return 1', {});
+  assertEq('worker exec', wr, 'ok');
+  const wasmR = await mgr.execute('wasm_tool', 'return args.x + 1', { x: 9 });
+  assertEq('wasm exec', wasmR, 10);
+
+  const list = mgr.list();
+  assertEq('list 2', list.length, 2);
+
+  // Invalid caps
+  let err;
+  try { mgr.create('bad', { tier: SANDBOX_TIERS.WASM, capabilities: ['dom:read'] }); }
+  catch (e) { err = e; }
+  assert('invalid caps', !!err);
+
+  mgr.terminate('worker_tool');
+  assertEq('after terminate', mgr.count, 1);
+  mgr.terminateAll();
+  assertEq('all gone', mgr.count, 0);
+}
+
+section('Sandbox: Agent Tools');
+{
+  const mgr = new SandboxManager({
+    wasmEvalFn: async (code, args) => { const fn = new Function('args', code); return fn(args); },
+  });
+  mgr.create('calc', { tier: SANDBOX_TIERS.WASM });
+
+  const rt = new SandboxRunTool(mgr);
+  assertEq('run name', rt.name, 'sandbox_run');
+  assertEq('run perm', rt.permission, 'approve');
+  const r1 = await rt.execute({ sandbox: 'calc', code: 'return args.n * 2', args: { n: 5 } });
+  assert('run ok', r1.success);
+  const r2 = await rt.execute({ sandbox: 'nope', code: 'return 1' });
+  assert('run not found', !r2.success);
+
+  const st = new SandboxStatusTool(mgr);
+  assertEq('status name', st.name, 'sandbox_status');
+  assertEq('status perm', st.permission, 'read');
+  const r3 = await st.execute();
+  assert('status has sandbox', r3.output.includes('calc'));
 }
 
 // ═══════════════════════════════════════════════════════════════
