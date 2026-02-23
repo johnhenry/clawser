@@ -24,6 +24,7 @@
 
 import { lsKey } from './clawser-state.js';
 import { Codex } from './clawser-codex.js';
+import { SafetyPipeline } from './clawser-safety.js';
 
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
@@ -509,6 +510,8 @@ export class ClawserAgent {
   #autonomy = new AutonomyController();
   /** @type {HookPipeline} */
   #hooks = new HookPipeline();
+  /** @type {SafetyPipeline} */
+  #safety = new SafetyPipeline();
 
   // ── Workspace ────────────────────────────────────────────────
   #workspaceId = 'default';
@@ -547,6 +550,7 @@ export class ClawserAgent {
     agent.#responseCache = opts.responseCache || null;
     if (opts.autonomy) agent.#autonomy = opts.autonomy;
     if (opts.hooks) agent.#hooks = opts.hooks;
+    if (opts.safety) agent.#safety = opts.safety;
     agent.#onToolCall = opts.onToolCall || (() => {});
 
     if (agent.#browserTools) {
@@ -658,6 +662,9 @@ export class ClawserAgent {
   /** Get the hook pipeline for registering lifecycle hooks */
   get hooks() { return this.#hooks; }
 
+  /** Get the safety pipeline for input/output scanning */
+  get safety() { return this.#safety; }
+
   /** Get available providers with availability info */
   async getProviders() {
     if (!this.#providers) return [];
@@ -758,6 +765,16 @@ export class ClawserAgent {
         params = hookResult.ctx.args;
       }
 
+      // Safety: validate tool call arguments
+      const validation = this.#safety.validateToolCall(call.name, params);
+      if (!validation.valid) {
+        const msg = validation.issues[0]?.msg || 'Validation failed';
+        result = { success: false, output: '', error: `Safety: ${msg}` };
+        this.#onToolCall(call.name, params, result);
+        results.push({ id: call.id, name: call.name, result });
+        continue;
+      }
+
       // Autonomy: check if tool is allowed at current level
       const toolObj = this.#browserTools?.get(call.name);
       if (toolObj && !this.#autonomy.canExecuteTool(toolObj)) {
@@ -794,6 +811,14 @@ export class ClawserAgent {
       else {
         result = { success: false, output: '', error: `Tool not found: ${call.name}` };
         this.#onToolCall(call.name, params, result);
+      }
+
+      // Safety: scan tool output for leaked secrets
+      if (result && result.output) {
+        const scanResult = this.#safety.scanOutput(result.output);
+        if (scanResult.findings.length > 0) {
+          result = { ...result, output: scanResult.content };
+        }
       }
 
       results.push({ id: call.id, name: call.name, result });
