@@ -1063,3 +1063,464 @@ export class DeactivateSkillTool extends BrowserTool {
     };
   }
 }
+
+// ── Semver Lite ──────────────────────────────────────────────────
+
+/**
+ * Compare two semver strings. Returns -1, 0, or 1.
+ * Handles partial versions (e.g. "1.0" treated as "1.0.0").
+ * @param {string} a
+ * @param {string} b
+ * @returns {-1|0|1}
+ */
+export function semverCompare(a, b) {
+  const pa = (a || '0.0.0').split('.').map(Number);
+  const pb = (b || '0.0.0').split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    const va = pa[i] || 0;
+    const vb = pb[i] || 0;
+    if (va > vb) return 1;
+    if (va < vb) return -1;
+  }
+  return 0;
+}
+
+/**
+ * Check if version a is greater than version b.
+ * @param {string} a
+ * @param {string} b
+ * @returns {boolean}
+ */
+export function semverGt(a, b) { return semverCompare(a, b) === 1; }
+
+// ── Requirements Validation ─────────────────────────────────────
+
+/**
+ * Validate skill requirements against available tools and permissions.
+ * @param {object} metadata - Skill metadata with optional `requires` field
+ * @param {object} [context] - Available context
+ * @param {string[]} [context.tools] - Available tool names
+ * @param {string[]} [context.permissions] - Available permission categories
+ * @returns {{ satisfied: boolean, missing: { tools: string[], permissions: string[] } }}
+ */
+export function validateRequirements(metadata, context = {}) {
+  const requires = metadata.requires || {};
+  const missingTools = [];
+  const missingPerms = [];
+
+  if (Array.isArray(requires.tools)) {
+    const available = new Set(context.tools || []);
+    for (const tool of requires.tools) {
+      if (!available.has(tool)) missingTools.push(tool);
+    }
+  }
+
+  if (Array.isArray(requires.permissions)) {
+    const available = new Set(context.permissions || []);
+    for (const perm of requires.permissions) {
+      if (!available.has(perm)) missingPerms.push(perm);
+    }
+  }
+
+  return {
+    satisfied: missingTools.length === 0 && missingPerms.length === 0,
+    missing: { tools: missingTools, permissions: missingPerms },
+  };
+}
+
+// ── SkillRegistryClient ─────────────────────────────────────────
+
+const DEFAULT_REGISTRY_URL = 'https://raw.githubusercontent.com/clawser/skills-registry/main';
+
+/**
+ * Client for browsing and installing skills from a remote registry.
+ * The registry is a GitHub repo with an index.json and skills/ subdirectory.
+ */
+export class SkillRegistryClient {
+  #registryUrl;
+  #indexCache = null;
+  #indexCacheTime = 0;
+  #cacheTTL;
+
+  /**
+   * @param {object} [opts]
+   * @param {string} [opts.registryUrl] - Base URL of the registry repo (raw content)
+   * @param {number} [opts.cacheTTL=300000] - Index cache TTL in ms (default 5 min)
+   */
+  constructor(opts = {}) {
+    this.#registryUrl = (opts.registryUrl || DEFAULT_REGISTRY_URL).replace(/\/$/, '');
+    this.#cacheTTL = opts.cacheTTL ?? 300_000;
+  }
+
+  /** Get the registry base URL */
+  get registryUrl() { return this.#registryUrl; }
+
+  /** Set a new registry URL */
+  set registryUrl(url) {
+    this.#registryUrl = (url || DEFAULT_REGISTRY_URL).replace(/\/$/, '');
+    this.#indexCache = null;
+  }
+
+  /**
+   * Fetch the registry index (cached).
+   * @returns {Promise<Array<{name: string, version: string, description: string, author: string, tags: string[], path: string}>>}
+   */
+  async fetchIndex() {
+    if (this.#indexCache && (Date.now() - this.#indexCacheTime) < this.#cacheTTL) {
+      return this.#indexCache;
+    }
+    const resp = await fetch(`${this.#registryUrl}/index.json`);
+    if (!resp.ok) throw new Error(`Registry fetch failed: ${resp.status} ${resp.statusText}`);
+    const data = await resp.json();
+    this.#indexCache = data.skills || [];
+    this.#indexCacheTime = Date.now();
+    return this.#indexCache;
+  }
+
+  /**
+   * Search the registry for skills matching a query.
+   * @param {string} query - Search string (matched against name, description, tags)
+   * @param {object} [opts]
+   * @param {string[]} [opts.tags] - Filter by tags
+   * @param {number} [opts.limit=20] - Max results
+   * @returns {Promise<Array<object>>}
+   */
+  async search(query, opts = {}) {
+    const index = await this.fetchIndex();
+    const limit = opts.limit || 20;
+    const queryLower = (query || '').toLowerCase();
+    const filterTags = opts.tags ? new Set(opts.tags.map(t => t.toLowerCase())) : null;
+
+    let results = index;
+
+    // Tag filter
+    if (filterTags) {
+      results = results.filter(s =>
+        Array.isArray(s.tags) && s.tags.some(t => filterTags.has(t.toLowerCase()))
+      );
+    }
+
+    // Text search
+    if (queryLower) {
+      results = results.map(s => {
+        const text = `${s.name} ${s.description} ${(s.tags || []).join(' ')} ${s.author || ''}`.toLowerCase();
+        const score = queryLower.split(/\s+/).reduce((sum, term) => sum + (text.includes(term) ? 1 : 0), 0);
+        return { ...s, _score: score };
+      }).filter(s => s._score > 0)
+        .sort((a, b) => b._score - a._score);
+    }
+
+    return results.slice(0, limit);
+  }
+
+  /**
+   * Fetch a SKILL.md from the registry by name.
+   * @param {string} name
+   * @returns {Promise<{content: string, metadata: object, body: string}>}
+   */
+  async getSkill(name) {
+    const index = await this.fetchIndex();
+    const entry = index.find(s => s.name === name);
+    if (!entry) throw new Error(`Skill "${name}" not found in registry`);
+
+    const url = `${this.#registryUrl}/${entry.path}`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`Failed to fetch skill: ${resp.status}`);
+    const content = await resp.text();
+    const { metadata, body } = SkillParser.parseFrontmatter(content);
+    return { content, metadata, body };
+  }
+
+  /**
+   * Install a skill from a URL (any raw SKILL.md URL).
+   * @param {string} url - URL to a SKILL.md file
+   * @param {SkillRegistry} registry
+   * @param {'global'|'workspace'} [scope='global']
+   * @param {string|null} [wsId]
+   * @returns {Promise<{name: string, metadata: object}>}
+   */
+  async installFromUrl(url, registry, scope = 'global', wsId = null) {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`Failed to fetch: ${resp.status}`);
+    const content = await resp.text();
+
+    const { metadata } = SkillParser.parseFrontmatter(content);
+    const validation = SkillParser.validateMetadata(metadata);
+    if (!validation.valid) {
+      throw new Error(`Invalid skill: ${validation.errors.join(', ')}`);
+    }
+
+    const files = new Map([['SKILL.md', content]]);
+    return registry.install(scope, wsId, files);
+  }
+
+  /**
+   * Install a skill from the registry by name.
+   * @param {string} name
+   * @param {SkillRegistry} registry
+   * @param {'global'|'workspace'} [scope='global']
+   * @param {string|null} [wsId]
+   * @param {object} [context] - For requirements validation {tools, permissions}
+   * @returns {Promise<{name: string, metadata: object, warnings: string[]}>}
+   */
+  async installFromRegistry(name, registry, scope = 'global', wsId = null, context = {}) {
+    const { content, metadata } = await this.getSkill(name);
+    const warnings = [];
+
+    // Check requirements
+    const reqCheck = validateRequirements(metadata, context);
+    if (!reqCheck.satisfied) {
+      if (reqCheck.missing.tools.length > 0) {
+        warnings.push(`Missing tools: ${reqCheck.missing.tools.join(', ')}`);
+      }
+      if (reqCheck.missing.permissions.length > 0) {
+        warnings.push(`Missing permissions: ${reqCheck.missing.permissions.join(', ')}`);
+      }
+    }
+
+    const files = new Map([['SKILL.md', content]]);
+    const result = await registry.install(scope, wsId, files);
+    return { ...result, warnings };
+  }
+
+  /**
+   * Check if an installed skill has an update available.
+   * @param {string} name
+   * @param {string} currentVersion
+   * @returns {Promise<{available: boolean, latest: string|null}>}
+   */
+  async checkUpdate(name, currentVersion) {
+    try {
+      const index = await this.fetchIndex();
+      const entry = index.find(s => s.name === name);
+      if (!entry) return { available: false, latest: null };
+      return {
+        available: semverGt(entry.version, currentVersion),
+        latest: entry.version,
+      };
+    } catch {
+      return { available: false, latest: null };
+    }
+  }
+
+  /** Clear the cached index */
+  clearCache() {
+    this.#indexCache = null;
+    this.#indexCacheTime = 0;
+  }
+}
+
+// ── Skill Registry Agent Tools ──────────────────────────────────
+
+/**
+ * Tool for searching the remote skill registry.
+ */
+export class SkillSearchTool extends BrowserTool {
+  #client;
+
+  constructor(client) {
+    super();
+    this.#client = client;
+  }
+
+  get name() { return 'skill_search'; }
+  get description() { return 'Search the skill registry for installable skills.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Search query (matches name, description, tags)' },
+        tags: { type: 'string', description: 'Comma-separated tags to filter by (optional)' },
+      },
+      required: ['query'],
+    };
+  }
+  get permission() { return 'network'; }
+
+  async execute({ query, tags }) {
+    try {
+      const opts = {};
+      if (tags) opts.tags = tags.split(',').map(t => t.trim());
+      const results = await this.#client.search(query, opts);
+      if (results.length === 0) {
+        return { success: true, output: 'No skills found matching your query.' };
+      }
+      const lines = results.map(s =>
+        `${s.name} v${s.version || '?'} — ${s.description || 'No description'}` +
+        (s.author ? ` (by ${s.author})` : '') +
+        (s.tags?.length ? ` [${s.tags.join(', ')}]` : '')
+      );
+      return { success: true, output: lines.join('\n') };
+    } catch (e) {
+      return { success: false, output: '', error: e.message };
+    }
+  }
+}
+
+/**
+ * Tool for installing skills from URL or registry.
+ */
+export class SkillInstallTool extends BrowserTool {
+  #client;
+  #registry;
+  #wsId;
+
+  constructor(client, registry, wsId = 'default') {
+    super();
+    this.#client = client;
+    this.#registry = registry;
+    this.#wsId = wsId;
+  }
+
+  get name() { return 'skill_install'; }
+  get description() { return 'Install a skill from the registry by name or from a URL.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Skill name from registry, or full URL to a SKILL.md' },
+        scope: { type: 'string', description: 'Install scope: "global" or "workspace" (default: global)' },
+      },
+      required: ['name'],
+    };
+  }
+  get permission() { return 'network'; }
+
+  async execute({ name, scope = 'global' }) {
+    try {
+      let result;
+      if (name.startsWith('http://') || name.startsWith('https://')) {
+        result = await this.#client.installFromUrl(name, this.#registry, scope, this.#wsId);
+      } else {
+        result = await this.#client.installFromRegistry(name, this.#registry, scope, this.#wsId);
+      }
+      let msg = `Skill "${result.name}" installed (${scope}).`;
+      if (result.warnings?.length) {
+        msg += ` Warnings: ${result.warnings.join('; ')}`;
+      }
+      return { success: true, output: msg };
+    } catch (e) {
+      return { success: false, output: '', error: e.message };
+    }
+  }
+}
+
+/**
+ * Tool for updating installed skills.
+ */
+export class SkillUpdateTool extends BrowserTool {
+  #client;
+  #registry;
+  #wsId;
+
+  constructor(client, registry, wsId = 'default') {
+    super();
+    this.#client = client;
+    this.#registry = registry;
+    this.#wsId = wsId;
+  }
+
+  get name() { return 'skill_update'; }
+  get description() { return 'Check for and install updates for an installed skill.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Skill name to update' },
+      },
+      required: ['name'],
+    };
+  }
+  get permission() { return 'network'; }
+
+  async execute({ name }) {
+    try {
+      const entry = this.#registry.skills.get(name);
+      if (!entry) return { success: false, output: '', error: `Skill "${name}" is not installed.` };
+
+      const currentVersion = entry.metadata?.version || '0.0.0';
+      const check = await this.#client.checkUpdate(name, currentVersion);
+      if (!check.available) {
+        return { success: true, output: `Skill "${name}" is already at the latest version (${currentVersion}).` };
+      }
+
+      const result = await this.#client.installFromRegistry(name, this.#registry, entry.scope, this.#wsId);
+      return { success: true, output: `Skill "${name}" updated from ${currentVersion} to ${check.latest}.` };
+    } catch (e) {
+      return { success: false, output: '', error: e.message };
+    }
+  }
+}
+
+/**
+ * Tool for removing installed skills.
+ */
+export class SkillRemoveTool extends BrowserTool {
+  #registry;
+  #wsId;
+
+  constructor(registry, wsId = 'default') {
+    super();
+    this.#registry = registry;
+    this.#wsId = wsId;
+  }
+
+  get name() { return 'skill_remove'; }
+  get description() { return 'Uninstall a skill.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Skill name to remove' },
+      },
+      required: ['name'],
+    };
+  }
+  get permission() { return 'write'; }
+
+  async execute({ name }) {
+    try {
+      if (!this.#registry.skills.has(name)) {
+        return { success: false, output: '', error: `Skill "${name}" is not installed.` };
+      }
+      await this.#registry.uninstall(name, this.#wsId);
+      return { success: true, output: `Skill "${name}" removed.` };
+    } catch (e) {
+      return { success: false, output: '', error: e.message };
+    }
+  }
+}
+
+/**
+ * Tool for listing installed skills.
+ */
+export class SkillListTool extends BrowserTool {
+  #registry;
+
+  constructor(registry) {
+    super();
+    this.#registry = registry;
+  }
+
+  get name() { return 'skill_list'; }
+  get description() { return 'List all installed skills with their status.'; }
+  get parameters() {
+    return { type: 'object', properties: {} };
+  }
+  get permission() { return 'read'; }
+
+  async execute() {
+    const skills = [...this.#registry.skills.values()];
+    if (skills.length === 0) {
+      return { success: true, output: 'No skills installed.' };
+    }
+    const activeNames = new Set(this.#registry.activeSkills.keys());
+    const lines = skills.map(s => {
+      const version = s.metadata?.version ? ` v${s.metadata.version}` : '';
+      const status = activeNames.has(s.name) ? ' [active]' : s.enabled ? '' : ' [disabled]';
+      const scope = s.scope === 'workspace' ? ' (ws)' : ' (global)';
+      return `${s.name}${version}${scope}${status} — ${s.description || 'No description'}`;
+    });
+    return { success: true, output: lines.join('\n') };
+  }
+}

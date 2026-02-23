@@ -34,7 +34,11 @@ import {
   ResponseCache,
 } from './clawser-providers.js';
 
-import { SkillParser } from './clawser-skills.js';
+import {
+  SkillParser, SkillRegistry, SkillRegistryClient,
+  semverCompare, semverGt, validateRequirements,
+  SkillSearchTool, SkillInstallTool, SkillUpdateTool, SkillRemoveTool, SkillListTool,
+} from './clawser-skills.js';
 
 import { $, esc, state, on, off, emit, lsKey, setSending, setConversation, resetConversationState } from './clawser-state.js';
 
@@ -4518,6 +4522,168 @@ section('SemanticMemory — agent integration');
   agent.memoryStore({ key: 'dup', content: 'second', category: 'user', timestamp: 2 });
   const removed = agent.memoryHygiene();
   assert('hygiene removed dups', removed >= 1);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SKILL REGISTRY — Semver Compare
+// ═══════════════════════════════════════════════════════════════
+
+section('SkillRegistry — semverCompare');
+
+{
+  assertEq('equal', semverCompare('1.0.0', '1.0.0'), 0);
+  assertEq('gt major', semverCompare('2.0.0', '1.0.0'), 1);
+  assertEq('lt major', semverCompare('1.0.0', '2.0.0'), -1);
+  assertEq('gt minor', semverCompare('1.2.0', '1.1.0'), 1);
+  assertEq('gt patch', semverCompare('1.0.2', '1.0.1'), 1);
+  assertEq('partial version', semverCompare('1.0', '1.0.0'), 0);
+  assertEq('null a', semverCompare(null, '1.0.0'), -1);
+  assert('semverGt true', semverGt('2.0.0', '1.9.9'));
+  assert('semverGt false', !semverGt('1.0.0', '1.0.0'));
+  assert('semverGt false lt', !semverGt('0.9.0', '1.0.0'));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SKILL REGISTRY — Requirements Validation
+// ═══════════════════════════════════════════════════════════════
+
+section('SkillRegistry — validateRequirements');
+
+{
+  // All satisfied
+  const meta1 = { requires: { tools: ['browser_fetch', 'web_search'], permissions: ['network'] } };
+  const ctx1 = { tools: ['browser_fetch', 'web_search', 'fs_read'], permissions: ['network', 'read'] };
+  const r1 = validateRequirements(meta1, ctx1);
+  assert('all satisfied', r1.satisfied);
+  assertEq('no missing tools', r1.missing.tools.length, 0);
+
+  // Missing tools
+  const meta2 = { requires: { tools: ['browser_fetch', 'imaginary_tool'] } };
+  const r2 = validateRequirements(meta2, { tools: ['browser_fetch'] });
+  assert('not satisfied', !r2.satisfied);
+  assertEq('missing one tool', r2.missing.tools.length, 1);
+  assertEq('missing tool name', r2.missing.tools[0], 'imaginary_tool');
+
+  // Missing permissions
+  const meta3 = { requires: { permissions: ['network', 'browser'] } };
+  const r3 = validateRequirements(meta3, { permissions: ['network'] });
+  assert('missing perm', !r3.satisfied);
+  assertEq('missing perm count', r3.missing.permissions.length, 1);
+
+  // No requires field
+  const r4 = validateRequirements({});
+  assert('no requires = satisfied', r4.satisfied);
+
+  // Empty context
+  const meta5 = { requires: { tools: ['foo'] } };
+  const r5 = validateRequirements(meta5);
+  assert('empty context missing', !r5.satisfied);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SKILL REGISTRY — SkillRegistryClient (offline)
+// ═══════════════════════════════════════════════════════════════
+
+section('SkillRegistry — SkillRegistryClient');
+
+{
+  const client = new SkillRegistryClient({ registryUrl: 'https://example.com/registry' });
+  assertEq('url set', client.registryUrl, 'https://example.com/registry');
+
+  // Change URL
+  client.registryUrl = 'https://other.com/reg/';
+  assertEq('url trailing slash stripped', client.registryUrl, 'https://other.com/reg');
+
+  // clearCache doesn't throw
+  client.clearCache();
+  assert('clearCache ok', true);
+
+  // Default URL
+  const client2 = new SkillRegistryClient();
+  assert('default url', client2.registryUrl.includes('clawser'));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SKILL REGISTRY — Agent Tools (unit)
+// ═══════════════════════════════════════════════════════════════
+
+section('SkillRegistry — tool specs');
+
+{
+  const client = new SkillRegistryClient();
+  const registry = new SkillRegistry();
+
+  const searchTool = new SkillSearchTool(client);
+  assertEq('search name', searchTool.name, 'skill_search');
+  assert('search has params', searchTool.parameters.properties.query);
+  assertEq('search permission', searchTool.permission, 'network');
+
+  const installTool = new SkillInstallTool(client, registry);
+  assertEq('install name', installTool.name, 'skill_install');
+  assert('install has name param', installTool.parameters.properties.name);
+
+  const updateTool = new SkillUpdateTool(client, registry);
+  assertEq('update name', updateTool.name, 'skill_update');
+
+  const removeTool = new SkillRemoveTool(registry);
+  assertEq('remove name', removeTool.name, 'skill_remove');
+  assertEq('remove permission', removeTool.permission, 'write');
+
+  const listTool = new SkillListTool(registry);
+  assertEq('list name', listTool.name, 'skill_list');
+
+  // list with no skills
+  const listResult = await listTool.execute({});
+  assert('list empty ok', listResult.success);
+  assert('list empty message', listResult.output.includes('No skills'));
+
+  // remove non-existent
+  const removeResult = await removeTool.execute({ name: 'nonexistent' });
+  assert('remove nonexistent fails', !removeResult.success);
+
+  // update non-existent
+  const updateResult = await updateTool.execute({ name: 'nonexistent' });
+  assert('update nonexistent fails', !updateResult.success);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SKILL REGISTRY — Extended metadata parsing
+// ═══════════════════════════════════════════════════════════════
+
+section('SkillRegistry — extended metadata');
+
+{
+  const skillMd = `---
+name: web-researcher
+version: 1.2.0
+description: Deep web research with source verification
+author: "@testuser"
+license: MIT
+tags: [research, web, citations]
+requires:
+  tools: [browser_fetch, web_search]
+  permissions: [network]
+---
+
+# Web Researcher
+
+You are a research assistant.`;
+
+  const { metadata, body } = SkillParser.parseFrontmatter(skillMd);
+  assertEq('name', metadata.name, 'web-researcher');
+  assertEq('version', metadata.version, '1.2.0');
+  assertEq('author', metadata.author, '@testuser');
+  assertEq('license', metadata.license, 'MIT');
+  assert('tags array', Array.isArray(metadata.tags));
+  assertEq('tags count', metadata.tags.length, 3);
+  assert('requires object', typeof metadata.requires === 'object');
+  assert('requires tools', Array.isArray(metadata.requires.tools));
+  assertEq('requires tools count', metadata.requires.tools.length, 2);
+  assert('body present', body.includes('research assistant'));
+
+  // Validate
+  const v = SkillParser.validateMetadata(metadata);
+  assert('valid', v.valid);
 }
 
 // ═══════════════════════════════════════════════════════════════
