@@ -25,6 +25,7 @@
 import { lsKey } from './clawser-state.js';
 import { Codex } from './clawser-codex.js';
 import { SafetyPipeline } from './clawser-safety.js';
+import { SemanticMemory } from './clawser-memory.js';
 
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
@@ -478,8 +479,8 @@ export class ClawserAgent {
   #config = { maxToolIterations: 20, maxHistoryMessages: 50 };
 
   // ── Memory backend ───────────────────────────────────────────
-  #memoryEntries = [];    // Array<{id, key, content, category, timestamp, score?}>
-  #memoryNextId = 1;
+  /** @type {SemanticMemory} */
+  #memory = new SemanticMemory();
 
   // ── Scheduler ────────────────────────────────────────────────
   #schedulerJobs = [];    // Array<ScheduledJob>
@@ -532,6 +533,7 @@ export class ClawserAgent {
    * @param {import('./clawser-mcp.js').McpManager} [opts.mcpManager]
    * @param {import('./clawser-providers.js').ResponseCache} [opts.responseCache]
    * @param {AutonomyController} [opts.autonomy]
+   * @param {SemanticMemory} [opts.memory]
    * @param {Function} [opts.onEvent]
    * @param {Function} [opts.onLog]
    * @param {Function} [opts.onToolCall]
@@ -551,6 +553,7 @@ export class ClawserAgent {
     if (opts.autonomy) agent.#autonomy = opts.autonomy;
     if (opts.hooks) agent.#hooks = opts.hooks;
     if (opts.safety) agent.#safety = opts.safety;
+    if (opts.memory) agent.#memory = opts.memory;
     agent.#onToolCall = opts.onToolCall || (() => {});
 
     if (agent.#browserTools) {
@@ -1447,7 +1450,7 @@ export class ClawserAgent {
       agent_state: 'Idle',
       history_len: this.#history.length,
       goals: this.#goals,
-      memory_count: this.#memoryEntries.length,
+      memory_count: this.#memory.size,
       scheduler_jobs: this.#schedulerJobs.length,
     };
   }
@@ -1476,75 +1479,85 @@ export class ClawserAgent {
    * @returns {string} Assigned memory ID
    */
   memoryStore(entry) {
-    const defaults = {
-      id: '',
-      timestamp: Date.now(),
-      category: 'core',
+    const id = this.#memory.store({
       ...entry,
-    };
-    if (!defaults.id) {
-      defaults.id = `mem_${this.#memoryNextId++}`;
-    } else {
-      // Ensure nextId stays ahead of any restored IDs
-      const num = parseInt(defaults.id.replace('mem_', ''), 10);
-      if (!isNaN(num) && num >= this.#memoryNextId) {
-        this.#memoryNextId = num + 1;
-      }
-    }
-    this.#memoryEntries.push(defaults);
+      category: entry.category || 'core',
+      timestamp: entry.timestamp || Date.now(),
+    });
     this.#eventLog.append('memory_stored', {
-      id: defaults.id,
-      key: defaults.key,
-      content: defaults.content,
-      category: defaults.category,
+      id,
+      key: entry.key,
+      content: entry.content,
+      category: entry.category || 'core',
     }, 'system');
-    return defaults.id;
+    return id;
   }
 
   /**
-   * Recall memories by keyword query.
+   * Recall memories by keyword query (sync wrapper for backward compat).
+   * For async hybrid search, use memoryRecallAsync().
    * Empty query returns all entries.
    * @param {string} query
+   * @param {object} [opts] - {limit, category, minScore, vectorWeight, keywordWeight}
    * @returns {Array<object>} Matching entries with scores
    */
-  memoryRecall(query) {
+  memoryRecall(query, opts) {
+    // Synchronous path: use internal sync recall (BM25 only, no async embedding)
+    // For full hybrid search, callers should use memoryRecallAsync()
     if (!query || query.trim() === '') {
-      return this.#memoryEntries.map(e => ({ ...e, score: 1.0 })).slice(0, 1000);
+      const entries = opts?.category ? this.#memory.all(opts.category) : this.#memory.all();
+      return entries.map(e => ({
+        id: e.id, key: e.key, content: e.content, category: e.category, timestamp: e.timestamp, score: 1.0,
+      })).slice(0, opts?.limit || 1000);
     }
 
-    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
-    const N = this.#memoryEntries.length || 1;
+    // Synchronous TF-IDF search (no embeddings, backward compat)
+    // For full hybrid BM25+vector search, use memoryRecallAsync()
+    const allEntries = opts?.category ? this.#memory.all(opts.category) : this.#memory.all();
+    if (allEntries.length === 0) return [];
 
-    // Document frequency per term
+    const queryTerms = query.toLowerCase().split(/[^a-z0-9]+/).filter(t => t.length > 1);
+    const N = allEntries.length;
     const df = {};
-    for (const term of terms) df[term] = 0;
-    for (const entry of this.#memoryEntries) {
+    for (const term of queryTerms) df[term] = 0;
+    for (const entry of allEntries) {
       const text = `${entry.key} ${entry.content}`.toLowerCase();
-      for (const term of terms) {
+      for (const term of queryTerms) {
         if (text.includes(term)) df[term]++;
       }
     }
 
     const scored = [];
-    for (const entry of this.#memoryEntries) {
+    for (const entry of allEntries) {
       const contentLower = (entry.content || '').toLowerCase();
       const keyLower = (entry.key || '').toLowerCase();
       let score = 0;
-
-      for (const term of terms) {
+      for (const term of queryTerms) {
         const idf = Math.log((N + 1) / ((df[term] || 0) + 1)) + 1;
-        // Term frequency in content + key (key weighted 2x)
         const tf = (contentLower.split(term).length - 1) + (keyLower.split(term).length - 1) * 2;
         score += tf * idf;
       }
-
       if (score > 0) {
-        scored.push({ ...entry, score: Math.round(score * 100) / 100 });
+        scored.push({
+          id: entry.id, key: entry.key, content: entry.content,
+          category: entry.category, timestamp: entry.timestamp,
+          score: Math.round(score * 100) / 100,
+        });
       }
     }
 
     scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, 20);
+    return scored.slice(0, opts?.limit || 20);
+  }
+
+  /**
+   * Recall memories using async hybrid search (BM25 + vector).
+   * @param {string} query
+   * @param {object} [opts]
+   * @returns {Promise<Array<object>>}
+   */
+  async memoryRecallAsync(query, opts) {
+    return this.#memory.recall(query, opts);
   }
 
   /**
@@ -1553,9 +1566,7 @@ export class ClawserAgent {
    * @returns {number} 1 if deleted, 0 if not found
    */
   memoryForget(id) {
-    const idx = this.#memoryEntries.findIndex(e => e.id === id);
-    if (idx >= 0) {
-      this.#memoryEntries.splice(idx, 1);
+    if (this.#memory.delete(id)) {
       this.#eventLog.append('memory_forgotten', { id }, 'system');
       return 1;
     }
@@ -1569,55 +1580,15 @@ export class ClawserAgent {
    * @returns {number} Number of entries removed
    */
   memoryHygiene(opts = {}) {
-    const maxAge = opts.maxAge || 30 * 24 * 60 * 60 * 1000; // 30 days
-    const maxEntries = opts.maxEntries || 500;
-    const now = Date.now();
-    let removed = 0;
-
-    // Deduplicate by key (keep the latest)
-    const seen = new Map();
-    for (let i = this.#memoryEntries.length - 1; i >= 0; i--) {
-      const entry = this.#memoryEntries[i];
-      const key = `${entry.category}:${entry.key}`;
-      if (seen.has(key)) {
-        this.#memoryEntries.splice(i, 1);
-        removed++;
-      } else {
-        seen.set(key, i);
-      }
-    }
-
-    // Purge old entries (skip 'core' category)
-    for (let i = this.#memoryEntries.length - 1; i >= 0; i--) {
-      const entry = this.#memoryEntries[i];
-      if (entry.category !== 'core' && entry.timestamp && (now - entry.timestamp) > maxAge) {
-        this.#memoryEntries.splice(i, 1);
-        removed++;
-      }
-    }
-
-    // Enforce max entries (remove oldest first, skip core)
-    if (this.#memoryEntries.length > maxEntries) {
-      const sorted = [...this.#memoryEntries]
-        .map((e, idx) => ({ ...e, _idx: idx }))
-        .filter(e => e.category !== 'core')
-        .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-
-      const toRemove = this.#memoryEntries.length - maxEntries;
-      const removeSet = new Set(sorted.slice(0, toRemove).map(e => e._idx));
-      for (let i = this.#memoryEntries.length - 1; i >= 0; i--) {
-        if (removeSet.has(i)) {
-          this.#memoryEntries.splice(i, 1);
-          removed++;
-        }
-      }
-    }
-
+    const removed = this.#memory.hygiene(opts);
     if (removed > 0) {
       this.#onLog(2, `memory hygiene: removed ${removed} entries`);
     }
     return removed;
   }
+
+  /** Get the underlying SemanticMemory instance for advanced operations */
+  get memory() { return this.#memory; }
 
   // ── Goals ───────────────────────────────────────────────────
 
@@ -1937,7 +1908,7 @@ export class ClawserAgent {
   /** Persist all memories to localStorage for survival across reloads */
   persistMemories() {
     try {
-      const all = this.memoryRecall(''); // empty query returns all
+      const all = this.#memory.exportToFlatArray();
       localStorage.setItem(lsKey.memories(this.#workspaceId), JSON.stringify(all));
     } catch (e) {
       this.#onLog(3, `persist memories failed: ${e.message}`);
@@ -1951,18 +1922,8 @@ export class ClawserAgent {
       if (!raw) return 0;
       const entries = JSON.parse(raw);
       // Clear existing memories to avoid duplicates on repeated restore
-      this.#memoryEntries = [];
-      this.#memoryNextId = 1;
-      // Snapshot event count so we can trim restore artifacts without nuking real events
-      const evtCountBefore = this.#eventLog.events.length;
-      let count = 0;
-      for (const entry of entries) {
-        const { score, ...clean } = entry; // strip score pollution from prior persist cycles
-        const id = this.memoryStore(clean);
-        if (id) count++;
-      }
-      // Remove only the memory_stored events generated by the restore loop
-      this.#eventLog.events.splice(evtCountBefore);
+      this.#memory.clear();
+      const count = this.#memory.importFromFlatArray(entries);
       this.#onLog(2, `restored ${count} memories from localStorage`);
       return count;
     } catch (e) {

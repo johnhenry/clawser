@@ -57,6 +57,11 @@ import {
 } from './clawser-identity.js';
 
 import {
+  cosineSimilarity, tokenize as memTokenize, bm25Score,
+  EmbeddingProvider, NoopEmbedder, SemanticMemory,
+} from './clawser-memory.js';
+
+import {
   loadConversations, saveConversations, generateConvId, CONV_KEY_PREFIX,
 } from './clawser-conversations.js';
 
@@ -1474,13 +1479,13 @@ section('ClawserAgent — Memory CRUD');
   const afterForget = agent.memoryRecall('test');
   assert('memoryForget entry gone', !afterForget.some(e => e.id === 'm1'));
 
-  // memoryHygiene with maxEntries keeps only N
-  agent.memoryStore({ key: 'a', content: 'aaa', category: 'core', timestamp: Date.now() });
-  agent.memoryStore({ key: 'b', content: 'bbb', category: 'core', timestamp: Date.now() });
-  agent.memoryStore({ key: 'c', content: 'ccc', category: 'core', timestamp: Date.now() });
+  // memoryHygiene with maxEntries keeps only N (non-core evicted first)
+  agent.memoryStore({ key: 'a', content: 'aaa', category: 'user', timestamp: Date.now() - 3000 });
+  agent.memoryStore({ key: 'b', content: 'bbb', category: 'user', timestamp: Date.now() - 2000 });
+  agent.memoryStore({ key: 'c', content: 'ccc', category: 'user', timestamp: Date.now() - 1000 });
   const hygieneResult = agent.memoryHygiene({ maxEntries: 1 });
   const afterHygiene = agent.memoryRecall('');
-  assert('memoryHygiene trims to maxEntries', afterHygiene.length <= 1);
+  assert('memoryHygiene trims', afterHygiene.length <= 1);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1663,13 +1668,16 @@ section('ScreenInfoTool & NotifyTool');
   assert('ScreenInfoTool has title', typeof screenData.title === 'string');
   assert('ScreenInfoTool has viewport', screenData.viewport && typeof screenData.viewport.width === 'number');
 
-  // NotifyTool — may fail gracefully (Notification API may not be available)
+  // NotifyTool — skip if permission not already granted (requestPermission blocks on prompt)
   const notifyTool = new NotifyTool();
-  const r2 = await notifyTool.execute({ title: 'test', body: 'msg' });
-  // Either succeeds or returns error about permissions/support
-  assert('NotifyTool returns result', typeof r2.success === 'boolean');
-  if (!r2.success) {
-    assert('NotifyTool error is string', typeof r2.error === 'string');
+  if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+    const r2 = await notifyTool.execute({ title: 'test', body: 'msg' });
+    assert('NotifyTool returns result', typeof r2.success === 'boolean');
+  } else if (typeof Notification !== 'undefined' && Notification.permission === 'denied') {
+    const r2 = await notifyTool.execute({ title: 'test', body: 'msg' });
+    assert('NotifyTool denied returns error', !r2.success && typeof r2.error === 'string');
+  } else {
+    assert('NotifyTool skipped (permission prompt would block)', true);
   }
 }
 
@@ -4109,6 +4117,407 @@ section('Identity — IdentityManager');
   // fromJSON with null
   const empty = IdentityManager.fromJSON(null);
   assertEq('null fromJSON name', empty.displayName, 'Clawser');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SEMANTIC MEMORY — Cosine Similarity
+// ═══════════════════════════════════════════════════════════════
+
+section('SemanticMemory — cosineSimilarity');
+
+{
+  // Identical vectors → 1.0
+  const a = new Float32Array([1, 0, 0]);
+  const b = new Float32Array([1, 0, 0]);
+  assertEq('identical', cosineSimilarity(a, b), 1);
+
+  // Orthogonal vectors → 0.0
+  const c = new Float32Array([1, 0, 0]);
+  const d = new Float32Array([0, 1, 0]);
+  assertEq('orthogonal', cosineSimilarity(c, d), 0);
+
+  // Opposite vectors → -1.0
+  const e = new Float32Array([1, 0, 0]);
+  const f = new Float32Array([-1, 0, 0]);
+  assertEq('opposite', cosineSimilarity(e, f), -1);
+
+  // Null/empty → 0
+  assertEq('null a', cosineSimilarity(null, b), 0);
+  assertEq('empty', cosineSimilarity(new Float32Array([]), new Float32Array([])), 0);
+  assertEq('mismatch length', cosineSimilarity(new Float32Array([1]), new Float32Array([1, 2])), 0);
+
+  // Zero vector → 0
+  assertEq('zero vector', cosineSimilarity(new Float32Array([0, 0]), new Float32Array([1, 1])), 0);
+
+  // Similar vectors → between 0 and 1
+  const g = new Float32Array([1, 1, 0]);
+  const h = new Float32Array([1, 0, 0]);
+  const sim = cosineSimilarity(g, h);
+  assert('similar range', sim > 0.5 && sim < 1.0, `got ${sim}`);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SEMANTIC MEMORY — Tokenizer
+// ═══════════════════════════════════════════════════════════════
+
+section('SemanticMemory — tokenize');
+
+{
+  // Basic tokenization
+  const tokens = memTokenize('Hello World');
+  assert('lowercased', tokens.every(t => t === t.toLowerCase()));
+  assert('two tokens', tokens.length === 2);
+
+  // Stemming
+  const stemmed = memTokenize('running quickly symptoms headaches');
+  assert('running stemmed', stemmed.includes('runn'));
+  assert('quickly stemmed', stemmed.includes('quick'));
+
+  // Empty/null
+  assertEq('null', memTokenize(null), []);
+  assertEq('empty', memTokenize(''), []);
+
+  // Single char words filtered
+  const short = memTokenize('I a the cat');
+  assert('short words filtered', !short.includes('i') && !short.includes('a'));
+  assert('cat preserved', short.includes('cat'));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SEMANTIC MEMORY — BM25 Scoring
+// ═══════════════════════════════════════════════════════════════
+
+section('SemanticMemory — BM25');
+
+{
+  const docs = [
+    { id: 'a', tokens: ['headache', 'tuesday', 'severe'], length: 3 },
+    { id: 'b', tokens: ['tuesday', 'meeting', 'project'], length: 3 },
+    { id: 'c', tokens: ['headache', 'headache', 'migrain'], length: 3 },
+  ];
+
+  // Query with overlapping term
+  const scores = bm25Score(['headache'], docs, 3);
+  assert('doc a matched', scores.has('a'));
+  assert('doc b not matched', !scores.has('b'));
+  assert('doc c matched', scores.has('c'));
+  assert('c > a (higher tf)', scores.get('c') > scores.get('a'));
+
+  // Multi-term query
+  const scores2 = bm25Score(['headache', 'tuesday'], docs, 3);
+  assert('a highest (both terms)', scores2.get('a') > scores2.get('b'));
+  assert('a highest (both terms) v2', scores2.get('a') > scores2.get('c'));
+
+  // Empty query → no scores
+  const empty = bm25Score([], docs, 3);
+  assertEq('empty query', empty.size, 0);
+
+  // Empty docs → no scores
+  const noDocs = bm25Score(['test'], [], 0);
+  assertEq('no docs', noDocs.size, 0);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SEMANTIC MEMORY — SemanticMemory CRUD
+// ═══════════════════════════════════════════════════════════════
+
+section('SemanticMemory — CRUD');
+
+{
+  const mem = new SemanticMemory();
+
+  // Store
+  const id1 = mem.store({ key: 'name', content: 'John', category: 'user' });
+  assert('store returns id', id1.startsWith('mem_'));
+  assertEq('size', mem.size, 1);
+
+  // Get
+  const entry = mem.get(id1);
+  assertEq('get key', entry.key, 'name');
+  assertEq('get content', entry.content, 'John');
+  assertEq('get category', entry.category, 'user');
+
+  // Store with explicit ID
+  const id2 = mem.store({ id: 'mem_100', key: 'city', content: 'NYC' });
+  assertEq('explicit id', id2, 'mem_100');
+
+  // Auto-increment past explicit ID
+  const id3 = mem.store({ key: 'color', content: 'blue' });
+  assert('auto-increment past 100', parseInt(id3.replace('mem_', ''), 10) > 100);
+
+  // Delete
+  assert('delete existing', mem.delete(id1));
+  assert('get after delete', mem.get(id1) === null);
+  assertEq('size after delete', mem.size, 2);
+
+  // Delete non-existent
+  assert('delete non-existent', !mem.delete('mem_999'));
+
+  // All
+  assertEq('all count', mem.all().length, 2);
+  assertEq('all by category', mem.all('core').length, 2);
+  assertEq('all user after delete', mem.all('user').length, 0);
+
+  // Clear
+  mem.clear();
+  assertEq('cleared size', mem.size, 0);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SEMANTIC MEMORY — Keyword Recall (BM25)
+// ═══════════════════════════════════════════════════════════════
+
+section('SemanticMemory — keyword recall');
+
+{
+  const mem = new SemanticMemory();
+  mem.store({ key: 'symptom', content: 'headache last Tuesday', category: 'user' });
+  mem.store({ key: 'meeting', content: 'project sync on Tuesday', category: 'context' });
+  mem.store({ key: 'symptom', content: 'back pain on Monday', category: 'user' });
+  mem.store({ key: 'preference', content: 'likes dark mode', category: 'core' });
+
+  // Keyword search
+  const results = await mem.recall('headache');
+  assert('headache found', results.length > 0);
+  assertEq('headache top hit', results[0].content, 'headache last Tuesday');
+
+  // Multi-word query
+  const results2 = await mem.recall('Tuesday symptom');
+  assert('multi-word search', results2.length >= 1);
+
+  // Empty query returns all
+  const all = await mem.recall('');
+  assertEq('empty query count', all.length, 4);
+  assert('empty query score 1.0', all.every(r => r.score === 1.0));
+
+  // Category filter
+  const userOnly = await mem.recall('', { category: 'user' });
+  assertEq('category filter', userOnly.length, 2);
+
+  // Limit
+  const limited = await mem.recall('', { limit: 2 });
+  assertEq('limit', limited.length, 2);
+
+  // No match
+  const noMatch = await mem.recall('xyzzyplugh');
+  assertEq('no match', noMatch.length, 0);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SEMANTIC MEMORY — Hybrid Search (Vector + Keyword)
+// ═══════════════════════════════════════════════════════════════
+
+section('SemanticMemory — hybrid search');
+
+{
+  // Mock embedder that returns simple vectors based on content
+  class MockEmbedder extends EmbeddingProvider {
+    get name() { return 'mock'; }
+    get dimensions() { return 3; }
+    async embed(text) {
+      const lower = text.toLowerCase();
+      // "symptom" family → [1, 0, 0]
+      if (lower.includes('symptom') || lower.includes('headache') || lower.includes('pain'))
+        return new Float32Array([1, 0, 0]);
+      // "meeting" family → [0, 1, 0]
+      if (lower.includes('meeting') || lower.includes('project'))
+        return new Float32Array([0, 1, 0]);
+      // Default → [0.5, 0.5, 0]
+      return new Float32Array([0.5, 0.5, 0]);
+    }
+  }
+
+  const mem = new SemanticMemory(new MockEmbedder());
+
+  // Store entries WITH embeddings
+  mem.store({ key: 'symptom', content: 'headache last Tuesday', category: 'user',
+    embedding: new Float32Array([1, 0, 0]) });
+  mem.store({ key: 'meeting', content: 'project sync', category: 'context',
+    embedding: new Float32Array([0, 1, 0]) });
+  mem.store({ key: 'diagnosis', content: 'migraine disorder', category: 'learned',
+    embedding: new Float32Array([0.9, 0.1, 0]) });
+
+  // Query "symptoms" — keyword "symptom" + vector [1,0,0]
+  const results = await mem.recall('symptoms');
+  assert('hybrid found results', results.length > 0);
+  // "headache last Tuesday" should rank high (both keyword and vector match)
+  assert('headache is top', results[0].content.includes('headache'));
+
+  // "migraine disorder" should also appear (high vector similarity even though keyword doesn't match perfectly)
+  const migraineResult = results.find(r => r.content.includes('migraine'));
+  assert('migraine found via vector', migraineResult !== undefined);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SEMANTIC MEMORY — NoopEmbedder
+// ═══════════════════════════════════════════════════════════════
+
+section('SemanticMemory — NoopEmbedder');
+
+{
+  const noop = new NoopEmbedder();
+  assertEq('name', noop.name, 'noop');
+  assertEq('dimensions', noop.dimensions, 0);
+  const vec = await noop.embed('test');
+  assertEq('embed returns null', vec, null);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SEMANTIC MEMORY — Hygiene
+// ═══════════════════════════════════════════════════════════════
+
+section('SemanticMemory — hygiene');
+
+{
+  const mem = new SemanticMemory();
+  const now = Date.now();
+
+  // Add duplicates (same category:key)
+  mem.store({ key: 'pref', content: 'old value', category: 'user', timestamp: now - 1000 });
+  mem.store({ key: 'pref', content: 'new value', category: 'user', timestamp: now });
+
+  // Add old entry
+  mem.store({ key: 'stale', content: 'old stuff', category: 'context', timestamp: now - 40 * 24 * 60 * 60 * 1000 });
+
+  // Add core (should survive purge)
+  mem.store({ key: 'core-fact', content: 'important', category: 'core', timestamp: now - 40 * 24 * 60 * 60 * 1000 });
+
+  assertEq('before hygiene', mem.size, 4);
+  const removed = mem.hygiene({ maxAge: 30 * 24 * 60 * 60 * 1000, maxEntries: 500 });
+  assert('removed some', removed >= 2, `removed ${removed}`);
+  assertEq('after hygiene', mem.size, 2); // new value + core
+
+  // Verify kept entries
+  const all = mem.all();
+  assert('kept new value', all.some(e => e.content === 'new value'));
+  assert('kept core', all.some(e => e.content === 'important'));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SEMANTIC MEMORY — Import/Export
+// ═══════════════════════════════════════════════════════════════
+
+section('SemanticMemory — import/export');
+
+{
+  const mem = new SemanticMemory();
+  const flat = [
+    { id: 'mem_1', key: 'a', content: 'alpha', category: 'core', timestamp: 100, score: 1.5 },
+    { id: 'mem_2', key: 'b', content: 'beta', category: 'user', timestamp: 200, score: 0.8 },
+  ];
+
+  const imported = mem.importFromFlatArray(flat);
+  assertEq('import count', imported, 2);
+  assertEq('mem size', mem.size, 2);
+
+  // Verify score was stripped
+  const entry = mem.get('mem_1');
+  assert('no score field', entry.score === undefined || entry.score === null);
+
+  // Export
+  const exported = mem.exportToFlatArray();
+  assertEq('export count', exported.length, 2);
+  assert('export no embedding', exported[0].embedding === undefined);
+  assertEq('export key', exported[0].key, 'a');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SEMANTIC MEMORY — Serialization (toJSON/fromJSON)
+// ═══════════════════════════════════════════════════════════════
+
+section('SemanticMemory — toJSON/fromJSON');
+
+{
+  const mem = new SemanticMemory();
+  mem.store({ key: 'test', content: 'hello', category: 'core' });
+  mem.store({ key: 'vec', content: 'world', category: 'user',
+    embedding: new Float32Array([1.0, 2.0, 3.0]) });
+
+  const json = mem.toJSON();
+  assertEq('version', json.version, 1);
+  assertEq('entries count', json.entries.length, 2);
+  assert('embedding serialized', typeof json.entries[1].embedding === 'string');
+  assert('null embedding preserved', json.entries[0].embedding === null);
+
+  // Restore
+  const restored = SemanticMemory.fromJSON(json);
+  assertEq('restored size', restored.size, 2);
+  const vec = restored.get(json.entries[1].id);
+  assert('embedding restored', vec.embedding instanceof Float32Array);
+  assertEq('embedding length', vec.embedding.length, 3);
+  assert('embedding value', Math.abs(vec.embedding[0] - 1.0) < 0.001);
+
+  // fromJSON with null
+  const empty = SemanticMemory.fromJSON(null);
+  assertEq('null fromJSON', empty.size, 0);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SEMANTIC MEMORY — embedEntry & backfill
+// ═══════════════════════════════════════════════════════════════
+
+section('SemanticMemory — embedEntry & backfill');
+
+{
+  class SimpleEmbedder extends EmbeddingProvider {
+    get name() { return 'simple'; }
+    get dimensions() { return 2; }
+    async embed(text) {
+      return new Float32Array([text.length / 100, 0.5]);
+    }
+  }
+
+  const mem = new SemanticMemory(new SimpleEmbedder());
+  const id1 = mem.store({ key: 'a', content: 'short' });
+  const id2 = mem.store({ key: 'b', content: 'a much longer piece of text here' });
+
+  // No embeddings yet
+  assert('no embedding initially', mem.get(id1).embedding === null);
+
+  // embedEntry
+  const ok = await mem.embedEntry(id1);
+  assert('embedEntry success', ok);
+  assert('embedding stored', mem.get(id1).embedding instanceof Float32Array);
+
+  // Backfill (should only embed id2 since id1 already has one)
+  const backfilled = await mem.backfillEmbeddings();
+  assertEq('backfill count', backfilled, 1);
+  assert('id2 now has embedding', mem.get(id2).embedding instanceof Float32Array);
+
+  // embedEntry with bad ID
+  const bad = await mem.embedEntry('nonexistent');
+  assert('bad id returns false', !bad);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SEMANTIC MEMORY — Agent Integration
+// ═══════════════════════════════════════════════════════════════
+
+section('SemanticMemory — agent integration');
+
+{
+  const reg = new BrowserToolRegistry();
+  const providers = createDefaultProviders();
+  const agent = await ClawserAgent.create({ browserTools: reg, providers });
+  agent.init({});
+
+  // Old API still works
+  const id = agent.memoryStore({ key: 'test', content: 'hello' });
+  assert('memoryStore returns id', id.startsWith('mem_'));
+
+  const results = agent.memoryRecall('hello');
+  assert('memoryRecall finds entry', results.length > 0);
+  assertEq('memoryRecall content', results[0].content, 'hello');
+
+  // Forget
+  assertEq('memoryForget', agent.memoryForget(id), 1);
+  assertEq('memoryForget not found', agent.memoryForget(id), 0);
+
+  // Hygiene
+  agent.memoryStore({ key: 'dup', content: 'first', category: 'user', timestamp: 1 });
+  agent.memoryStore({ key: 'dup', content: 'second', category: 'user', timestamp: 2 });
+  const removed = agent.memoryHygiene();
+  assert('hygiene removed dups', removed >= 1);
 }
 
 // ═══════════════════════════════════════════════════════════════
