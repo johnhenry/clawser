@@ -52,6 +52,11 @@ import {
 } from './clawser-safety.js';
 
 import {
+  DEFAULT_IDENTITY, detectIdentityFormat, validateAIEOS,
+  compileSystemPrompt, IdentityManager,
+} from './clawser-identity.js';
+
+import {
   loadConversations, saveConversations, generateConvId, CONV_KEY_PREFIX,
 } from './clawser-conversations.js';
 
@@ -3974,6 +3979,136 @@ section('Safety — SafetyPipeline');
   const d1 = pipeline.validateToolCall('fs_read', { path: '../../etc/passwd' });
   assert('disabled passes everything', d1.valid);
   pipeline.enabled = true;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Identity System
+// ═══════════════════════════════════════════════════════════════
+
+section('Identity — DEFAULT_IDENTITY');
+{
+  assert('default has version', DEFAULT_IDENTITY.version === '1.1');
+  assert('default has display name', DEFAULT_IDENTITY.names.display === 'Clawser');
+  assert('default has bio', typeof DEFAULT_IDENTITY.bio === 'string');
+  assert('default has psychology', DEFAULT_IDENTITY.psychology !== undefined);
+  assert('default has linguistics', DEFAULT_IDENTITY.linguistics !== undefined);
+  assert('default has motivations', DEFAULT_IDENTITY.motivations !== undefined);
+}
+
+section('Identity — detectIdentityFormat');
+{
+  assertEq('string is plain', detectIdentityFormat('You are a helpful assistant'), 'plain');
+  assertEq('aieos v1.1', detectIdentityFormat({ version: '1.1', names: {} }), 'aieos');
+  assertEq('aieos v1.0', detectIdentityFormat({ version: '1.0' }), 'aieos');
+  assertEq('openclaw', detectIdentityFormat({ files: { identity: '...' } }), 'openclaw');
+  assertEq('null is plain', detectIdentityFormat(null), 'plain');
+  assertEq('number is plain', detectIdentityFormat(42), 'plain');
+  assertEq('empty obj is plain', detectIdentityFormat({}), 'plain');
+}
+
+section('Identity — validateAIEOS');
+{
+  // Valid AIEOS
+  const r1 = validateAIEOS(DEFAULT_IDENTITY);
+  assert('default valid', r1.valid);
+  assertEq('default name', r1.identity.names.display, 'Clawser');
+
+  // Partial AIEOS fills defaults
+  const r2 = validateAIEOS({ version: '1.1', names: { display: 'CustomBot' } });
+  assert('partial valid', r2.valid);
+  assertEq('custom name', r2.identity.names.display, 'CustomBot');
+  assert('has default bio', typeof r2.identity.bio === 'string');
+
+  // Null input
+  const r3 = validateAIEOS(null);
+  assert('null has identity', r3.identity !== null);
+  assertEq('null uses default name', r3.identity.names.display, 'Clawser');
+
+  // Empty object
+  const r4 = validateAIEOS({});
+  assert('empty obj has identity', r4.identity !== null);
+}
+
+section('Identity — compileSystemPrompt plain');
+{
+  const prompt = compileSystemPrompt('You are a test assistant.');
+  assert('plain prompt contains text', prompt.includes('You are a test assistant'));
+
+  // With context
+  const prompt2 = compileSystemPrompt('Base prompt.', { memoryPrompt: 'User prefers dark mode.' });
+  assert('plain with context', prompt2.includes('Base prompt'));
+  assert('plain includes memory', prompt2.includes('User prefers dark mode'));
+}
+
+section('Identity — compileSystemPrompt AIEOS');
+{
+  const prompt = compileSystemPrompt(DEFAULT_IDENTITY);
+  assert('aieos includes name', prompt.includes('Clawser'));
+  assert('aieos includes bio', prompt.includes('browser-native'));
+  assert('aieos includes personality', prompt.includes('INTJ'));
+  assert('aieos includes tone', prompt.includes('direct and helpful'));
+  assert('aieos includes traits', prompt.includes('curiosity'));
+
+  // Custom AIEOS with forbidden words
+  const custom = {
+    ...DEFAULT_IDENTITY,
+    linguistics: { ...DEFAULT_IDENTITY.linguistics, forbidden_words: ['um', 'like'] },
+  };
+  const prompt2 = compileSystemPrompt(custom);
+  assert('forbidden words in prompt', prompt2.includes('Never use these words'));
+}
+
+section('Identity — compileSystemPrompt OpenClaw');
+{
+  const source = {
+    files: {
+      identity: '# Agent\nI am a research assistant.',
+      soul: '# Soul\nBe thorough and accurate.',
+      user: '# User\nPrefers bullet points.',
+    },
+  };
+  const prompt = compileSystemPrompt(source);
+  assert('openclaw includes identity', prompt.includes('research assistant'));
+  assert('openclaw includes soul', prompt.includes('thorough and accurate'));
+  assert('openclaw includes user', prompt.includes('bullet points'));
+  assert('openclaw has separator', prompt.includes('---'));
+}
+
+section('Identity — IdentityManager');
+{
+  // Default constructor
+  const mgr = new IdentityManager();
+  assertEq('default format', mgr.format, 'aieos');
+  assertEq('default name', mgr.displayName, 'Clawser');
+
+  // Compile
+  const prompt = mgr.compile();
+  assert('compile includes name', prompt.includes('Clawser'));
+
+  // Load plain
+  mgr.load('You are a simple bot.');
+  assertEq('loaded plain format', mgr.format, 'plain');
+  assertEq('plain displayName', mgr.displayName, 'Agent');
+  assert('plain compile', mgr.compile().includes('simple bot'));
+
+  // Load custom AIEOS
+  mgr.load({ version: '1.1', names: { display: 'MyBot' }, bio: 'Custom bio.' });
+  assertEq('custom format', mgr.format, 'aieos');
+  assertEq('custom name', mgr.displayName, 'MyBot');
+
+  // Reset
+  mgr.reset();
+  assertEq('reset name', mgr.displayName, 'Clawser');
+
+  // Serialization roundtrip
+  const json = mgr.toJSON();
+  const restored = IdentityManager.fromJSON(json);
+  assertEq('restored name', restored.displayName, 'Clawser');
+  assertEq('restored format', restored.format, 'aieos');
+
+  // fromJSON with null
+  const empty = IdentityManager.fromJSON(null);
+  assertEq('null fromJSON name', empty.displayName, 'Clawser');
 }
 
 // ═══════════════════════════════════════════════════════════════
