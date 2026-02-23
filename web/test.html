@@ -74,6 +74,11 @@ import {
   AuthListProfilesTool, AuthSwitchProfileTool, AuthStatusTool,
 } from './clawser-auth-profiles.js';
 
+import {
+  MessageIntent, PIPELINE_CONFIG, IntentRouter, classifyWithLLM,
+  IntentClassifyTool, IntentOverrideTool,
+} from './clawser-intent.js';
+
 import { $, esc, state, on, off, emit, lsKey, setSending, setConversation, resetConversationState } from './clawser-state.js';
 
 import { ClawserAgent, AutonomyController, HookPipeline, HOOK_POINTS, createAuditLoggerHook } from './clawser-agent.js';
@@ -6428,6 +6433,155 @@ section('Auth Profiles — onProfileChanged callback');
   assert('callback fired', callbackArgs !== null);
   assertEq('callback provider', callbackArgs.provider, 'openai');
   assertEq('callback profileId', callbackArgs.profileId, p2.id);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  INTENT ROUTER
+// ═══════════════════════════════════════════════════════════════
+
+section('Intent Router — MessageIntent & PIPELINE_CONFIG');
+
+{
+  assertEq('COMMAND', MessageIntent.COMMAND, 'command');
+  assertEq('QUERY', MessageIntent.QUERY, 'query');
+  assertEq('TASK', MessageIntent.TASK, 'task');
+  assertEq('CHAT', MessageIntent.CHAT, 'chat');
+  assertEq('SYSTEM', MessageIntent.SYSTEM, 'system');
+  assert('frozen', Object.isFrozen(MessageIntent));
+
+  const cmd = PIPELINE_CONFIG[MessageIntent.COMMAND];
+  assertEq('command useLLM false', cmd.useLLM, false);
+  assertEq('command useTools false', cmd.useTools, false);
+  const task = PIPELINE_CONFIG[MessageIntent.TASK];
+  assertEq('task useGoals true', task.useGoals, true);
+  assertEq('task modelHint', task.modelHint, 'smart');
+  const system = PIPELINE_CONFIG[MessageIntent.SYSTEM];
+  assertEq('system skipUI', system.skipUI, true);
+}
+
+section('Intent Router — Command classification');
+
+{
+  const router = new IntentRouter();
+  assertEq('slash command', router.classify('/help'), 'command');
+  assertEq('undo keyword', router.classify('undo'), 'command');
+  assertEq('redo keyword', router.classify('redo'), 'command');
+  assertEq('clear keyword', router.classify('clear'), 'command');
+  assertEq('set prefix', router.classify('set model to haiku'), 'command');
+}
+
+section('Intent Router — System classification');
+
+{
+  const router = new IntentRouter();
+  assertEq('scheduler source', router.classify('run backup', { source: 'scheduler' }), 'system');
+  assertEq('webhook source', router.classify('new event', { source: 'webhook' }), 'system');
+  assertEq('routine source', router.classify('check health', { source: 'routine' }), 'system');
+}
+
+section('Intent Router — Chat classification');
+
+{
+  const router = new IntentRouter();
+  assertEq('hi', router.classify('hi'), 'chat');
+  assertEq('hello', router.classify('hello'), 'chat');
+  assertEq('thanks', router.classify('thanks'), 'chat');
+  assertEq('bye', router.classify('bye'), 'chat');
+  assertEq('cool', router.classify('cool'), 'chat');
+  assertEq('good morning', router.classify('good morning'), 'chat');
+  assertEq('long greeting is task', router.classify('hello I need you to build a complex application with database integration'), 'task');
+}
+
+section('Intent Router — Query classification');
+
+{
+  const router = new IntentRouter();
+  assertEq('what is', router.classify('what is TypeScript?'), 'query');
+  assertEq('how does', router.classify('how does async/await work?'), 'query');
+  assertEq('who made', router.classify('who made JavaScript?'), 'query');
+  assertEq('can I', router.classify('can I use fetch in Node?'), 'query');
+  assertEq('question mark', router.classify('the meaning of life?'), 'query');
+}
+
+section('Intent Router — Task classification');
+
+{
+  const router = new IntentRouter();
+  assertEq('build task', router.classify('build a todo app with React'), 'task');
+  assertEq('refactor task', router.classify('refactor the authentication module to use JWT tokens'), 'task');
+  assertEq('fix task', router.classify('fix the login bug in the user dashboard'), 'task');
+}
+
+section('Intent Router — Edge cases & route()');
+
+{
+  const router = new IntentRouter();
+  assertEq('empty string', router.classify(''), 'chat');
+  assertEq('null', router.classify(null), 'chat');
+  assertEq('whitespace', router.classify('   '), 'chat');
+
+  const result = router.route('/help');
+  assertEq('route intent', result.intent, 'command');
+  assertEq('route config useLLM', result.config.useLLM, false);
+}
+
+section('Intent Router — Custom patterns & overrides');
+
+{
+  const router = new IntentRouter();
+  const initialCount = router.patternCount;
+
+  router.addPattern('query', (msg) => msg.startsWith('search:'));
+  assertEq('pattern added', router.patternCount, initialCount + 1);
+  assertEq('custom pattern', router.classify('search: best practices'), 'query');
+
+  router.resetPatterns();
+  assertEq('patterns reset', router.patternCount, initialCount);
+
+  router.addOverride('!task:', 'task');
+  router.addOverride('!q:', 'query');
+  assertEq('!task: override', router.classify('!task: hello'), 'task');
+  assertEq('!q: override', router.classify('!q: build something'), 'query');
+  assertEq('strip prefix', router.stripOverride('!task: hello world'), 'hello world');
+}
+
+section('Intent Router — classifyWithLLM');
+
+{
+  const router = new IntentRouter();
+  let llmCalled = false;
+  const mockChat = async () => { llmCalled = true; return { content: 'query' }; };
+
+  const r1 = await classifyWithLLM(router, mockChat, '/help');
+  assertEq('command skips LLM', r1, 'command');
+  assert('LLM not called', !llmCalled);
+
+  const r2 = await classifyWithLLM(router, mockChat, 'build a web app');
+  assertEq('LLM returns query', r2, 'query');
+  assert('LLM was called', llmCalled);
+
+  const errorChat = async () => { throw new Error('fail'); };
+  const r3 = await classifyWithLLM(router, errorChat, 'implement a full API');
+  assertEq('LLM error falls back', r3, 'task');
+}
+
+section('Intent Router — Agent Tools');
+
+{
+  const router = new IntentRouter();
+  const tool = new IntentClassifyTool(router);
+  assertEq('classify tool name', tool.name, 'intent_classify');
+
+  const r = await tool.execute({ message: '/help' });
+  assert('classify success', r.success);
+  assert('has intent', r.output.includes('Intent: command'));
+
+  const overrideTool = new IntentOverrideTool(router);
+  assertEq('override tool name', overrideTool.name, 'intent_add_override');
+
+  const r2 = await overrideTool.execute({ prefix: '!fast:', intent: 'query' });
+  assert('override success', r2.success);
+  assertEq('override works', router.classify('!fast: stuff'), 'query');
 }
 
 // ═══════════════════════════════════════════════════════════════
