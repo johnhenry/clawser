@@ -100,6 +100,12 @@ import {
   DaemonController, DaemonStatusTool, DaemonCheckpointTool,
 } from './clawser-daemon.js';
 
+import {
+  PERIPHERAL_TYPES, PeripheralHandle, SerialPeripheral, BluetoothPeripheral,
+  USBPeripheral, PeripheralManager, resetHandleCounter,
+  HwListTool, HwConnectTool, HwSendTool, HwReadTool, HwDisconnectTool, HwInfoTool,
+} from './clawser-hardware.js';
+
 import { $, esc, state, on, off, emit, lsKey, setSending, setConversation, resetConversationState } from './clawser-state.js';
 
 import { ClawserAgent, AutonomyController, HookPipeline, HOOK_POINTS, createAuditLoggerHook } from './clawser-agent.js';
@@ -7225,6 +7231,319 @@ section('Daemon — Agent Tools');
   assert('has id', cr.output.includes('cp_'));
 
   await ctrl.stop();
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  WEB HARDWARE PERIPHERALS
+// ═══════════════════════════════════════════════════════════════
+
+section('Hardware: Constants & Abstract Handle');
+{
+  assertEq('PERIPHERAL_TYPES.SERIAL', PERIPHERAL_TYPES.SERIAL, 'serial');
+  assertEq('PERIPHERAL_TYPES.BLUETOOTH', PERIPHERAL_TYPES.BLUETOOTH, 'bluetooth');
+  assertEq('PERIPHERAL_TYPES.USB', PERIPHERAL_TYPES.USB, 'usb');
+  try { PERIPHERAL_TYPES.NEW = 'x'; } catch {}
+  assert('PERIPHERAL_TYPES frozen', !PERIPHERAL_TYPES.NEW);
+
+  const ph = new PeripheralHandle();
+  assertEq('abstract id', ph.id, '');
+  assertEq('abstract name', ph.name, 'Unknown Device');
+  assertEq('abstract type', ph.type, 'unknown');
+  assertEq('abstract connected', ph.connected, false);
+  assertEq('abstract toJSON.id', ph.toJSON().id, '');
+}
+
+section('Hardware: SerialPeripheral');
+{
+  // Mock serial port
+  function mockPort() {
+    const written = [];
+    return {
+      getInfo() { return { usbProductId: '0x1234' }; },
+      async open() {},
+      async close() {},
+      get readable() { return null; },
+      get writable() {
+        return { getWriter() { return { async write(d) { written.push(d); }, async close() {} }; } };
+      },
+      _written: written,
+    };
+  }
+
+  resetHandleCounter();
+  const p1 = mockPort();
+  const sp1 = new SerialPeripheral(p1);
+  assertEq('serial type', sp1.type, 'serial');
+  assert('serial id', sp1.id.startsWith('serial_'));
+  assertEq('serial not connected', sp1.connected, false);
+
+  // Connect and send
+  await sp1.connect({ baudRate: 115200 });
+  assertEq('serial connected', sp1.connected, true);
+  await sp1.send('hello');
+  const text = new TextDecoder().decode(p1._written[0]);
+  assert('send adds newline', text.endsWith('\n'));
+
+  // Disconnect fires callback
+  let dcFired = false;
+  sp1.onDisconnect(() => { dcFired = true; });
+  await sp1.disconnect();
+  assertEq('serial disconnected', sp1.connected, false);
+  assert('disconnect callback', dcFired);
+
+  // Send when not connected
+  const sp2 = new SerialPeripheral(mockPort());
+  let sendErr = false;
+  try { await sp2.send('x'); } catch { sendErr = true; }
+  assert('send throws when not connected', sendErr);
+
+  // Receive timeout
+  resetHandleCounter();
+  const sp3 = new SerialPeripheral(mockPort());
+  await sp3.connect();
+  let timeoutErr = false;
+  try { await sp3.receive(50); } catch (e) { timeoutErr = e.message.includes('timeout'); }
+  assert('receive timeout', timeoutErr);
+}
+
+section('Hardware: BluetoothPeripheral');
+{
+  function mockBTDevice(name) {
+    const listeners = {};
+    return {
+      name,
+      gatt: {
+        connected: false,
+        async connect() { this.connected = true; return this; },
+        disconnect() { this.connected = false; },
+        async getPrimaryService() {
+          return { async getCharacteristic() {
+            return {
+              async writeValue() {}, async readValue() { return { buffer: new Uint8Array([42]).buffer }; },
+              async startNotifications() {}, async stopNotifications() {},
+              addEventListener() {},
+            };
+          }};
+        },
+      },
+      addEventListener(t, cb) { if (!listeners[t]) listeners[t] = []; listeners[t].push(cb); },
+      _emit(t) { for (const cb of (listeners[t] || [])) cb(); },
+    };
+  }
+
+  resetHandleCounter();
+  const bp = new BluetoothPeripheral(mockBTDevice('Temp'));
+  assertEq('bt type', bp.type, 'bluetooth');
+  assertEq('bt name', bp.name, 'Temp');
+
+  await bp.connect();
+  assertEq('bt connected', bp.connected, true);
+
+  let btDc = false;
+  bp.onDisconnect(() => { btDc = true; });
+  await bp.disconnect();
+  assertEq('bt disconnected', bp.connected, false);
+  assert('bt dc callback', btDc);
+
+  // GATT required
+  const bp2 = new BluetoothPeripheral({});
+  let gattErr = false;
+  try { await bp2.connect(); } catch { gattErr = true; }
+  assert('bt requires gatt', gattErr);
+
+  // gattserverdisconnected event
+  const dev3 = mockBTDevice('Sensor');
+  const bp3 = new BluetoothPeripheral(dev3);
+  await bp3.connect();
+  let evtDc = false;
+  bp3.onDisconnect(() => { evtDc = true; });
+  dev3._emit('gattserverdisconnected');
+  assertEq('bt event disconnects', bp3.connected, false);
+  assert('bt event dc callback', evtDc);
+}
+
+section('Hardware: USBPeripheral');
+{
+  function mockUSB(opts = {}) {
+    const xfers = [];
+    return {
+      productName: opts.name || 'MockUSB',
+      vendorId: opts.vid || 0x1234, productId: opts.pid || 0x5678,
+      configuration: opts.noConfig ? null : {},
+      async open() {}, async close() {},
+      async selectConfiguration() {}, async claimInterface() {}, async releaseInterface() {},
+      async transferOut(ep, d) { xfers.push({ ep, d }); },
+      async transferIn() { return { data: { buffer: new Uint8Array([1,2,3]).buffer } }; },
+      _xfers: xfers,
+    };
+  }
+
+  resetHandleCounter();
+  const up = new USBPeripheral(mockUSB({ name: 'MCU', vid: 0xAA, pid: 0xBB }));
+  assertEq('usb type', up.type, 'usb');
+  assertEq('usb name', up.name, 'MCU');
+  assertEq('usb vid', up.toJSON().vendorId, 0xAA);
+
+  await up.connect();
+  assertEq('usb connected', up.connected, true);
+
+  await up.send('hello');
+  // default endpointOut = 2
+  const dev = mockUSB();
+  const up2 = new USBPeripheral(dev);
+  await up2.connect();
+  await up2.send('test');
+  assertEq('usb xfer ep', dev._xfers[0].ep, 2);
+
+  const data = await up2.receive();
+  assert('usb receive returns Uint8Array', data instanceof Uint8Array);
+  assertEq('usb receive length', data.length, 3);
+
+  let usbDc = false;
+  up2.onDisconnect(() => { usbDc = true; });
+  await up2.disconnect();
+  assertEq('usb disconnected', up2.connected, false);
+  assert('usb dc callback', usbDc);
+}
+
+section('Hardware: PeripheralManager');
+{
+  function mockPort() {
+    return {
+      getInfo() { return {}; },
+      async open() {}, async close() {},
+      get readable() { return null; },
+      get writable() { return { getWriter() { return { async write() {}, async close() {} }; } }; },
+    };
+  }
+
+  // requestSerial
+  resetHandleCounter();
+  const mgr1 = new PeripheralManager({
+    serialApi: { requestPort: async () => mockPort() },
+  });
+  const h1 = await mgr1.requestSerial();
+  assertEq('mgr serial type', h1.type, 'serial');
+  assertEq('mgr device count', mgr1.deviceCount, 1);
+
+  // requestSerial throws without API
+  const mgr2 = new PeripheralManager({ serialApi: null });
+  let noApi = false;
+  try { await mgr2.requestSerial(); } catch { noApi = true; }
+  assert('requestSerial throws without API', noApi);
+
+  // reconnectSerial
+  resetHandleCounter();
+  const mgr3 = new PeripheralManager({
+    serialApi: { getPorts: async () => [mockPort(), mockPort()] },
+  });
+  const reconnected = await mgr3.reconnectSerial();
+  assertEq('reconnect count', reconnected.length, 2);
+
+  // disconnectAll
+  await mgr3.disconnectAll();
+  assertEq('after disconnectAll', mgr3.deviceCount, 0);
+
+  // getApiSupport
+  const mgr4 = new PeripheralManager({ serialApi: {}, bluetoothApi: null, usbApi: {} });
+  const support = mgr4.getApiSupport();
+  assertEq('api serial', support.serial, true);
+  assertEq('api bluetooth', support.bluetooth, false);
+  assertEq('api usb', support.usb, true);
+
+  // buildPrompt
+  assertEq('empty prompt', new PeripheralManager({}).buildPrompt(), '');
+  resetHandleCounter();
+  const mgr5 = new PeripheralManager({
+    serialApi: { requestPort: async () => mockPort() },
+  });
+  await mgr5.requestSerial();
+  assert('prompt has serial', mgr5.buildPrompt().includes('serial'));
+
+  // onLog
+  const logs = [];
+  const mgr6 = new PeripheralManager({
+    serialApi: { requestPort: async () => mockPort() },
+    onLog: m => logs.push(m),
+  });
+  await mgr6.requestSerial();
+  assert('onLog fires', logs.length > 0);
+}
+
+section('Hardware: Agent Tools');
+{
+  function mockPort() {
+    return {
+      getInfo() { return {}; },
+      async open() {}, async close() {},
+      get readable() { return null; },
+      get writable() { return { getWriter() { return { async write() {}, async close() {} }; } }; },
+    };
+  }
+
+  // hw_list empty
+  resetHandleCounter();
+  const mgr = new PeripheralManager({ serialApi: {}, bluetoothApi: null, usbApi: null });
+  const listTool = new HwListTool(mgr);
+  assertEq('hw_list name', listTool.name, 'hw_list');
+  assertEq('hw_list permission', listTool.permission, 'approve');
+  const lr = await listTool.execute();
+  assert('hw_list success', lr.success);
+  assert('hw_list no peripherals', lr.output.includes('No peripherals'));
+
+  // hw_connect serial
+  resetHandleCounter();
+  const mgr2 = new PeripheralManager({
+    serialApi: { requestPort: async () => mockPort() },
+  });
+  const connectTool = new HwConnectTool(mgr2);
+  const cr = await connectTool.execute({ type: 'serial' });
+  assert('hw_connect success', cr.success);
+  assert('hw_connect output', cr.output.includes('Connected'));
+
+  // hw_connect unknown type
+  const cr2 = await new HwConnectTool(new PeripheralManager({})).execute({ type: 'nfc' });
+  assert('hw_connect unknown fails', !cr2.success);
+
+  // hw_send
+  resetHandleCounter();
+  const mgr3 = new PeripheralManager({
+    serialApi: { requestPort: async () => mockPort() },
+  });
+  const h = await mgr3.requestSerial();
+  await h.connect();
+  const sr = await new HwSendTool(mgr3).execute({ device: h.id, data: '{"cmd":"info"}' });
+  assert('hw_send success', sr.success);
+
+  // hw_send not found
+  const sr2 = await new HwSendTool(new PeripheralManager({})).execute({ device: 'x', data: 't' });
+  assert('hw_send not found', !sr2.success);
+
+  // hw_disconnect
+  resetHandleCounter();
+  const mgr4 = new PeripheralManager({
+    serialApi: { requestPort: async () => mockPort() },
+  });
+  const h2 = await mgr4.requestSerial();
+  await h2.connect();
+  const dr = await new HwDisconnectTool(mgr4).execute({ device: h2.id });
+  assert('hw_disconnect success', dr.success);
+  assertEq('hw_disconnect removed', mgr4.deviceCount, 0);
+
+  // hw_info
+  resetHandleCounter();
+  const mgr5 = new PeripheralManager({
+    serialApi: { requestPort: async () => mockPort() },
+  });
+  const h3 = await mgr5.requestSerial();
+  const ir = await new HwInfoTool(mgr5).execute({ device: h3.id });
+  assert('hw_info success', ir.success);
+  const info = JSON.parse(ir.output);
+  assertEq('hw_info type', info.type, 'serial');
+
+  // hw_info not found
+  const ir2 = await new HwInfoTool(new PeripheralManager({})).execute({ device: 'x' });
+  assert('hw_info not found', !ir2.success);
 }
 
 // ═══════════════════════════════════════════════════════════════
