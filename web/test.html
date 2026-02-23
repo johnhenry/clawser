@@ -69,6 +69,11 @@ import {
   SubAgent, DelegateManager, DelegateTool, MAX_DELEGATION_DEPTH,
 } from './clawser-delegate.js';
 
+import {
+  createAuthProfile, AuthProfileManager,
+  AuthListProfilesTool, AuthSwitchProfileTool, AuthStatusTool,
+} from './clawser-auth-profiles.js';
+
 import { $, esc, state, on, off, emit, lsKey, setSending, setConversation, resetConversationState } from './clawser-state.js';
 
 import { ClawserAgent, AutonomyController, HookPipeline, HOOK_POINTS, createAuditLoggerHook } from './clawser-agent.js';
@@ -6122,6 +6127,307 @@ section('Delegate — DelegateTool');
   assert('output has task', r.output.includes('Calculate meaning'));
   assert('output has status', r.output.includes('completed'));
   assert('output has summary', r.output.includes('42'));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  AUTH PROFILES
+// ═══════════════════════════════════════════════════════════════
+
+section('Auth Profiles — createAuthProfile');
+
+{
+  const p = createAuthProfile({ provider: 'openai', name: 'Work', authType: 'api_key' });
+  assert('has id', p.id.startsWith('prof_'));
+  assertEq('name', p.name, 'Work');
+  assertEq('provider', p.provider, 'openai');
+  assertEq('authType', p.authType, 'api_key');
+  assertEq('baseUrl null', p.baseUrl, null);
+  assertEq('defaultModel null', p.defaultModel, null);
+  assert('metadata.created is number', typeof p.metadata.created === 'number');
+}
+
+{
+  const p = createAuthProfile({
+    provider: 'anthropic',
+    name: 'Personal',
+    baseUrl: 'https://custom.api.com',
+    defaultModel: 'claude-3',
+    organization: 'MyOrg',
+    project: 'Alpha',
+  });
+  assertEq('baseUrl set', p.baseUrl, 'https://custom.api.com');
+  assertEq('defaultModel set', p.defaultModel, 'claude-3');
+  assertEq('organization', p.metadata.organization, 'MyOrg');
+  assertEq('project', p.metadata.project, 'Alpha');
+}
+
+{
+  const p = createAuthProfile({ provider: 'groq' });
+  assertEq('defaults name', p.name, 'Default');
+  assertEq('defaults authType', p.authType, 'api_key');
+}
+
+section('Auth Profiles — AuthProfileManager CRUD');
+
+{
+  const mockVault = {
+    _store: new Map(),
+    async store(key, val) { this._store.set(key, val); },
+    async retrieve(key) { return this._store.get(key) || null; },
+    async delete(key) { this._store.delete(key); },
+  };
+
+  const mgr = new AuthProfileManager({ vault: mockVault });
+  assertEq('initially empty', mgr.size, 0);
+
+  // Add profiles
+  const p1 = await mgr.addProfile('openai', 'Work', { apiKey: 'sk-111' });
+  assertEq('size 1', mgr.size, 1);
+  assert('first profile auto-active', mgr.isActive(p1.id));
+
+  const p2 = await mgr.addProfile('openai', 'Personal', { apiKey: 'sk-222' });
+  assertEq('size 2', mgr.size, 2);
+  assert('first still active', mgr.isActive(p1.id));
+  assert('second not active', !mgr.isActive(p2.id));
+
+  // List profiles
+  const openaiProfiles = mgr.listProfiles('openai');
+  assertEq('2 openai profiles', openaiProfiles.length, 2);
+  const allProfiles = mgr.listProfiles();
+  assertEq('2 total profiles', allProfiles.length, 2);
+
+  // Get active profile
+  const active = mgr.getActiveProfile('openai');
+  assertEq('active is p1', active.id, p1.id);
+
+  // Get credentials
+  const creds = await mgr.getActiveCredentials('openai');
+  assertEq('creds apiKey', creds.apiKey, 'sk-111');
+
+  // Switch profile
+  const switched = mgr.switchProfile('openai', p2.id);
+  assert('switch succeeded', switched);
+  assert('p2 now active', mgr.isActive(p2.id));
+  assert('p1 no longer active', !mgr.isActive(p1.id));
+
+  const creds2 = await mgr.getActiveCredentials('openai');
+  assertEq('creds2 apiKey', creds2.apiKey, 'sk-222');
+
+  // Switch to invalid profile
+  const badSwitch = mgr.switchProfile('openai', 'nonexistent');
+  assert('bad switch fails', !badSwitch);
+
+  // Switch wrong provider
+  const wrongProvider = mgr.switchProfile('anthropic', p1.id);
+  assert('wrong provider fails', !wrongProvider);
+}
+
+section('Auth Profiles — Remove & Auto-switch');
+
+{
+  const mockVault = {
+    _store: new Map(),
+    async store(key, val) { this._store.set(key, val); },
+    async retrieve(key) { return this._store.get(key) || null; },
+    async delete(key) { this._store.delete(key); },
+  };
+
+  const mgr = new AuthProfileManager({ vault: mockVault });
+  const p1 = await mgr.addProfile('openai', 'First', { key: '1' });
+  const p2 = await mgr.addProfile('openai', 'Second', { key: '2' });
+  assert('p1 active initially', mgr.isActive(p1.id));
+
+  // Remove active profile — should auto-switch to p2
+  const removed = await mgr.removeProfile(p1.id);
+  assert('remove succeeded', removed);
+  assertEq('size after remove', mgr.size, 1);
+  assert('p2 now active', mgr.isActive(p2.id));
+
+  // Credentials removed from vault
+  assert('vault key deleted', !mockVault._store.has(`auth_${p1.id}`));
+
+  // Remove last profile
+  await mgr.removeProfile(p2.id);
+  assertEq('empty after removing all', mgr.size, 0);
+  assertEq('no active profile', mgr.getActiveProfile('openai'), null);
+
+  // Remove nonexistent
+  const removeBad = await mgr.removeProfile('nonexistent');
+  assert('remove nonexistent returns false', !removeBad);
+}
+
+section('Auth Profiles — Serialization');
+
+{
+  const mockVault = {
+    _store: new Map(),
+    async store(key, val) { this._store.set(key, val); },
+    async retrieve(key) { return this._store.get(key) || null; },
+    async delete(key) { this._store.delete(key); },
+  };
+
+  const mgr = new AuthProfileManager({ vault: mockVault });
+  await mgr.addProfile('openai', 'Work', { key: '1' });
+  await mgr.addProfile('anthropic', 'Claude', { key: '2' });
+
+  const json = mgr.toJSON();
+  assertEq('serialized 2 profiles', json.profiles.length, 2);
+  assert('active map has openai', 'openai' in json.active);
+  assert('active map has anthropic', 'anthropic' in json.active);
+
+  // Restore into new manager
+  const mgr2 = new AuthProfileManager({ vault: mockVault });
+  mgr2.fromJSON(json);
+  assertEq('restored size', mgr2.size, 2);
+  assertEq('restored openai profiles', mgr2.listProfiles('openai').length, 1);
+  assertEq('restored anthropic profiles', mgr2.listProfiles('anthropic').length, 1);
+  assert('restored active openai', mgr2.getActiveProfile('openai') !== null);
+}
+
+section('Auth Profiles — ActiveMap & Workspace Binding');
+
+{
+  const mockVault = {
+    _store: new Map(),
+    async store(key, val) { this._store.set(key, val); },
+    async retrieve(key) { return this._store.get(key) || null; },
+    async delete(key) { this._store.delete(key); },
+  };
+
+  const mgr = new AuthProfileManager({ vault: mockVault });
+  const p1 = await mgr.addProfile('openai', 'A', { key: '1' });
+  const p2 = await mgr.addProfile('openai', 'B', { key: '2' });
+  const p3 = await mgr.addProfile('anthropic', 'C', { key: '3' });
+
+  const map = mgr.getActiveMap();
+  assertEq('map openai is p1', map.openai, p1.id);
+  assertEq('map anthropic is p3', map.anthropic, p3.id);
+
+  // Set active map (workspace binding)
+  mgr.setActiveMap({ openai: p2.id });
+  assert('p2 now active via setActiveMap', mgr.isActive(p2.id));
+  assert('anthropic unchanged', mgr.isActive(p3.id));
+
+  // setActiveMap with invalid profile — ignored
+  mgr.setActiveMap({ openai: 'bad_id' });
+  assert('p2 still active after bad setActiveMap', mgr.isActive(p2.id));
+}
+
+section('Auth Profiles — buildPrompt');
+
+{
+  const mockVault = {
+    _store: new Map(),
+    async store(key, val) { this._store.set(key, val); },
+    async retrieve(key) { return this._store.get(key) || null; },
+    async delete(key) { this._store.delete(key); },
+  };
+
+  const mgr = new AuthProfileManager({ vault: mockVault });
+
+  // Empty prompt
+  assertEq('empty prompt', mgr.buildPrompt(), '');
+
+  await mgr.addProfile('openai', 'Work', { key: '1' }, { defaultModel: 'gpt-4', organization: 'Acme' });
+  await mgr.addProfile('anthropic', 'Personal', { key: '2' }, { baseUrl: 'https://custom.api' });
+
+  const prompt = mgr.buildPrompt();
+  assert('prompt has openai', prompt.includes('openai'));
+  assert('prompt has Work', prompt.includes('Work'));
+  assert('prompt has gpt-4', prompt.includes('gpt-4'));
+  assert('prompt has Acme', prompt.includes('Acme'));
+  assert('prompt has anthropic', prompt.includes('anthropic'));
+  assert('prompt has custom url', prompt.includes('https://custom.api'));
+}
+
+section('Auth Profiles — Agent Tools');
+
+{
+  const mockVault = {
+    _store: new Map(),
+    async store(key, val) { this._store.set(key, val); },
+    async retrieve(key) { return this._store.get(key) || null; },
+    async delete(key) { this._store.delete(key); },
+  };
+
+  const mgr = new AuthProfileManager({ vault: mockVault });
+  await mgr.addProfile('openai', 'Work', { key: '1' });
+  await mgr.addProfile('openai', 'Personal', { key: '2' });
+
+  // AuthListProfilesTool
+  const listTool = new AuthListProfilesTool(mgr);
+  assertEq('list tool name', listTool.name, 'auth_list_profiles');
+  assertEq('list tool permission', listTool.permission, 'read');
+
+  const listResult = await listTool.execute({ provider: 'openai' });
+  assert('list success', listResult.success);
+  assert('list has Work', listResult.output.includes('Work'));
+  assert('list has Personal', listResult.output.includes('Personal'));
+  assert('list has ACTIVE', listResult.output.includes('[ACTIVE]'));
+
+  const emptyList = await listTool.execute({ provider: 'groq' });
+  assert('empty list', emptyList.output.includes('No auth profiles'));
+
+  // AuthSwitchProfileTool
+  const switchTool = new AuthSwitchProfileTool(mgr);
+  assertEq('switch tool name', switchTool.name, 'auth_switch_profile');
+  assertEq('switch tool permission', switchTool.permission, 'approve');
+
+  const profiles = mgr.listProfiles('openai');
+  const p2Id = profiles[1].id;
+  const switchResult = await switchTool.execute({ provider: 'openai', profile_id: p2Id });
+  assert('switch success', switchResult.success);
+  assert('switch output', switchResult.output.includes('Switched'));
+
+  const badSwitch = await switchTool.execute({ provider: 'openai', profile_id: 'bad' });
+  assert('bad switch fails', !badSwitch.success);
+
+  // AuthStatusTool
+  const statusTool = new AuthStatusTool(mgr);
+  assertEq('status tool name', statusTool.name, 'auth_status');
+  assertEq('status tool permission', statusTool.permission, 'read');
+
+  const statusResult = await statusTool.execute();
+  assert('status success', statusResult.success);
+  assert('status has provider', statusResult.output.includes('openai'));
+}
+
+section('Auth Profiles — No Vault Fallback');
+
+{
+  // Manager without vault
+  const mgr = new AuthProfileManager();
+  const p = await mgr.addProfile('openai', 'NoVault', { key: '123' });
+  assert('profile created without vault', p !== null);
+  assertEq('size', mgr.size, 1);
+
+  // getActiveCredentials returns null without vault
+  const creds = await mgr.getActiveCredentials('openai');
+  assertEq('no vault returns null', creds, null);
+
+  // Remove still works
+  const removed = await mgr.removeProfile(p.id);
+  assert('remove without vault', removed);
+  assertEq('empty after remove', mgr.size, 0);
+}
+
+section('Auth Profiles — onProfileChanged callback');
+
+{
+  let callbackArgs = null;
+  const mgr = new AuthProfileManager({
+    onProfileChanged: (provider, profileId) => {
+      callbackArgs = { provider, profileId };
+    },
+  });
+  // Need to add vault-less profiles manually
+  const p1 = await mgr.addProfile('openai', 'A', {});
+  const p2 = await mgr.addProfile('openai', 'B', {});
+
+  mgr.switchProfile('openai', p2.id);
+  assert('callback fired', callbackArgs !== null);
+  assertEq('callback provider', callbackArgs.provider, 'openai');
+  assertEq('callback profileId', callbackArgs.profileId, p2.id);
 }
 
 // ═══════════════════════════════════════════════════════════════
