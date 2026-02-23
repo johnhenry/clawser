@@ -197,6 +197,134 @@ class EventLog {
   }
 }
 
+// ── AutonomyController ─────────────────────────────────────────
+// Enforces autonomy levels (readonly, supervised, full) and rate/cost limits.
+
+/** @type {readonly ['readonly', 'supervised', 'full']} */
+const AUTONOMY_LEVELS = ['readonly', 'supervised', 'full'];
+
+/** Tool permission categories that are read-only (allowed in readonly mode). */
+const READ_PERMISSIONS = new Set(['internal', 'read']);
+
+export class AutonomyController {
+  #level = 'supervised';
+  #actionsThisHour = 0;
+  #costTodayCents = 0;
+  #hourStart = Date.now();
+  #dayStart = AutonomyController.#startOfDay();
+
+  // Configurable limits (Infinity = no limit)
+  #maxActionsPerHour;
+  #maxCostPerDayCents;
+
+  /**
+   * @param {object} [opts]
+   * @param {'readonly'|'supervised'|'full'} [opts.level='supervised']
+   * @param {number} [opts.maxActionsPerHour=Infinity]
+   * @param {number} [opts.maxCostPerDayCents=Infinity]
+   */
+  constructor(opts = {}) {
+    if (opts.level && AUTONOMY_LEVELS.includes(opts.level)) this.#level = opts.level;
+    this.#maxActionsPerHour = opts.maxActionsPerHour ?? Infinity;
+    this.#maxCostPerDayCents = opts.maxCostPerDayCents ?? Infinity;
+  }
+
+  static #startOfDay() {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  }
+
+  /** @returns {'readonly'|'supervised'|'full'} */
+  get level() { return this.#level; }
+  set level(v) {
+    if (AUTONOMY_LEVELS.includes(v)) this.#level = v;
+  }
+
+  get maxActionsPerHour() { return this.#maxActionsPerHour; }
+  set maxActionsPerHour(v) { this.#maxActionsPerHour = v; }
+
+  get maxCostPerDayCents() { return this.#maxCostPerDayCents; }
+  set maxCostPerDayCents(v) { this.#maxCostPerDayCents = v; }
+
+  /**
+   * Check if a tool is allowed at the current autonomy level.
+   * @param {{permission: string}} tool - Tool or spec with a permission field
+   * @returns {boolean}
+   */
+  canExecuteTool(tool) {
+    if (this.#level === 'readonly') {
+      return READ_PERMISSIONS.has(tool.permission);
+    }
+    return true;
+  }
+
+  /**
+   * Check if a tool needs user approval at the current autonomy level.
+   * @param {{permission: string}} tool
+   * @returns {boolean}
+   */
+  needsApproval(tool) {
+    if (this.#level === 'full') return false;
+    if (this.#level === 'readonly') return false; // blocked entirely, not awaiting approval
+    // supervised: non-read tools need approval
+    return !READ_PERMISSIONS.has(tool.permission);
+  }
+
+  /**
+   * Check rate and cost limits. Resets counters if the time window has elapsed.
+   * @returns {{blocked: boolean, reason?: string}}
+   */
+  checkLimits() {
+    const now = Date.now();
+
+    // Reset hourly counter
+    if (now - this.#hourStart > 3_600_000) {
+      this.#actionsThisHour = 0;
+      this.#hourStart = now;
+    }
+
+    // Reset daily counter
+    if (now - this.#dayStart > 86_400_000) {
+      this.#costTodayCents = 0;
+      this.#dayStart = AutonomyController.#startOfDay();
+    }
+
+    if (this.#actionsThisHour >= this.#maxActionsPerHour) {
+      return { blocked: true, reason: `Rate limit: ${this.#maxActionsPerHour} actions/hour exceeded` };
+    }
+    if (this.#costTodayCents >= this.#maxCostPerDayCents) {
+      return { blocked: true, reason: `Cost limit: $${(this.#maxCostPerDayCents / 100).toFixed(2)}/day exceeded` };
+    }
+    return { blocked: false };
+  }
+
+  /** Record one tool action. */
+  recordAction() { this.#actionsThisHour++; }
+
+  /** Record cost in cents. @param {number} cents */
+  recordCost(cents) { this.#costTodayCents += cents; }
+
+  /** Get current stats for UI display. */
+  get stats() {
+    return {
+      level: this.#level,
+      actionsThisHour: this.#actionsThisHour,
+      maxActionsPerHour: this.#maxActionsPerHour,
+      costTodayCents: this.#costTodayCents,
+      maxCostPerDayCents: this.#maxCostPerDayCents,
+    };
+  }
+
+  /** Reset all counters (e.g. for testing). */
+  reset() {
+    this.#actionsThisHour = 0;
+    this.#costTodayCents = 0;
+    this.#hourStart = Date.now();
+    this.#dayStart = AutonomyController.#startOfDay();
+  }
+}
+
 export class ClawserAgent {
   // ── Agent state ──────────────────────────────────────────────
   #history = [];          // Array<{role, content, tool_call_id?, name?, tool_calls?}>
@@ -235,6 +363,8 @@ export class ClawserAgent {
   #codex = null;
   /** @type {import('./clawser-providers.js').ResponseCache|null} */
   #responseCache = null;
+  /** @type {AutonomyController} */
+  #autonomy = new AutonomyController();
 
   // ── Workspace ────────────────────────────────────────────────
   #workspaceId = 'default';
@@ -254,6 +384,7 @@ export class ClawserAgent {
    * @param {import('./clawser-providers.js').ProviderRegistry} [opts.providers]
    * @param {import('./clawser-mcp.js').McpManager} [opts.mcpManager]
    * @param {import('./clawser-providers.js').ResponseCache} [opts.responseCache]
+   * @param {AutonomyController} [opts.autonomy]
    * @param {Function} [opts.onEvent]
    * @param {Function} [opts.onLog]
    * @param {Function} [opts.onToolCall]
@@ -270,6 +401,7 @@ export class ClawserAgent {
     agent.#mcpManager = opts.mcpManager || null;
     agent.#providers = opts.providers || null;
     agent.#responseCache = opts.responseCache || null;
+    if (opts.autonomy) agent.#autonomy = opts.autonomy;
     agent.#onToolCall = opts.onToolCall || (() => {});
 
     if (agent.#browserTools) {
@@ -375,6 +507,9 @@ export class ClawserAgent {
   /** Get the current model override */
   getModel() { return this.#model; }
 
+  /** Get the autonomy controller for level/limit management */
+  get autonomy() { return this.#autonomy; }
+
   /** Get available providers with availability info */
   async getProviders() {
     if (!this.#providers) return [];
@@ -458,16 +593,36 @@ export class ClawserAgent {
 
       let result;
 
+      // Autonomy: check if tool is allowed at current level
+      const toolObj = this.#browserTools?.get(call.name);
+      if (toolObj && !this.#autonomy.canExecuteTool(toolObj)) {
+        result = { success: false, output: '', error: `Blocked: agent is in ${this.#autonomy.level} mode` };
+        this.#onToolCall(call.name, params, result);
+        results.push({ id: call.id, name: call.name, result });
+        continue;
+      }
+
+      // Autonomy: check rate limits before each tool execution
+      const limitCheck = this.#autonomy.checkLimits();
+      if (limitCheck.blocked) {
+        result = { success: false, output: '', error: limitCheck.reason };
+        this.#onToolCall(call.name, params, result);
+        results.push({ id: call.id, name: call.name, result });
+        continue;
+      }
+
       // 1. Check browser tools first
       if (this.#browserTools?.has(call.name)) {
         this.#onToolCall(call.name, params, null);
         result = await this.#browserTools.execute(call.name, params);
+        this.#autonomy.recordAction();
         this.#onToolCall(call.name, params, result);
       }
       // 2. Check MCP tools
       else if (this.#mcpManager?.findClient(call.name)) {
         this.#onToolCall(call.name, params, null);
         result = await this.#mcpManager.executeTool(call.name, params);
+        this.#autonomy.recordAction();
         this.#onToolCall(call.name, params, result);
       }
       // 3. Unknown tool
@@ -621,6 +776,13 @@ export class ClawserAgent {
    * @returns {Promise<{status: number, data: string}>}
    */
   async run() {
+    // Autonomy: check limits before starting
+    const limitsCheck = this.#autonomy.checkLimits();
+    if (limitsCheck.blocked) {
+      this.#eventLog.append('autonomy_blocked', { reason: limitsCheck.reason }, 'system');
+      return { status: -1, data: limitsCheck.reason };
+    }
+
     let maxIterations = this.#config.maxToolIterations || 20;
     let codexDone = false;
 
@@ -672,6 +834,13 @@ export class ClawserAgent {
       } catch (e) {
         this.#eventLog.append('error', { message: e.message }, 'system');
         return { status: -1, data: `Provider error: ${e.message}` };
+      }
+
+      // Autonomy: record cost after LLM call
+      if (response.usage) {
+        const { estimateCost } = await import('./clawser-providers.js');
+        const cost = estimateCost(response.model, response.usage);
+        this.#autonomy.recordCost(Math.round(cost * 100));
       }
 
       // For non-native providers: execute code blocks, then follow-up LLM call
@@ -753,6 +922,14 @@ export class ClawserAgent {
    * @returns {AsyncGenerator}
    */
   async *runStream(options = {}) {
+    // Autonomy: check limits before starting
+    const limitsCheck = this.#autonomy.checkLimits();
+    if (limitsCheck.blocked) {
+      this.#eventLog.append('autonomy_blocked', { reason: limitsCheck.reason }, 'system');
+      yield { type: 'error', error: limitsCheck.reason };
+      return;
+    }
+
     let maxIterations = this.#config.maxToolIterations || 20;
     let codexDone = false;
 

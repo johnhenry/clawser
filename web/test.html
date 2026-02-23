@@ -38,7 +38,7 @@ import { SkillParser } from './clawser-skills.js';
 
 import { $, esc, state, on, off, emit, lsKey, setSending, setConversation, resetConversationState } from './clawser-state.js';
 
-import { ClawserAgent } from './clawser-agent.js';
+import { ClawserAgent, AutonomyController } from './clawser-agent.js';
 
 import {
   deriveKey, encryptSecret, decryptSecret,
@@ -3237,7 +3237,7 @@ section('ResponseCache — integration with agent');
   });
 
   agent.init({});
-  agent.setActiveProvider('echo');
+  agent.setProvider('echo');
   agent.setSystemPrompt('test');
   agent.sendMessage('cache test message');
 
@@ -3435,6 +3435,166 @@ section('Vault — exists check');
 
   await vault.unlock('pass');
   assertEq('vault exists after unlock', await vault.exists(), true);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  AutonomyController
+// ═══════════════════════════════════════════════════════════════
+
+section('Autonomy — level basics');
+{
+  const ac = new AutonomyController();
+  assertEq('default level supervised', ac.level, 'supervised');
+
+  ac.level = 'full';
+  assertEq('set to full', ac.level, 'full');
+
+  ac.level = 'readonly';
+  assertEq('set to readonly', ac.level, 'readonly');
+
+  ac.level = 'invalid';
+  assertEq('invalid ignored', ac.level, 'readonly');
+}
+
+section('Autonomy — canExecuteTool');
+{
+  const readTool = { permission: 'read' };
+  const writeTool = { permission: 'write' };
+  const networkTool = { permission: 'network' };
+  const internalTool = { permission: 'internal' };
+  const browserTool = { permission: 'browser' };
+
+  // ReadOnly: only read + internal allowed
+  const ro = new AutonomyController({ level: 'readonly' });
+  assert('readonly allows read', ro.canExecuteTool(readTool));
+  assert('readonly allows internal', ro.canExecuteTool(internalTool));
+  assert('readonly blocks write', !ro.canExecuteTool(writeTool));
+  assert('readonly blocks network', !ro.canExecuteTool(networkTool));
+  assert('readonly blocks browser', !ro.canExecuteTool(browserTool));
+
+  // Supervised: all tools allowed
+  const sv = new AutonomyController({ level: 'supervised' });
+  assert('supervised allows write', sv.canExecuteTool(writeTool));
+  assert('supervised allows network', sv.canExecuteTool(networkTool));
+
+  // Full: all tools allowed
+  const fl = new AutonomyController({ level: 'full' });
+  assert('full allows write', fl.canExecuteTool(writeTool));
+  assert('full allows network', fl.canExecuteTool(networkTool));
+}
+
+section('Autonomy — needsApproval');
+{
+  const writeTool = { permission: 'write' };
+  const readTool = { permission: 'read' };
+  const internalTool = { permission: 'internal' };
+
+  // ReadOnly: never needs approval (blocked entirely)
+  const ro = new AutonomyController({ level: 'readonly' });
+  assert('readonly no approval for write', !ro.needsApproval(writeTool));
+
+  // Supervised: non-read tools need approval
+  const sv = new AutonomyController({ level: 'supervised' });
+  assert('supervised needs approval for write', sv.needsApproval(writeTool));
+  assert('supervised no approval for read', !sv.needsApproval(readTool));
+  assert('supervised no approval for internal', !sv.needsApproval(internalTool));
+
+  // Full: never needs approval
+  const fl = new AutonomyController({ level: 'full' });
+  assert('full no approval for write', !fl.needsApproval(writeTool));
+}
+
+section('Autonomy — rate limits');
+{
+  const ac = new AutonomyController({ maxActionsPerHour: 3, maxCostPerDayCents: Infinity });
+
+  assertEq('starts unblocked', ac.checkLimits().blocked, false);
+
+  ac.recordAction();
+  ac.recordAction();
+  ac.recordAction();
+  assert('at limit blocked', ac.checkLimits().blocked);
+  assert('rate limit reason', ac.checkLimits().reason.includes('actions/hour'));
+
+  // Reset clears counters
+  ac.reset();
+  assertEq('reset unblocked', ac.checkLimits().blocked, false);
+}
+
+section('Autonomy — cost limits');
+{
+  const ac = new AutonomyController({ maxActionsPerHour: Infinity, maxCostPerDayCents: 100 }); // $1
+
+  assertEq('cost starts unblocked', ac.checkLimits().blocked, false);
+
+  ac.recordCost(50);
+  assertEq('50c still unblocked', ac.checkLimits().blocked, false);
+
+  ac.recordCost(60); // total 110 > 100
+  assert('over cost limit blocked', ac.checkLimits().blocked);
+  assert('cost limit reason', ac.checkLimits().reason.includes('Cost limit'));
+}
+
+section('Autonomy — no limits by default');
+{
+  const ac = new AutonomyController();
+
+  // Record many actions and high cost — should never block with Infinity limits
+  for (let i = 0; i < 1000; i++) ac.recordAction();
+  ac.recordCost(999999);
+  assertEq('infinite limits never block', ac.checkLimits().blocked, false);
+}
+
+section('Autonomy — stats');
+{
+  const ac = new AutonomyController({ level: 'full', maxActionsPerHour: 50, maxCostPerDayCents: 500 });
+  ac.recordAction();
+  ac.recordAction();
+  ac.recordCost(42);
+
+  const s = ac.stats;
+  assertEq('stats level', s.level, 'full');
+  assertEq('stats actions', s.actionsThisHour, 2);
+  assertEq('stats maxActions', s.maxActionsPerHour, 50);
+  assertEq('stats cost', s.costTodayCents, 42);
+  assertEq('stats maxCost', s.maxCostPerDayCents, 500);
+}
+
+section('Autonomy — agent integration');
+{
+  const providers = createDefaultProviders();
+  const autonomy = new AutonomyController({ level: 'readonly' });
+
+  const agent = await ClawserAgent.create({
+    providers,
+    autonomy,
+    browserTools: createDefaultRegistry(),
+    onEvent: () => {},
+  });
+
+  agent.init({});
+  agent.setProvider('echo');
+  agent.setSystemPrompt('test');
+  agent.sendMessage('hello');
+
+  // Agent should still work in readonly mode (LLM calls allowed, just tool restrictions)
+  const r = await agent.run();
+  assertEq('readonly agent works', r.status, 1);
+
+  // Verify autonomy is accessible
+  assertEq('agent autonomy level', agent.autonomy.level, 'readonly');
+
+  // Test with cost limit blocking
+  const autonomy2 = new AutonomyController({ maxCostPerDayCents: 0 });
+  autonomy2.recordCost(1); // exceed immediately
+  const agent2 = await ClawserAgent.create({ providers, autonomy: autonomy2, onEvent: () => {} });
+  agent2.init({});
+  agent2.setProvider('echo');
+  agent2.setSystemPrompt('test');
+  agent2.sendMessage('hello');
+  const r2 = await agent2.run();
+  assertEq('cost blocked agent fails', r2.status, -1);
+  assert('cost blocked message', r2.data.includes('Cost limit'));
 }
 
 // ═══════════════════════════════════════════════════════════════
