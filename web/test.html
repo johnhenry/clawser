@@ -117,6 +117,12 @@ import {
   HeartbeatRunner, HeartbeatStatusTool, HeartbeatRunTool,
 } from './clawser-heartbeat.js';
 
+import {
+  TRIGGER_TYPES, ACTION_TYPES, DEFAULT_GUARDRAILS, AUTO_DISABLE_THRESHOLD,
+  createRoutine, matchFilter, resetRoutineCounter, RoutineEngine,
+  RoutineCreateTool, RoutineListTool, RoutineDeleteTool, RoutineRunTool,
+} from './clawser-routines.js';
+
 import { $, esc, state, on, off, emit, lsKey, setSending, setConversation, resetConversationState } from './clawser-state.js';
 
 import { ClawserAgent, AutonomyController, HookPipeline, HOOK_POINTS, createAuditLoggerHook } from './clawser-agent.js';
@@ -7864,6 +7870,137 @@ section('Heartbeat: Agent Tools');
   const r3 = await runTool.execute({ group: 'all' });
   assert('run all passed', r3.success && r3.output.includes('passed'));
   runner.stop();
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  ROUTINES ENGINE
+// ═══════════════════════════════════════════════════════════════
+
+section('Routines: Constants & Factory');
+{
+  assertEq('TRIGGER_TYPES.CRON', TRIGGER_TYPES.CRON, 'cron');
+  assertEq('TRIGGER_TYPES.EVENT', TRIGGER_TYPES.EVENT, 'event');
+  assertEq('ACTION_TYPES.PROMPT', ACTION_TYPES.PROMPT, 'prompt');
+
+  resetRoutineCounter();
+  const r = createRoutine({ name: 'Test', trigger: { type: 'event', event: 'file.changed' } });
+  assert('routine id', r.id.startsWith('routine_'));
+  assertEq('routine name', r.name, 'Test');
+  assertEq('trigger type', r.trigger.type, 'event');
+  assertEq('default guardrails', r.guardrails.maxRunsPerHour, 3);
+}
+
+section('Routines: matchFilter');
+{
+  assert('null filter', matchFilter(null, { x: 1 }));
+  assert('exact match', matchFilter({ path: '/src/a.js' }, { path: '/src/a.js' }));
+  assert('exact mismatch', !matchFilter({ path: '/src/a.js' }, { path: '/lib/a.js' }));
+  assert('glob match', matchFilter({ path: '/src/*' }, { path: '/src/app.js' }));
+  assert('glob mismatch', !matchFilter({ path: '/src/*' }, { path: '/lib/app.js' }));
+  assert('missing key', !matchFilter({ path: '/src' }, { type: 'mod' }));
+}
+
+section('Routines: RoutineEngine');
+{
+  // CRUD
+  resetRoutineCounter();
+  const engine = new RoutineEngine();
+  const r1 = engine.addRoutine({ name: 'A' });
+  assertEq('add count', engine.routineCount, 1);
+  assertEq('get by id', engine.getRoutine(r1.id).name, 'A');
+  assert('remove', engine.removeRoutine(r1.id));
+  assertEq('after remove', engine.routineCount, 0);
+
+  // Event handling
+  resetRoutineCounter();
+  let evtCount = 0;
+  const engine2 = new RoutineEngine({ executeFn: async () => { evtCount++; } });
+  engine2.addRoutine({
+    name: 'On file change',
+    trigger: { type: 'event', event: 'file.changed', filter: { path: '/src/*' } },
+  });
+  await engine2.handleEvent('file.changed', { path: '/src/app.js' });
+  assertEq('event triggered', evtCount, 1);
+  await engine2.handleEvent('file.changed', { path: '/lib/util.js' });
+  assertEq('filtered out', evtCount, 1);
+
+  // Cron
+  resetRoutineCounter();
+  let cronCount = 0;
+  const engine3 = new RoutineEngine({ executeFn: async () => { cronCount++; } });
+  engine3.addRoutine({
+    name: 'Every minute',
+    trigger: { type: 'cron', cron: '* * * * *' },
+  });
+  await engine3.tickCron(new Date('2026-01-15T10:30:00'));
+  assertEq('cron triggered', cronCount, 1);
+
+  // Rate limiting
+  resetRoutineCounter();
+  let rlCount = 0;
+  const engine4 = new RoutineEngine({ executeFn: async () => { rlCount++; } });
+  engine4.addRoutine({
+    name: 'Rate limited',
+    trigger: { type: 'event', event: 'test' },
+    guardrails: { maxRunsPerHour: 2 },
+  });
+  await engine4.handleEvent('test');
+  await engine4.handleEvent('test');
+  await engine4.handleEvent('test');
+  assertEq('rate limited', rlCount, 2);
+
+  // Auto-disable
+  resetRoutineCounter();
+  const engine5 = new RoutineEngine({
+    executeFn: async () => { throw new Error('fail'); },
+    onNotify: () => {},
+  });
+  const r5 = engine5.addRoutine({
+    name: 'Auto-disable',
+    trigger: { type: 'event', event: 'test' },
+    guardrails: { maxRunsPerHour: 100 },
+  });
+  for (let i = 0; i < AUTO_DISABLE_THRESHOLD; i++) await engine5.handleEvent('test');
+  assertEq('auto-disabled', engine5.getRoutine(r5.id).enabled, false);
+
+  // Serialization
+  resetRoutineCounter();
+  const engine6 = new RoutineEngine();
+  engine6.addRoutine({ name: 'A' });
+  engine6.addRoutine({ name: 'B' });
+  const json = engine6.toJSON();
+  const engine7 = new RoutineEngine();
+  engine7.fromJSON(json);
+  assertEq('restored count', engine7.routineCount, 2);
+}
+
+section('Routines: Agent Tools');
+{
+  resetRoutineCounter();
+  const engine = new RoutineEngine({ executeFn: async () => {} });
+  const ct = new RoutineCreateTool(engine);
+  assertEq('create name', ct.name, 'routine_create');
+  const cr = await ct.execute({ name: 'Test', trigger_type: 'event', event: 'file.changed' });
+  assert('create success', cr.success);
+  assertEq('engine has 1', engine.routineCount, 1);
+
+  const lt = new RoutineListTool(engine);
+  const lr = await lt.execute();
+  assert('list success', lr.success);
+  assert('list has routine', lr.output.includes('Test'));
+
+  const r = engine.listRoutines()[0];
+  const rt = new RoutineRunTool(engine);
+  const rr = await rt.execute({ id: r.id });
+  assert('run success', rr.success);
+
+  const dt = new RoutineDeleteTool(engine);
+  const dr = await dt.execute({ id: r.id });
+  assert('delete success', dr.success);
+  assertEq('deleted', engine.routineCount, 0);
+
+  const dr2 = await dt.execute({ id: 'nonexistent' });
+  assert('delete not found', !dr2.success);
 }
 
 // ═══════════════════════════════════════════════════════════════
