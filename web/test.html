@@ -45,6 +45,11 @@ import {
   ToolBuildTool, ToolTestTool, ToolListCustomTool, ToolEditTool, ToolRemoveTool,
 } from './clawser-tool-builder.js';
 
+import {
+  percentile, MetricsCollector, RingBufferLog, LOG_LEVELS,
+  exportMetricsJSON, exportMetricsOTLP,
+} from './clawser-metrics.js';
+
 import { $, esc, state, on, off, emit, lsKey, setSending, setConversation, resetConversationState } from './clawser-state.js';
 
 import { ClawserAgent, AutonomyController, HookPipeline, HOOK_POINTS, createAuditLoggerHook } from './clawser-agent.js';
@@ -4992,6 +4997,190 @@ section('ToolBuilder — agent tools');
   // List empty
   const lr2 = await listTool.execute({});
   assert('list empty', lr2.output.includes('No custom'));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  OBSERVABILITY — percentile helper
+// ═══════════════════════════════════════════════════════════════
+
+section('Observability — percentile');
+
+{
+  assertEq('empty array', percentile([], 50), 0);
+  assertEq('single value', percentile([42], 50), 42);
+  assertEq('p0', percentile([1, 2, 3, 4, 5], 0), 1);
+  assertEq('p100', percentile([1, 2, 3, 4, 5], 100), 5);
+  assertEq('p50 odd', percentile([1, 2, 3, 4, 5], 50), 3);
+  // p50 of [1,2,3,4] = interpolate index 1.5 → 2.5
+  assertEq('p50 even', percentile([1, 2, 3, 4], 50), 2.5);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  OBSERVABILITY — MetricsCollector
+// ═══════════════════════════════════════════════════════════════
+
+section('Observability — MetricsCollector');
+
+{
+  const mc = new MetricsCollector();
+
+  // Counters
+  mc.increment('requests');
+  mc.increment('requests');
+  mc.increment('requests', 3);
+  assertEq('counter value', mc.counter('requests'), 5);
+  assertEq('counter unknown', mc.counter('nonexistent'), 0);
+
+  // Gauges
+  mc.gauge('active_connections', 10);
+  assertEq('gauge value', mc.getGauge('active_connections'), 10);
+  mc.gauge('active_connections', 7);
+  assertEq('gauge updated', mc.getGauge('active_connections'), 7);
+
+  // Histograms
+  mc.observe('latency', 100);
+  mc.observe('latency', 200);
+  mc.observe('latency', 300);
+  assertEq('histogram length', mc.histogram('latency').length, 3);
+
+  // Snapshot
+  const snap = mc.snapshot();
+  assertEq('snap counter', snap.counters.requests, 5);
+  assertEq('snap gauge', snap.gauges.active_connections, 7);
+  assertEq('snap hist count', snap.histograms.latency.count, 3);
+  assertEq('snap hist min', snap.histograms.latency.min, 100);
+  assertEq('snap hist max', snap.histograms.latency.max, 300);
+  assertEq('snap hist avg', snap.histograms.latency.avg, 200);
+  assert('snap has timestamp', typeof snap.timestamp === 'number');
+
+  // Reset
+  mc.reset();
+  assertEq('reset counter', mc.counter('requests'), 0);
+  assert('reset gauge', mc.getGauge('active_connections') === undefined);
+  assertEq('reset histogram', mc.histogram('latency').length, 0);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  OBSERVABILITY — Histogram capacity
+// ═══════════════════════════════════════════════════════════════
+
+section('Observability — histogram capacity');
+
+{
+  const mc = new MetricsCollector({ histogramCapacity: 5 });
+  for (let i = 0; i < 10; i++) mc.observe('x', i);
+  assertEq('capped at 5', mc.histogram('x').length, 5);
+  // Should keep the last 5: [5, 6, 7, 8, 9]
+  assertEq('oldest kept', mc.histogram('x')[0], 5);
+  assertEq('newest kept', mc.histogram('x')[4], 9);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  OBSERVABILITY — RingBufferLog
+// ═══════════════════════════════════════════════════════════════
+
+section('Observability — RingBufferLog');
+
+{
+  const log = new RingBufferLog(5);
+  assertEq('initial size', log.size, 0);
+  assertEq('capacity', log.capacity, 5);
+
+  // Push entries
+  log.push({ level: 1, source: 'agent', message: 'step 1' });
+  log.push({ level: 2, source: 'provider', message: 'warning' });
+  log.push({ level: 3, source: 'tool', message: 'error occurred' });
+  assertEq('size after 3', log.size, 3);
+
+  // toArray
+  const all = log.toArray();
+  assertEq('toArray length', all.length, 3);
+  assertEq('first message', all[0].message, 'step 1');
+  assert('has timestamp', typeof all[0].timestamp === 'number');
+  assert('has seq', typeof all[0].seq === 'number');
+
+  // Query by level
+  const errors = log.query({ level: 3 });
+  assertEq('errors count', errors.length, 1);
+  assertEq('error message', errors[0].message, 'error occurred');
+
+  // Query by source
+  const providerLogs = log.query({ source: 'provider' });
+  assertEq('provider count', providerLogs.length, 1);
+
+  // Query by pattern
+  const stepped = log.query({ pattern: 'step' });
+  assertEq('pattern count', stepped.length, 1);
+
+  // Wrapping behavior
+  log.push({ level: 1, source: 'agent', message: 'step 4' });
+  log.push({ level: 1, source: 'agent', message: 'step 5' });
+  assertEq('size at capacity', log.size, 5);
+
+  log.push({ level: 1, source: 'agent', message: 'step 6' });
+  assertEq('size after wrap', log.size, 5);
+  const wrapped = log.toArray();
+  assertEq('wrapped length', wrapped.length, 5);
+  // First entry should now be 'warning' (oldest surviving)
+  assertEq('oldest after wrap', wrapped[0].message, 'warning');
+  assertEq('newest after wrap', wrapped[4].message, 'step 6');
+
+  // Query limit
+  const limited = log.query({ limit: 2 });
+  assertEq('limit count', limited.length, 2);
+
+  // Clear
+  log.clear();
+  assertEq('cleared size', log.size, 0);
+  assertEq('cleared toArray', log.toArray().length, 0);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  OBSERVABILITY — Metrics Export
+// ═══════════════════════════════════════════════════════════════
+
+section('Observability — export');
+
+{
+  const mc = new MetricsCollector();
+  mc.increment('agent.steps.total', 10);
+  mc.gauge('memory.entries.count', 42);
+  mc.observe('provider.request.duration_ms', 150);
+  mc.observe('provider.request.duration_ms', 250);
+
+  const snap = mc.snapshot();
+
+  // JSON export
+  const json = exportMetricsJSON(snap);
+  assert('json is string', typeof json === 'string');
+  const parsed = JSON.parse(json);
+  assertEq('json counter', parsed.counters['agent.steps.total'], 10);
+
+  // OTLP export
+  const otlp = exportMetricsOTLP(snap, 'clawser-test');
+  assert('otlp has resourceMetrics', Array.isArray(otlp.resourceMetrics));
+  const rm = otlp.resourceMetrics[0];
+  assertEq('otlp service name', rm.resource.attributes[0].value.stringValue, 'clawser-test');
+  const scopeMetrics = rm.scopeMetrics[0].metrics;
+  assert('otlp has metrics', scopeMetrics.length >= 3);
+
+  // Find counter
+  const counterMetric = scopeMetrics.find(m => m.name === 'agent.steps.total');
+  assert('otlp counter found', !!counterMetric);
+  assert('otlp counter is sum', !!counterMetric.sum);
+  assertEq('otlp counter value', counterMetric.sum.dataPoints[0].asDouble, 10);
+  assert('otlp counter monotonic', counterMetric.sum.isMonotonic);
+
+  // Find gauge
+  const gaugeMetric = scopeMetrics.find(m => m.name === 'memory.entries.count');
+  assert('otlp gauge found', !!gaugeMetric);
+  assert('otlp gauge type', !!gaugeMetric.gauge);
+
+  // Find histogram
+  const histMetric = scopeMetrics.find(m => m.name === 'provider.request.duration_ms');
+  assert('otlp hist found', !!histMetric);
+  assert('otlp hist type', !!histMetric.histogram);
+  assertEq('otlp hist count', histMetric.histogram.dataPoints[0].count, 2);
 }
 
 // ═══════════════════════════════════════════════════════════════
