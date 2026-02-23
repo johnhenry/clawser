@@ -136,6 +136,11 @@ import {
   RemoteStatusTool, RemotePairTool, RemoteRevokeTool,
 } from './clawser-remote.js';
 
+import {
+  OAUTH_PROVIDERS, OAuthConnection, OAuthManager,
+  OAuthListTool, OAuthConnectTool, OAuthDisconnectTool, OAuthApiTool,
+} from './clawser-oauth.js';
+
 import { $, esc, state, on, off, emit, lsKey, setSending, setConversation, resetConversationState } from './clawser-state.js';
 
 import { ClawserAgent, AutonomyController, HookPipeline, HOOK_POINTS, createAuditLoggerHook } from './clawser-agent.js';
@@ -8261,6 +8266,133 @@ section('Remote: Agent Tools');
   const r3 = await rt.execute({ all: true });
   assert('revoke all', r3.output.includes('All remote sessions revoked'));
   assertEq('revoked count', pm.sessionCount, 0);
+}
+
+// ── Block 16: OAuth App Integrations ─────────────────────────────
+
+section('OAuth: OAUTH_PROVIDERS');
+{
+  assert('google exists', !!OAUTH_PROVIDERS.google);
+  assert('github exists', !!OAUTH_PROVIDERS.github);
+  assert('notion exists', !!OAUTH_PROVIDERS.notion);
+  assert('slack exists', !!OAUTH_PROVIDERS.slack);
+  assert('linear exists', !!OAUTH_PROVIDERS.linear);
+  assertEq('google name', OAUTH_PROVIDERS.google.name, 'Google');
+  assert('google authUrl', OAUTH_PROVIDERS.google.authUrl.includes('accounts.google.com'));
+  assert('google requiresClientId', OAUTH_PROVIDERS.google.requiresClientId);
+  assert('github scopes', OAUTH_PROVIDERS.github.scopes.repo.length > 0);
+}
+
+section('OAuth: OAuthConnection');
+{
+  const tokens = { access_token: 'at_1', refresh_token: 'rt_1', expires_at: Date.now() + 3600_000, scope: 'repo' };
+  const conn = new OAuthConnection('github', tokens);
+  assertEq('provider', conn.provider, 'github');
+  assertEq('access token', conn.accessToken, 'at_1');
+  assert('not expired', !conn.expired);
+
+  // Expired
+  const conn2 = new OAuthConnection('github', { access_token: 'old', expires_at: Date.now() - 1000 });
+  assert('expired', conn2.expired);
+
+  // Update tokens
+  conn2.updateTokens({ access_token: 'new', expires_at: Date.now() + 3600_000 });
+  assertEq('updated token', conn2.accessToken, 'new');
+  assert('no longer expired', !conn2.expired);
+}
+
+section('OAuth: OAuthManager');
+{
+  const mockVault = {
+    stored: {},
+    async store(k, v) { this.stored[k] = v; },
+    async retrieve(k) { return this.stored[k] || null; },
+    async delete(k) { delete this.stored[k]; },
+  };
+
+  const mgr = new OAuthManager({
+    vault: mockVault,
+    redirectUri: 'http://localhost:8765/#/oauth/callback',
+    openPopupFn: async () => ({ code: 'auth_code' }),
+    exchangeCodeFn: async () => ({ access_token: 'at_gh', refresh_token: 'rt_gh', expires_at: Date.now() + 3600_000 }),
+  });
+
+  assertEq('no connections', mgr.connectionCount, 0);
+
+  mgr.setClientConfig('github', 'client_id');
+  await mgr.connect('github');
+  assertEq('connected', mgr.connectionCount, 1);
+  assert('is connected', mgr.isConnected('github'));
+  assert('vault stored', !!mockVault.stored['oauth_github']);
+
+  const client = await mgr.getClient('github');
+  assert('client returned', client !== null);
+  assertEq('client token', client.accessToken, 'at_gh');
+
+  await mgr.disconnect('github');
+  assert('disconnected', !mgr.isConnected('github'));
+  assert('vault cleared', !mockVault.stored['oauth_github']);
+}
+
+section('OAuth: Auto-refresh');
+{
+  let refreshed = false;
+  const mgr = new OAuthManager({
+    openPopupFn: async () => ({ code: 'c' }),
+    exchangeCodeFn: async () => ({ access_token: 'old', refresh_token: 'rt', expires_at: Date.now() - 1000 }),
+    refreshTokenFn: async () => { refreshed = true; return { access_token: 'fresh', expires_at: Date.now() + 3600_000 }; },
+  });
+  mgr.setClientConfig('github', 'id');
+  await mgr.connect('github');
+  const client = await mgr.getClient('github');
+  assert('refreshed', refreshed);
+  assertEq('fresh token', client.accessToken, 'fresh');
+}
+
+section('OAuth: restoreFromVault');
+{
+  const mockVault = {
+    stored: { oauth_github: JSON.stringify({ access_token: 'at_r', expires_at: Date.now() + 3600_000 }) },
+    async retrieve(k) { return this.stored[k] || null; },
+    async store() {}, async delete() {},
+  };
+  const mgr = new OAuthManager({ vault: mockVault });
+  const restored = await mgr.restoreFromVault(['github', 'notion']);
+  assertEq('restored 1', restored.length, 1);
+  assert('github restored', mgr.isConnected('github'));
+}
+
+section('OAuth: Agent Tools');
+{
+  const mgr = new OAuthManager({
+    openPopupFn: async () => ({ code: 'c' }),
+    exchangeCodeFn: async () => ({ access_token: 'at', expires_at: Date.now() + 3600_000 }),
+    fetchFn: async () => ({ ok: true, json: async () => ({ data: 'ok' }) }),
+  });
+
+  const lt = new OAuthListTool(mgr);
+  assertEq('list name', lt.name, 'oauth_list');
+  const r1 = await lt.execute();
+  assert('list available', r1.output.includes('Available'));
+
+  const ct = new OAuthConnectTool(mgr);
+  assertEq('connect name', ct.name, 'oauth_connect');
+  assertEq('connect perm', ct.permission, 'approve');
+  mgr.setClientConfig('github', 'id');
+  const r2 = await ct.execute({ provider: 'github' });
+  assert('connect ok', r2.success);
+
+  const dt = new OAuthDisconnectTool(mgr);
+  assertEq('disconnect name', dt.name, 'oauth_disconnect');
+
+  const at = new OAuthApiTool(mgr);
+  assertEq('api name', at.name, 'oauth_api');
+  const r3 = await at.execute({ provider: 'github', path: '/user' });
+  assert('api success', r3.success);
+
+  await mgr.disconnect('github');
+  const r4 = await at.execute({ provider: 'github', path: '/user' });
+  assert('api not connected', !r4.success);
 }
 
 // ═══════════════════════════════════════════════════════════════
