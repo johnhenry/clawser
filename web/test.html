@@ -79,6 +79,12 @@ import {
   IntentClassifyTool, IntentOverrideTool,
 } from './clawser-intent.js';
 
+import {
+  DEFAULT_THRESHOLDS, ISSUE_TYPES, RECOVERY_STRATEGIES,
+  findDuplicateSequences, StuckDetector, SelfRepairEngine,
+  SelfRepairStatusTool, SelfRepairConfigureTool,
+} from './clawser-self-repair.js';
+
 import { $, esc, state, on, off, emit, lsKey, setSending, setConversation, resetConversationState } from './clawser-state.js';
 
 import { ClawserAgent, AutonomyController, HookPipeline, HOOK_POINTS, createAuditLoggerHook } from './clawser-agent.js';
@@ -6582,6 +6588,156 @@ section('Intent Router — Agent Tools');
   const r2 = await overrideTool.execute({ prefix: '!fast:', intent: 'query' });
   assert('override success', r2.success);
   assertEq('override works', router.classify('!fast: stuff'), 'query');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SELF-REPAIR
+// ═══════════════════════════════════════════════════════════════
+
+section('Self-Repair — Constants');
+
+{
+  assert('DEFAULT_THRESHOLDS frozen', Object.isFrozen(DEFAULT_THRESHOLDS));
+  assertEq('toolTimeout', DEFAULT_THRESHOLDS.toolTimeout, 60000);
+  assertEq('loopDetection', DEFAULT_THRESHOLDS.loopDetection, 3);
+  assert('ISSUE_TYPES frozen', Object.isFrozen(ISSUE_TYPES));
+  assert('RECOVERY_STRATEGIES frozen', Object.isFrozen(RECOVERY_STRATEGIES));
+  assert('has tool_timeout strategies', RECOVERY_STRATEGIES.tool_timeout.length >= 2);
+}
+
+section('Self-Repair — findDuplicateSequences');
+
+{
+  assertEq('empty', findDuplicateSequences([]).length, 0);
+  assertEq('null', findDuplicateSequences(null).length, 0);
+  assertEq('different calls', findDuplicateSequences([
+    { name: 'a', arguments: '{}' }, { name: 'b', arguments: '{}' },
+  ]).length, 0);
+  assertEq('two same', findDuplicateSequences([
+    { name: 'a', arguments: '{}' }, { name: 'a', arguments: '{}' },
+  ]).length, 1);
+  assertEq('three same', findDuplicateSequences([
+    { name: 'a', arguments: '1' }, { name: 'a', arguments: '1' }, { name: 'a', arguments: '1' },
+  ]).length, 2);
+}
+
+section('Self-Repair — StuckDetector');
+
+{
+  // Tool timeout
+  const d1 = new StuckDetector({ toolTimeout: 100 });
+  const i1 = d1.detect({ activeToolStart: Date.now() - 500, activeTool: 'test' });
+  assertEq('tool timeout detected', i1.length, 1);
+  assertEq('timeout type', i1[0].type, 'tool_timeout');
+
+  // No progress
+  const d2 = new StuckDetector({ noProgress: 100 });
+  const i2 = d2.detect({ lastActivityAt: Date.now() - 500 });
+  assertEq('no progress detected', i2.length, 1);
+
+  // Loop detection
+  const d3 = new StuckDetector({ loopDetection: 3 });
+  const i3 = d3.detect({ recentToolCalls: [
+    { name: 'f', arguments: 'x' }, { name: 'f', arguments: 'x' },
+    { name: 'f', arguments: 'x' }, { name: 'f', arguments: 'x' },
+  ]});
+  assertEq('loop detected', i3.length, 1);
+  assertEq('loop type', i3[0].type, 'loop_detected');
+
+  // Context pressure
+  const d4 = new StuckDetector({ contextPressure: 0.9 });
+  const i4 = d4.detect({ tokenUsage: 9500, contextLimit: 10000 });
+  assertEq('pressure detected', i4.length, 1);
+
+  // Consecutive errors
+  const d5 = new StuckDetector({ consecutiveErrors: 3 });
+  const i5 = d5.detect({ consecutiveErrors: 5 });
+  assertEq('errors detected', i5.length, 1);
+
+  // Cost runaway
+  const d6 = new StuckDetector({ costRunaway: 1.0 });
+  const i6 = d6.detect({ turnCost: 1.5 });
+  assertEq('cost detected', i6.length, 1);
+
+  // Null state
+  const d7 = new StuckDetector();
+  assertEq('null state', d7.detect(null).length, 0);
+  assertEq('empty state', d7.detect({}).length, 0);
+
+  // Thresholds get/set
+  d7.setThresholds({ toolTimeout: 30000 });
+  assertEq('updated threshold', d7.thresholds.toolTimeout, 30000);
+}
+
+section('Self-Repair — SelfRepairEngine');
+
+{
+  // No issues
+  const e1 = new SelfRepairEngine();
+  const r1 = await e1.check({});
+  assertEq('no issues', r1.length, 0);
+
+  // Detect and apply
+  let cancelled = null;
+  const e2 = new SelfRepairEngine({
+    detector: new StuckDetector({ toolTimeout: 100 }),
+    handlers: { cancel_tool: async (s, issue) => { cancelled = issue.tool; return true; } },
+  });
+  const r2 = await e2.check({ activeToolStart: Date.now() - 500, activeTool: 'slow' });
+  assertEq('one result', r2.length, 1);
+  assert('result success', r2[0].success);
+  assertEq('cancelled', cancelled, 'slow');
+
+  // Disabled
+  e2.enabled = false;
+  const r3 = await e2.check({ activeToolStart: Date.now() - 500, activeTool: 'x' });
+  assertEq('disabled empty', r3.length, 0);
+  e2.enabled = true;
+
+  // Repair log and summary
+  const summary = e2.getSummary();
+  assertEq('totalDetections', summary.totalDetections, 1);
+  assertEq('successRate', summary.successRate, 1);
+  e2.clearLog();
+  assertEq('cleared', e2.repairLog.length, 0);
+
+  // Register handler
+  let paused = false;
+  const e3 = new SelfRepairEngine({ detector: new StuckDetector({ costRunaway: 0.5 }) });
+  e3.registerHandler('pause', async () => { paused = true; return true; });
+  await e3.check({ turnCost: 1.0 });
+  assert('pause handler', paused);
+}
+
+section('Self-Repair — Nudge via inject_message');
+
+{
+  let injected = null;
+  const engine = new SelfRepairEngine({
+    detector: new StuckDetector({ noProgress: 100 }),
+    handlers: { inject_message: async (prompt) => { injected = prompt; return true; } },
+  });
+  await engine.check({ lastActivityAt: Date.now() - 500 });
+  assert('injected', injected !== null);
+  assert('has stuck', injected.includes('stuck'));
+}
+
+section('Self-Repair — Agent Tools');
+
+{
+  const engine = new SelfRepairEngine();
+  const statusTool = new SelfRepairStatusTool(engine);
+  assertEq('status name', statusTool.name, 'self_repair_status');
+  const sr = await statusTool.execute();
+  assert('status success', sr.success);
+  assert('has thresholds', sr.output.includes('Thresholds'));
+
+  const configTool = new SelfRepairConfigureTool(engine);
+  assertEq('config name', configTool.name, 'self_repair_configure');
+  const cr = await configTool.execute({ enabled: false, toolTimeout: 30000 });
+  assert('config success', cr.success);
+  assertEq('disabled', engine.enabled, false);
+  assertEq('threshold updated', engine.detector.thresholds.toolTimeout, 30000);
 }
 
 // ═══════════════════════════════════════════════════════════════
