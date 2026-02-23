@@ -40,6 +40,11 @@ import {
   SkillSearchTool, SkillInstallTool, SkillUpdateTool, SkillRemoveTool, SkillListTool,
 } from './clawser-skills.js';
 
+import {
+  validateToolCode, DynamicTool, ToolBuilder,
+  ToolBuildTool, ToolTestTool, ToolListCustomTool, ToolEditTool, ToolRemoveTool,
+} from './clawser-tool-builder.js';
+
 import { $, esc, state, on, off, emit, lsKey, setSending, setConversation, resetConversationState } from './clawser-state.js';
 
 import { ClawserAgent, AutonomyController, HookPipeline, HOOK_POINTS, createAuditLoggerHook } from './clawser-agent.js';
@@ -4684,6 +4689,309 @@ You are a research assistant.`;
   // Validate
   const v = SkillParser.validateMetadata(metadata);
   assert('valid', v.valid);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  TOOL BUILDER — Code Validation
+// ═══════════════════════════════════════════════════════════════
+
+section('ToolBuilder — validateToolCode');
+
+{
+  // Safe code
+  const safe = validateToolCode('function execute(p) { return p.x + p.y; }');
+  assert('safe code passes', safe.safe);
+  assertEq('no issues', safe.issues.length, 0);
+
+  // Network access
+  const net = validateToolCode('fetch("http://evil.com")');
+  assert('fetch blocked', !net.safe);
+  assert('fetch issue', net.issues.some(i => i.includes('Network')));
+
+  // DOM access
+  const dom = validateToolCode('document.querySelector("body")');
+  assert('document blocked', !dom.safe);
+
+  // eval
+  const ev = validateToolCode('eval("alert(1)")');
+  assert('eval blocked', !ev.safe);
+
+  // setTimeout
+  const timer = validateToolCode('setTimeout(() => {}, 1000)');
+  assert('setTimeout blocked', !timer.safe);
+
+  // Dynamic import
+  const imp = validateToolCode('import("./module.js")');
+  assert('import() blocked', !imp.safe);
+
+  // Storage
+  const storage = validateToolCode('localStorage.getItem("key")');
+  assert('localStorage blocked', !storage.safe);
+
+  // Multiple issues
+  const multi = validateToolCode('fetch(window.location.href)');
+  assert('multiple issues', !multi.safe);
+  assert('multiple issue count', multi.issues.length >= 2);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  TOOL BUILDER — DynamicTool
+// ═══════════════════════════════════════════════════════════════
+
+section('ToolBuilder — DynamicTool');
+
+{
+  // Sandbox contract: (code, params) => result
+  // Code defines an execute(params) function; we call it
+  const mockSandbox = async (code, params) => {
+    const wrapper = `${code}\nreturn typeof execute === 'function' ? execute(params) : undefined;`;
+    return new Function('params', wrapper)(params);
+  };
+
+  const tool = new DynamicTool({
+    name: 'test_tool',
+    description: 'A test tool',
+    parameters: {
+      type: 'object',
+      properties: { x: { type: 'number' } },
+    },
+    code: 'function execute(params) { return params.x * 2; }',
+    author: 'agent',
+    version: 1,
+    trusted: false,
+  }, mockSandbox);
+
+  assertEq('name', tool.name, 'test_tool');
+  assertEq('description', tool.description, 'A test tool');
+  assertEq('permission untrusted', tool.permission, 'approve');
+  assertEq('version', tool.version, 1);
+  assertEq('author', tool.author, 'agent');
+  assert('not trusted', !tool.trusted);
+
+  // Execute
+  const result = await tool.execute({ x: 5 });
+  assert('execute success', result.success);
+  assertEq('execute output', result.output, '10');
+
+  // Trust changes permission
+  tool.trusted = true;
+  assertEq('permission trusted', tool.permission, 'auto');
+
+  // rawSpec serialization
+  const spec = tool.rawSpec;
+  assertEq('rawSpec name', spec.name, 'test_tool');
+  assert('rawSpec has code', typeof spec.code === 'string');
+
+  // No sandbox → error
+  const noSandbox = new DynamicTool({ name: 'ns', code: '' });
+  const nsResult = await noSandbox.execute({});
+  assert('no sandbox fails', !nsResult.success);
+  assert('no sandbox error', nsResult.error.includes('sandbox'));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  TOOL BUILDER — ToolBuilder
+// ═══════════════════════════════════════════════════════════════
+
+section('ToolBuilder — build, test, edit, remove');
+
+{
+  const reg = new BrowserToolRegistry();
+  const mockSandbox = async (code, params) => {
+    const wrapper = `${code}\nreturn typeof execute === 'function' ? execute(params) : undefined;`;
+    return new Function('params', wrapper)(params);
+  };
+
+  const builder = new ToolBuilder(reg, mockSandbox);
+
+  // Build safe tool
+  const r1 = await builder.buildTool({
+    name: 'doubler',
+    description: 'Doubles a number',
+    code: 'function execute(params) { return params.x * 2; }',
+    testInput: { x: 5 },
+  });
+  assert('build success', r1.success);
+  assertEq('build tool name', r1.tool, 'doubler');
+  assertEq('build version', r1.version, 1);
+  assert('registered', reg.has('doubler'));
+
+  // Build unsafe tool
+  const r2 = await builder.buildTool({
+    name: 'evil',
+    description: 'Bad tool',
+    code: 'fetch("http://evil.com")',
+  });
+  assert('unsafe rejected', !r2.success);
+  assert('unsafe error', r2.error.includes('Unsafe'));
+
+  // Build with failing test
+  const r3 = await builder.buildTool({
+    name: 'crasher',
+    description: 'Crashes',
+    code: 'function execute() { throw new Error("boom"); }',
+    testInput: {},
+  });
+  assert('failing test rejected', !r3.success);
+  assert('test error', r3.error.includes('Test failed'));
+
+  // Test tool (without registering)
+  const t1 = await builder.testTool({
+    code: 'function execute(params) { return params.a + params.b; }',
+    testInput: { a: 3, b: 4 },
+  });
+  assert('test success', t1.success);
+  assertEq('test output', t1.output, '7');
+
+  // List tools
+  const list = builder.listTools();
+  assertEq('list count', list.length, 1);
+  assertEq('list name', list[0].name, 'doubler');
+
+  // Edit tool (creates version 2)
+  const e1 = await builder.editTool('doubler', {
+    code: 'function execute(params) { return params.x * 3; }',
+  });
+  assert('edit success', e1.success);
+  assertEq('edit version', e1.version, 2);
+
+  // History
+  const hist = builder.getHistory('doubler');
+  assertEq('history length', hist.length, 1);
+  assertEq('history v1', hist[0].version, 1);
+
+  // Rollback to v1
+  const rb = builder.rollback('doubler', 1);
+  assert('rollback success', rb.success);
+  assertEq('rollback creates v3', rb.version, 3);
+  const afterRollback = reg.get('doubler');
+  assertEq('rollback version', afterRollback.version, 3);
+
+  // Edit non-existent
+  const e2 = await builder.editTool('nonexistent', { code: '' });
+  assert('edit nonexistent fails', !e2.success);
+
+  // Remove
+  const rm = builder.removeTool('doubler');
+  assert('remove success', rm.success);
+  assert('unregistered', !reg.has('doubler'));
+
+  // Remove non-existent
+  const rm2 = builder.removeTool('nonexistent');
+  assert('remove nonexistent fails', !rm2.success);
+
+  // Missing name
+  const r4 = await builder.buildTool({ code: 'x' });
+  assert('missing name fails', !r4.success);
+
+  // Missing code
+  const r5 = await builder.buildTool({ name: 'test' });
+  assert('missing code fails', !r5.success);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  TOOL BUILDER — Export/Import
+// ═══════════════════════════════════════════════════════════════
+
+section('ToolBuilder — export/import');
+
+{
+  const reg = new BrowserToolRegistry();
+  const mockSandbox = async (code, params) => {
+    const wrapper = `${code}\nreturn typeof execute === 'function' ? execute(params) : undefined;`;
+    return new Function('params', wrapper)(params);
+  };
+  const builder = new ToolBuilder(reg, mockSandbox);
+
+  await builder.buildTool({
+    name: 'adder',
+    description: 'Adds numbers',
+    code: 'function execute(p) { return p.a + p.b; }',
+    testInput: { a: 1, b: 2 },
+  });
+
+  // Export
+  const exported = builder.exportAll();
+  assertEq('export count', exported.length, 1);
+  assertEq('export name', exported[0].name, 'adder');
+  assert('export has code', typeof exported[0].code === 'string');
+
+  // Import into new builder
+  const reg2 = new BrowserToolRegistry();
+  const builder2 = new ToolBuilder(reg2, mockSandbox);
+  builder2.importAll(exported);
+
+  assert('imported tool registered', reg2.has('adder'));
+  const list = builder2.listTools();
+  assertEq('imported list', list.length, 1);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  TOOL BUILDER — Agent Tools
+// ═══════════════════════════════════════════════════════════════
+
+section('ToolBuilder — agent tools');
+
+{
+  const reg = new BrowserToolRegistry();
+  const mockSandbox = async (code, params) => {
+    const wrapper = `${code}\nreturn typeof execute === 'function' ? execute(params) : undefined;`;
+    return new Function('params', wrapper)(params);
+  };
+  const builder = new ToolBuilder(reg, mockSandbox);
+
+  const buildTool = new ToolBuildTool(builder);
+  const testTool = new ToolTestTool(builder);
+  const listTool = new ToolListCustomTool(builder);
+  const editTool = new ToolEditTool(builder);
+  const removeTool = new ToolRemoveTool(builder);
+
+  // Specs
+  assertEq('build name', buildTool.name, 'tool_build');
+  assertEq('test name', testTool.name, 'tool_test');
+  assertEq('list name', listTool.name, 'tool_list_custom');
+  assertEq('edit name', editTool.name, 'tool_edit');
+  assertEq('remove name', removeTool.name, 'tool_remove');
+  assertEq('build permission', buildTool.permission, 'approve');
+  assertEq('list permission', listTool.permission, 'read');
+
+  // Build via tool
+  const br = await buildTool.execute({
+    name: 'concat_tool',
+    description: 'Concatenates strings',
+    code: 'function execute(p) { return p.a + p.b; }',
+    test_input: '{"a":"hello","b":"world"}',
+  });
+  assert('build tool success', br.success);
+  assert('build tool output', br.output.includes('concat_tool'));
+
+  // List via tool
+  const lr = await listTool.execute({});
+  assert('list success', lr.success);
+  assert('list has concat', lr.output.includes('concat_tool'));
+
+  // Test via tool
+  const tr = await testTool.execute({
+    code: 'function execute(p) { return p.x + 1; }',
+    test_input: '{"x":41}',
+  });
+  assert('test tool success', tr.success);
+  assert('test output', tr.output.includes('42'));
+
+  // Edit via tool
+  const er = await editTool.execute({
+    name: 'concat_tool',
+    code: 'function execute(p) { return p.a + " " + p.b; }',
+  });
+  assert('edit tool success', er.success);
+
+  // Remove via tool
+  const rr = await removeTool.execute({ name: 'concat_tool' });
+  assert('remove tool success', rr.success);
+
+  // List empty
+  const lr2 = await listTool.execute({});
+  assert('list empty', lr2.output.includes('No custom'));
 }
 
 // ═══════════════════════════════════════════════════════════════
