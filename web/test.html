@@ -55,6 +55,11 @@ import {
   ProviderHealth, ModelRouter, HINT_MODELS, costAwareSort,
 } from './clawser-fallback.js';
 
+import {
+  MountableFs, isFileSystemAccessSupported,
+  MountListTool, MountResolveTool,
+} from './clawser-mount.js';
+
 import { $, esc, state, on, off, emit, lsKey, setSending, setConversation, resetConversationState } from './clawser-state.js';
 
 import { ClawserAgent, AutonomyController, HookPipeline, HOOK_POINTS, createAuditLoggerHook } from './clawser-agent.js';
@@ -5450,6 +5455,192 @@ section('Fallback — backoff');
 
   const b5 = backoff(5, 500, 10000);
   assert('backoff capped', b5 <= 11000); // max 10000 + 10% jitter
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  MOUNT — MountableFs
+// ═══════════════════════════════════════════════════════════════
+
+section('Mount — MountableFs core');
+
+{
+  const mfs = new MountableFs();
+
+  // Mock FileSystemDirectoryHandle
+  const mockDir = { name: 'myapp', kind: 'directory' };
+  const mockDir2 = { name: 'data', kind: 'directory' };
+  const mockFile = { name: 'config.json', kind: 'file' };
+
+  // Initial state
+  assertEq('no mounts', mfs.mountCount, 0);
+  assertEq('empty table', mfs.mountTable.length, 0);
+
+  // Mount
+  mfs.mount('/mnt/myapp', mockDir);
+  assertEq('mount count 1', mfs.mountCount, 1);
+  assert('is mounted', mfs.isMounted('/mnt/myapp'));
+  assert('not mounted other', !mfs.isMounted('/mnt/other'));
+
+  // Mount with options
+  mfs.mount('/mnt/data', mockDir2, { readOnly: true });
+  assertEq('mount count 2', mfs.mountCount, 2);
+
+  // Mount file
+  mfs.mount('/mnt/config.json', mockFile);
+  assertEq('mount count 3', mfs.mountCount, 3);
+
+  // Mount table
+  const table = mfs.mountTable;
+  assertEq('table length', table.length, 3);
+  const myappEntry = table.find(t => t.path === '/mnt/myapp');
+  assert('table has myapp', !!myappEntry);
+  assertEq('myapp name', myappEntry.name, 'myapp');
+  assertEq('myapp kind', myappEntry.kind, 'directory');
+  assert('myapp not readonly', !myappEntry.readOnly);
+
+  const dataEntry = table.find(t => t.path === '/mnt/data');
+  assert('data readonly', dataEntry.readOnly);
+
+  // Error: mount outside /mnt/
+  let mountErr = null;
+  try { mfs.mount('/other/path', mockDir); } catch (e) { mountErr = e; }
+  assert('mount outside /mnt/ throws', mountErr !== null);
+  assert('error message', mountErr.message.includes('/mnt/'));
+
+  // Unmount
+  assert('unmount existing', mfs.unmount('/mnt/config.json'));
+  assertEq('after unmount', mfs.mountCount, 2);
+  assert('unmount nonexistent', !mfs.unmount('/mnt/nothing'));
+
+  // Unmount all
+  mfs.unmountAll();
+  assertEq('unmount all', mfs.mountCount, 0);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  MOUNT — resolveMount
+// ═══════════════════════════════════════════════════════════════
+
+section('Mount — resolveMount');
+
+{
+  const mfs = new MountableFs();
+  const mockDir = { name: 'myapp', kind: 'directory' };
+  mfs.mount('/mnt/myapp', mockDir);
+  mfs.mount('/mnt/myapp/deep', { name: 'deep', kind: 'directory' }); // nested mount
+
+  // Path under mount
+  const r1 = mfs.resolveMount('/mnt/myapp/src/main.js');
+  assertEq('type mount', r1.type, 'mount');
+  assertEq('mount point', r1.mountPoint, '/mnt/myapp/deep'.length > '/mnt/myapp'.length ? '/mnt/myapp' : '/mnt/myapp');
+  assertEq('relative', r1.relative, 'src/main.js');
+  assert('not readonly', !r1.readOnly);
+
+  // Path is exact mount point
+  const r2 = mfs.resolveMount('/mnt/myapp');
+  assertEq('exact mount type', r2.type, 'mount');
+  assertEq('exact mount relative', r2.relative, '');
+
+  // Nested mount (longest prefix wins)
+  const r3 = mfs.resolveMount('/mnt/myapp/deep/file.txt');
+  assertEq('nested mount', r3.mountPoint, '/mnt/myapp/deep');
+  assertEq('nested relative', r3.relative, 'file.txt');
+
+  // Path NOT under any mount → OPFS
+  const r4 = mfs.resolveMount('/workspace/notes.md');
+  assertEq('opfs type', r4.type, 'opfs');
+  assert('opfs has path', typeof r4.opfsPath === 'string');
+
+  // Root path
+  const r5 = mfs.resolveMount('/');
+  assertEq('root opfs', r5.type, 'opfs');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  MOUNT — path normalization
+// ═══════════════════════════════════════════════════════════════
+
+section('Mount — path normalization');
+
+{
+  const mfs = new MountableFs();
+  const mockDir = { name: 'test', kind: 'directory' };
+
+  // Trailing slashes
+  mfs.mount('/mnt/test/', mockDir);
+  assert('mount with trailing slash', mfs.isMounted('/mnt/test'));
+  assert('check with trailing slash', mfs.isMounted('/mnt/test/'));
+
+  // Double slashes
+  const r = mfs.resolveMount('//mnt//test//foo.txt');
+  assertEq('double slash mount', r.type, 'mount');
+  assertEq('double slash relative', r.relative, 'foo.txt');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  MOUNT — Agent tools
+// ═══════════════════════════════════════════════════════════════
+
+section('Mount — agent tools');
+
+{
+  const mfs = new MountableFs();
+  const mockDir = { name: 'project', kind: 'directory' };
+
+  // MountListTool — empty
+  const listTool = new MountListTool(mfs);
+  assertEq('list name', listTool.name, 'mount_list');
+  assertEq('list perm', listTool.permission, 'read');
+  const lr1 = await listTool.execute({});
+  assert('empty list', lr1.output.includes('No local'));
+
+  // Mount and list again
+  mfs.mount('/mnt/project', mockDir);
+  const lr2 = await listTool.execute({});
+  assert('list has project', lr2.output.includes('project'));
+  assert('list has readwrite', lr2.output.includes('readwrite'));
+
+  // MountResolveTool
+  const resolveTool = new MountResolveTool(mfs);
+  assertEq('resolve name', resolveTool.name, 'mount_resolve');
+
+  const rr1 = await resolveTool.execute({ path: '/mnt/project/src/index.js' });
+  assert('resolve mount', rr1.output.includes('local mount'));
+  assert('resolve mount point', rr1.output.includes('/mnt/project'));
+
+  const rr2 = await resolveTool.execute({ path: '/notes.md' });
+  assert('resolve opfs', rr2.output.includes('OPFS'));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  MOUNT — Feature detection
+// ═══════════════════════════════════════════════════════════════
+
+section('Mount — feature detection');
+
+{
+  // isFileSystemAccessSupported returns boolean
+  const supported = isFileSystemAccessSupported();
+  assert('returns boolean', typeof supported === 'boolean');
+  // In Node.js test env, showDirectoryPicker is not available
+  // In browser, it may or may not be — just check it doesn't throw
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  MOUNT — export mounts
+// ═══════════════════════════════════════════════════════════════
+
+section('Mount — export mounts');
+
+{
+  const mfs = new MountableFs();
+  mfs.mount('/mnt/a', { name: 'a', kind: 'directory' });
+  mfs.mount('/mnt/b', { name: 'b', kind: 'directory' }, { readOnly: true });
+
+  const exported = mfs.exportMounts();
+  assertEq('export length', exported.length, 2);
+  assert('export has a', exported.some(e => e.name === 'a'));
+  assert('export has b readonly', exported.some(e => e.name === 'b' && e.readOnly));
 }
 
 // ═══════════════════════════════════════════════════════════════
