@@ -90,6 +90,11 @@ import {
   UndoTool, UndoStatusTool,
 } from './clawser-undo.js';
 
+import {
+  BRIDGE_TYPES, ExternalBridge, LocalServerBridge, ExtensionBridge,
+  BridgeManager, BridgeStatusTool, BridgeListToolsTool, BridgeFetchTool,
+} from './clawser-bridge.js';
+
 import { $, esc, state, on, off, emit, lsKey, setSending, setConversation, resetConversationState } from './clawser-state.js';
 
 import { ClawserAgent, AutonomyController, HookPipeline, HOOK_POINTS, createAuditLoggerHook } from './clawser-agent.js';
@@ -6900,6 +6905,160 @@ section('Undo — handler errors resilience');
   assertEq('still 1 result', results.length, 1);
   assert('still reverted', results[0].reverted);
   assertEq('messages 0', results[0].details.messagesRemoved, 0);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  EXTERNAL BRIDGE
+// ═══════════════════════════════════════════════════════════════
+
+section('Bridge — Constants & Abstract');
+
+{
+  assert('BRIDGE_TYPES frozen', Object.isFrozen(BRIDGE_TYPES));
+  assertEq('LOCAL_SERVER', BRIDGE_TYPES.LOCAL_SERVER, 'local_server');
+  assertEq('EXTENSION', BRIDGE_TYPES.EXTENSION, 'extension');
+  assertEq('NONE', BRIDGE_TYPES.NONE, 'none');
+
+  const bridge = new ExternalBridge();
+  const available = await bridge.isAvailable();
+  assertEq('abstract not available', available, false);
+  assertEq('abstract type', bridge.type, 'none');
+  const tools = await bridge.listTools();
+  assertEq('abstract no tools', tools.length, 0);
+}
+
+section('Bridge — LocalServerBridge');
+
+{
+  const mockFetch = async (url, opts = {}) => {
+    const path = new URL(url).pathname;
+    if (path === '/health') return { status: 200, ok: true, json: async () => ({}) };
+    if (path === '/mcp/tools') return { status: 200, ok: true, json: async () => ({
+      tools: [{ name: 'shell_exec', description: 'Run shell' }],
+    })};
+    if (path === '/mcp/call') return { status: 200, ok: true, json: async () => ({
+      success: true, output: 'done',
+    })};
+    if (path === '/proxy') return { status: 200, ok: true, json: async () => ({
+      status: 200, headers: {}, body: '<h1>Hi</h1>',
+    })};
+    return { status: 404, ok: false };
+  };
+
+  const bridge = new LocalServerBridge({ fetchFn: mockFetch });
+  assertEq('type', bridge.type, 'local_server');
+  assert('available', await bridge.isAvailable());
+
+  const tools = await bridge.listTools();
+  assertEq('1 tool', tools.length, 1);
+
+  const result = await bridge.callTool('shell_exec', {});
+  assert('call success', result.success);
+
+  const proxy = await bridge.proxyFetch('http://example.com');
+  assertEq('proxy status', proxy.status, 200);
+}
+
+{
+  // Unavailable server
+  const bridge = new LocalServerBridge({ fetchFn: async () => { throw new Error('fail'); } });
+  assert('unavailable', !(await bridge.isAvailable()));
+  const result = await bridge.callTool('test', {});
+  assert('call fails', !result.success);
+}
+
+{
+  // API key auth
+  let authHeader = null;
+  const mockFetch = async (url, opts = {}) => {
+    authHeader = opts.headers?.Authorization;
+    return { status: 200, ok: true, json: async () => ({}) };
+  };
+  const bridge = new LocalServerBridge({ fetchFn: mockFetch, apiKey: 'key123' });
+  await bridge.isAvailable();
+  assertEq('auth header', authHeader, 'Bearer key123');
+}
+
+section('Bridge — BridgeManager');
+
+{
+  const mockFetch = async (url) => {
+    if (url.includes('/health')) return { status: 200, ok: true, json: async () => ({}) };
+    if (url.includes('/mcp/tools')) return { status: 200, ok: true, json: async () => ({ tools: [{ name: 'a' }] })};
+    if (url.includes('/mcp/call')) return { status: 200, ok: true, json: async () => ({ success: true, output: 'ok' })};
+    return { status: 404, ok: false };
+  };
+
+  const mgr = new BridgeManager({
+    localBridge: new LocalServerBridge({ fetchFn: mockFetch }),
+    extensionBridge: new ExtensionBridge(),
+  });
+
+  const detected = await mgr.detect();
+  assertEq('detected local', detected, 'local_server');
+  assert('connected', mgr.isConnected);
+
+  const tools = await mgr.listTools();
+  assertEq('1 tool', tools.length, 1);
+
+  const result = await mgr.callTool('a', {});
+  assert('call success', result.success);
+
+  const prompt = mgr.buildPrompt();
+  assert('prompt has type', prompt.includes('local_server'));
+
+  await mgr.disconnect();
+  assert('disconnected', !mgr.isConnected);
+}
+
+{
+  // No bridges available
+  const mgr = new BridgeManager({
+    localBridge: new LocalServerBridge({ fetchFn: async () => { throw new Error(); } }),
+    extensionBridge: new ExtensionBridge(),
+  });
+  const detected = await mgr.detect();
+  assertEq('none detected', detected, 'none');
+  assertEq('empty prompt', mgr.buildPrompt(), '');
+}
+
+section('Bridge — Agent Tools');
+
+{
+  const mockFetch = async (url) => {
+    if (url.includes('/health')) return { status: 200, ok: true, json: async () => ({}) };
+    if (url.includes('/mcp/tools')) return { status: 200, ok: true, json: async () => ({
+      tools: [{ name: 'tool_a', description: 'Does A' }],
+    })};
+    if (url.includes('/proxy')) return { status: 200, ok: true, json: async () => ({
+      status: 200, headers: {}, body: 'test-body',
+    })};
+    return { status: 404, ok: false };
+  };
+  const mgr = new BridgeManager({
+    localBridge: new LocalServerBridge({ fetchFn: mockFetch }),
+    extensionBridge: new ExtensionBridge(),
+  });
+  await mgr.detect();
+
+  const statusTool = new BridgeStatusTool(mgr);
+  assertEq('status name', statusTool.name, 'bridge_status');
+  const sr = await statusTool.execute();
+  assert('status success', sr.success);
+  assert('has connected', sr.output.includes('true'));
+
+  const listTool = new BridgeListToolsTool(mgr);
+  assertEq('list name', listTool.name, 'bridge_list_tools');
+  const lr = await listTool.execute();
+  assert('list success', lr.success);
+  assert('has tool_a', lr.output.includes('tool_a'));
+
+  const fetchTool = new BridgeFetchTool(mgr);
+  assertEq('fetch name', fetchTool.name, 'bridge_fetch');
+  assertEq('fetch permission', fetchTool.permission, 'approve');
+  const fr = await fetchTool.execute({ url: 'http://example.com' });
+  assert('fetch success', fr.success);
+  assert('fetch has body', fr.output.includes('test-body'));
 }
 
 // ═══════════════════════════════════════════════════════════════
