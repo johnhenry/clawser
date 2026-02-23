@@ -60,6 +60,11 @@ import {
   MountListTool, MountResolveTool,
 } from './clawser-mount.js';
 
+import {
+  Goal, GoalManager, resetGoalIdCounter,
+  GoalAddTool, GoalUpdateTool, GoalAddArtifactTool, GoalListTool,
+} from './clawser-goals.js';
+
 import { $, esc, state, on, off, emit, lsKey, setSending, setConversation, resetConversationState } from './clawser-state.js';
 
 import { ClawserAgent, AutonomyController, HookPipeline, HOOK_POINTS, createAuditLoggerHook } from './clawser-agent.js';
@@ -5641,6 +5646,219 @@ section('Mount — export mounts');
   assertEq('export length', exported.length, 2);
   assert('export has a', exported.some(e => e.name === 'a'));
   assert('export has b readonly', exported.some(e => e.name === 'b' && e.readOnly));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  GOALS — Goal class
+// ═══════════════════════════════════════════════════════════════
+
+section('Goals — Goal class');
+
+{
+  resetGoalIdCounter();
+
+  const g = new Goal({ description: 'Test goal', priority: 'high' });
+  assertEq('goal id', g.id, 'goal-001');
+  assertEq('status', g.status, 'active');
+  assertEq('priority', g.priority, 'high');
+  assert('is root', g.isRoot);
+  assert('is leaf', g.isLeaf);
+  assertEq('no parent', g.parentId, null);
+  assertEq('no subgoals', g.subGoalIds.length, 0);
+  assertEq('no artifacts', g.artifacts.length, 0);
+  assert('createdAt', g.createdAt > 0);
+
+  // Serialization
+  const json = g.toJSON();
+  assertEq('json id', json.id, 'goal-001');
+  const restored = Goal.fromJSON(json);
+  assertEq('restored id', restored.id, 'goal-001');
+  assertEq('restored desc', restored.description, 'Test goal');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  GOALS — GoalManager CRUD
+// ═══════════════════════════════════════════════════════════════
+
+section('Goals — GoalManager CRUD');
+
+{
+  resetGoalIdCounter();
+  const gm = new GoalManager();
+
+  // Add goals
+  const g1 = gm.addGoal('Build auth system', { priority: 'high' });
+  const g2 = gm.addGoal('Write docs', { priority: 'low' });
+  assertEq('size 2', gm.size, 2);
+  assertEq('get by id', gm.get(g1.id).description, 'Build auth system');
+  assert('get null', gm.get('nonexistent') === null);
+
+  // Sub-goals
+  const s1 = gm.addSubGoal(g1.id, 'Design JWT structure');
+  const s2 = gm.addSubGoal(g1.id, 'Implement token generation');
+  assertEq('size 4', gm.size, 4);
+  assertEq('parent subgoals', g1.subGoalIds.length, 2);
+  assertEq('child parent', s1.parentId, g1.id);
+  assert('child not root', !s1.isRoot);
+  assert('parent not leaf', !g1.isLeaf);
+
+  // Add artifact
+  assert('add artifact', gm.addArtifact(g1.id, '/docs/auth-plan.md'));
+  assertEq('artifact count', g1.artifacts.length, 1);
+  assert('add artifact nonexistent', !gm.addArtifact('bad-id', '/file'));
+
+  // Log progress
+  assert('log progress', gm.logProgress(g1.id, 'Started design phase'));
+  assertEq('log length', g1.progressLog.length, 1);
+
+  // Progress calculation
+  assertEq('leaf progress 0', gm.progress(s1.id), 0.0);
+  assertEq('parent progress 0', gm.progress(g1.id), 0.0);
+
+  // Complete a sub-goal
+  gm.updateStatus(s1.id, 'completed');
+  assertEq('leaf progress 1', gm.progress(s1.id), 1.0);
+  assertEq('parent progress 50', gm.progress(g1.id), 0.5);
+
+  // Depth
+  assertEq('root depth', gm.depth(g1.id), 0);
+  assertEq('child depth', gm.depth(s1.id), 1);
+
+  // List with filters
+  assertEq('list all', gm.list().length, 4);
+  assertEq('list active', gm.list({ status: 'active' }).length, 3);
+  assertEq('list completed', gm.list({ status: 'completed' }).length, 1);
+  assertEq('list root only', gm.list({ rootOnly: true }).length, 2);
+  assertEq('list children of g1', gm.list({ parentId: g1.id }).length, 2);
+
+  // Remove
+  assert('remove', gm.remove(g2.id));
+  assertEq('after remove', gm.size, 3);
+  assert('remove nonexistent', !gm.remove('bad-id'));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  GOALS — Cascading completion
+// ═══════════════════════════════════════════════════════════════
+
+section('Goals — cascading completion');
+
+{
+  resetGoalIdCounter();
+  const gm = new GoalManager();
+
+  const parent = gm.addGoal('Parent goal');
+  const c1 = gm.addSubGoal(parent.id, 'Child 1');
+  const c2 = gm.addSubGoal(parent.id, 'Child 2');
+
+  gm.updateStatus(c1.id, 'completed');
+  assertEq('parent still active', parent.status, 'active');
+
+  gm.updateStatus(c2.id, 'completed');
+  assertEq('parent auto-completed', parent.status, 'completed');
+  assert('parent has completedAt', parent.completedAt > 0);
+  assert('parent log', parent.progressLog.some(e => e.note.includes('Auto-completed')));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  GOALS — System prompt
+// ═══════════════════════════════════════════════════════════════
+
+section('Goals — system prompt');
+
+{
+  resetGoalIdCounter();
+  const gm = new GoalManager();
+
+  // No goals → empty
+  assertEq('empty prompt', gm.buildPrompt(), '');
+
+  // Add goals
+  const g1 = gm.addGoal('Build auth', { priority: 'high' });
+  const s1 = gm.addSubGoal(g1.id, 'Design JWT');
+  gm.addSubGoal(g1.id, 'Implement tokens');
+  gm.updateStatus(s1.id, 'completed');
+
+  const prompt = gm.buildPrompt();
+  assert('has active-goals tag', prompt.includes('<active-goals>'));
+  assert('has goal desc', prompt.includes('Build auth'));
+  assert('has priority', prompt.includes('[high]'));
+  assert('has progress', prompt.includes('50%'));
+  assert('has completed sub', prompt.includes('[x] Design JWT'));
+  assert('has pending sub', prompt.includes('[ ] Implement tokens'));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  GOALS — Serialization
+// ═══════════════════════════════════════════════════════════════
+
+section('Goals — serialization');
+
+{
+  resetGoalIdCounter();
+  const gm = new GoalManager();
+  gm.addGoal('Goal A', { priority: 'high' });
+  const g2 = gm.addGoal('Goal B');
+  gm.addSubGoal(g2.id, 'Sub B1');
+
+  const data = gm.toJSON();
+  assertEq('json length', data.length, 3);
+
+  const gm2 = new GoalManager();
+  gm2.fromJSON(data);
+  assertEq('restored size', gm2.size, 3);
+  assert('restored goal A', gm2.list().some(g => g.description === 'Goal A'));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  GOALS — Agent tools
+// ═══════════════════════════════════════════════════════════════
+
+section('Goals — agent tools');
+
+{
+  resetGoalIdCounter();
+  const gm = new GoalManager();
+
+  const addTool = new GoalAddTool(gm);
+  const updateTool = new GoalUpdateTool(gm);
+  const artifactTool = new GoalAddArtifactTool(gm);
+  const listTool = new GoalListTool(gm);
+
+  assertEq('add name', addTool.name, 'goal_add');
+  assertEq('update name', updateTool.name, 'goal_update');
+  assertEq('artifact name', artifactTool.name, 'goal_add_artifact');
+  assertEq('list name', listTool.name, 'goal_list');
+
+  // Add via tool
+  const ar = await addTool.execute({ description: 'Test goal', priority: 'high' });
+  assert('add success', ar.success);
+  assert('add output', ar.output.includes('goal-001'));
+
+  // Add sub-goal via tool
+  const sr = await addTool.execute({ description: 'Sub task', parent_id: 'goal-001' });
+  assert('subgoal success', sr.success);
+
+  // List via tool
+  const lr = await listTool.execute({ status: 'active' });
+  assert('list success', lr.success);
+  assert('list has goals', lr.output.includes('Test goal'));
+
+  // Add artifact via tool
+  const aar = await artifactTool.execute({ goal_id: 'goal-001', file_path: '/plan.md' });
+  assert('artifact success', aar.success);
+
+  // Update via tool
+  const ur = await updateTool.execute({ goal_id: 'goal-001', status: 'paused', progress_note: 'Waiting for review' });
+  assert('update success', ur.success);
+  assertEq('updated status', gm.get('goal-001').status, 'paused');
+
+  // Error cases
+  const badUpdate = await updateTool.execute({ goal_id: 'bad', status: 'active' });
+  assert('bad update fails', !badUpdate.success);
+
+  const badSubgoal = await addTool.execute({ description: 'Orphan', parent_id: 'nonexistent' });
+  assert('bad parent fails', !badSubgoal.success);
 }
 
 // ═══════════════════════════════════════════════════════════════
