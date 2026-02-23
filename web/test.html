@@ -40,6 +40,11 @@ import { $, esc, state, on, off, emit, lsKey, setSending, setConversation, reset
 
 import { ClawserAgent } from './clawser-agent.js';
 
+import {
+  deriveKey, encryptSecret, decryptSecret,
+  MemoryVaultStorage, SecretVault,
+} from './clawser-vault.js';
+
 import { extractCodeBlocks, stripCodeBlocks, Codex } from './clawser-codex.js';
 
 import {
@@ -57,6 +62,7 @@ import { parseHash } from './clawser-router.js';
 
 import {
   ACCT_KEY, loadAccounts, saveAccounts, createAccount, deleteAccount,
+  storeAccountKey, resolveAccountKey, migrateKeysToVault,
 } from './clawser-accounts.js';
 
 import {
@@ -1357,7 +1363,7 @@ section('Accounts');
 
     // createAccount() adds to list
     localStorage.removeItem(ACCT_KEY);
-    const id = createAccount({ name: 'My Acct', service: 'anthropic', apiKey: 'key123', model: 'claude-sonnet-4-6' });
+    const id = await createAccount({ name: 'My Acct', service: 'anthropic', apiKey: 'key123', model: 'claude-sonnet-4-6' });
     assert('createAccount returns id', typeof id === 'string' && id.length > 0);
     const list = loadAccounts();
     assert('createAccount adds to list', list.some(a => a.id === id && a.name === 'My Acct'));
@@ -3247,6 +3253,188 @@ section('ResponseCache — integration with agent');
   assertEq('second call success', r2.status, 1);
   assertEq('second call cached', r2.cached, true);
   assert('cache hit count', cache.stats.totalHits >= 1);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SecretVault
+// ═══════════════════════════════════════════════════════════════
+
+section('Vault — crypto primitives (deriveKey, encrypt, decrypt)');
+{
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const key = await deriveKey('test-passphrase', salt);
+  assert('deriveKey returns CryptoKey', key instanceof CryptoKey);
+
+  // Encrypt and decrypt roundtrip
+  const encrypted = await encryptSecret('sk-secret-key-12345', key);
+  assert('encrypt returns iv', encrypted.iv instanceof Uint8Array);
+  assertEq('iv length 12', encrypted.iv.length, 12);
+  assert('encrypt returns ciphertext', encrypted.ciphertext instanceof Uint8Array);
+  assert('ciphertext not empty', encrypted.ciphertext.length > 0);
+
+  const decrypted = await decryptSecret(encrypted, key);
+  assertEq('decrypt roundtrip', decrypted, 'sk-secret-key-12345');
+
+  // Different passphrase should fail to decrypt
+  const wrongKey = await deriveKey('wrong-passphrase', salt);
+  try {
+    await decryptSecret(encrypted, wrongKey);
+    assert('wrong passphrase should throw', false);
+  } catch {
+    assert('wrong passphrase should throw', true);
+  }
+
+  // Same passphrase + same salt = same key (deterministic)
+  const key2 = await deriveKey('test-passphrase', salt);
+  const decrypted2 = await decryptSecret(encrypted, key2);
+  assertEq('same passphrase+salt = same key', decrypted2, 'sk-secret-key-12345');
+}
+
+section('Vault — MemoryVaultStorage');
+{
+  const storage = new MemoryVaultStorage();
+
+  // Empty storage
+  assertEq('empty list', (await storage.list()).length, 0);
+  assertEq('read nonexistent', await storage.read('nope'), null);
+
+  // Write and read
+  const data = new Uint8Array([1, 2, 3, 4]);
+  await storage.write('test', data);
+  const read = await storage.read('test');
+  assertEq('read length', read.length, 4);
+  assertEq('read content', read[0], 1);
+  assertEq('list after write', (await storage.list()).length, 1);
+
+  // Remove
+  await storage.remove('test');
+  assertEq('read after remove', await storage.read('test'), null);
+  assertEq('list after remove', (await storage.list()).length, 0);
+}
+
+section('Vault — SecretVault lifecycle');
+{
+  const storage = new MemoryVaultStorage();
+  const vault = new SecretVault(storage);
+
+  // Vault starts locked
+  assert('vault starts locked', vault.isLocked);
+
+  // Cannot store while locked
+  try {
+    await vault.store('key1', 'secret');
+    assert('store while locked throws', false);
+  } catch (e) {
+    assertEq('store locked error', e.message, 'Vault is locked');
+  }
+
+  // Cannot retrieve while locked
+  try {
+    await vault.retrieve('key1');
+    assert('retrieve while locked throws', false);
+  } catch (e) {
+    assertEq('retrieve locked error', e.message, 'Vault is locked');
+  }
+
+  // Unlock
+  await vault.unlock('my-passphrase');
+  assert('vault unlocked', !vault.isLocked);
+
+  // Store and retrieve
+  await vault.store('openai-key', 'sk-abc123');
+  await vault.store('anthropic-key', 'sk-ant-xyz789');
+  const retrieved = await vault.retrieve('openai-key');
+  assertEq('retrieve openai', retrieved, 'sk-abc123');
+
+  const retrieved2 = await vault.retrieve('anthropic-key');
+  assertEq('retrieve anthropic', retrieved2, 'sk-ant-xyz789');
+
+  // List secrets (should not include internal salt key)
+  const secrets = await vault.list();
+  assert('list has openai-key', secrets.includes('openai-key'));
+  assert('list has anthropic-key', secrets.includes('anthropic-key'));
+  assert('list excludes salt', !secrets.includes('__vault_salt__'));
+
+  // Delete
+  await vault.delete('openai-key');
+  const afterDelete = await vault.list();
+  assert('openai-key deleted', !afterDelete.includes('openai-key'));
+
+  // Lock and verify inaccessible
+  vault.lock();
+  assert('vault locked again', vault.isLocked);
+  try {
+    await vault.retrieve('anthropic-key');
+    assert('retrieve after lock throws', false);
+  } catch {
+    assert('retrieve after lock throws', true);
+  }
+
+  // Unlock again with same passphrase — data persists
+  await vault.unlock('my-passphrase');
+  const reRetrieved = await vault.retrieve('anthropic-key');
+  assertEq('data persists after relock', reRetrieved, 'sk-ant-xyz789');
+}
+
+section('Vault — wrong passphrase detection');
+{
+  const storage = new MemoryVaultStorage();
+  const vault = new SecretVault(storage);
+
+  // First unlock with correct passphrase
+  await vault.unlock('correct-pass');
+  await vault.store('secret1', 'value1');
+  vault.lock();
+
+  // Attempt to unlock with wrong passphrase
+  await vault.unlock('wrong-pass');
+  try {
+    await vault.retrieve('secret1');
+    assert('wrong passphrase decrypt fails', false);
+  } catch {
+    assert('wrong passphrase decrypt fails', true);
+  }
+  vault.lock();
+
+  // Correct passphrase still works
+  await vault.unlock('correct-pass');
+  const val = await vault.retrieve('secret1');
+  assertEq('correct passphrase still works', val, 'value1');
+}
+
+section('Vault — verify passphrase canary');
+{
+  const storage = new MemoryVaultStorage();
+  const vault = new SecretVault(storage);
+
+  // First verify creates canary
+  const firstVerify = await vault.verify('my-secret-pass');
+  assertEq('first verify succeeds', firstVerify, true);
+  assert('vault unlocked after verify', !vault.isLocked);
+
+  // Store something while unlocked
+  await vault.store('key1', 'val1');
+  vault.lock();
+
+  // Second verify with correct pass succeeds
+  const secondVerify = await vault.verify('my-secret-pass');
+  assertEq('correct pass verify', secondVerify, true);
+  vault.lock();
+
+  // Verify with wrong pass fails
+  const wrongVerify = await vault.verify('wrong-pass');
+  assertEq('wrong pass verify fails', wrongVerify, false);
+}
+
+section('Vault — exists check');
+{
+  const storage = new MemoryVaultStorage();
+  const vault = new SecretVault(storage);
+
+  assertEq('no vault initially', await vault.exists(), false);
+
+  await vault.unlock('pass');
+  assertEq('vault exists after unlock', await vault.exists(), true);
 }
 
 // ═══════════════════════════════════════════════════════════════

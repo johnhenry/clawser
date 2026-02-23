@@ -28,6 +28,7 @@ import { createDefaultProviders, ResponseCache } from './clawser-providers.js';
 import { McpManager } from './clawser-mcp.js';
 import { SkillRegistry, SkillStorage, ActivateSkillTool, DeactivateSkillTool } from './clawser-skills.js';
 import { ClawserShell, ShellTool } from './clawser-shell.js';
+import { SecretVault, OPFSVaultStorage } from './clawser-vault.js';
 
 // ── Create service singletons ───────────────────────────────────
 state.workspaceFs = new WorkspaceFs();
@@ -38,6 +39,7 @@ state.mcpManager = new McpManager({
 });
 
 state.responseCache = new ResponseCache();
+state.vault = new SecretVault(new OPFSVaultStorage());
 
 // Freeze service singleton slots to prevent accidental reassignment
 Object.defineProperty(state, 'workspaceFs', { value: state.workspaceFs, writable: false, configurable: false });
@@ -45,6 +47,7 @@ Object.defineProperty(state, 'browserTools', { value: state.browserTools, writab
 Object.defineProperty(state, 'providers', { value: state.providers, writable: false, configurable: false });
 Object.defineProperty(state, 'mcpManager', { value: state.mcpManager, writable: false, configurable: false });
 Object.defineProperty(state, 'responseCache', { value: state.responseCache, writable: false, configurable: false });
+Object.defineProperty(state, 'vault', { value: state.vault, writable: false, configurable: false });
 
 // ── Skills ──────────────────────────────────────────────────────
 state.skillRegistry = new SkillRegistry({
@@ -540,13 +543,13 @@ function initHomeListeners() {
     if (svc) { for (const m of svc.models) { const opt = document.createElement('option'); opt.value = m; dl.appendChild(opt); } }
   });
 
-  $('homeAcctSave').addEventListener('click', () => {
+  $('homeAcctSave').addEventListener('click', async () => {
     const name = $('homeAcctName').value.trim();
     const service = $('homeAcctService').value;
     const apiKey = $('homeAcctKey').value.trim();
     const model = $('homeAcctModel').value.trim();
     if (!name || !apiKey || !model) return;
-    createAccount({ name, service, apiKey, model });
+    await createAccount({ name, service, apiKey, model });
     $('homeAcctAddForm').classList.remove('visible');
     renderHomeAccountList();
   });

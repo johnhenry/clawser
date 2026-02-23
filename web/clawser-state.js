@@ -49,6 +49,7 @@ export const state = {
   browserTools: null,
   providers: null,
   mcpManager: null,
+  vault: null,
 };
 
 // ── State transition helpers ──────────────────────────────────

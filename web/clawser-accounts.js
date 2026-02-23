@@ -30,14 +30,17 @@ export function saveAccounts(list) {
 }
 
 /** Create a new provider account, persist it, and return the generated ID.
+ * If vault is unlocked, the API key is stored encrypted; otherwise plaintext in localStorage.
  * @param {{name: string, service: string, apiKey: string, model: string}} opts
- * @returns {string} Account ID
+ * @returns {Promise<string>} Account ID
  */
-export function createAccount({ name, service, apiKey, model }) {
+export async function createAccount({ name, service, apiKey, model }) {
   const id = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
   const list = loadAccounts();
   list.push({ id, name, service, apiKey, model });
   saveAccounts(list);
+  // Attempt to store in vault (async, best-effort)
+  await storeAccountKey(id, apiKey);
   return id;
 }
 
@@ -53,6 +56,69 @@ export function deleteAccount(id) {
   let list = loadAccounts();
   list = list.filter(a => a.id !== id);
   saveAccounts(list);
+  // Also remove from vault if available
+  if (state.vault && !state.vault.isLocked) {
+    state.vault.delete(`apikey-${id}`).catch(() => {});
+  }
+}
+
+/**
+ * Store an account's API key in the vault (if unlocked) or in localStorage.
+ * @param {string} acctId - Account ID
+ * @param {string} apiKey - Plaintext API key
+ */
+export async function storeAccountKey(acctId, apiKey) {
+  if (state.vault && !state.vault.isLocked) {
+    await state.vault.store(`apikey-${acctId}`, apiKey);
+    // Remove plaintext key from account object
+    const list = loadAccounts();
+    const acct = list.find(a => a.id === acctId);
+    if (acct) {
+      acct.apiKey = ''; // clear plaintext
+      acct.vaultStored = true;
+      saveAccounts(list);
+    }
+  }
+  // If vault is locked, key stays in the account object (localStorage fallback)
+}
+
+/**
+ * Resolve an account's API key from the vault (preferred) or localStorage fallback.
+ * @param {Object} acct - Account object
+ * @returns {Promise<string>} API key
+ */
+export async function resolveAccountKey(acct) {
+  // Try vault first
+  if (state.vault && !state.vault.isLocked) {
+    try {
+      return await state.vault.retrieve(`apikey-${acct.id}`);
+    } catch {
+      // Key not in vault — fall through to plaintext
+    }
+  }
+  // Fallback to plaintext in account object
+  return acct.apiKey || '';
+}
+
+/**
+ * Migrate all plaintext API keys from localStorage accounts to the vault.
+ * Call after vault unlock to secure existing keys.
+ * @returns {Promise<number>} Number of keys migrated
+ */
+export async function migrateKeysToVault() {
+  if (!state.vault || state.vault.isLocked) return 0;
+  const list = loadAccounts();
+  let migrated = 0;
+  for (const acct of list) {
+    if (acct.apiKey && !acct.vaultStored) {
+      await state.vault.store(`apikey-${acct.id}`, acct.apiKey);
+      acct.apiKey = '';
+      acct.vaultStored = true;
+      migrated++;
+    }
+  }
+  if (migrated > 0) saveAccounts(list);
+  return migrated;
 }
 
 /** Render the account list in the config panel with edit/delete controls. */
@@ -100,7 +166,7 @@ export function showAccountEditForm(acct, parentEl) {
   const modelOptions = svc ? svc.models.map(m => `<option value="${m}">`).join('') : '';
   form.innerHTML = `
     <input type="text" class="edit-name" value="${esc(acct.name)}" placeholder="Account name" />
-    <input type="password" class="edit-key" value="${esc(acct.apiKey)}" placeholder="API key" />
+    <input type="password" class="edit-key" value="${acct.vaultStored ? '' : esc(acct.apiKey)}" placeholder="${acct.vaultStored ? 'Stored in vault (enter new to replace)' : 'API key'}" />
     <input type="text" class="edit-model" value="${esc(acct.model)}" list="editModelList" placeholder="Model" />
     <datalist id="editModelList">${modelOptions}</datalist>
     <div class="acct-form-row">
@@ -109,24 +175,25 @@ export function showAccountEditForm(acct, parentEl) {
     </div>
   `;
   form.querySelector('.edit-cancel').addEventListener('click', () => form.remove());
-  form.querySelector('.edit-save').addEventListener('click', () => {
+  form.querySelector('.edit-save').addEventListener('click', async () => {
     const newName = form.querySelector('.edit-name').value.trim();
     const newKey = form.querySelector('.edit-key').value.trim();
     const newModel = form.querySelector('.edit-model').value.trim();
     if (!newName || !newKey || !newModel) return;
     updateAccount(acct.id, { name: newName, apiKey: newKey, model: newModel });
+    await storeAccountKey(acct.id, newKey);
     form.remove();
     rebuildProviderDropdown();
     renderAccountList();
     const providerSelect = $('providerSelect');
-    if (providerSelect.value === `acct_${acct.id}`) onProviderChange();
+    if (providerSelect.value === `acct_${acct.id}`) await onProviderChange();
     saveConfig();
   });
   parentEl.after(form);
 }
 
 /** Handle provider dropdown change: configure agent with selected account/provider. */
-export function onProviderChange() {
+export async function onProviderChange() {
   const providerSelect = $('providerSelect');
   const val = providerSelect.value;
   if (!state.agent) return;
@@ -137,7 +204,8 @@ export function onProviderChange() {
     const acct = accts.find(a => a.id === acctId);
     if (acct) {
       state.agent.setProvider(acct.service);
-      state.agent.setApiKey(acct.apiKey);
+      const apiKey = await resolveAccountKey(acct);
+      state.agent.setApiKey(apiKey);
       state.agent.setModel(acct.model);
       $('providerLabel').textContent = acct.name;
     }
@@ -191,7 +259,7 @@ export async function applyRestoredConfig(savedConfig) {
       providerSelect.value = `acct_${existing.id}`;
     } else {
       const svc = SERVICES[savedConfig.provider];
-      const id = createAccount({
+      const id = await createAccount({
         name: svc?.name || savedConfig.provider,
         service: savedConfig.provider,
         apiKey: savedConfig.apiKey,
@@ -201,7 +269,7 @@ export async function applyRestoredConfig(savedConfig) {
       renderAccountList();
       providerSelect.value = `acct_${id}`;
     }
-    onProviderChange();
+    await onProviderChange();
     return;
   }
 
@@ -315,12 +383,12 @@ export function initAccountListeners() {
     const apiKey = $('acctKey').value.trim();
     const model = $('acctModel').value.trim();
     if (!name || !apiKey || !model) return;
-    const id = createAccount({ name, service, apiKey, model });
+    const id = await createAccount({ name, service, apiKey, model });
     $('acctAddForm').classList.remove('visible');
     await rebuildProviderDropdown();
     renderAccountList();
     providerSelect.value = `acct_${id}`;
-    onProviderChange();
+    await onProviderChange();
     saveConfig();
   });
 
