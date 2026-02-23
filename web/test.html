@@ -65,6 +65,10 @@ import {
   GoalAddTool, GoalUpdateTool, GoalAddArtifactTool, GoalListTool,
 } from './clawser-goals.js';
 
+import {
+  SubAgent, DelegateManager, DelegateTool, MAX_DELEGATION_DEPTH,
+} from './clawser-delegate.js';
+
 import { $, esc, state, on, off, emit, lsKey, setSending, setConversation, resetConversationState } from './clawser-state.js';
 
 import { ClawserAgent, AutonomyController, HookPipeline, HOOK_POINTS, createAuditLoggerHook } from './clawser-agent.js';
@@ -5859,6 +5863,265 @@ section('Goals — agent tools');
 
   const badSubgoal = await addTool.execute({ description: 'Orphan', parent_id: 'nonexistent' });
   assert('bad parent fails', !badSubgoal.success);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  DELEGATE — SubAgent
+// ═══════════════════════════════════════════════════════════════
+
+section('Delegate — SubAgent basic');
+
+{
+  // Mock provider: responds with text immediately (no tool calls)
+  const mockChat = async (messages, tools, opts) => ({
+    content: 'Research complete: found 3 WASM runtimes.',
+    tool_calls: [],
+    usage: { input_tokens: 100, output_tokens: 50 },
+    model: 'mock',
+  });
+
+  const mockExecute = async (name, params) => ({
+    success: true, output: 'tool result',
+  });
+
+  const sub = new SubAgent({
+    goal: 'Research WASM runtimes',
+    chatFn: mockChat,
+    executeFn: mockExecute,
+    toolSpecs: [{ name: 'web_search', required_permission: 'read' }],
+    maxIterations: 5,
+    depth: 0,
+  });
+
+  assertEq('status pending', sub.status, 'pending');
+  assertEq('goal', sub.goal, 'Research WASM runtimes');
+  assertEq('depth', sub.depth, 0);
+
+  const result = await sub.run();
+  assert('success', result.success);
+  assert('summary', result.summary.includes('WASM'));
+  assertEq('iterations 1', result.iterations, 1);
+  assertEq('tool calls 0', result.toolCalls, 0);
+  assertEq('status completed', sub.status, 'completed');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  DELEGATE — SubAgent with tool calls
+// ═══════════════════════════════════════════════════════════════
+
+section('Delegate — SubAgent with tools');
+
+{
+  let chatCallCount = 0;
+  const mockChat = async (messages) => {
+    chatCallCount++;
+    if (chatCallCount === 1) {
+      return {
+        content: '',
+        tool_calls: [{ id: 'tc1', name: 'web_search', arguments: '{"q":"wasm"}' }],
+        usage: { input_tokens: 50, output_tokens: 30 },
+        model: 'mock',
+      };
+    }
+    return {
+      content: 'Found wasmtime, wasmer, and wazero.',
+      tool_calls: [],
+      usage: { input_tokens: 80, output_tokens: 40 },
+      model: 'mock',
+    };
+  };
+
+  const toolResults = [];
+  const mockExecute = async (name, params) => {
+    toolResults.push({ name, params });
+    return { success: true, output: 'wasmtime, wasmer, wazero' };
+  };
+
+  const sub = new SubAgent({
+    goal: 'Find WASM runtimes',
+    chatFn: mockChat,
+    executeFn: mockExecute,
+    toolSpecs: [{ name: 'web_search', required_permission: 'read' }],
+    maxIterations: 5,
+    depth: 0,
+  });
+
+  const result = await sub.run();
+  assert('success', result.success);
+  assertEq('iterations', result.iterations, 2);
+  assertEq('tool calls', result.toolCalls, 1);
+  assertEq('tool name', toolResults[0].name, 'web_search');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  DELEGATE — Depth limit
+// ═══════════════════════════════════════════════════════════════
+
+section('Delegate — depth limit');
+
+{
+  const sub = new SubAgent({
+    goal: 'Nested too deep',
+    chatFn: async () => ({ content: '', tool_calls: [], usage: {}, model: 'mock' }),
+    executeFn: async () => ({ success: true, output: '' }),
+    toolSpecs: [],
+    depth: MAX_DELEGATION_DEPTH, // At max — should fail
+  });
+
+  const result = await sub.run();
+  assert('depth limit fails', !result.success);
+  assert('depth message', result.summary.includes('depth'));
+  assertEq('status failed', sub.status, 'failed');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  DELEGATE — Tool restriction
+// ═══════════════════════════════════════════════════════════════
+
+section('Delegate — tool restriction');
+
+{
+  let callCount = 0;
+  const mockChat = async () => {
+    callCount++;
+    if (callCount === 1) {
+      return {
+        content: '',
+        tool_calls: [
+          { id: 'tc1', name: 'web_search', arguments: '{}' },
+          { id: 'tc2', name: 'fs_write', arguments: '{}' }, // NOT allowed
+        ],
+        usage: {}, model: 'mock',
+      };
+    }
+    return { content: 'Done', tool_calls: [], usage: {}, model: 'mock' };
+  };
+
+  const executed = [];
+  const mockExecute = async (name) => {
+    executed.push(name);
+    return { success: true, output: 'ok' };
+  };
+
+  const sub = new SubAgent({
+    goal: 'Restricted task',
+    chatFn: mockChat,
+    executeFn: mockExecute,
+    toolSpecs: [
+      { name: 'web_search', required_permission: 'read' },
+      { name: 'fs_write', required_permission: 'write' },
+    ],
+    allowedTools: ['web_search'], // Only allow search
+    maxIterations: 5,
+    depth: 0,
+  });
+
+  const result = await sub.run();
+  assert('completed', result.success);
+  assertEq('only 1 executed', executed.length, 1);
+  assertEq('only search', executed[0], 'web_search');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  DELEGATE — Cancel
+// ═══════════════════════════════════════════════════════════════
+
+section('Delegate — cancel');
+
+{
+  const sub = new SubAgent({
+    goal: 'Will be cancelled',
+    chatFn: async () => ({ content: '', tool_calls: [], usage: {}, model: 'mock' }),
+    executeFn: async () => ({ success: true, output: '' }),
+    toolSpecs: [],
+    depth: 0,
+  });
+
+  sub.cancel();
+  assertEq('cancelled status', sub.status, 'cancelled');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  DELEGATE — DelegateManager
+// ═══════════════════════════════════════════════════════════════
+
+section('Delegate — DelegateManager');
+
+{
+  const dm = new DelegateManager({ maxConcurrency: 2 });
+  assertEq('size 0', dm.size, 0);
+  assertEq('running 0', dm.running, 0);
+
+  const mockChat = async () => ({
+    content: 'Done',
+    tool_calls: [],
+    usage: {},
+    model: 'mock',
+  });
+  const mockExecute = async () => ({ success: true, output: '' });
+
+  // Single delegation
+  const r1 = await dm.delegate({
+    goal: 'Task 1',
+    chatFn: mockChat,
+    executeFn: mockExecute,
+    toolSpecs: [],
+    depth: 0,
+  });
+  assert('delegate success', r1.success);
+  assertEq('size 1', dm.size, 1);
+
+  // Parallel delegation
+  const results = await dm.delegateAll([
+    { goal: 'Parallel A', chatFn: mockChat, executeFn: mockExecute, toolSpecs: [], depth: 0 },
+    { goal: 'Parallel B', chatFn: mockChat, executeFn: mockExecute, toolSpecs: [], depth: 0 },
+  ]);
+  assertEq('parallel count', results.length, 2);
+  assert('parallel A', results[0].success);
+  assert('parallel B', results[1].success);
+
+  // List
+  const list = dm.list();
+  assertEq('list length', list.length, 3);
+
+  // Cleanup
+  dm.cleanup();
+  assertEq('after cleanup', dm.size, 0);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  DELEGATE — DelegateTool
+// ═══════════════════════════════════════════════════════════════
+
+section('Delegate — DelegateTool');
+
+{
+  const dm = new DelegateManager();
+  const mockChat = async () => ({
+    content: 'Sub-task result: 42',
+    tool_calls: [],
+    usage: {},
+    model: 'mock',
+  });
+  const mockExecute = async () => ({ success: true, output: '' });
+  const toolSpecs = [{ name: 'echo', required_permission: 'read' }];
+
+  const tool = new DelegateTool({
+    manager: dm,
+    chatFn: mockChat,
+    executeFn: mockExecute,
+    toolSpecs,
+    currentDepth: 0,
+  });
+
+  assertEq('tool name', tool.name, 'agent_delegate');
+  assertEq('tool permission', tool.permission, 'approve');
+
+  const r = await tool.execute({ task: 'Calculate meaning of life' });
+  assert('delegate tool success', r.success);
+  assert('output has task', r.output.includes('Calculate meaning'));
+  assert('output has status', r.output.includes('completed'));
+  assert('output has summary', r.output.includes('42'));
 }
 
 // ═══════════════════════════════════════════════════════════════
