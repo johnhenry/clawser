@@ -65,7 +65,7 @@ state.stuckDetector = new StuckDetector();
 state.selfRepairEngine = new SelfRepairEngine({ detector: state.stuckDetector });
 state.undoManager = new UndoManager({
   handlers: {
-    revertHistory: (history) => { if (state.agent) state.agent.setHistory(history); },
+    revertHistory: (historyLength) => { /* agent #history is private; undo relies on event log replay */ },
     revertMemory: (op) => { /* memory revert handled by agent */ },
   },
 });
@@ -79,13 +79,14 @@ state.daemonController = new DaemonController({
   getStateFn: () => state.agent?.getState(),
 });
 state.routineEngine = new RoutineEngine({
-  executeFn: async (prompt) => {
+  executeFn: async (routine, triggerEvent) => {
     if (state.agent) {
+      const prompt = routine.action?.prompt || routine.name;
       state.agent.sendMessage(prompt);
       return state.agent.run();
     }
   },
-  onNotify: (msg) => addEvent('routine', msg),
+  onNotify: (routine, message) => addEvent('routine', message),
 });
 
 // Freeze service singleton slots to prevent accidental reassignment

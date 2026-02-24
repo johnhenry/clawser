@@ -8865,14 +8865,14 @@ section('Batch 6 — Module Singletons');
 {
   // Test IntentRouter
   const router = new IntentRouter();
-  const intent1 = router.classify('fetch the page at example.com');
-  assert('IntentRouter classifies commands', intent1 === 'COMMAND' || typeof intent1 === 'string');
+  const intent1 = router.classify('/help');
+  assert('IntentRouter classifies commands', intent1 === 'command');
 
   const intent2 = router.classify('what is the weather like?');
-  assert('IntentRouter classifies queries', intent2 === 'QUERY' || typeof intent2 === 'string');
+  assert('IntentRouter classifies queries', intent2 === 'query');
 
   const intent3 = router.classify('hello!');
-  assert('IntentRouter classifies chat', intent3 === 'CHAT' || typeof intent3 === 'string');
+  assert('IntentRouter classifies chat', intent3 === 'chat');
 
   // Test InputSanitizer
   const sanitizer = new InputSanitizer();
@@ -8939,10 +8939,10 @@ section('Batch 6 — Module Singletons');
   rc.set('key1', { content: 'response1' }, 'model1');
   const cached = rc.get('key1');
   assert('ResponseCache stores and retrieves', cached?.content === 'response1');
-  const stats = rc.stats();
-  assert('ResponseCache tracks stats', stats.size === 1);
+  const stats = rc.stats;
+  assert('ResponseCache tracks stats', stats.entries === 1);
   rc.clear();
-  assert('ResponseCache clears', rc.stats().size === 0);
+  assert('ResponseCache clears', rc.stats.entries === 0);
 }
 
 section('Batch 7 — Cross-Block Wiring');
@@ -8972,9 +8972,9 @@ section('Batch 7 — Cross-Block Wiring');
 
   // Test RoutineEngine
   const re = new RoutineEngine({ executeFn: async () => ({}) });
-  const rid = re.addRoutine({ name: 'test-routine', trigger: { type: 'EVENT', event: 'test' }, actions: [{ type: 'PROMPT', prompt: 'hello' }] });
+  const rid = re.addRoutine({ name: 'test-routine', trigger: { type: 'event', event: 'test' }, action: { type: 'prompt', prompt: 'hello' } });
   assert('RoutineEngine adds routine', re.routineCount === 1);
-  re.removeRoutine(rid);
+  re.removeRoutine(rid.id);
   assert('RoutineEngine removes routine', re.routineCount === 0);
 }
 

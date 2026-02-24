@@ -717,8 +717,9 @@ export async function sendMessage() {
   // Batch 6: Undo checkpoint before agent acts
   if (state.undoManager && state.agent) {
     try {
+      const agentState = state.agent.getState();
       state.undoManager.beginTurn({
-        history: state.agent.getHistory ? state.agent.getHistory() : [],
+        historyLength: agentState.history_len || 0,
       });
     } catch (e) { /* undo checkpoint is non-critical */ }
   }

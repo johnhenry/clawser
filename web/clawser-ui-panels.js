@@ -477,7 +477,7 @@ function saveIdentitySettings() {
 }
 
 /** Render model routing section (Block 11). */
-export function renderRoutingSection() {
+export async function renderRoutingSection() {
   const list = $('routingChainList');
   const badges = $('routingHealthBadges');
   if (!list || !badges) return;
@@ -487,7 +487,8 @@ export function renderRoutingSection() {
   // Show registered providers as chain entries
   if (state.providers) {
     let idx = 1;
-    for (const name of state.providers.names()) {
+    const providerList = await state.providers.listWithAvailability().catch(() => []);
+    for (const { name } of providerList) {
       const d = document.createElement('div');
       d.className = 'routing-chain-item';
       d.innerHTML = `<span class="chain-idx">${idx++}.</span><span class="chain-name">${esc(name)}</span>`;
@@ -552,8 +553,8 @@ export function renderSelfRepairSection() {
 export function updateCacheStats() {
   const el = $('cacheStats');
   if (!el || !state.responseCache) return;
-  const stats = state.responseCache.stats();
-  el.textContent = `Hits: ${stats.hits || 0} · Misses: ${stats.misses || 0} · Entries: ${stats.size || 0}`;
+  const stats = state.responseCache.stats;
+  el.textContent = `Hits: ${stats.totalHits || 0} · Misses: ${stats.totalMisses || 0} · Entries: ${stats.entries || 0}`;
 }
 
 /** Render sandbox capabilities (Block 28). */
@@ -662,7 +663,7 @@ export function refreshDashboard() {
     $('dashTokens').textContent = snap.counters?.tokens ?? 0;
     $('dashErrors').textContent = snap.counters?.errors ?? 0;
     const hist = snap.histograms?.latency;
-    $('dashLatency').textContent = hist?.mean ? `${Math.round(hist.mean)}ms` : '0ms';
+    $('dashLatency').textContent = hist?.avg ? `${Math.round(hist.avg)}ms` : '0ms';
   }
   if (state.ringBufferLog) {
     const el = $('dashLogViewer');
@@ -671,7 +672,8 @@ export function refreshDashboard() {
     const entries = state.ringBufferLog.query({ limit: 50 });
     for (const entry of entries) {
       const d = document.createElement('div');
-      d.className = `dash-log-entry ${entry.level || ''}`;
+      const levelNames = ['debug', 'info', 'warn', 'error'];
+      d.className = `dash-log-entry ${levelNames[entry.level] ?? ''}`;
       const time = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : '';
       d.innerHTML = `<span class="log-time">${time}</span>${esc(entry.message || JSON.stringify(entry))}`;
       el.appendChild(d);
