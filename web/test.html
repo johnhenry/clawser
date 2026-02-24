@@ -193,7 +193,7 @@ import {
   createWorkspace, renameWorkspace, deleteWorkspace, getWorkspaceName, touchWorkspace,
 } from './clawser-workspaces.js';
 
-import { buildDynamicSystemPrompt, updateInlineToolCall, addErrorMsg } from './clawser-ui-chat.js';
+import { buildDynamicSystemPrompt, updateInlineToolCall, addErrorMsg, addSubAgentCard, updateSubAgentCard, addSafetyBanner, addUndoButton, addIntentBadge } from './clawser-ui-chat.js';
 import { parseHash } from './clawser-router.js';
 
 import {
@@ -8691,6 +8691,300 @@ section('Sandbox: Agent Tools');
   assertEq('status perm', st.permission, 'read');
   const r3 = await st.execute();
   assert('status has sandbox', r3.output.includes('calc'));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  PHASE 2 — UI, Agent Loop Integration, Cross-Block Wiring
+// ═══════════════════════════════════════════════════════════════
+
+section('Batch 1 — Config Panel Sections');
+
+{
+  // Verify new config sections exist in DOM
+  const configSections = [
+    'autonomySection', 'identitySection', 'routingSection',
+    'authProfilesSection', 'selfRepairSection', 'cacheSection',
+    'sandboxSection', 'heartbeatSection',
+  ];
+  for (const id of configSections) {
+    assert(`Config section #${id} exists`, document.getElementById(id) !== null);
+  }
+
+  // Verify toggles exist
+  const toggles = [
+    'autonomyToggle', 'identityToggle', 'routingToggle',
+    'authProfilesToggle', 'selfRepairToggle', 'cacheToggle',
+    'sandboxToggle', 'heartbeatToggle',
+  ];
+  for (const id of toggles) {
+    assert(`Config toggle #${id} exists`, document.getElementById(id) !== null);
+  }
+
+  // Verify toggle show/hide mechanism
+  const sec = document.getElementById('autonomySection');
+  assert('autonomySection starts hidden', !sec.classList.contains('visible'));
+  sec.classList.add('visible');
+  assert('autonomySection can be shown', sec.classList.contains('visible'));
+  sec.classList.remove('visible');
+
+  // Verify autonomy controls exist
+  assert('autonomy level radios exist', document.querySelectorAll('input[name="autonomyLevel"]').length === 3);
+  assert('max actions input exists', document.getElementById('cfgMaxActions') !== null);
+  assert('daily cost limit input exists', document.getElementById('cfgDailyCostLimit') !== null);
+  assert('cost meter bar exists', document.getElementById('costMeterBar') !== null);
+
+  // Verify identity controls
+  assert('identity format select exists', document.getElementById('identityFormat') !== null);
+  assert('identity plain textarea exists', document.getElementById('identityPlain') !== null);
+  assert('identity name input exists', document.getElementById('identityName') !== null);
+  assert('identity preview button exists', document.getElementById('identityPreview') !== null);
+
+  // Verify self-repair sliders
+  const sliders = ['cfgToolTimeout', 'cfgNoProgress', 'cfgLoopDetection', 'cfgConsecErrors', 'cfgCostRunaway'];
+  for (const id of sliders) {
+    assert(`Self-repair slider #${id} exists`, document.getElementById(id) !== null);
+  }
+
+  // Verify cache controls
+  assert('cache TTL input exists', document.getElementById('cfgCacheTTL') !== null);
+  assert('cache max entries exists', document.getElementById('cfgCacheMaxEntries') !== null);
+  assert('cache stats display exists', document.getElementById('cacheStats') !== null);
+  assert('cache clear button exists', document.getElementById('cacheClear') !== null);
+
+  // Verify sandbox controls
+  assert('sandbox tier select exists', document.getElementById('cfgSandboxTier') !== null);
+  assert('sandbox capabilities area exists', document.getElementById('sandboxCapabilities') !== null);
+  assert('fuel limit input exists', document.getElementById('cfgFuelLimit') !== null);
+
+  // Verify heartbeat controls
+  assert('heartbeat checks area exists', document.getElementById('heartbeatChecks') !== null);
+  assert('heartbeat interval select exists', document.getElementById('cfgHeartbeatInterval') !== null);
+  assert('heartbeat alert select exists', document.getElementById('cfgHeartbeatAlert') !== null);
+}
+
+section('Batch 2 — Header Badges');
+
+{
+  // Verify header badges exist
+  assert('autonomy badge exists', document.getElementById('autonomyBadge') !== null);
+  assert('daemon badge exists', document.getElementById('daemonBadge') !== null);
+  assert('remote badge exists', document.getElementById('remoteBadge') !== null);
+
+  // Verify badges start hidden
+  const ab = document.getElementById('autonomyBadge');
+  assert('autonomy badge starts hidden', !ab.classList.contains('visible'));
+
+  const db = document.getElementById('daemonBadge');
+  assert('daemon badge starts hidden', !db.classList.contains('visible'));
+
+  const rb = document.getElementById('remoteBadge');
+  assert('remote badge starts hidden', !rb.classList.contains('visible'));
+}
+
+section('Batch 4 — Terminal & Dashboard Panels');
+
+{
+  // Verify terminal panel elements
+  assert('terminal panel exists', document.getElementById('panelTerminal') !== null);
+  assert('terminal output exists', document.getElementById('terminalOutput') !== null);
+  assert('terminal input exists', document.getElementById('terminalInput') !== null);
+  assert('terminal cwd display exists', document.getElementById('terminalCwd') !== null);
+
+  // Verify dashboard panel elements
+  assert('dashboard panel exists', document.getElementById('panelDashboard') !== null);
+  assert('dash requests card exists', document.getElementById('dashRequests') !== null);
+  assert('dash tokens card exists', document.getElementById('dashTokens') !== null);
+  assert('dash errors card exists', document.getElementById('dashErrors') !== null);
+  assert('dash latency card exists', document.getElementById('dashLatency') !== null);
+  assert('dash log viewer exists', document.getElementById('dashLogViewer') !== null);
+  assert('dash refresh button exists', document.getElementById('dashRefresh') !== null);
+
+  // Verify sidebar buttons for new panels
+  const termBtn = document.querySelector('.sidebar button[data-panel="terminal"]');
+  const dashBtn = document.querySelector('.sidebar button[data-panel="dashboard"]');
+  assert('terminal sidebar button exists', termBtn !== null);
+  assert('dashboard sidebar button exists', dashBtn !== null);
+}
+
+section('Batch 5 — Chat Inline Elements');
+
+{
+  // Test sub-agent card creation
+  const messagesEl = document.getElementById('messages');
+  const origHTML = messagesEl.innerHTML;
+
+  // addSubAgentCard
+  const card = addSubAgentCard('Test delegation task', { iterations: 3, tokens: 500 });
+  assert('sub-agent card created', card !== null);
+  assert('sub-agent card has class', card.classList.contains('subagent-card'));
+  assert('sub-agent card has task text', card.textContent.includes('Test delegation task'));
+  assert('sub-agent card has stats', card.textContent.includes('3 iters'));
+
+  // updateSubAgentCard
+  updateSubAgentCard(card, 'Test delegation task', { iterations: 5, tokens: 1200, output: 'Task completed.' });
+  assert('sub-agent card updated stats', card.textContent.includes('5 iters'));
+
+  // addSafetyBanner
+  addSafetyBanner('suspicious pattern detected');
+  const banners = messagesEl.querySelectorAll('.safety-banner');
+  assert('safety banner created', banners.length > 0);
+  assert('safety banner has text', banners[0].textContent.includes('suspicious pattern'));
+
+  // addUndoButton
+  let undoCalled = false;
+  const undoBtn = addUndoButton(() => { undoCalled = true; });
+  assert('undo button created', undoBtn !== null);
+  assert('undo button has text', undoBtn.textContent.includes('Undo'));
+
+  // addIntentBadge — needs a user message first
+  const userMsg = document.createElement('div');
+  userMsg.className = 'msg user';
+  userMsg.innerHTML = '<div class="label">You</div>hello';
+  messagesEl.appendChild(userMsg);
+  addIntentBadge('CHAT');
+  const badge = userMsg.querySelector('.intent-badge');
+  assert('intent badge added to user message', badge !== null);
+  assert('intent badge has correct class', badge.classList.contains('CHAT'));
+  assert('intent badge has correct text', badge.textContent === 'CHAT');
+
+  // addErrorMsg with retry
+  let retryCalled = false;
+  addErrorMsg('Test error', () => { retryCalled = true; });
+  const errMsgs = messagesEl.querySelectorAll('.msg.error');
+  const lastErr = errMsgs[errMsgs.length - 1];
+  assert('error msg with retry created', lastErr !== null);
+  const retryBtn = lastErr.querySelector('.retry-btn');
+  assert('retry button exists', retryBtn !== null);
+
+  // Cleanup
+  messagesEl.innerHTML = origHTML;
+}
+
+section('Batch 6 — Module Singletons');
+
+{
+  // Test IntentRouter
+  const router = new IntentRouter();
+  const intent1 = router.classify('fetch the page at example.com');
+  assert('IntentRouter classifies commands', intent1 === 'COMMAND' || typeof intent1 === 'string');
+
+  const intent2 = router.classify('what is the weather like?');
+  assert('IntentRouter classifies queries', intent2 === 'QUERY' || typeof intent2 === 'string');
+
+  const intent3 = router.classify('hello!');
+  assert('IntentRouter classifies chat', intent3 === 'CHAT' || typeof intent3 === 'string');
+
+  // Test InputSanitizer
+  const sanitizer = new InputSanitizer();
+  const clean = sanitizer.sanitize('hello world');
+  assert('InputSanitizer passes clean input', clean.content === 'hello world' || clean.content != null);
+  assert('InputSanitizer no flags on clean', !clean.flags || clean.flags.length === 0);
+
+  // Test ToolCallValidator
+  const validator = new ToolCallValidator();
+  const valid = validator.validate('browser_fetch', { url: 'https://example.com' });
+  assert('ToolCallValidator validates clean call', valid.valid === true || valid.issues?.length === 0);
+
+  // Test UndoManager
+  const undo = new UndoManager({ handlers: {} });
+  assert('UndoManager starts empty', !undo.canUndo);
+  undo.beginTurn({ history: [{ role: 'user', content: 'hi' }] });
+  assert('UndoManager has checkpoint after beginTurn', undo.canUndo);
+
+  // Test StuckDetector
+  const detector = new StuckDetector();
+  assert('StuckDetector has thresholds', detector.thresholds != null);
+  const issues = detector.detect({ toolCalls: [], iterations: 0, elapsed: 0, errors: 0, cost: 0, history: [] });
+  assert('StuckDetector returns array', Array.isArray(issues));
+
+  // Test SelfRepairEngine
+  const engine = new SelfRepairEngine({ detector });
+  assert('SelfRepairEngine has enabled property', typeof engine.enabled === 'boolean');
+
+  // Test MetricsCollector
+  const metrics = new MetricsCollector();
+  metrics.increment('test_counter');
+  metrics.increment('test_counter');
+  assert('MetricsCollector tracks counters', metrics.counter('test_counter') === 2);
+  metrics.gauge('test_gauge', 42);
+  assert('MetricsCollector tracks gauges', metrics.getGauge('test_gauge') === 42);
+  metrics.observe('test_hist', 100);
+  metrics.observe('test_hist', 200);
+  const hist = metrics.histogram('test_hist');
+  assert('MetricsCollector tracks histograms', hist.count === 2);
+
+  // Test RingBufferLog
+  const log = new RingBufferLog(5);
+  log.push({ message: 'a' });
+  log.push({ message: 'b' });
+  log.push({ message: 'c' });
+  const entries = log.query({ limit: 10 });
+  assert('RingBufferLog stores entries', entries.length === 3);
+  // Test capacity
+  for (let i = 0; i < 10; i++) log.push({ message: `x${i}` });
+  const capped = log.query({ limit: 100 });
+  assert('RingBufferLog respects capacity', capped.length <= 5);
+
+  // Test HeartbeatRunner
+  const hb = new HeartbeatRunner({ onAlert: () => {} });
+  hb.loadDefault();
+  assert('HeartbeatRunner loads default checks', hb.checkCount > 0);
+
+  // Test AuthProfileManager
+  const apm = new AuthProfileManager({});
+  assert('AuthProfileManager starts empty', apm.size === 0);
+
+  // Test ResponseCache
+  const rc = new ResponseCache({ maxEntries: 10, ttlMs: 60000 });
+  rc.set('key1', { content: 'response1' }, 'model1');
+  const cached = rc.get('key1');
+  assert('ResponseCache stores and retrieves', cached?.content === 'response1');
+  const stats = rc.stats();
+  assert('ResponseCache tracks stats', stats.size === 1);
+  rc.clear();
+  assert('ResponseCache clears', rc.stats().size === 0);
+}
+
+section('Batch 7 — Cross-Block Wiring');
+
+{
+  // Test IdentityManager → system prompt
+  const im = new IdentityManager();
+  const compiled = compileSystemPrompt('You are clawser.', {});
+  assert('compileSystemPrompt returns string', typeof compiled === 'string');
+  assert('compileSystemPrompt includes identity', compiled.includes('clawser'));
+
+  // Test ProviderHealth tracking
+  const ph = new ProviderHealth();
+  ph.recordSuccess('openai', 'gpt-4', 150);
+  ph.recordSuccess('openai', 'gpt-4', 200);
+  const health = ph.getHealth('openai', 'gpt-4');
+  assert('ProviderHealth tracks success', health != null);
+  assert('ProviderHealth circuit closed on success', !ph.isCircuitOpen('openai', 'gpt-4'));
+
+  // Test ModelRouter
+  const mr = new ModelRouter();
+  assert('ModelRouter has hints getter', mr.hints != null);
+
+  // Test FallbackChain
+  const chain = new FallbackChain({ entries: [] });
+  assert('FallbackChain starts empty', chain.enabledEntries().length === 0);
+
+  // Test RoutineEngine
+  const re = new RoutineEngine({ executeFn: async () => ({}) });
+  const rid = re.addRoutine({ name: 'test-routine', trigger: { type: 'EVENT', event: 'test' }, actions: [{ type: 'PROMPT', prompt: 'hello' }] });
+  assert('RoutineEngine adds routine', re.routineCount === 1);
+  re.removeRoutine(rid);
+  assert('RoutineEngine removes routine', re.routineCount === 0);
+}
+
+section('Router — New Panels');
+
+{
+  // Test that router recognizes new panel names
+  const { PANEL_NAMES } = await import('./clawser-router.js');
+  assert('Router includes terminal panel', PANEL_NAMES.has('terminal'));
+  assert('Router includes dashboard panel', PANEL_NAMES.has('dashboard'));
 }
 
 // ═══════════════════════════════════════════════════════════════

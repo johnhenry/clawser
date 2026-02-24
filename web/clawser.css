@@ -412,6 +412,129 @@ header .dot.error { background:var(--red); }
 .home-acct-form.visible { display:block; }
 .skill-scope-cancel { color:var(--muted); }
 
+/* ── Batch 1: Config panel sections ───────────────── */
+.radio-group { display:flex; gap:12px; padding:4px 0; }
+.radio-label { font-size:11px; color:var(--text); display:flex; align-items:center; gap:4px; cursor:pointer; }
+.radio-label input[type="radio"] { accent-color:var(--accent); }
+
+.cost-meter-wrap { position:relative; height:18px; background:var(--bg); border:1px solid var(--border); border-radius:4px; overflow:hidden; }
+.cost-meter-bar { height:100%; background:var(--green); transition:width .3s, background .3s; width:0%; }
+.cost-meter-bar.warn { background:var(--orange); }
+.cost-meter-bar.danger { background:var(--red); }
+.cost-meter-label { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:10px; font-family:var(--mono); color:var(--text); }
+
+.identity-preview { padding:8px 12px; font-size:11px; font-family:var(--mono); white-space:pre-wrap; word-break:break-word; color:var(--muted); max-height:200px; overflow-y:auto; border:1px solid var(--border); border-radius:4px; margin:0 12px 8px; background:var(--bg); }
+
+.routing-chain-list { font-size:11px; font-family:var(--mono); }
+.routing-chain-item { padding:4px 0; display:flex; align-items:center; gap:6px; }
+.routing-chain-item .chain-idx { color:var(--dim); width:16px; }
+.routing-chain-item .chain-name { color:var(--accent); flex:1; }
+.routing-health-badges { display:flex; flex-wrap:wrap; gap:4px; }
+.health-badge { padding:2px 6px; border-radius:10px; font-size:10px; font-family:var(--mono); }
+.health-badge.healthy { background:rgba(63,185,80,.15); color:var(--green); }
+.health-badge.degraded { background:rgba(210,153,34,.15); color:var(--orange); }
+.health-badge.down { background:rgba(248,81,73,.15); color:var(--red); }
+
+.auth-profile-list { font-size:11px; font-family:var(--mono); }
+.auth-profile-item { padding:4px 0; display:flex; align-items:center; gap:6px; border-bottom:1px solid var(--border); }
+.auth-profile-item .profile-active { width:6px; height:6px; border-radius:50%; }
+.auth-profile-item .profile-active.on { background:var(--green); }
+.auth-profile-item .profile-active.off { background:var(--dim); }
+.auth-profile-item .profile-name { color:var(--accent); flex:1; }
+.auth-profile-item .profile-provider { color:var(--dim); }
+.auth-profile-item .profile-actions button { border:none; background:transparent; cursor:pointer; font-size:10px; color:var(--muted); padding:2px 4px; }
+.auth-profile-item .profile-actions button:hover { color:var(--text); }
+
+input[type="range"] { width:100%; accent-color:var(--accent); }
+.range-val { font-size:10px; font-family:var(--mono); color:var(--dim); }
+
+.cache-stats { font-size:11px; font-family:var(--mono); color:var(--muted); padding:4px 0; }
+
+.sandbox-caps { display:flex; flex-wrap:wrap; gap:4px; }
+.sandbox-cap { font-size:10px; padding:2px 6px; border-radius:3px; background:var(--surface2); color:var(--muted); display:flex; align-items:center; gap:3px; cursor:pointer; }
+.sandbox-cap.granted { background:rgba(63,185,80,.15); color:var(--green); }
+.sandbox-cap input[type="checkbox"] { accent-color:var(--green); width:10px; height:10px; }
+
+.heartbeat-checks { font-size:11px; font-family:var(--mono); }
+.heartbeat-check-item { padding:3px 0; display:flex; align-items:center; gap:6px; border-bottom:1px solid rgba(48,54,61,.4); }
+.heartbeat-check-item .hb-status { width:6px; height:6px; border-radius:50%; background:var(--dim); }
+.heartbeat-check-item .hb-status.pass { background:var(--green); }
+.heartbeat-check-item .hb-status.fail { background:var(--red); }
+.heartbeat-check-item .hb-name { flex:1; color:var(--text); }
+.heartbeat-check-item .hb-remove { border:none; background:transparent; cursor:pointer; color:var(--muted); font-size:10px; }
+.heartbeat-check-item .hb-remove:hover { color:var(--red); }
+
+/* ── Batch 2: Header badges ────────────────────────── */
+.autonomy-badge, .daemon-badge, .remote-badge {
+  font-size:10px; font-family:var(--mono); padding:1px 6px; border-radius:10px; margin-right:4px; display:none;
+}
+.autonomy-badge.visible, .daemon-badge.visible, .remote-badge.visible { display:inline-block; }
+.autonomy-badge.readonly { background:rgba(248,81,73,.15); color:var(--red); }
+.autonomy-badge.supervised { background:rgba(210,153,34,.15); color:var(--orange); }
+.autonomy-badge.full { background:rgba(63,185,80,.15); color:var(--green); }
+.daemon-badge.paused { background:rgba(210,153,34,.15); color:var(--orange); }
+.daemon-badge.running { background:rgba(63,185,80,.15); color:var(--green); }
+.daemon-badge.stopped { background:rgba(248,81,73,.15); color:var(--red); }
+.remote-badge { background:rgba(88,166,255,.15); color:var(--accent); }
+
+/* ── Batch 3: Panel enhancements ───────────────────── */
+.mount-list { font-size:11px; font-family:var(--mono); }
+.mount-item { padding:4px 6px; display:flex; align-items:center; gap:6px; border-bottom:1px solid var(--border); }
+.mount-item .mount-point { color:var(--accent); flex:1; }
+.mount-item .mount-unmount { border:none; background:transparent; cursor:pointer; color:var(--muted); font-size:10px; }
+.mount-item .mount-unmount:hover { color:var(--red); }
+
+.goal-tree { padding-left:16px; }
+.goal-progress { height:3px; background:var(--border); border-radius:2px; margin-top:2px; overflow:hidden; }
+.goal-progress-fill { height:100%; background:var(--green); transition:width .3s; }
+
+/* ── Batch 4: Terminal & Dashboard panels ──────────── */
+.terminal-output { background:var(--bg); color:var(--green); font-size:11px; white-space:pre-wrap; word-break:break-word; min-height:100px; }
+.terminal-input-row { padding:4px 8px; border-top:1px solid var(--border); display:flex; gap:4px; align-items:center; background:var(--surface); flex-shrink:0; }
+.terminal-cwd { font-size:10px; font-family:var(--mono); color:var(--accent); white-space:nowrap; }
+.terminal-input { flex:1; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--bg); color:var(--green); font-size:11px; font-family:var(--mono); outline:none; }
+.terminal-input:focus { border-color:var(--accent); }
+.terminal-cmd { color:var(--accent); }
+.terminal-stdout { color:var(--text); }
+.terminal-stderr { color:var(--red); }
+
+.dash-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; padding:4px 0; margin-bottom:8px; }
+.dash-card { background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius); padding:8px; text-align:center; }
+.dash-card .val { font-size:20px; font-weight:700; color:var(--accent); font-family:var(--mono); }
+.dash-card .lbl { font-size:10px; text-transform:uppercase; color:var(--muted); margin-top:2px; }
+.dash-log-wrap { max-height:300px; overflow-y:auto; }
+.dash-log-entry { padding:2px 4px; border-bottom:1px solid rgba(48,54,61,.3); font-size:10px; }
+.dash-log-entry.warn { color:var(--orange); }
+.dash-log-entry.error { color:var(--red); }
+.dash-log-entry .log-time { color:var(--dim); margin-right:6px; }
+
+/* ── Batch 5: Chat inline elements ─────────────────── */
+.msg.subagent-card { align-self:stretch; max-width:100%; padding:0; background:transparent; border:none; border-left:3px solid var(--purple); margin:4px 0; font-size:12px; font-family:var(--mono); }
+.subagent-head { padding:4px 10px; display:flex; align-items:center; gap:6px; cursor:pointer; color:var(--muted); }
+.subagent-head:hover { background:var(--surface2); }
+.subagent-head .sa-icon { color:var(--purple); }
+.subagent-head .sa-task { color:var(--purple); font-weight:600; flex:1; }
+.subagent-head .sa-stats { color:var(--dim); font-size:10px; }
+.subagent-detail { display:none; padding:4px 10px 6px; color:var(--muted); white-space:pre-wrap; word-break:break-word; max-height:200px; overflow-y:auto; border-top:1px solid var(--border); }
+.msg.subagent-card.expanded .subagent-detail { display:block; }
+
+.safety-banner { padding:6px 10px; background:rgba(210,153,34,.08); border:1px solid rgba(210,153,34,.2); border-radius:var(--radius); color:var(--orange); font-size:11px; font-family:var(--mono); margin:4px 0; }
+
+.undo-btn { display:inline-block; margin-top:4px; font-size:10px; color:var(--dim); cursor:pointer; font-family:var(--mono); border:none; background:none; padding:0; }
+.undo-btn:hover { color:var(--accent); text-decoration:underline; }
+
+.intent-badge { display:inline-block; padding:0 5px; border-radius:8px; font-size:9px; font-family:var(--mono); font-weight:600; margin-left:6px; vertical-align:middle; }
+.intent-badge.COMMAND { background:rgba(88,166,255,.15); color:var(--accent); }
+.intent-badge.QUERY { background:rgba(188,140,255,.15); color:var(--purple); }
+.intent-badge.TASK { background:rgba(63,185,80,.15); color:var(--green); }
+.intent-badge.CHAT { background:rgba(139,148,158,.15); color:var(--muted); }
+.intent-badge.SYSTEM { background:rgba(210,153,34,.15); color:var(--orange); }
+
+/* ── Batch 8: Modals & dialogs ─────────────────────── */
+.vault-dialog { padding:16px; }
+.vault-dialog input[type="password"] { width:100%; padding:6px 10px; border:1px solid var(--border); border-radius:4px; background:var(--bg); color:var(--text); font-size:12px; font-family:var(--mono); margin-bottom:8px; }
+.vault-lock-toggle { display:flex; align-items:center; gap:8px; font-size:11px; color:var(--muted); cursor:pointer; }
+
 @media (max-width:600px) {
   .sidebar { width:40px; }
   .sidebar button { width:32px; height:32px; font-size:14px; }

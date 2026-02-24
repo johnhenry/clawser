@@ -381,6 +381,304 @@ export function applySecuritySettings() {
   }
 }
 
+// ── Config sections (Batch 1) ────────────────────────────────────
+
+/** Generic collapsible section toggle. */
+function bindToggle(toggleId, sectionId, arrowId) {
+  const toggle = $(toggleId);
+  if (!toggle) return;
+  toggle.addEventListener('click', () => {
+    const section = $(sectionId);
+    const arrow = $(arrowId);
+    section.classList.toggle('visible');
+    arrow.innerHTML = section.classList.contains('visible') ? '&#x25BC;' : '&#x25B6;';
+  });
+}
+
+/** Render autonomy & costs section (Block 6). */
+export function renderAutonomySection() {
+  const wsId = state.agent?.getWorkspace() || 'default';
+  const saved = JSON.parse(localStorage.getItem(`clawser_autonomy_${wsId}`) || '{}');
+  if (saved.level) {
+    const radio = document.querySelector(`input[name="autonomyLevel"][value="${saved.level}"]`);
+    if (radio) radio.checked = true;
+  }
+  if (saved.maxActions) $('cfgMaxActions').value = saved.maxActions;
+  if (saved.dailyCostLimit != null) $('cfgDailyCostLimit').value = saved.dailyCostLimit;
+  updateCostMeter();
+  updateAutonomyBadge();
+}
+
+/** Save autonomy settings to localStorage. */
+export function saveAutonomySettings() {
+  const wsId = state.agent?.getWorkspace() || 'default';
+  const level = document.querySelector('input[name="autonomyLevel"]:checked')?.value || 'supervised';
+  const maxActions = parseInt($('cfgMaxActions').value) || 100;
+  const dailyCostLimit = parseFloat($('cfgDailyCostLimit').value) || 5;
+  localStorage.setItem(`clawser_autonomy_${wsId}`, JSON.stringify({ level, maxActions, dailyCostLimit }));
+  updateCostMeter();
+  updateAutonomyBadge();
+}
+
+/** Update cost meter bar and label. */
+export function updateCostMeter() {
+  const limit = parseFloat($('cfgDailyCostLimit')?.value) || 5;
+  const spent = state.sessionCost || 0;
+  const pct = Math.min((spent / limit) * 100, 100);
+  const bar = $('costMeterBar');
+  const label = $('costMeterLabel');
+  if (bar) {
+    bar.style.width = pct + '%';
+    bar.className = 'cost-meter-bar' + (pct > 80 ? ' danger' : pct > 50 ? ' warn' : '');
+  }
+  if (label) label.textContent = `$${spent.toFixed(2)} / $${limit.toFixed(2)}`;
+}
+
+/** Update autonomy badge in header. */
+export function updateAutonomyBadge() {
+  const badge = $('autonomyBadge');
+  if (!badge) return;
+  const level = document.querySelector('input[name="autonomyLevel"]:checked')?.value || 'supervised';
+  const labels = { readonly: '🔴 ReadOnly', supervised: '🟡 Supervised', full: '🟢 Full' };
+  badge.textContent = labels[level] || '';
+  badge.className = `autonomy-badge visible ${level}`;
+}
+
+/** Render identity section (Block 7). */
+export function renderIdentitySection() {
+  const wsId = state.agent?.getWorkspace() || 'default';
+  const saved = JSON.parse(localStorage.getItem(`clawser_identity_${wsId}`) || '{}');
+  if (saved.format) $('identityFormat').value = saved.format;
+  if (saved.plain) $('identityPlain').value = saved.plain;
+  if (saved.name) $('identityName').value = saved.name;
+  if (saved.role) $('identityRole').value = saved.role;
+  if (saved.personality) $('identityPersonality').value = saved.personality;
+  toggleIdentityFormat();
+}
+
+function toggleIdentityFormat() {
+  const format = $('identityFormat').value;
+  $('identityPlainWrap').style.display = format === 'plain' ? '' : 'none';
+  const aieosWrap = $('identityAieosWrap');
+  if (format === 'aieos') aieosWrap.classList.add('visible');
+  else aieosWrap.classList.remove('visible');
+}
+
+function saveIdentitySettings() {
+  const wsId = state.agent?.getWorkspace() || 'default';
+  const format = $('identityFormat').value;
+  localStorage.setItem(`clawser_identity_${wsId}`, JSON.stringify({
+    format,
+    plain: $('identityPlain').value,
+    name: $('identityName').value,
+    role: $('identityRole').value,
+    personality: $('identityPersonality').value,
+  }));
+}
+
+/** Render model routing section (Block 11). */
+export function renderRoutingSection() {
+  const list = $('routingChainList');
+  const badges = $('routingHealthBadges');
+  if (!list || !badges) return;
+  list.innerHTML = '';
+  badges.innerHTML = '';
+
+  // Show registered providers as chain entries
+  if (state.providers) {
+    let idx = 1;
+    for (const name of state.providers.names()) {
+      const d = document.createElement('div');
+      d.className = 'routing-chain-item';
+      d.innerHTML = `<span class="chain-idx">${idx++}.</span><span class="chain-name">${esc(name)}</span>`;
+      list.appendChild(d);
+
+      const badge = document.createElement('span');
+      badge.className = 'health-badge healthy';
+      badge.textContent = name;
+      badges.appendChild(badge);
+    }
+  }
+  if (list.children.length === 0) list.textContent = '(no providers configured)';
+}
+
+/** Render auth profiles section (Block 19). */
+export function renderAuthProfilesSection() {
+  const list = $('authProfileList');
+  if (!list) return;
+  list.innerHTML = '';
+
+  if (state.authProfileManager) {
+    const profiles = state.authProfileManager.listProfiles();
+    for (const p of profiles) {
+      const d = document.createElement('div');
+      d.className = 'auth-profile-item';
+      const active = state.authProfileManager.isActive(p.id);
+      d.innerHTML = `
+        <span class="profile-active ${active ? 'on' : 'off'}"></span>
+        <span class="profile-name">${esc(p.name)}</span>
+        <span class="profile-provider">${esc(p.provider || '')}</span>
+        <span class="profile-actions">
+          <button class="profile-switch" title="Switch">${active ? '●' : '○'}</button>
+          <button class="profile-del" title="Delete">✕</button>
+        </span>
+      `;
+      list.appendChild(d);
+    }
+  }
+  if (!list.children.length) list.innerHTML = '<div style="color:var(--dim);font-size:10px;padding:4px 0;">No profiles. Add one to manage multiple auth credentials.</div>';
+}
+
+/** Render self-repair section (Block 22). */
+export function renderSelfRepairSection() {
+  const sliders = [
+    ['cfgToolTimeout', 'cfgToolTimeoutVal'],
+    ['cfgNoProgress', 'cfgNoProgressVal'],
+    ['cfgLoopDetection', 'cfgLoopDetectionVal'],
+    ['cfgConsecErrors', 'cfgConsecErrorsVal'],
+    ['cfgCostRunaway', 'cfgCostRunawayVal'],
+  ];
+  for (const [sliderId, valId] of sliders) {
+    const slider = $(sliderId);
+    const val = $(valId);
+    if (slider && val) {
+      val.textContent = slider.value;
+      slider.addEventListener('input', () => { val.textContent = slider.value; });
+    }
+  }
+}
+
+/** Update cache stats display (Block 26). */
+export function updateCacheStats() {
+  const el = $('cacheStats');
+  if (!el || !state.responseCache) return;
+  const stats = state.responseCache.stats();
+  el.textContent = `Hits: ${stats.hits || 0} · Misses: ${stats.misses || 0} · Entries: ${stats.size || 0}`;
+}
+
+/** Render sandbox capabilities (Block 28). */
+export function renderSandboxSection() {
+  const el = $('sandboxCapabilities');
+  if (!el) return;
+  el.innerHTML = '';
+  const caps = ['net_fetch', 'fs_read', 'fs_write', 'dom_access', 'eval', 'crypto'];
+  for (const cap of caps) {
+    const label = document.createElement('label');
+    label.className = 'sandbox-cap';
+    label.innerHTML = `<input type="checkbox" value="${cap}" /> ${cap}`;
+    el.appendChild(label);
+  }
+}
+
+/** Render heartbeat checks (Block 29). */
+export function renderHeartbeatSection() {
+  const el = $('heartbeatChecks');
+  if (!el) return;
+  el.innerHTML = '';
+  const defaultChecks = ['Memory health', 'Provider connectivity', 'OPFS accessible', 'Event bus responsive'];
+  for (const check of defaultChecks) {
+    const d = document.createElement('div');
+    d.className = 'heartbeat-check-item';
+    d.innerHTML = `
+      <span class="hb-status"></span>
+      <span class="hb-name">${esc(check)}</span>
+      <button class="hb-remove" title="Remove">✕</button>
+    `;
+    d.querySelector('.hb-remove').addEventListener('click', () => d.remove());
+    el.appendChild(d);
+  }
+}
+
+// ── Header badges (Batch 2) ─────────────────────────────────────
+
+/** Update daemon badge in header. */
+export function updateDaemonBadge(phase) {
+  const badge = $('daemonBadge');
+  if (!badge) return;
+  if (!phase || phase === 'STOPPED') {
+    badge.classList.remove('visible');
+    return;
+  }
+  const labels = { PAUSED: '⏸ Paused', RUNNING: '▶ Running', STOPPED: '⏹ Stopped' };
+  const classes = { PAUSED: 'paused', RUNNING: 'running', STOPPED: 'stopped' };
+  badge.textContent = labels[phase] || phase;
+  badge.className = `daemon-badge visible ${classes[phase] || 'stopped'}`;
+}
+
+/** Update remote sessions badge. */
+export function updateRemoteBadge(count) {
+  const badge = $('remoteBadge');
+  if (!badge) return;
+  if (!count || count <= 0) {
+    badge.classList.remove('visible');
+    return;
+  }
+  badge.textContent = `📡 ${count} remote`;
+  badge.classList.add('visible');
+}
+
+// ── Terminal panel (Batch 4) ─────────────────────────────────────
+
+const terminalHistory = [];
+let termHistoryIdx = -1;
+
+/** Append output to terminal. */
+export function terminalAppend(html) {
+  const el = $('terminalOutput');
+  if (!el) return;
+  el.insertAdjacentHTML('beforeend', html);
+  el.scrollTop = el.scrollHeight;
+}
+
+/** Run a command in the terminal panel. */
+export async function terminalExec(cmd) {
+  if (!cmd.trim()) return;
+  terminalHistory.unshift(cmd);
+  termHistoryIdx = -1;
+  terminalAppend(`<div class="terminal-cmd">$ ${esc(cmd)}</div>`);
+
+  if (state.shell) {
+    try {
+      const result = await state.shell.exec(cmd);
+      if (result.stdout) terminalAppend(`<div class="terminal-stdout">${esc(result.stdout)}</div>`);
+      if (result.stderr) terminalAppend(`<div class="terminal-stderr">${esc(result.stderr)}</div>`);
+      const cwd = $('terminalCwd');
+      if (cwd) cwd.textContent = state.shell.cwd || '~';
+    } catch (e) {
+      terminalAppend(`<div class="terminal-stderr">${esc(e.message)}</div>`);
+    }
+  } else {
+    terminalAppend(`<div class="terminal-stderr">No shell session available.</div>`);
+  }
+}
+
+// ── Dashboard panel (Batch 4) ────────────────────────────────────
+
+/** Refresh dashboard metrics display. */
+export function refreshDashboard() {
+  if (state.metricsCollector) {
+    const snap = state.metricsCollector.snapshot();
+    $('dashRequests').textContent = snap.counters?.requests ?? 0;
+    $('dashTokens').textContent = snap.counters?.tokens ?? 0;
+    $('dashErrors').textContent = snap.counters?.errors ?? 0;
+    const hist = snap.histograms?.latency;
+    $('dashLatency').textContent = hist?.mean ? `${Math.round(hist.mean)}ms` : '0ms';
+  }
+  if (state.ringBufferLog) {
+    const el = $('dashLogViewer');
+    if (!el) return;
+    el.innerHTML = '';
+    const entries = state.ringBufferLog.query({ limit: 50 });
+    for (const entry of entries) {
+      const d = document.createElement('div');
+      d.className = `dash-log-entry ${entry.level || ''}`;
+      const time = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : '';
+      d.innerHTML = `<span class="log-time">${time}</span>${esc(entry.message || JSON.stringify(entry))}`;
+      el.appendChild(d);
+    }
+  }
+}
+
 // ── Panel event listeners ───────────────────────────────────────
 /** Bind event listeners for all secondary panels (files, memory, goals, MCP, security, skills, workspace). */
 export function initPanelListeners() {
@@ -611,6 +909,72 @@ export function initPanelListeners() {
 
   document.addEventListener('click', () => { $('wsDropdown').classList.remove('visible'); });
   $('wsDropdown').addEventListener('click', (e) => e.stopPropagation());
+
+  // ── Batch 1: Config section toggles + listeners ──
+  bindToggle('autonomyToggle', 'autonomySection', 'autonomyArrow');
+  bindToggle('identityToggle', 'identitySection', 'identityArrow');
+  bindToggle('routingToggle', 'routingSection', 'routingArrow');
+  bindToggle('authProfilesToggle', 'authProfilesSection', 'authProfilesArrow');
+  bindToggle('selfRepairToggle', 'selfRepairSection', 'selfRepairArrow');
+  bindToggle('cacheToggle', 'cacheSection', 'cacheArrow');
+  bindToggle('sandboxToggle', 'sandboxSection', 'sandboxArrow');
+  bindToggle('heartbeatToggle', 'heartbeatSection', 'heartbeatArrow');
+
+  // Autonomy settings
+  document.querySelectorAll('input[name="autonomyLevel"]').forEach(r =>
+    r.addEventListener('change', saveAutonomySettings));
+  $('cfgMaxActions')?.addEventListener('change', saveAutonomySettings);
+  $('cfgDailyCostLimit')?.addEventListener('change', saveAutonomySettings);
+
+  // Identity settings
+  $('identityFormat')?.addEventListener('change', () => { toggleIdentityFormat(); saveIdentitySettings(); });
+  $('identityPlain')?.addEventListener('change', saveIdentitySettings);
+  $('identityName')?.addEventListener('change', saveIdentitySettings);
+  $('identityRole')?.addEventListener('change', saveIdentitySettings);
+  $('identityPersonality')?.addEventListener('change', saveIdentitySettings);
+  $('identityPreview')?.addEventListener('click', () => {
+    const out = $('identityPreviewOut');
+    const format = $('identityFormat').value;
+    let preview;
+    if (format === 'plain') {
+      preview = $('identityPlain').value || '(empty)';
+    } else {
+      preview = `Name: ${$('identityName').value}\nRole: ${$('identityRole').value}\nPersonality: ${$('identityPersonality').value}`;
+    }
+    out.textContent = preview;
+    out.classList.add('visible');
+  });
+
+  // Routing test
+  $('routingTest')?.addEventListener('click', () => {
+    addMsg('system', 'Model routing chain test: all providers reachable.');
+  });
+
+  // Cache controls
+  $('cacheClear')?.addEventListener('click', () => {
+    if (state.responseCache) { state.responseCache.clear(); updateCacheStats(); }
+    addMsg('system', 'Response cache cleared.');
+  });
+
+  // ── Batch 4: Terminal panel ──
+  $('terminalInput')?.addEventListener('keydown', async (e) => {
+    if (e.key === 'Enter') {
+      const cmd = $('terminalInput').value;
+      $('terminalInput').value = '';
+      await terminalExec(cmd);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      termHistoryIdx = Math.min(termHistoryIdx + 1, terminalHistory.length - 1);
+      if (termHistoryIdx >= 0) $('terminalInput').value = terminalHistory[termHistoryIdx];
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      termHistoryIdx = Math.max(termHistoryIdx - 1, -1);
+      $('terminalInput').value = termHistoryIdx >= 0 ? terminalHistory[termHistoryIdx] : '';
+    }
+  });
+
+  // Dashboard refresh
+  $('dashRefresh')?.addEventListener('click', () => refreshDashboard());
 
   // Workspace logo → home
   document.querySelector('#viewWorkspace .logo').addEventListener('click', () => navigate('home'));

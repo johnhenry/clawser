@@ -83,6 +83,9 @@
   <span class="mode provider-label" id="providerLabel"></span>
   <span class="spacer"></span>
   <span id="costDisplay" class="cost-display" title="Session cost estimate"></span>
+  <span id="autonomyBadge" class="autonomy-badge" title="Autonomy level"></span>
+  <span id="daemonBadge" class="daemon-badge" title="Daemon status"></span>
+  <span id="remoteBadge" class="remote-badge" title="Remote sessions"></span>
   <div class="status">
     <span class="dot" id="statusDot"></span>
     <span id="statusText">loading...</span>
@@ -109,6 +112,8 @@
     <button data-panel="goals" title="Goals">🎯</button>
     <button data-panel="events" title="Events">📡</button>
     <button data-panel="skills" title="Skills">🧩</button>
+    <button data-panel="terminal" title="Terminal">🖥</button>
+    <button data-panel="dashboard" title="Dashboard">📊</button>
     <span class="sep-line"></span>
     <button data-panel="config" title="Settings">⚙️</button>
   </nav>
@@ -218,6 +223,31 @@
       <div class="panel-body panel-mono" id="skillList"></div>
     </div>
 
+    <!-- Terminal (Block 1) -->
+    <div class="panel" id="panelTerminal">
+      <div class="panel-header">Terminal</div>
+      <div class="panel-body panel-mono terminal-output" id="terminalOutput"></div>
+      <div class="terminal-input-row">
+        <span class="terminal-cwd" id="terminalCwd">~</span>
+        <input type="text" id="terminalInput" class="terminal-input" placeholder="$ command..." />
+      </div>
+    </div>
+
+    <!-- Dashboard (Block 10) -->
+    <div class="panel" id="panelDashboard">
+      <div class="panel-header">Dashboard <button class="btn-sm ml-auto" id="dashRefresh">Refresh</button></div>
+      <div class="panel-body">
+        <div class="dash-grid" id="dashMetrics">
+          <div class="dash-card"><div class="val" id="dashRequests">0</div><div class="lbl">Requests</div></div>
+          <div class="dash-card"><div class="val" id="dashTokens">0</div><div class="lbl">Tokens</div></div>
+          <div class="dash-card"><div class="val" id="dashErrors">0</div><div class="lbl">Errors</div></div>
+          <div class="dash-card"><div class="val" id="dashLatency">0ms</div><div class="lbl">Avg Latency</div></div>
+        </div>
+        <div class="config-group"><label>Recent Logs</label></div>
+        <div class="panel-body panel-mono dash-log-wrap" id="dashLogViewer"></div>
+      </div>
+    </div>
+
     <!-- Config -->
     <div class="panel" id="panelConfig">
       <div class="panel-header">Configuration</div>
@@ -299,6 +329,209 @@
             <button class="btn-sm" id="mcpConnect">Connect</button>
           </div>
           <div id="mcpServers" class="mcp-servers-wrap"></div>
+        </div>
+
+        <!-- Autonomy & Costs (Block 6) -->
+        <div class="config-group config-toggle" id="autonomyToggle">
+          <label class="config-toggle">Autonomy &amp; Costs <span id="autonomyArrow" class="config-arrow">&#x25B6;</span></label>
+        </div>
+        <div id="autonomySection" class="config-section-hidden">
+          <div class="config-group">
+            <label>Autonomy Level</label>
+            <div class="radio-group" id="autonomyLevel">
+              <label class="radio-label"><input type="radio" name="autonomyLevel" value="readonly" /> Read-Only</label>
+              <label class="radio-label"><input type="radio" name="autonomyLevel" value="supervised" checked /> Supervised</label>
+              <label class="radio-label"><input type="radio" name="autonomyLevel" value="full" /> Full</label>
+            </div>
+          </div>
+          <div class="config-group">
+            <label>Max Actions / Hour</label>
+            <input type="number" id="cfgMaxActions" class="cfg-narrow" min="1" max="1000" value="100" />
+          </div>
+          <div class="config-group">
+            <label>Daily Cost Limit ($)</label>
+            <input type="number" id="cfgDailyCostLimit" class="cfg-narrow" min="0" step="0.5" value="5" />
+          </div>
+          <div class="config-group">
+            <label>Cost Today</label>
+            <div class="cost-meter-wrap">
+              <div class="cost-meter-bar" id="costMeterBar"></div>
+              <span class="cost-meter-label" id="costMeterLabel">$0.00 / $5.00</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Agent Identity (Block 7) -->
+        <div class="config-group config-toggle" id="identityToggle">
+          <label class="config-toggle">Agent Identity <span id="identityArrow" class="config-arrow">&#x25B6;</span></label>
+        </div>
+        <div id="identitySection" class="config-section-hidden">
+          <div class="config-group">
+            <label>Format</label>
+            <select id="identityFormat">
+              <option value="plain">Plain Text</option>
+              <option value="aieos">AIEOS Structured</option>
+            </select>
+          </div>
+          <div class="config-group" id="identityPlainWrap">
+            <label>Identity Prompt</label>
+            <textarea id="identityPlain" rows="4" placeholder="You are clawser..."></textarea>
+          </div>
+          <div id="identityAieosWrap" class="config-section-hidden">
+            <div class="config-group">
+              <label>Name</label>
+              <input type="text" id="identityName" placeholder="clawser" />
+            </div>
+            <div class="config-group">
+              <label>Role</label>
+              <input type="text" id="identityRole" placeholder="browser-native AI agent" />
+            </div>
+            <div class="config-group">
+              <label>Personality</label>
+              <textarea id="identityPersonality" rows="2" placeholder="helpful, concise"></textarea>
+            </div>
+          </div>
+          <div class="config-group">
+            <button class="btn-sm" id="identityPreview">Preview</button>
+          </div>
+          <div id="identityPreviewOut" class="config-section-hidden identity-preview"></div>
+        </div>
+
+        <!-- Model Routing (Block 11) -->
+        <div class="config-group config-toggle" id="routingToggle">
+          <label class="config-toggle">Model Routing <span id="routingArrow" class="config-arrow">&#x25B6;</span></label>
+        </div>
+        <div id="routingSection" class="config-section-hidden">
+          <div class="config-group">
+            <label>Fallback Chain</label>
+            <div id="routingChainList" class="routing-chain-list"></div>
+          </div>
+          <div class="config-group">
+            <label>Provider Health</label>
+            <div id="routingHealthBadges" class="routing-health-badges"></div>
+          </div>
+          <div class="config-group">
+            <button class="btn-sm" id="routingTest">Test Chain</button>
+          </div>
+        </div>
+
+        <!-- Auth Profiles (Block 19) -->
+        <div class="config-group config-toggle" id="authProfilesToggle">
+          <label class="config-toggle">Auth Profiles <span id="authProfilesArrow" class="config-arrow">&#x25B6;</span></label>
+        </div>
+        <div id="authProfilesSection" class="config-section-hidden">
+          <div class="config-group">
+            <label>Profiles</label>
+            <div id="authProfileList" class="auth-profile-list"></div>
+          </div>
+          <div class="config-group">
+            <button class="btn-sm" id="authProfileAdd">+ Add Profile</button>
+          </div>
+        </div>
+
+        <!-- Self-Repair (Block 22) -->
+        <div class="config-group config-toggle" id="selfRepairToggle">
+          <label class="config-toggle">Self-Repair <span id="selfRepairArrow" class="config-arrow">&#x25B6;</span></label>
+        </div>
+        <div id="selfRepairSection" class="config-section-hidden">
+          <div class="config-group">
+            <label>Tool Timeout (ms)</label>
+            <input type="range" id="cfgToolTimeout" min="5000" max="120000" step="5000" value="30000" />
+            <span id="cfgToolTimeoutVal" class="range-val">30000</span>
+          </div>
+          <div class="config-group">
+            <label>No Progress Turns</label>
+            <input type="range" id="cfgNoProgress" min="2" max="20" step="1" value="5" />
+            <span id="cfgNoProgressVal" class="range-val">5</span>
+          </div>
+          <div class="config-group">
+            <label>Loop Detection Window</label>
+            <input type="range" id="cfgLoopDetection" min="3" max="20" step="1" value="6" />
+            <span id="cfgLoopDetectionVal" class="range-val">6</span>
+          </div>
+          <div class="config-group">
+            <label>Max Consecutive Errors</label>
+            <input type="range" id="cfgConsecErrors" min="1" max="10" step="1" value="3" />
+            <span id="cfgConsecErrorsVal" class="range-val">3</span>
+          </div>
+          <div class="config-group">
+            <label>Cost Runaway Factor</label>
+            <input type="range" id="cfgCostRunaway" min="2" max="20" step="1" value="5" />
+            <span id="cfgCostRunawayVal" class="range-val">5</span>
+          </div>
+        </div>
+
+        <!-- Response Cache (Block 26) -->
+        <div class="config-group config-toggle" id="cacheToggle">
+          <label class="config-toggle">Response Cache <span id="cacheArrow" class="config-arrow">&#x25B6;</span></label>
+        </div>
+        <div id="cacheSection" class="config-section-hidden">
+          <div class="config-group">
+            <label>TTL (minutes)</label>
+            <input type="number" id="cfgCacheTTL" class="cfg-narrow" min="1" max="1440" value="30" />
+          </div>
+          <div class="config-group">
+            <label>Max Entries</label>
+            <input type="number" id="cfgCacheMaxEntries" class="cfg-narrow" min="10" max="5000" value="500" />
+          </div>
+          <div class="config-group">
+            <label>Cache Stats</label>
+            <div id="cacheStats" class="cache-stats">Hits: 0 · Misses: 0 · Tokens Saved: 0</div>
+          </div>
+          <div class="config-group">
+            <button class="btn-sm" id="cacheClear">Clear Cache</button>
+          </div>
+        </div>
+
+        <!-- Sandbox Config (Block 28) -->
+        <div class="config-group config-toggle" id="sandboxToggle">
+          <label class="config-toggle">Sandbox Config <span id="sandboxArrow" class="config-arrow">&#x25B6;</span></label>
+        </div>
+        <div id="sandboxSection" class="config-section-hidden">
+          <div class="config-group">
+            <label>Default Sandbox Tier</label>
+            <select id="cfgSandboxTier">
+              <option value="0">Trusted (no sandbox)</option>
+              <option value="1" selected>Worker (isolated)</option>
+              <option value="2">WASM (fuel-metered)</option>
+            </select>
+          </div>
+          <div class="config-group">
+            <label>Capabilities</label>
+            <div id="sandboxCapabilities" class="sandbox-caps"></div>
+          </div>
+          <div class="config-group">
+            <label>Fuel Limit (WASM ops)</label>
+            <input type="number" id="cfgFuelLimit" class="cfg-narrow" min="1000" max="10000000" value="1000000" />
+          </div>
+        </div>
+
+        <!-- Heartbeat (Block 29) -->
+        <div class="config-group config-toggle" id="heartbeatToggle">
+          <label class="config-toggle">Heartbeat <span id="heartbeatArrow" class="config-arrow">&#x25B6;</span></label>
+        </div>
+        <div id="heartbeatSection" class="config-section-hidden">
+          <div class="config-group">
+            <label>Checks</label>
+            <div id="heartbeatChecks" class="heartbeat-checks"></div>
+          </div>
+          <div class="config-group">
+            <label>Check Interval</label>
+            <select id="cfgHeartbeatInterval">
+              <option value="60000">1 min</option>
+              <option value="300000" selected>5 min</option>
+              <option value="900000">15 min</option>
+              <option value="3600000">1 hour</option>
+            </select>
+          </div>
+          <div class="config-group">
+            <label>Alert Strategy</label>
+            <select id="cfgHeartbeatAlert">
+              <option value="log" selected>Log Only</option>
+              <option value="notify">Notify</option>
+              <option value="prompt">Prompt Agent</option>
+            </select>
+          </div>
         </div>
 
         <!-- Security settings -->

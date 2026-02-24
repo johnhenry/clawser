@@ -18,8 +18,8 @@ import { loadWorkspaces, setActiveWorkspaceId, ensureDefaultWorkspace, createWor
 import { loadConversations } from './clawser-conversations.js';
 import { SERVICES, loadAccounts, createAccount, deleteAccount, saveConfig, applyRestoredConfig, rebuildProviderDropdown, setupProviders, initAccountListeners } from './clawser-accounts.js';
 import { parseHash, navigate, showView, updateRouteHash, activatePanel, initRouterListeners } from './clawser-router.js';
-import { setStatus, addMsg, addErrorMsg, addToolCall, addInlineToolCall, updateInlineToolCall, addEvent, updateState, updateCostDisplay, replaySessionHistory, replayFromEvents, updateConvNameDisplay, persistActiveConversation, switchConversation, initChatListeners, renderToolCalls, resetChatUI } from './clawser-ui-chat.js';
-import { refreshFiles, renderGoals, renderToolRegistry, renderSkills, applySecuritySettings, initPanelListeners } from './clawser-ui-panels.js';
+import { setStatus, addMsg, addErrorMsg, addToolCall, addInlineToolCall, updateInlineToolCall, addEvent, updateState, updateCostDisplay, replaySessionHistory, replayFromEvents, updateConvNameDisplay, persistActiveConversation, switchConversation, initChatListeners, renderToolCalls, resetChatUI, addSubAgentCard, updateSubAgentCard, addSafetyBanner, addUndoButton, addIntentBadge } from './clawser-ui-chat.js';
+import { refreshFiles, renderGoals, renderToolRegistry, renderSkills, applySecuritySettings, initPanelListeners, renderAutonomySection, renderIdentitySection, renderRoutingSection, renderAuthProfilesSection, renderSelfRepairSection, updateCacheStats, renderSandboxSection, renderHeartbeatSection, updateCostMeter, updateAutonomyBadge, updateDaemonBadge, updateRemoteBadge, refreshDashboard } from './clawser-ui-panels.js';
 import { initCmdPaletteListeners } from './clawser-cmd-palette.js';
 
 import { ClawserAgent } from './clawser-agent.js';
@@ -29,6 +29,18 @@ import { McpManager } from './clawser-mcp.js';
 import { SkillRegistry, SkillStorage, ActivateSkillTool, DeactivateSkillTool } from './clawser-skills.js';
 import { ClawserShell, ShellTool } from './clawser-shell.js';
 import { SecretVault, OPFSVaultStorage } from './clawser-vault.js';
+import { AutonomyController, HookPipeline } from './clawser-agent.js';
+import { IdentityManager, compileSystemPrompt } from './clawser-identity.js';
+import { ModelRouter, ProviderHealth, FallbackChain, FallbackExecutor } from './clawser-fallback.js';
+import { IntentRouter } from './clawser-intent.js';
+import { InputSanitizer, ToolCallValidator, SafetyPipeline } from './clawser-safety.js';
+import { StuckDetector, SelfRepairEngine } from './clawser-self-repair.js';
+import { UndoManager } from './clawser-undo.js';
+import { HeartbeatRunner } from './clawser-heartbeat.js';
+import { AuthProfileManager } from './clawser-auth-profiles.js';
+import { MetricsCollector, RingBufferLog } from './clawser-metrics.js';
+import { DaemonController } from './clawser-daemon.js';
+import { RoutineEngine } from './clawser-routines.js';
 
 // ── Create service singletons ───────────────────────────────────
 state.workspaceFs = new WorkspaceFs();
@@ -40,6 +52,41 @@ state.mcpManager = new McpManager({
 
 state.responseCache = new ResponseCache();
 state.vault = new SecretVault(new OPFSVaultStorage());
+
+// ── Create advanced module singletons (Batch 6-8) ───────────────
+state.identityManager = new IdentityManager();
+state.intentRouter = new IntentRouter();
+state.inputSanitizer = new InputSanitizer();
+state.toolCallValidator = new ToolCallValidator();
+state.safetyPipeline = new SafetyPipeline({ sanitizer: state.inputSanitizer, validator: state.toolCallValidator });
+state.providerHealth = new ProviderHealth();
+state.modelRouter = new ModelRouter();
+state.stuckDetector = new StuckDetector();
+state.selfRepairEngine = new SelfRepairEngine({ detector: state.stuckDetector });
+state.undoManager = new UndoManager({
+  handlers: {
+    revertHistory: (history) => { if (state.agent) state.agent.setHistory(history); },
+    revertMemory: (op) => { /* memory revert handled by agent */ },
+  },
+});
+state.heartbeatRunner = new HeartbeatRunner({
+  onAlert: (msg) => addEvent('heartbeat_alert', msg),
+});
+state.authProfileManager = new AuthProfileManager({ vault: state.vault });
+state.metricsCollector = new MetricsCollector();
+state.ringBufferLog = new RingBufferLog(1000);
+state.daemonController = new DaemonController({
+  getStateFn: () => state.agent?.getState(),
+});
+state.routineEngine = new RoutineEngine({
+  executeFn: async (prompt) => {
+    if (state.agent) {
+      state.agent.sendMessage(prompt);
+      return state.agent.run();
+    }
+  },
+  onNotify: (msg) => addEvent('routine', msg),
+});
 
 // Freeze service singleton slots to prevent accidental reassignment
 Object.defineProperty(state, 'workspaceFs', { value: state.workspaceFs, writable: false, configurable: false });
@@ -86,6 +133,10 @@ on('renderGoals', () => renderGoals());
 on('renderSkills', () => renderSkills());
 on('saveConfig', () => saveConfig());
 on('newShellSession', () => createShellSession());
+on('updateCostMeter', () => updateCostMeter());
+on('updateDaemon', (phase) => updateDaemonBadge(phase));
+on('updateRemote', (count) => updateRemoteBadge(count));
+on('refreshDashboard', () => refreshDashboard());
 
 // ── Switch workspace ────────────────────────────────────────────
 /** Save current workspace state, switch to a new workspace, and restore its agent/UI/conversation state.
@@ -344,6 +395,19 @@ async function initWorkspace(wsId, convId) {
     renderGoals();
     refreshFiles();
 
+    // Render new config sections (Batch 1)
+    renderAutonomySection();
+    renderIdentitySection();
+    renderRoutingSection();
+    renderAuthProfilesSection();
+    renderSelfRepairSection();
+    updateCacheStats();
+    renderSandboxSection();
+    renderHeartbeatSection();
+
+    // Initialize heartbeat (Batch 7)
+    state.heartbeatRunner.loadDefault();
+
     await state.skillRegistry.discover(activeWsId);
     renderSkills();
 
@@ -373,7 +437,12 @@ async function initWorkspace(wsId, convId) {
     setActiveWorkspaceId(activeWsId);
     updateRouteHash();
 
-    state._updateInterval = setInterval(() => updateState(), 5000);
+    state._updateInterval = setInterval(() => {
+      updateState();
+      updateCostMeter();
+      updateCacheStats();
+      refreshDashboard();
+    }, 5000);
   } catch (e) {
     addErrorMsg(`Init failed: ${e.message}`);
     setStatus('error', 'init failed');

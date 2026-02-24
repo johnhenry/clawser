@@ -514,6 +514,96 @@ export function replayFromEvents(events) {
   renderToolCalls();
 }
 
+// ── Batch 5: Chat inline elements ────────────────────────────────
+
+/**
+ * Add a sub-agent delegation card to the chat (Block 9).
+ * @param {string} task - Sub-agent task description
+ * @param {Object} [opts] - Options: {iterations, tokens, output}
+ * @returns {HTMLElement} The card element (for later updates)
+ */
+export function addSubAgentCard(task, opts = {}) {
+  const messagesEl = $('messages');
+  const div = document.createElement('div');
+  div.className = 'msg subagent-card';
+  const stats = opts.iterations != null ? `${opts.iterations} iters · ${opts.tokens || 0} tokens` : 'starting...';
+  div.innerHTML = `
+    <div class="subagent-head">
+      <span class="sa-icon">🤖</span>
+      <span class="sa-task">${esc(task)}</span>
+      <span class="sa-stats">${esc(stats)}</span>
+    </div>
+    <div class="subagent-detail">${esc(opts.output || '(pending)')}</div>
+  `;
+  div.querySelector('.subagent-head').addEventListener('click', () => div.classList.toggle('expanded'));
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return div;
+}
+
+/** Update a sub-agent card with results. */
+export function updateSubAgentCard(el, task, opts = {}) {
+  if (!el) return;
+  const head = el.querySelector('.subagent-head');
+  if (head) {
+    const stats = opts.iterations != null ? `${opts.iterations} iters · ${opts.tokens || 0} tokens` : 'done';
+    head.querySelector('.sa-stats').textContent = stats;
+  }
+  const detail = el.querySelector('.subagent-detail');
+  if (detail && opts.output) detail.textContent = opts.output;
+}
+
+/**
+ * Display a safety/injection warning banner (Block 23).
+ * @param {string} details - Warning details
+ */
+export function addSafetyBanner(details) {
+  const messagesEl = $('messages');
+  const div = document.createElement('div');
+  div.className = 'safety-banner';
+  div.textContent = `⚠ Potential injection detected — ${details}`;
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+/**
+ * Add an undo button after an agent message (Block 25).
+ * @param {Function} onUndo - Callback when undo is clicked
+ * @returns {HTMLElement}
+ */
+export function addUndoButton(onUndo) {
+  const messagesEl = $('messages');
+  const btn = document.createElement('button');
+  btn.className = 'undo-btn';
+  btn.textContent = '↩ Undo';
+  btn.addEventListener('click', () => {
+    btn.remove();
+    if (onUndo) onUndo();
+  });
+  messagesEl.appendChild(btn);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return btn;
+}
+
+/**
+ * Add an intent classification badge to the last user message (Block 27).
+ * @param {string} intent - One of COMMAND|QUERY|TASK|CHAT|SYSTEM
+ */
+export function addIntentBadge(intent) {
+  const messagesEl = $('messages');
+  const userMsgs = messagesEl.querySelectorAll('.msg.user');
+  const lastUser = userMsgs[userMsgs.length - 1];
+  if (!lastUser) return;
+  const existing = lastUser.querySelector('.intent-badge');
+  if (existing) existing.remove();
+  const badge = document.createElement('span');
+  badge.className = `intent-badge ${intent}`;
+  badge.textContent = intent;
+  const label = lastUser.querySelector('.label');
+  if (label) label.appendChild(badge);
+  else lastUser.appendChild(badge);
+}
+
 // ── Dynamic system prompt builder ────────────────────────────────
 /**
  * Build dynamic system prompt from base + memories + goals + skill metadata + active skill bodies.
@@ -606,6 +696,33 @@ export async function sendMessage() {
   $('sendBtn').disabled = true;
   setStatus('busy', 'thinking...');
 
+  // Batch 5: Intent classification badge
+  if (state.intentRouter) {
+    try {
+      const intent = state.intentRouter.classify(originalText);
+      addIntentBadge(intent);
+    } catch (e) { /* intent classification is non-critical */ }
+  }
+
+  // Batch 6: Safety check on inbound message
+  if (state.inputSanitizer) {
+    try {
+      const sanitized = state.inputSanitizer.sanitize(originalText);
+      if (sanitized.flags?.length > 0) {
+        addSafetyBanner(sanitized.flags.join(', '));
+      }
+    } catch (e) { /* safety check is non-critical */ }
+  }
+
+  // Batch 6: Undo checkpoint before agent acts
+  if (state.undoManager && state.agent) {
+    try {
+      state.undoManager.beginTurn({
+        history: state.agent.getHistory ? state.agent.getHistory() : [],
+      });
+    } catch (e) { /* undo checkpoint is non-critical */ }
+  }
+
   try {
     // Build dynamic system prompt with goals + memory + skills context
     const basePrompt = $('systemPrompt').value;
@@ -665,6 +782,16 @@ export async function sendMessage() {
       finalizeStreamingMsg(streamEl);
       if (!fullContent.trim()) {
         streamEl.remove();
+      } else {
+        // Batch 5: Undo button after agent response
+        if (state.undoManager?.canUndo) {
+          addUndoButton(async () => {
+            try {
+              await state.undoManager.undo();
+              addMsg('system', 'Last turn undone.');
+            } catch (e) { addErrorMsg(`Undo failed: ${e.message}`); }
+          });
+        }
       }
     } else {
       // ── Non-streaming path (original) ──
@@ -679,7 +806,18 @@ export async function sendMessage() {
 
       switch (result.status) {
         case 0: addMsg('system', '(idle — no response)'); break;
-        case 1: addMsg('agent', result.data); break;
+        case 1:
+          addMsg('agent', result.data);
+          // Batch 5: Undo button after agent response
+          if (state.undoManager?.canUndo) {
+            addUndoButton(async () => {
+              try {
+                await state.undoManager.undo();
+                addMsg('system', 'Last turn undone.');
+              } catch (e) { addErrorMsg(`Undo failed: ${e.message}`); }
+            });
+          }
+          break;
         case -1: {
           const classified = classifyError(result.data);
           addErrorMsg(`Error (${classified.category}): ${classified.message}`, makeRetryFn(classified));
@@ -696,6 +834,12 @@ export async function sendMessage() {
     emit('error', classified);
     console.error(e);
   } finally {
+    // Track metrics (Batch 6)
+    if (state.metricsCollector) {
+      state.metricsCollector.increment('requests');
+    }
+    emit('updateCostMeter');
+
     try {
       state.agent.persistMemories();
       await state.agent.persistCheckpoint();
