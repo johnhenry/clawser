@@ -1347,6 +1347,33 @@ export class ConsultAgentTool extends BrowserTool {
   }
 }
 
+// ── Storage Quota Checking (Gap 7.6 + 12.1) ─────────────────────
+
+/**
+ * Check current storage quota using the StorageManager API.
+ * Returns usage/quota info with warning and critical thresholds.
+ * @returns {Promise<{usage: number, quota: number, percent: number, warning: boolean, critical: boolean}>}
+ */
+export async function checkQuota() {
+  if (!navigator.storage?.estimate) {
+    return { usage: 0, quota: 0, percent: 0, warning: false, critical: false };
+  }
+  try {
+    const { usage = 0, quota = 0 } = await navigator.storage.estimate();
+    const percent = quota > 0 ? (usage / quota) * 100 : 0;
+    return {
+      usage,
+      quota,
+      percent,
+      warning: percent >= 80,
+      critical: percent >= 95,
+    };
+  } catch (e) {
+    console.warn('[clawser] storage estimate failed', e);
+    return { usage: 0, quota: 0, percent: 0, warning: false, critical: false };
+  }
+}
+
 export function createDefaultRegistry(workspaceFs) {
   const registry = new BrowserToolRegistry();
 

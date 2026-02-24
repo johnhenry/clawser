@@ -45,6 +45,9 @@ export {
   updateDaemonBadge,
   updateRemoteBadge,
   refreshDashboard,
+  renderApiKeyWarning,
+  renderQuotaBar,
+  renderCleanConversationsSection,
 } from './clawser-ui-config.js';
 
 // ── Local imports from extracted modules (used by initPanelListeners) ──
@@ -66,6 +69,9 @@ import {
   renderOAuthSection,
   updateCostMeter,
   refreshDashboard,
+  renderApiKeyWarning,
+  renderQuotaBar,
+  renderCleanConversationsSection,
 } from './clawser-ui-config.js';
 
 /** Sanitize a color value for safe use in style attributes. */
@@ -700,7 +706,24 @@ export function renderToolManagementPanel() {
     return a[0].localeCompare(b[0]);
   });
 
-  let html = `<div class="tool-search-bar"><input id="toolSearch" type="text" placeholder="Search tools..." class="tool-search-input" value="${esc(query)}" /><span class="tool-count">${statusFiltered.length} / ${allTools.length}</span></div>`;
+  let html = `<div class="tool-perm-legend">
+    <div class="tool-perm-legend-title">Permission Levels</div>
+    <div class="tool-perm-legend-items">
+      <div class="tool-perm-legend-item">
+        <span class="tool-perm-badge" style="background:rgba(63,185,80,.13);color:var(--green);">auto</span>
+        <span class="tool-perm-legend-desc">Tool runs automatically without user confirmation.</span>
+      </div>
+      <div class="tool-perm-legend-item">
+        <span class="tool-perm-badge" style="background:rgba(234,179,8,.13);color:#eab308;">approve</span>
+        <span class="tool-perm-legend-desc">Tool requires user approval before each execution.</span>
+      </div>
+      <div class="tool-perm-legend-item">
+        <span class="tool-perm-badge" style="background:rgba(248,84,84,.13);color:var(--red);">denied</span>
+        <span class="tool-perm-legend-desc">Tool is blocked and cannot be used.</span>
+      </div>
+    </div>
+  </div>`;
+  html += `<div class="tool-search-bar"><input id="toolSearch" type="text" placeholder="Search tools..." class="tool-search-input" value="${esc(query)}" /><span class="tool-count">${statusFiltered.length} / ${allTools.length}</span></div>`;
   html += `<div class="tool-filters">${['all','enabled','disabled','approve'].map(f =>
     `<button class="tool-filter-btn ${activeToolFilter === f ? 'active' : ''}" data-filter="${f}">${f === 'approve' ? 'Needs Approval' : f[0].toUpperCase() + f.slice(1)}</button>`
   ).join('')}</div>`;
@@ -1081,14 +1104,20 @@ async function renderAgentEditor(panelBody, agentId) {
 }
 
 // ── Generic collapsible section toggle ──────────────────────────
-function bindToggle(toggleId, sectionId, arrowId) {
+function bindToggle(toggleId, sectionId, arrowId, onOpen) {
   const toggle = $(toggleId);
   if (!toggle) return;
   toggle.addEventListener('click', () => {
     const section = $(sectionId);
     const arrow = $(arrowId);
     section.classList.toggle('visible');
-    arrow.innerHTML = section.classList.contains('visible') ? '&#x25BC;' : '&#x25B6;';
+    const isOpen = section.classList.contains('visible');
+    arrow.innerHTML = isOpen ? '&#x25BC;' : '&#x25B6;';
+    // Update aria-expanded if present
+    if (toggle.hasAttribute('aria-expanded')) {
+      toggle.setAttribute('aria-expanded', String(isOpen));
+    }
+    if (isOpen && onOpen) onOpen();
   });
 }
 
@@ -1182,6 +1211,11 @@ export function initPanelListeners() {
     const arrow = $('securityArrow');
     section.classList.toggle('visible');
     arrow.innerHTML = section.classList.contains('visible') ? '&#x25BC;' : '&#x25B6;';
+    // Render API key warning banner and storage quota bar when section opens
+    if (section.classList.contains('visible')) {
+      renderApiKeyWarning();
+      renderQuotaBar();
+    }
   });
 
   $('btnApplySecurity').addEventListener('click', () => {
@@ -1344,6 +1378,7 @@ export function initPanelListeners() {
   bindToggle('cacheToggle', 'cacheSection', 'cacheArrow');
   bindToggle('sandboxToggle', 'sandboxSection', 'sandboxArrow');
   bindToggle('heartbeatToggle', 'heartbeatSection', 'heartbeatArrow');
+  bindToggle('cleanConvToggle', 'cleanConvSection', 'cleanConvArrow', () => renderCleanConversationsSection());
 
   // Autonomy settings
   document.querySelectorAll('input[name="autonomyLevel"]').forEach(r =>

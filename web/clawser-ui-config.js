@@ -9,6 +9,7 @@ import { $, esc, state, lsKey } from './clawser-state.js';
 import { modal } from './clawser-modal.js';
 import { addMsg, addErrorMsg } from './clawser-ui-chat.js';
 import { OAUTH_PROVIDERS } from './clawser-oauth.js';
+import { checkQuota } from './clawser-tools.js';
 
 // ── Security settings ──────────────────────────────────────────
 /** Apply domain allowlist and max file size from UI inputs to the browser tools and persist. */
@@ -409,6 +410,163 @@ export function renderOAuthSection() {
   }
 }
 
+// ── Clean Old Conversations (Gap 12.2) ───────────────────────────
+
+/**
+ * Render the "Clean old conversations" section in the config panel.
+ * Adds UI to find and delete conversations older than a threshold.
+ * @param {HTMLElement} [container] - Container element (defaults to 'cleanConvSection')
+ */
+export function renderCleanConversationsSection() {
+  const el = $('cleanConvSection');
+  if (!el) return;
+  el.innerHTML = '';
+
+  const wsId = state.agent?.getWorkspace() || 'default';
+
+  // Threshold input row
+  const thresholdRow = document.createElement('div');
+  thresholdRow.className = 'config-group';
+  thresholdRow.innerHTML = `
+    <label>Max Age (days)</label>
+    <div style="display:flex;gap:6px;align-items:center;">
+      <input type="number" id="cleanConvThreshold" class="cfg-narrow" min="1" max="3650" value="90" />
+      <button class="btn-sm" id="cleanConvScan">Scan</button>
+    </div>
+  `;
+  el.appendChild(thresholdRow);
+
+  // Results container
+  const resultsEl = document.createElement('div');
+  resultsEl.id = 'cleanConvResults';
+  resultsEl.className = 'clean-conv-results';
+  el.appendChild(resultsEl);
+
+  // Bind scan button
+  thresholdRow.querySelector('#cleanConvScan').addEventListener('click', () => {
+    _scanOldConversations(wsId, resultsEl);
+  });
+}
+
+/**
+ * Scan for old conversations and display them for deletion.
+ * @param {string} wsId - Workspace ID
+ * @param {HTMLElement} resultsEl - Container for results
+ */
+function _scanOldConversations(wsId, resultsEl) {
+  resultsEl.innerHTML = '';
+  const thresholdDays = parseInt($('cleanConvThreshold')?.value) || 90;
+  const cutoffMs = Date.now() - (thresholdDays * 24 * 60 * 60 * 1000);
+
+  // Find conversation keys in localStorage
+  const convPrefix = `clawser_conv_${wsId}_`;
+  const convListKey = `clawser_conversations_${wsId}`;
+  const convListRaw = localStorage.getItem(convListKey);
+
+  let conversations = [];
+  if (convListRaw) {
+    try {
+      conversations = JSON.parse(convListRaw);
+    } catch { /* corrupt data */ }
+  }
+
+  // If no conversation list found, scan by key prefix
+  if (conversations.length === 0) {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(convPrefix)) {
+        try {
+          const data = JSON.parse(localStorage.getItem(key));
+          if (data) {
+            conversations.push({
+              id: key.replace(convPrefix, ''),
+              name: data.name || 'Unnamed',
+              lastUsed: data.lastUsed || data.created || 0,
+              _storageKey: key,
+            });
+          }
+        } catch { /* skip corrupt entries */ }
+      }
+    }
+  }
+
+  const oldConversations = conversations.filter(c => {
+    const ts = c.lastUsed || c.created || 0;
+    return ts > 0 && ts < cutoffMs;
+  });
+
+  if (oldConversations.length === 0) {
+    resultsEl.innerHTML = `<div class="clean-conv-empty">No conversations older than ${thresholdDays} days found.</div>`;
+    return;
+  }
+
+  // Header
+  const header = document.createElement('div');
+  header.className = 'clean-conv-header';
+  header.innerHTML = `<span>${oldConversations.length} conversation(s) older than ${thresholdDays} days</span>`;
+  resultsEl.appendChild(header);
+
+  // Checkboxes for each conversation
+  const selectedIds = new Set();
+  for (const conv of oldConversations) {
+    const row = document.createElement('div');
+    row.className = 'clean-conv-item';
+    const age = Math.floor((Date.now() - (conv.lastUsed || 0)) / 86400000);
+    row.innerHTML = `
+      <label class="clean-conv-label">
+        <input type="checkbox" class="clean-conv-cb" data-id="${esc(conv.id)}" checked />
+        <span class="clean-conv-name">${esc(conv.name || conv.id)}</span>
+        <span class="clean-conv-age">${age}d ago</span>
+      </label>
+    `;
+    const cb = row.querySelector('.clean-conv-cb');
+    cb.addEventListener('change', () => {
+      if (cb.checked) selectedIds.add(conv.id);
+      else selectedIds.delete(conv.id);
+    });
+    selectedIds.add(conv.id); // Start all selected
+    resultsEl.appendChild(row);
+  }
+
+  // Select all / none toggles + delete button
+  const actionRow = document.createElement('div');
+  actionRow.className = 'clean-conv-actions';
+  actionRow.innerHTML = `
+    <button class="btn-sm btn-surface2" id="cleanConvSelectAll">Select All</button>
+    <button class="btn-sm btn-surface2" id="cleanConvSelectNone">Select None</button>
+    <span class="spacer"></span>
+    <button class="btn-sm btn-danger" id="cleanConvDelete">Delete Selected</button>
+  `;
+  resultsEl.appendChild(actionRow);
+
+  actionRow.querySelector('#cleanConvSelectAll').addEventListener('click', () => {
+    resultsEl.querySelectorAll('.clean-conv-cb').forEach(cb => { cb.checked = true; selectedIds.add(cb.dataset.id); });
+  });
+  actionRow.querySelector('#cleanConvSelectNone').addEventListener('click', () => {
+    resultsEl.querySelectorAll('.clean-conv-cb').forEach(cb => { cb.checked = false; });
+    selectedIds.clear();
+  });
+  actionRow.querySelector('#cleanConvDelete').addEventListener('click', () => {
+    if (selectedIds.size === 0) return;
+
+    // Remove selected conversations from localStorage
+    const convList = JSON.parse(localStorage.getItem(convListKey) || '[]');
+    const remaining = convList.filter(c => !selectedIds.has(c.id));
+    localStorage.setItem(convListKey, JSON.stringify(remaining));
+
+    // Remove individual conversation data
+    for (const id of selectedIds) {
+      localStorage.removeItem(`${convPrefix}${id}`);
+      // Also try removing event log data
+      localStorage.removeItem(`clawser_events_${wsId}_${id}`);
+    }
+
+    const count = selectedIds.size;
+    addMsg('system', `Deleted ${count} old conversation(s).`);
+    _scanOldConversations(wsId, resultsEl);
+  });
+}
+
 // ── Header badges (Batch 2) ─────────────────────────────────────
 
 /** Update daemon badge in header. */
@@ -463,5 +621,110 @@ export function refreshDashboard() {
       el.appendChild(d);
     }
   }
+}
+
+// ── API Key Warning Banner (Gap 7.3) ──────────────────────────────
+
+/**
+ * Render a warning banner in the security section of the config panel
+ * explaining that API keys are stored in localStorage (not encrypted),
+ * with a "Clear all API keys" button.
+ *
+ * Call this when the config panel renders (e.g. when securitySection opens).
+ */
+export function renderApiKeyWarning() {
+  const section = $('securitySection');
+  if (!section) return;
+
+  // Avoid duplicating the banner if already rendered
+  if (section.querySelector('.api-key-warning-banner')) return;
+
+  const banner = document.createElement('div');
+  banner.className = 'api-key-warning-banner';
+  banner.innerHTML = `
+    <div class="api-key-warning-text">
+      <strong>Warning:</strong> API keys are stored in localStorage and are <em>not encrypted</em>.
+      Any script running on this origin can read them. Avoid storing keys on shared devices.
+    </div>
+    <button class="btn-sm btn-danger api-key-clear-btn" id="btnClearApiKeys">Clear all API keys</button>
+  `;
+
+  // Insert at the top of the security section
+  section.prepend(banner);
+
+  // Bind the clear button
+  banner.querySelector('#btnClearApiKeys').addEventListener('click', async () => {
+    const keysToRemove = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('clawser_config_')) {
+        keysToRemove.push(key);
+      }
+    }
+    if (keysToRemove.length === 0) {
+      addMsg('system', 'No API key configurations found in localStorage.');
+      return;
+    }
+    const confirmed = await modal.confirm(
+      `This will remove ${keysToRemove.length} config entries (clawser_config_*) from localStorage, including all stored API keys. Continue?`,
+      { danger: true }
+    );
+    if (!confirmed) return;
+    for (const key of keysToRemove) {
+      localStorage.removeItem(key);
+    }
+    addMsg('system', `Cleared ${keysToRemove.length} API key configuration(s) from localStorage.`);
+  });
+}
+
+// ── Storage Quota Bar (Gap 7.6 + 12.1) ───────────────────────────
+
+/**
+ * Format bytes into a human-readable string (KB, MB, GB).
+ */
+function formatBytes(bytes) {
+  if (bytes === 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
+}
+
+/**
+ * Render a storage quota usage bar in the security section of the config panel.
+ * Shows current OPFS/storage usage as a visual bar with percentage.
+ *
+ * Call this when the config panel renders (e.g. when securitySection opens).
+ */
+export async function renderQuotaBar() {
+  const section = $('securitySection');
+  if (!section) return;
+
+  // Avoid duplicating
+  let wrap = section.querySelector('.quota-bar-wrap');
+  if (!wrap) {
+    wrap = document.createElement('div');
+    wrap.className = 'quota-bar-wrap';
+    section.appendChild(wrap);
+  }
+
+  const quota = await checkQuota();
+
+  const barClass = quota.critical ? 'danger' : quota.warning ? 'warn' : '';
+  const statusText = quota.critical
+    ? 'Critical: storage nearly full!'
+    : quota.warning
+      ? 'Warning: storage usage is high.'
+      : '';
+
+  wrap.innerHTML = `
+    <div class="config-group">
+      <label>Storage Usage</label>
+      <div class="quota-meter-wrap">
+        <div class="quota-meter-bar ${barClass}" style="width:${Math.min(quota.percent, 100).toFixed(1)}%"></div>
+        <span class="quota-meter-label">${formatBytes(quota.usage)} / ${formatBytes(quota.quota)} (${quota.percent.toFixed(1)}%)</span>
+      </div>
+      ${statusText ? `<div class="quota-status-text ${barClass}">${statusText}</div>` : ''}
+    </div>
+  `;
 }
 
