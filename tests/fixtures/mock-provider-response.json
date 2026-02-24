@@ -1,0 +1,39 @@
+{
+  "id": "chatcmpl-test-001",
+  "object": "chat.completion",
+  "created": 1700000000,
+  "model": "gpt-4o-mini",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "I'll fetch the page content for you.",
+        "tool_calls": [
+          {
+            "id": "call_abc123",
+            "type": "function",
+            "function": {
+              "name": "browser_fetch",
+              "arguments": "{\"url\": \"https://example.com\", \"method\": \"GET\"}"
+            }
+          },
+          {
+            "id": "call_def456",
+            "type": "function",
+            "function": {
+              "name": "browser_fs_write",
+              "arguments": "{\"path\": \"/output/page.html\", \"content\": \"<html>...</html>\"}"
+            }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 150,
+    "completion_tokens": 42,
+    "total_tokens": 192
+  }
+}

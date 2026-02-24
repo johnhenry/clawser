@@ -1,0 +1,8 @@
+{"id":"evt_1700000000_0","type":"user_message","timestamp":1700000000000,"data":{"role":"user","content":"Fetch the content of example.com"},"source":"user"}
+{"id":"evt_1700000001_1","type":"agent_message","timestamp":1700000001000,"data":{"role":"assistant","content":"I'll fetch that page for you now."},"source":"agent"}
+{"id":"evt_1700000002_2","type":"tool_call","timestamp":1700000002000,"data":{"id":"call_001","name":"browser_fetch","arguments":{"url":"https://example.com","method":"GET"}},"source":"agent"}
+{"id":"evt_1700000003_3","type":"tool_result","timestamp":1700000003000,"data":{"id":"call_001","name":"browser_fetch","result":{"success":true,"output":"<!DOCTYPE html><html><head><title>Example</title></head><body>Hello</body></html>"}},"source":"system"}
+{"id":"evt_1700000004_4","type":"agent_message","timestamp":1700000004000,"data":{"role":"assistant","content":"I've fetched the page. It contains a simple HTML document with the title \"Example\" and the body text \"Hello\"."},"source":"agent"}
+{"id":"evt_1700000005_5","type":"tool_call","timestamp":1700000005000,"data":{"id":"call_002","name":"browser_fs_write","arguments":{"path":"/output/page.html","content":"<!DOCTYPE html><html><head><title>Example</title></head><body>Hello</body></html>"}},"source":"agent"}
+{"id":"evt_1700000006_6","type":"tool_result","timestamp":1700000006000,"data":{"id":"call_002","name":"browser_fs_write","result":{"success":true,"output":"Written 85 bytes to /output/page.html"}},"source":"system"}
+{"id":"evt_1700000007_7","type":"agent_message","timestamp":1700000007000,"data":{"role":"assistant","content":"Done! I've saved the page content to /output/page.html."},"source":"agent"}
