@@ -1,352 +1,77 @@
 /**
  * clawser-ui-panels.js — Secondary panel rendering and event binding
  *
- * Renders and manages all non-chat workspace panels:
- *   - OPFS file browser (refreshFiles) with click-to-preview
- *   - Memory search/edit/delete (renderMemoryResults, doMemorySearch)
- *   - Goals list with status indicators (renderGoals)
+ * Re-exports extracted panel modules and contains remaining panel functions:
  *   - Tool registry with permission cycling (renderToolRegistry)
  *   - MCP server list (renderMcpServers)
  *   - Skills panel with enable/disable, export, delete (renderSkills)
  *   - Workspace dropdown switcher (renderWsDropdown)
- *   - Security settings: domain allowlist, max file size (applySecuritySettings)
+ *   - Terminal panel (terminalExec, terminalAskUser, etc.)
+ *   - Tool management panel (renderToolManagementPanel)
+ *   - Agent picker and management (initAgentPicker, renderAgentPanel, etc.)
+ *   - Panel event listeners (initPanelListeners)
  *   - Slash command autocomplete on the chat input
  */
-import { $, esc, state, emit, lsKey } from './clawser-state.js';
+import { $, esc, state, lsKey } from './clawser-state.js';
 import { modal } from './clawser-modal.js';
 import { addMsg, addErrorMsg, updateState, resetToolAndEventState } from './clawser-ui-chat.js';
 import { loadWorkspaces, getActiveWorkspaceId, renameWorkspace, deleteWorkspace, createWorkspace, getWorkspaceName } from './clawser-workspaces.js';
 import { navigate } from './clawser-router.js';
 import { SkillStorage } from './clawser-skills.js';
-import { OAUTH_PROVIDERS } from './clawser-oauth.js';
 import { createItemBar, _relativeTime } from './clawser-item-bar.js';
+
+// ── Re-exports from extracted modules ──────────────────────────
+export { refreshFiles, mountLocalFolder, renderMountList } from './clawser-ui-files.js';
+export { renderMemoryResults, doMemorySearch } from './clawser-ui-memory.js';
+export { renderGoals, toggleGoalExpand } from './clawser-ui-goals.js';
+export {
+  applySecuritySettings,
+  renderAutonomySection,
+  saveAutonomySettings,
+  renderIdentitySection,
+  saveIdentitySettings,
+  renderRoutingSection,
+  renderAuthProfilesSection,
+  saveSelfRepairSettings,
+  renderSelfRepairSection,
+  updateCacheStats,
+  saveSandboxSettings,
+  renderSandboxSection,
+  saveHeartbeatSettings,
+  renderHeartbeatSection,
+  renderOAuthSection,
+  updateCostMeter,
+  updateAutonomyBadge,
+  updateDaemonBadge,
+  updateRemoteBadge,
+  refreshDashboard,
+} from './clawser-ui-config.js';
+
+// ── Local imports from extracted modules (used by initPanelListeners) ──
+import { refreshFiles, mountLocalFolder, renderMountList } from './clawser-ui-files.js';
+import { doMemorySearch } from './clawser-ui-memory.js';
+import { renderGoals } from './clawser-ui-goals.js';
+import {
+  applySecuritySettings,
+  renderAutonomySection,
+  saveAutonomySettings,
+  renderIdentitySection,
+  saveIdentitySettings,
+  renderRoutingSection,
+  renderAuthProfilesSection,
+  renderSelfRepairSection,
+  updateCacheStats,
+  renderSandboxSection,
+  renderHeartbeatSection,
+  renderOAuthSection,
+  updateCostMeter,
+  refreshDashboard,
+} from './clawser-ui-config.js';
 
 /** Sanitize a color value for safe use in style attributes. */
 function safeColor(c, fallback = '#8b949e') {
   if (!c || typeof c !== 'string') return fallback;
   return /^#[0-9a-fA-F]{3,8}$/.test(c) ? c : fallback;
-}
-
-// ── OPFS file browser ──────────────────────────────────────────
-const HIDDEN_DIRS = new Set(['.checkpoints', '.skills', '.conversations']);
-
-/** Render the OPFS file browser for the active workspace, with click-to-preview.
- * @param {string} [path='/'] - Directory path relative to workspace root
- * @param {HTMLElement} [el] - Container element (defaults to #fileList)
- */
-export async function refreshFiles(path = '/', el = null) {
-  if (!el) el = $('fileList');
-  try {
-    const root = await navigator.storage.getDirectory();
-
-    let wsDir;
-    try {
-      const base = await root.getDirectoryHandle('clawser_workspaces');
-      const wsId = state.agent?.getWorkspace() || 'default';
-      wsDir = await base.getDirectoryHandle(wsId);
-    } catch {
-      el.textContent = '(empty — files created by the agent will appear here)';
-      return;
-    }
-
-    let dir = wsDir;
-    if (path !== '/') {
-      for (const part of path.replace(/^\//, '').split('/').filter(Boolean)) {
-        dir = await dir.getDirectoryHandle(part);
-      }
-    }
-    el.innerHTML = '';
-    if (path !== '/') {
-      const back = document.createElement('div');
-      back.className = 'file-back';
-      back.textContent = '.. (back)';
-      const parentPath = path.replace(/[^/]+\/$/, '') || '/';
-      back.addEventListener('click', () => refreshFiles(parentPath, el));
-      el.appendChild(back);
-    }
-    let count = 0;
-    for await (const [name, handle] of dir) {
-      if (path === '/' && HIDDEN_DIRS.has(name)) continue;
-      count++;
-      const d = document.createElement('div');
-      d.className = 'file-item';
-      const icon = handle.kind === 'directory' ? '📁' : '📄';
-      d.textContent = `${icon} ${name}`;
-      d.addEventListener('click', async () => {
-        if (handle.kind === 'directory') {
-          await refreshFiles(`${path}${name}/`, el);
-        } else {
-          try {
-            const file = await handle.getFile();
-            if (file.name.endsWith('.bin') || file.name.endsWith('.wasm') || file.size > 100000) {
-              el.insertAdjacentHTML('afterbegin',
-                `<div class="file-binary-info">${esc(name)}: ${(file.size / 1024).toFixed(1)} KB (binary)</div>`);
-            } else {
-              const text = await file.text();
-              el.insertAdjacentHTML('afterbegin',
-                `<div class="file-preview"><div class="file-preview-name">${esc(name)}</div>${esc(text.slice(0, 2000))}</div>`);
-            }
-          } catch (e) { console.debug('[clawser] file preview error', e); }
-        }
-      });
-      el.appendChild(d);
-    }
-    if (count === 0) el.textContent = '(empty — files created by the agent will appear here)';
-  } catch (e) {
-    el.textContent = `Error: ${e.message}`;
-  }
-}
-
-// ── Mount local folder (Block 2) ─────────────────────────────────
-/** Prompt user to pick a local directory and mount it into the workspace FS. */
-export async function mountLocalFolder() {
-  if (!window.showDirectoryPicker) {
-    addErrorMsg('showDirectoryPicker not supported in this browser.');
-    return;
-  }
-  try {
-    const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
-    const mountPoint = await modal.prompt('Mount point (under /mnt/):', `/mnt/${handle.name}`);
-    if (!mountPoint) return;
-    state.workspaceFs.mount(mountPoint, handle);
-    renderMountList();
-    refreshFiles();
-    addMsg('system', `Mounted "${handle.name}" at ${mountPoint}`);
-  } catch (e) {
-    if (e.name !== 'AbortError') addErrorMsg(`Mount failed: ${e.message}`);
-  }
-}
-
-/** Render the list of active mounts with unmount buttons. */
-export function renderMountList() {
-  const el = $('mountList');
-  if (!el) return;
-  el.innerHTML = '';
-  if (!state.workspaceFs?.mountTable) return;
-  const mounts = state.workspaceFs.mountTable;
-  if (mounts.length === 0) return;
-  for (const m of mounts) {
-    const d = document.createElement('div');
-    d.className = 'mount-item';
-    d.innerHTML = `<span class="mount-point">${esc(m.path)}</span><span style="color:var(--dim);font-size:10px;">${esc(m.name)}${m.readOnly ? ' (ro)' : ''}</span>`;
-    const btn = document.createElement('button');
-    btn.className = 'mount-unmount';
-    btn.textContent = '✕';
-    btn.title = 'Unmount';
-    btn.addEventListener('click', () => {
-      state.workspaceFs.unmount(m.path);
-      renderMountList();
-      refreshFiles();
-      addMsg('system', `Unmounted ${m.path}`);
-    });
-    d.appendChild(btn);
-    el.appendChild(d);
-  }
-}
-
-// ── Memory management ──────────────────────────────────────────
-/** Render memory search results with edit/delete controls, applying category filter.
- * @param {Array<Object>} results - Memory entries
- * @param {HTMLElement} el - Container element
- */
-export function renderMemoryResults(results, el) {
-  const catFilter = $('memCatFilter').value;
-  if (catFilter) results = results.filter(r => r.category === catFilter);
-
-  el.innerHTML = '';
-  if (results.length === 0) { el.textContent = 'No memories found.'; return; }
-  for (const r of results) {
-    const d = document.createElement('div');
-    d.className = 'mem-item';
-    const cat = r.category || '';
-    const catBadge = cat ? `<span class="mem-cat">${esc(cat)}</span>` : '';
-    const score = r.score != null ? `<span class="mem-score">${r.score.toFixed(1)}</span>` : '';
-    const ts = r.timestamp ? new Date(r.timestamp).toLocaleDateString() : '';
-    d.innerHTML = `
-      <div class="mem-header">
-        <span class="mem-key">${esc(r.key)}</span>
-        ${catBadge}${score}
-        <span class="mem-actions">
-          <button class="mem-edit" title="Edit">&#x270E;</button>
-          <button class="mem-del" title="Delete">&#x2715;</button>
-        </span>
-      </div>
-      <div class="mem-content">${esc(r.content || '')}</div>
-      ${ts ? `<div class="mem-date">${ts}</div>` : ''}
-    `;
-
-    d.querySelector('.mem-edit').addEventListener('click', () => {
-      d.querySelectorAll('.mem-edit-form').forEach(f => f.remove());
-      const form = document.createElement('div');
-      form.className = 'mem-form mem-edit-form';
-      form.innerHTML = `
-        <input type="text" class="edit-key" value="${esc(r.key)}" />
-        <textarea class="edit-content">${esc(r.content || '')}</textarea>
-        <div class="mem-form-row">
-          <select class="edit-cat">
-            <option value="core"${cat === 'core' ? ' selected' : ''}>core</option>
-            <option value="learned"${cat === 'learned' ? ' selected' : ''}>learned</option>
-            <option value="user"${cat === 'user' ? ' selected' : ''}>user</option>
-            <option value="context"${cat === 'context' ? ' selected' : ''}>context</option>
-          </select>
-          <button class="btn-sm edit-save">Save</button>
-          <button class="btn-sm btn-sm-secondary edit-cancel">Cancel</button>
-        </div>
-      `;
-      form.querySelector('.edit-cancel').addEventListener('click', () => form.remove());
-      form.querySelector('.edit-save').addEventListener('click', () => {
-        const newKey = form.querySelector('.edit-key').value.trim();
-        const newContent = form.querySelector('.edit-content').value.trim();
-        const newCat = form.querySelector('.edit-cat').value;
-        if (!newKey || !newContent) return;
-        state.agent.memoryForget(r.id);
-        state.agent.memoryStore({ key: newKey, content: newContent, category: newCat });
-        state.agent.persistMemories();
-        updateState();
-        doMemorySearch();
-      });
-      d.appendChild(form);
-    });
-
-    d.querySelector('.mem-del').addEventListener('click', async () => {
-      if (!await modal.confirm(`Delete memory "${r.key}"?`, { danger: true })) return;
-      const rc = state.agent.memoryForget(r.id);
-      if (rc === 1) {
-        state.agent.persistMemories();
-        updateState();
-        doMemorySearch();
-      } else {
-        addErrorMsg('Failed to delete memory.');
-      }
-    });
-
-    el.appendChild(d);
-  }
-}
-
-/** Execute a memory search using the query input and render results.
- *  When semantic toggle is checked, uses async hybrid search. */
-export async function doMemorySearch() {
-  if (!state.agent) return;
-  const query = $('memQuery').value.trim();
-  const semantic = $('memSemanticToggle')?.checked;
-  const category = $('memCatFilter').value || undefined;
-
-  if (semantic && query) {
-    const el = $('memResults');
-    el.innerHTML = '<div style="color:var(--muted);font-size:11px;padding:8px;">Searching...</div>';
-    try {
-      const results = await state.agent.memoryRecallAsync(query, { category });
-      renderMemoryResults(results, el);
-    } catch (e) {
-      el.textContent = `Search error: ${e.message}`;
-    }
-  } else {
-    renderMemoryResults(state.agent.memoryRecall(query), $('memResults'));
-  }
-}
-
-// ── Goals (tree view — Block 8) ────────────────────────────────
-const _collapsedGoals = new Set();
-
-/** Toggle goal expand/collapse state. */
-export function toggleGoalExpand(goalId) {
-  if (_collapsedGoals.has(goalId)) _collapsedGoals.delete(goalId);
-  else _collapsedGoals.add(goalId);
-  renderGoals();
-}
-
-/** Render the goals tree with indentation, progress bars, artifact links, and collapse toggles. */
-export function renderGoals() {
-  if (!state.agent) return;
-  const agentState = state.agent.getState();
-  const goals = agentState.goals || [];
-  const el = $('goalList');
-  el.innerHTML = '';
-
-  // Build parent→children map
-  const childMap = new Map();
-  const roots = [];
-  for (const g of goals) {
-    if (g.parentId) {
-      if (!childMap.has(g.parentId)) childMap.set(g.parentId, []);
-      childMap.get(g.parentId).push(g);
-    } else {
-      roots.push(g);
-    }
-  }
-
-  function renderGoalNode(g, depth) {
-    const children = childMap.get(g.id) || [];
-    const hasChildren = children.length > 0;
-    const collapsed = _collapsedGoals.has(g.id);
-
-    const d = document.createElement('div');
-    d.className = 'goal-item goal-tree-item';
-    d.style.marginLeft = `${depth * 16}px`;
-
-    // Toggle arrow
-    let arrow = '';
-    if (hasChildren) {
-      arrow = `<span class="goal-toggle" data-gid="${g.id}">${collapsed ? '▶' : '▼'}</span>`;
-    }
-
-    d.innerHTML = `${arrow}<span class="goal-dot ${esc(g.status)}">●</span><span class="goal-desc">${esc(g.description)}</span>`;
-
-    // Progress bar for goals with sub-goals
-    if (hasChildren) {
-      const completed = children.filter(c => c.status === 'completed').length;
-      const pct = Math.round((completed / children.length) * 100);
-      d.insertAdjacentHTML('beforeend',
-        `<div class="goal-progress"><div class="goal-progress-fill" style="width:${pct}%"></div></div>`);
-    }
-
-    // Artifact links
-    if (g.artifacts?.length > 0) {
-      for (const a of g.artifacts) {
-        const link = document.createElement('a');
-        link.className = 'goal-artifact-link';
-        link.href = '#';
-        link.textContent = a.name || a.path || 'artifact';
-        link.addEventListener('click', (e) => { e.preventDefault(); });
-        d.appendChild(link);
-      }
-    }
-
-    // Complete button
-    if (g.status === 'active') {
-      const btn = document.createElement('button');
-      btn.textContent = '✓';
-      btn.className = 'goal-complete-btn';
-      btn.addEventListener('click', () => { state.agent.completeGoal(g.id); renderGoals(); updateState(); });
-      d.appendChild(btn);
-    }
-
-    // Collapse toggle handler
-    if (hasChildren) {
-      d.querySelector('.goal-toggle').addEventListener('click', () => toggleGoalExpand(g.id));
-    }
-
-    el.appendChild(d);
-
-    // Render children recursively if not collapsed
-    if (hasChildren && !collapsed) {
-      for (const child of children) {
-        renderGoalNode(child, depth + 1);
-      }
-    }
-  }
-
-  for (const root of roots) {
-    renderGoalNode(root, 0);
-  }
-
-  // Handle flat goals with no roots (all have parentId but parent doesn't exist)
-  if (roots.length === 0 && goals.length > 0) {
-    for (const g of goals) {
-      renderGoalNode(g, 0);
-    }
-  }
 }
 
 // ── Tool registry ──────────────────────────────────────────────
@@ -417,8 +142,8 @@ export function renderSkills() {
         <span class="skill-scope${scopeClass}">${esc(skill.scope)}</span>
         <span class="skill-actions">
           <button class="skill-toggle${skill.enabled ? ' on' : ''}" title="${skill.enabled ? 'Disable' : 'Enable'}"></button>
-          <button class="skill-export" title="Export">↓</button>
-          <button class="skill-del" title="Delete">✕</button>
+          <button class="skill-export" title="Export">\u2193</button>
+          <button class="skill-del" title="Delete">\u2715</button>
         </span>
       </div>
       <div class="skill-desc">${esc(skill.description || '(no description)')}</div>
@@ -480,7 +205,7 @@ export function renderWsDropdown() {
     d.innerHTML = `<span class="ws-dd-name">${esc(ws.name)}</span>`;
     if (isActive) {
       const renBtn = document.createElement('span');
-      renBtn.textContent = '✏';
+      renBtn.textContent = '\u270F';
       renBtn.className = 'ws-dd-action';
       renBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
@@ -495,7 +220,7 @@ export function renderWsDropdown() {
     } else {
       if (ws.id !== 'default') {
         const delBtn = document.createElement('span');
-        delBtn.textContent = '✕';
+        delBtn.textContent = '\u2715';
         delBtn.className = 'ws-dd-action danger';
         delBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
@@ -512,414 +237,7 @@ export function renderWsDropdown() {
   }
 }
 
-// ── Security settings ──────────────────────────────────────────
-/** Apply domain allowlist and max file size from UI inputs to the browser tools and persist. */
-export function applySecuritySettings() {
-  const raw = $('cfgDomainAllowlist').value.trim();
-  const domains = raw ? raw.split(',').map(d => d.trim()).filter(Boolean) : null;
-  const maxMB = parseFloat($('cfgMaxFileSize').value) || 10;
-
-  const fetchTool = state.browserTools.get('browser_fetch');
-  if (fetchTool?.setDomainAllowlist) fetchTool.setDomainAllowlist(domains);
-
-  const writeTool = state.browserTools.get('browser_fs_write');
-  if (writeTool?.setMaxFileSize) writeTool.setMaxFileSize(maxMB * 1024 * 1024);
-
-  if (state.agent) {
-    const wsId = state.agent.getWorkspace();
-    localStorage.setItem(lsKey.security(wsId), JSON.stringify({ domains: raw, maxFileSizeMB: maxMB }));
-  }
-}
-
-// ── Config sections (Batch 1) ────────────────────────────────────
-
-/** Generic collapsible section toggle. */
-function bindToggle(toggleId, sectionId, arrowId) {
-  const toggle = $(toggleId);
-  if (!toggle) return;
-  toggle.addEventListener('click', () => {
-    const section = $(sectionId);
-    const arrow = $(arrowId);
-    section.classList.toggle('visible');
-    arrow.innerHTML = section.classList.contains('visible') ? '&#x25BC;' : '&#x25B6;';
-  });
-}
-
-/** Render autonomy & costs section (Block 6). */
-export function renderAutonomySection() {
-  const wsId = state.agent?.getWorkspace() || 'default';
-  const saved = JSON.parse(localStorage.getItem(lsKey.autonomy(wsId)) || '{}');
-  if (saved.level) {
-    const radio = document.querySelector(`input[name="autonomyLevel"][value="${saved.level}"]`);
-    if (radio) radio.checked = true;
-  }
-  if (saved.maxActions) $('cfgMaxActions').value = saved.maxActions;
-  if (saved.dailyCostLimit != null) $('cfgDailyCostLimit').value = saved.dailyCostLimit;
-  // Apply saved config to agent's AutonomyController
-  if (state.agent && saved.level) {
-    state.agent.applyAutonomyConfig({
-      level: saved.level || 'supervised',
-      maxActionsPerHour: parseInt(saved.maxActions) || Infinity,
-      maxCostPerDayCents: parseInt(saved.dailyCostLimit) || Infinity,
-    });
-  }
-  updateCostMeter();
-  updateAutonomyBadge();
-}
-
-/** Save autonomy settings to localStorage and apply live. */
-export function saveAutonomySettings() {
-  const wsId = state.agent?.getWorkspace() || 'default';
-  const level = document.querySelector('input[name="autonomyLevel"]:checked')?.value || 'supervised';
-  const maxActions = parseInt($('cfgMaxActions').value) || 100;
-  const dailyCostLimit = parseFloat($('cfgDailyCostLimit').value) || 5;
-  localStorage.setItem(lsKey.autonomy(wsId), JSON.stringify({ level, maxActions, dailyCostLimit }));
-  // Apply live to agent's AutonomyController
-  if (state.agent) {
-    state.agent.applyAutonomyConfig({
-      level,
-      maxActionsPerHour: parseInt(maxActions) || Infinity,
-      maxCostPerDayCents: parseInt(dailyCostLimit) || Infinity,
-    });
-  }
-  updateCostMeter();
-  updateAutonomyBadge();
-}
-
-/** Update cost meter bar and label. */
-export function updateCostMeter() {
-  const limit = parseFloat($('cfgDailyCostLimit')?.value) || 5;
-  const spent = state.sessionCost || 0;
-  const pct = Math.min((spent / limit) * 100, 100);
-  const bar = $('costMeterBar');
-  const label = $('costMeterLabel');
-  if (bar) {
-    bar.style.width = pct + '%';
-    bar.className = 'cost-meter-bar' + (pct > 80 ? ' danger' : pct > 50 ? ' warn' : '');
-  }
-  if (label) label.textContent = `$${spent.toFixed(2)} / $${limit.toFixed(2)}`;
-}
-
-/** Update autonomy badge in header. */
-export function updateAutonomyBadge() {
-  const badge = $('autonomyBadge');
-  if (!badge) return;
-  const level = document.querySelector('input[name="autonomyLevel"]:checked')?.value || 'supervised';
-  const labels = { readonly: '🔴 ReadOnly', supervised: '🟡 Supervised', full: '🟢 Full' };
-  badge.textContent = labels[level] || '';
-  badge.className = `autonomy-badge visible ${level}`;
-}
-
-/** Render identity section (Block 7). */
-export function renderIdentitySection() {
-  const wsId = state.agent?.getWorkspace() || 'default';
-  const saved = JSON.parse(localStorage.getItem(lsKey.identity(wsId)) || '{}');
-  if (saved.format) $('identityFormat').value = saved.format;
-  if (saved.plain) $('identityPlain').value = saved.plain;
-  if (saved.name) $('identityName').value = saved.name;
-  if (saved.role) $('identityRole').value = saved.role;
-  if (saved.personality) $('identityPersonality').value = saved.personality;
-  toggleIdentityFormat();
-  // Apply saved identity to system prompt on init
-  applyIdentityToAgent(saved);
-}
-
-function toggleIdentityFormat() {
-  const format = $('identityFormat').value;
-  $('identityPlainWrap').style.display = format === 'plain' ? '' : 'none';
-  const aieosWrap = $('identityAieosWrap');
-  if (format === 'aieos') aieosWrap.classList.add('visible');
-  else aieosWrap.classList.remove('visible');
-}
-
-/** Apply identity config to agent's system prompt. */
-function applyIdentityToAgent(saved) {
-  if (!state.agent || !state.identityManager || !saved?.format) return;
-  try {
-    if (saved.format === 'plain') {
-      state.identityManager.load(saved.plain || '');
-    } else {
-      state.identityManager.load({
-        version: '1.1',
-        names: { display: saved.name || '' },
-        bio: saved.role || '',
-        linguistics: { tone: saved.personality || '' },
-      });
-    }
-    const compiled = state.identityManager.compile();
-    if (compiled) state.agent.setSystemPrompt(compiled);
-  } catch (e) { console.warn('[clawser] identity compile failed', e); }
-}
-
-function saveIdentitySettings() {
-  const wsId = state.agent?.getWorkspace() || 'default';
-  const format = $('identityFormat').value;
-  const saved = {
-    format,
-    plain: $('identityPlain').value,
-    name: $('identityName').value,
-    role: $('identityRole').value,
-    personality: $('identityPersonality').value,
-  };
-  localStorage.setItem(lsKey.identity(wsId), JSON.stringify(saved));
-  // Apply live to agent's system prompt
-  applyIdentityToAgent(saved);
-}
-
-/** Render model routing section (Block 11). */
-export async function renderRoutingSection() {
-  const list = $('routingChainList');
-  const badges = $('routingHealthBadges');
-  if (!list || !badges) return;
-  list.innerHTML = '';
-  badges.innerHTML = '';
-
-  // Show registered providers as chain entries
-  if (state.providers) {
-    let idx = 1;
-    const providerList = await state.providers.listWithAvailability().catch(() => []);
-    for (const { name } of providerList) {
-      const d = document.createElement('div');
-      d.className = 'routing-chain-item';
-      d.innerHTML = `<span class="chain-idx">${idx++}.</span><span class="chain-name">${esc(name)}</span>`;
-      list.appendChild(d);
-
-      const badge = document.createElement('span');
-      badge.className = 'health-badge healthy';
-      badge.textContent = name;
-      badges.appendChild(badge);
-    }
-  }
-  if (list.children.length === 0) list.textContent = '(no providers configured)';
-}
-
-/** Render auth profiles section (Block 19). */
-export function renderAuthProfilesSection() {
-  const list = $('authProfileList');
-  if (!list) return;
-  list.innerHTML = '';
-
-  if (state.authProfileManager) {
-    const profiles = state.authProfileManager.listProfiles();
-    for (const p of profiles) {
-      const d = document.createElement('div');
-      d.className = 'auth-profile-item';
-      const active = state.authProfileManager.isActive(p.id);
-      d.innerHTML = `
-        <span class="profile-active ${active ? 'on' : 'off'}"></span>
-        <span class="profile-name">${esc(p.name)}</span>
-        <span class="profile-provider">${esc(p.provider || '')}</span>
-        <span class="profile-actions">
-          <button class="profile-switch" title="Switch">${active ? '●' : '○'}</button>
-          <button class="profile-del" title="Delete">✕</button>
-        </span>
-      `;
-      list.appendChild(d);
-    }
-  }
-  if (!list.children.length) list.innerHTML = '<div style="color:var(--dim);font-size:10px;padding:4px 0;">No profiles. Add one to manage multiple auth credentials.</div>';
-}
-
-/** Save self-repair slider settings and apply to StuckDetector. */
-export function saveSelfRepairSettings() {
-  const wsId = state.agent?.getWorkspace() || 'default';
-  const cfg = {
-    toolTimeout: parseInt($('cfgToolTimeout')?.value) || 60,
-    noProgress: parseInt($('cfgNoProgress')?.value) || 120,
-    loopDetection: parseInt($('cfgLoopDetection')?.value) || 3,
-    consecErrors: parseInt($('cfgConsecErrors')?.value) || 5,
-    costRunaway: parseFloat($('cfgCostRunaway')?.value) || 2.0,
-  };
-  localStorage.setItem(lsKey.selfRepair(wsId), JSON.stringify(cfg));
-  // Apply live to StuckDetector
-  if (state.stuckDetector) {
-    state.stuckDetector.setThresholds({
-      toolTimeout: cfg.toolTimeout * 1000,
-      noProgress: cfg.noProgress * 1000,
-      loopDetection: cfg.loopDetection,
-      consecutiveErrors: cfg.consecErrors,
-      costRunaway: cfg.costRunaway,
-    });
-  }
-}
-
-/** Render self-repair section (Block 22). */
-export function renderSelfRepairSection() {
-  const wsId = state.agent?.getWorkspace() || 'default';
-  const saved = JSON.parse(localStorage.getItem(lsKey.selfRepair(wsId)) || 'null');
-
-  const sliders = [
-    ['cfgToolTimeout', 'cfgToolTimeoutVal'],
-    ['cfgNoProgress', 'cfgNoProgressVal'],
-    ['cfgLoopDetection', 'cfgLoopDetectionVal'],
-    ['cfgConsecErrors', 'cfgConsecErrorsVal'],
-    ['cfgCostRunaway', 'cfgCostRunawayVal'],
-  ];
-  const keys = ['toolTimeout', 'noProgress', 'loopDetection', 'consecErrors', 'costRunaway'];
-
-  for (let i = 0; i < sliders.length; i++) {
-    const [sliderId, valId] = sliders[i];
-    const slider = $(sliderId);
-    const val = $(valId);
-    if (slider && val) {
-      // Restore saved value
-      if (saved && saved[keys[i]] != null) slider.value = saved[keys[i]];
-      val.textContent = slider.value;
-      slider.addEventListener('input', () => {
-        val.textContent = slider.value;
-        saveSelfRepairSettings();
-      });
-    }
-  }
-
-  // Apply saved thresholds on init
-  if (saved && state.stuckDetector) {
-    state.stuckDetector.setThresholds({
-      toolTimeout: (saved.toolTimeout || 60) * 1000,
-      noProgress: (saved.noProgress || 120) * 1000,
-      loopDetection: saved.loopDetection || 3,
-      consecutiveErrors: saved.consecErrors || 5,
-      costRunaway: saved.costRunaway || 2.0,
-    });
-  }
-}
-
-/** Update cache stats display (Block 26). */
-export function updateCacheStats() {
-  const el = $('cacheStats');
-  if (!el || !state.responseCache) return;
-  const stats = state.responseCache.stats;
-  el.textContent = `Hits: ${stats.totalHits || 0} · Misses: ${stats.totalMisses || 0} · Entries: ${stats.entries || 0}`;
-}
-
-/** Save sandbox capability gates and apply to tool permissions. */
-export function saveSandboxSettings() {
-  const wsId = state.agent?.getWorkspace() || 'default';
-  const caps = {};
-  for (const cb of document.querySelectorAll('#sandboxCapabilities input[type=checkbox]')) {
-    caps[cb.value] = cb.checked;
-  }
-  localStorage.setItem(lsKey.sandbox(wsId), JSON.stringify(caps));
-  // Apply: update tool permissions based on capability gates
-  const toolMap = { net_fetch: 'fetch', fs_write: 'fs_write', fs_read: 'fs_read', dom_access: 'dom_query', eval: 'code_eval' };
-  if (state.browserTools) {
-    for (const [cap, toolName] of Object.entries(toolMap)) {
-      if (caps[cap] === false) state.browserTools.setPermission(toolName, 'denied');
-      else state.browserTools.setPermission(toolName, 'auto');
-    }
-  }
-}
-
-/** Render sandbox capabilities (Block 28). */
-export function renderSandboxSection() {
-  const el = $('sandboxCapabilities');
-  if (!el) return;
-  el.innerHTML = '';
-
-  const wsId = state.agent?.getWorkspace() || 'default';
-  const saved = JSON.parse(localStorage.getItem(lsKey.sandbox(wsId)) || 'null');
-
-  const caps = ['net_fetch', 'fs_read', 'fs_write', 'dom_access', 'eval', 'crypto'];
-  for (const cap of caps) {
-    const label = document.createElement('label');
-    label.className = 'sandbox-cap';
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.value = cap;
-    cb.dataset.cap = cap;
-    // Restore saved state (default: checked/enabled)
-    cb.checked = saved ? (saved[cap] !== false) : true;
-    cb.addEventListener('change', () => saveSandboxSettings());
-    label.appendChild(cb);
-    label.appendChild(document.createTextNode(` ${cap}`));
-    el.appendChild(label);
-  }
-
-  // Apply saved capability gates on init
-  if (saved) saveSandboxSettings();
-}
-
-/** Save heartbeat check list to localStorage. */
-export function saveHeartbeatSettings() {
-  const wsId = state.agent?.getWorkspace() || 'default';
-  const items = [];
-  for (const el of document.querySelectorAll('#heartbeatChecks .heartbeat-check-item')) {
-    const nameEl = el.querySelector('.hb-name');
-    if (nameEl) items.push({ description: nameEl.textContent, interval: 300000 });
-  }
-  localStorage.setItem(lsKey.heartbeat(wsId), JSON.stringify(items));
-}
-
-/** Render heartbeat checks (Block 29). */
-export function renderHeartbeatSection() {
-  const el = $('heartbeatChecks');
-  if (!el) return;
-  el.innerHTML = '';
-
-  const wsId = state.agent?.getWorkspace() || 'default';
-  const saved = JSON.parse(localStorage.getItem(lsKey.heartbeat(wsId)) || 'null');
-  const defaultChecks = [
-    { description: 'Memory health', interval: 300000 },
-    { description: 'Provider connectivity', interval: 300000 },
-    { description: 'OPFS accessible', interval: 300000 },
-    { description: 'Event bus responsive', interval: 300000 },
-  ];
-  const checks = saved || defaultChecks;
-
-  for (const check of checks) {
-    const d = document.createElement('div');
-    d.className = 'heartbeat-check-item';
-    d.innerHTML = `
-      <span class="hb-status"></span>
-      <span class="hb-name">${esc(check.description || check)}</span>
-      <button class="hb-remove" title="Remove">✕</button>
-    `;
-    d.querySelector('.hb-remove').addEventListener('click', () => {
-      d.remove();
-      saveHeartbeatSettings();
-    });
-    el.appendChild(d);
-  }
-}
-
-/** Render OAuth connected apps section (Block 16). */
-export function renderOAuthSection() {
-  const el = $('oauthProviderList');
-  if (!el) return;
-  el.innerHTML = '';
-
-  for (const [key, prov] of Object.entries(OAUTH_PROVIDERS)) {
-    const connected = state.oauthManager?.isConnected(key);
-    const d = document.createElement('div');
-    d.className = 'oauth-provider-card';
-    d.innerHTML = `
-      <span class="oauth-name">${esc(prov.name)}</span>
-      <span class="oauth-status ${connected ? 'connected' : ''}">${connected ? 'Connected' : 'Not connected'}</span>
-    `;
-    const btn = document.createElement('button');
-    btn.className = `btn-sm ${connected ? 'btn-surface2' : ''}`;
-    btn.textContent = connected ? 'Disconnect' : 'Connect';
-    btn.addEventListener('click', async () => {
-      if (!state.oauthManager) { addErrorMsg('OAuth manager not initialized.'); return; }
-      try {
-        if (connected) {
-          await state.oauthManager.disconnect(key);
-          addMsg('system', `Disconnected from ${prov.name}.`);
-        } else {
-          const clientId = await modal.prompt(`${prov.name} Client ID:`);
-          if (!clientId) return;
-          await state.oauthManager.authenticate(key, clientId);
-          addMsg('system', `Connected to ${prov.name}.`);
-        }
-        renderOAuthSection();
-      } catch (e) {
-        addErrorMsg(`OAuth error: ${e.message}`);
-      }
-    });
-    d.appendChild(btn);
-    el.appendChild(d);
-  }
-}
+// ── Skill registry search ───────────────────────────────────────
 
 /** Skill registry URL constant */
 const SKILL_REGISTRY_URL = 'https://raw.githubusercontent.com/nicholasgasior/agent-skills-index/main/index.json';
@@ -988,34 +306,6 @@ export async function searchSkillRegistry(query) {
   }
 }
 
-// ── Header badges (Batch 2) ─────────────────────────────────────
-
-/** Update daemon badge in header. */
-export function updateDaemonBadge(phase) {
-  const badge = $('daemonBadge');
-  if (!badge) return;
-  if (!phase || phase === 'STOPPED') {
-    badge.classList.remove('visible');
-    return;
-  }
-  const labels = { PAUSED: '⏸ Paused', RUNNING: '▶ Running', STOPPED: '⏹ Stopped' };
-  const classes = { PAUSED: 'paused', RUNNING: 'running', STOPPED: 'stopped' };
-  badge.textContent = labels[phase] || phase;
-  badge.className = `daemon-badge visible ${classes[phase] || 'stopped'}`;
-}
-
-/** Update remote sessions badge. */
-export function updateRemoteBadge(count) {
-  const badge = $('remoteBadge');
-  if (!badge) return;
-  if (!count || count <= 0) {
-    badge.classList.remove('visible');
-    return;
-  }
-  badge.textContent = `📡 ${count} remote`;
-  badge.classList.add('visible');
-}
-
 // ── Terminal panel (Batch 4) ─────────────────────────────────────
 
 const terminalHistory = [];
@@ -1029,10 +319,10 @@ export function terminalAppend(html) {
   el.scrollTop = el.scrollHeight;
 }
 
-/** Run a command in the terminal panel. */
 /** Track terminal agent mode state */
 let _terminalAgentMode = false;
 
+/** Run a command in the terminal panel. */
 export async function terminalExec(cmd) {
   if (!cmd.trim()) return;
   terminalHistory.unshift(cmd);
@@ -1077,7 +367,7 @@ export async function terminalExec(cmd) {
       if (result.__enterAgentMode) {
         _terminalAgentMode = true;
         const badge = $('terminalModeBadge');
-        if (badge) { badge.textContent = '[AGENT ⏎]'; badge.classList.add('agent'); }
+        if (badge) { badge.textContent = '[AGENT \u23CE]'; badge.classList.add('agent'); }
       }
       if (result.__exitAgentMode) {
         _terminalAgentMode = false;
@@ -1143,7 +433,7 @@ export async function terminalAskUser(questions) {
         card.classList.add('ask-user-answered');
         const ansDiv = document.createElement('div');
         ansDiv.className = 'ask-user-answer';
-        ansDiv.textContent = `→ ${answer}`;
+        ansDiv.textContent = `\u2192 ${answer}`;
         card.appendChild(ansDiv);
         // Collapse options
         card.querySelector('.ask-user-options').style.display = 'none';
@@ -1790,32 +1080,16 @@ async function renderAgentEditor(panelBody, agentId) {
   });
 }
 
-// ── Dashboard panel (Batch 4) ────────────────────────────────────
-
-/** Refresh dashboard metrics display. */
-export function refreshDashboard() {
-  if (state.metricsCollector) {
-    const snap = state.metricsCollector.snapshot();
-    $('dashRequests').textContent = snap.counters?.requests ?? 0;
-    $('dashTokens').textContent = snap.counters?.tokens ?? 0;
-    $('dashErrors').textContent = snap.counters?.errors ?? 0;
-    const hist = snap.histograms?.latency;
-    $('dashLatency').textContent = hist?.avg ? `${Math.round(hist.avg)}ms` : '0ms';
-  }
-  if (state.ringBufferLog) {
-    const el = $('dashLogViewer');
-    if (!el) return;
-    el.innerHTML = '';
-    const entries = state.ringBufferLog.query({ limit: 50 });
-    for (const entry of entries) {
-      const d = document.createElement('div');
-      const levelNames = ['debug', 'info', 'warn', 'error'];
-      d.className = `dash-log-entry ${levelNames[entry.level] ?? ''}`;
-      const time = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : '';
-      d.innerHTML = `<span class="log-time">${time}</span>${esc(entry.message || JSON.stringify(entry))}`;
-      el.appendChild(d);
-    }
-  }
+// ── Generic collapsible section toggle ──────────────────────────
+function bindToggle(toggleId, sectionId, arrowId) {
+  const toggle = $(toggleId);
+  if (!toggle) return;
+  toggle.addEventListener('click', () => {
+    const section = $(sectionId);
+    const arrow = $(arrowId);
+    section.classList.toggle('visible');
+    arrow.innerHTML = section.classList.contains('visible') ? '&#x25BC;' : '&#x25B6;';
+  });
 }
 
 // ── Panel event listeners ───────────────────────────────────────
@@ -2078,7 +1352,7 @@ export function initPanelListeners() {
   $('cfgDailyCostLimit')?.addEventListener('change', saveAutonomySettings);
 
   // Identity settings
-  $('identityFormat')?.addEventListener('change', () => { toggleIdentityFormat(); saveIdentitySettings(); });
+  $('identityFormat')?.addEventListener('change', () => { saveIdentitySettings(); });
   $('identityPlain')?.addEventListener('change', saveIdentitySettings);
   $('identityName')?.addEventListener('change', saveIdentitySettings);
   $('identityRole')?.addEventListener('change', saveIdentitySettings);
