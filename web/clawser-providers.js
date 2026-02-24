@@ -129,16 +129,16 @@ async function withRetry(fn, retries = 2, baseDelay = 1000) {
 /** Per-1K-token pricing (USD). Input and output rates. */
 export const MODEL_PRICING = {
   // OpenAI
-  'gpt-4o':          { input: 0.0025, output: 0.010 },
+  'gpt-4o':          { input: 0.0025, output: 0.010, cached_input: 0.00125 },
   'gpt-4o-mini':     { input: 0.00015, output: 0.0006 },
-  'gpt-4.1':         { input: 0.002, output: 0.008 },
+  'gpt-4.1':         { input: 0.002, output: 0.008, cached_input: 0.001 },
   'gpt-4.1-mini':    { input: 0.0004, output: 0.0016 },
   'gpt-4.1-nano':    { input: 0.0001, output: 0.0004 },
   'o3-mini':         { input: 0.0011, output: 0.0044 },
   // Anthropic
-  'claude-sonnet-4-6':          { input: 0.003, output: 0.015 },
-  'claude-haiku-4-5-20251001':  { input: 0.0008, output: 0.004 },
-  'claude-opus-4-6':            { input: 0.015, output: 0.075 },
+  'claude-sonnet-4-6':          { input: 0.003, output: 0.015, cached_input: 0.0015 },
+  'claude-haiku-4-5-20251001':  { input: 0.0008, output: 0.004, cached_input: 0.0004 },
+  'claude-opus-4-6':            { input: 0.015, output: 0.075, cached_input: 0.0075 },
   // Groq
   'llama-3.3-70b-versatile':   { input: 0.00059, output: 0.00079 },
   'llama-3.1-8b-instant':      { input: 0.00005, output: 0.00008 },
@@ -146,7 +146,7 @@ export const MODEL_PRICING = {
   'mistral-small-latest':      { input: 0.0001, output: 0.0003 },
   'mistral-large-latest':      { input: 0.002, output: 0.006 },
   // DeepSeek
-  'deepseek-chat':             { input: 0.00014, output: 0.00028 },
+  'deepseek-chat':             { input: 0.00014, output: 0.00028, cached_input: 0.00007 },
   'deepseek-reasoner':         { input: 0.00055, output: 0.00219 },
   // Chrome AI / Echo
   'chrome-ai':                 { input: 0, output: 0 },
@@ -157,7 +157,10 @@ export function estimateCost(model, usage) {
   if (!usage) return 0;
   const pricing = MODEL_PRICING[model];
   if (!pricing) return 0;
-  return (((usage.input_tokens || 0) / 1000) * pricing.input) +
+  const cachedTokens = usage.cache_read_input_tokens || 0;
+  const regularInputTokens = (usage.input_tokens || 0) - cachedTokens;
+  return ((regularInputTokens / 1000) * pricing.input) +
+         ((cachedTokens / 1000) * (pricing.cached_input || pricing.input)) +
          (((usage.output_tokens || 0) / 1000) * pricing.output);
 }
 
@@ -443,7 +446,9 @@ export class EchoProvider extends LLMProvider {
 // ── Chrome AI Provider ────────────────────────────────────────────
 
 export class ChromeAIProvider extends LLMProvider {
-  #session = null;
+  #sessions = new Map();
+  #maxSessions = 3;
+  #sessionTimeout = 300_000; // 5 minutes
   #apiNamespace = null;
   #lastSystemPrompt = null;
 
@@ -473,16 +478,55 @@ export class ChromeAIProvider extends LLMProvider {
     } catch { return false; }
   }
 
+  #sessionHash(systemPrompt) {
+    const s = systemPrompt || '';
+    return s.slice(0, 100) + ':' + s.length;
+  }
+
   async #getSession(systemPrompt) {
-    if (this.#session) return this.#session;
+    const hash = this.#sessionHash(systemPrompt);
+    const now = Date.now();
+
+    // Check if a valid cached session exists
+    const entry = this.#sessions.get(hash);
+    if (entry && (now - entry.timestamp) < this.#sessionTimeout) {
+      entry.timestamp = now; // refresh LRU timestamp
+      return entry.session;
+    }
+
+    // Evict expired entry if it exists
+    if (entry) {
+      if (entry.session?.destroy) entry.session.destroy();
+      this.#sessions.delete(hash);
+    }
+
+    // Evict oldest if pool is at max capacity
+    if (this.#sessions.size >= this.#maxSessions) {
+      let oldestKey = null;
+      let oldestTime = Infinity;
+      for (const [key, val] of this.#sessions) {
+        if (val.timestamp < oldestTime) {
+          oldestTime = val.timestamp;
+          oldestKey = key;
+        }
+      }
+      if (oldestKey !== null) {
+        const evicted = this.#sessions.get(oldestKey);
+        if (evicted?.session?.destroy) evicted.session.destroy();
+        this.#sessions.delete(oldestKey);
+      }
+    }
+
+    // Create new session
     const api = this.#getApi();
     if (!api) throw new Error('Chrome Prompt API not available');
     const initialPrompts = [];
     if (systemPrompt) initialPrompts.push({ role: 'system', content: systemPrompt });
-    this.#session = await api.create({
+    const session = await api.create({
       initialPrompts: initialPrompts.length > 0 ? initialPrompts : undefined,
     });
-    return this.#session;
+    this.#sessions.set(hash, { session, timestamp: now });
+    return session;
   }
 
   #preparePrompt(request) {
@@ -490,7 +534,7 @@ export class ChromeAIProvider extends LLMProvider {
     const systemMsg = messages.find(m => m.role === 'system');
     const systemContent = systemMsg?.content || 'You are a helpful assistant.';
     const baseSystem = systemContent.split('\n\nYou have browser tools')[0];
-    if (this.#session && this.#lastSystemPrompt !== baseSystem) this.resetSession();
+    if (this.#sessions.size > 0 && this.#lastSystemPrompt !== baseSystem) this.resetSession();
     this.#lastSystemPrompt = baseSystem;
     const conversationMsgs = messages.filter(m => m.role !== 'system');
     const lastUser = [...conversationMsgs].reverse().find(m => m.role === 'user');
@@ -592,9 +636,15 @@ export class ChromeAIProvider extends LLMProvider {
   }
 
   resetSession() {
-    if (this.#session?.destroy) this.#session.destroy();
-    this.#session = null;
+    for (const [, entry] of this.#sessions) {
+      if (entry.session?.destroy) entry.session.destroy();
+    }
+    this.#sessions.clear();
     this.#apiNamespace = null;
+  }
+
+  destroyPool() {
+    this.resetSession();
   }
 }
 
@@ -1394,12 +1444,13 @@ export class MateyProvider extends LLMProvider {
       yield { type: 'error', error: e.message };
     }
 
+    const inputChars = (request.messages || []).reduce((sum, m) => sum + (typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content).length), 0);
     yield {
       type: 'done',
       response: {
         content,
         tool_calls: [],
-        usage: { input_tokens: Math.round(content.length / 4), output_tokens: Math.round(content.length / 4) },
+        usage: { input_tokens: Math.round(inputChars / 4), output_tokens: Math.round(content.length / 4) },
         model,
       },
     };

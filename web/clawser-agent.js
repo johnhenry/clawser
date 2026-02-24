@@ -27,6 +27,12 @@ import { Codex } from './clawser-codex.js';
 import { SafetyPipeline } from './clawser-safety.js';
 import { SemanticMemory } from './clawser-memory.js';
 
+let _providersModule = null;
+async function getProvidersModule() {
+  if (!_providersModule) _providersModule = await import('./clawser-providers.js');
+  return _providersModule;
+}
+
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
 
@@ -581,6 +587,7 @@ export class ClawserAgent {
     if (opts.fallbackExecutor) agent.#fallbackExecutor = opts.fallbackExecutor;
     if (opts.selfRepairEngine) agent.#selfRepairEngine = opts.selfRepairEngine;
     if (opts.undoManager) agent.#undoManager = opts.undoManager;
+    if (opts.maxResultLength != null) agent.#maxResultLen = opts.maxResultLength;
     agent.#onToolCall = opts.onToolCall || (() => {});
 
     if (agent.#browserTools) {
@@ -905,8 +912,9 @@ export class ClawserAgent {
     return results;
   }
 
-  /** Max chars for a single tool result shown in chat */
+  /** Max chars for a single tool result shown in chat (default, overridable via opts.maxResultLength) */
   static #MAX_RESULT_LEN = 1500;
+  #maxResultLen = 1500;
 
   /**
    * Execute code blocks from an LLM response and perform a follow-up LLM call
@@ -994,11 +1002,14 @@ export class ClawserAgent {
     this.#onEvent('codex.executed', `${results.length} code block(s)`);
 
     // Truncate results to prevent flooding
-    const maxLen = ClawserAgent.#MAX_RESULT_LEN;
+    const maxLen = this.#maxResultLen;
     const resultSummaries = results.map(r => {
       if (r.error) return `Error: ${r.error}`;
       if (!r.output || r.output === '(no output)') return '(no output)';
-      if (r.output.length > maxLen) return r.output.slice(0, maxLen) + `\n... (${r.output.length} chars total, truncated)`;
+      if (r.output.length > maxLen) {
+        this.#eventLog.append('tool_result_truncated', { tool: r.name || 'unknown', original: r.output.length, truncated: maxLen }, 'system');
+        return r.output.slice(0, maxLen) + `\n... (${r.output.length} chars total, truncated)`;
+      }
       return r.output;
     });
 
@@ -1102,7 +1113,7 @@ export class ClawserAgent {
       // Response cache lookup (skip on first iteration when tools may be pending)
       let cacheKey = null;
       if (this.#responseCache) {
-        const { ResponseCache } = await import('./clawser-providers.js');
+        const { ResponseCache } = await getProvidersModule();
         cacheKey = ResponseCache.cacheKey(request.messages, this.#model);
         const cached = this.#responseCache.get(cacheKey);
         if (cached) {
@@ -1130,7 +1141,7 @@ export class ClawserAgent {
 
       // Autonomy: record cost after LLM call
       if (response.usage) {
-        const { estimateCost } = await import('./clawser-providers.js');
+        const { estimateCost } = await getProvidersModule();
         const cost = estimateCost(response.model, response.usage);
         this.#autonomy.recordCost(Math.round(cost * 100));
       }
@@ -1308,7 +1319,7 @@ export class ClawserAgent {
       // Response cache lookup
       let cacheKey = null;
       if (this.#responseCache) {
-        const { ResponseCache } = await import('./clawser-providers.js');
+        const { ResponseCache } = await getProvidersModule();
         cacheKey = ResponseCache.cacheKey(request.messages, this.#model);
         const cached = this.#responseCache.get(cacheKey);
         if (cached) {

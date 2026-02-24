@@ -68,11 +68,27 @@ function adaptPythonisms(code) {
  * Only adds await if not already preceded by await.
  */
 function autoAwait(code) {
-  // await before print() calls
-  code = code.replace(/(?<!\bawait\s+)(\bprint\s*\()/g, 'await $1');
-  // await before browser_* tool calls at statement level (not inside print())
-  // Match: start of line or after ; then optional whitespace, then browser_xxx(
-  code = code.replace(/(^|;\s*)(?!await\s)(browser_\w+\s*\()/gm, '$1await $2');
+  // Skip matches inside string literals (single, double, backtick)
+  const stringPattern = /(['"`])(?:(?!\1|\\).|\\.)*\1/g;
+  const stringRanges = [];
+  let m;
+  while ((m = stringPattern.exec(code)) !== null) {
+    stringRanges.push([m.index, m.index + m[0].length]);
+  }
+  function inString(idx) {
+    return stringRanges.some(([s, e]) => idx >= s && idx < e);
+  }
+
+  // await before print() calls — skip if inside string
+  code = code.replace(/(?<!\bawait\s+)(\bprint\s*\()/g, (match, p1, offset) => {
+    if (inString(offset)) return match;
+    return 'await ' + p1;
+  });
+  // await before browser_* tool calls at statement level
+  code = code.replace(/(^|;\s*)(?!await\s)(browser_\w+\s*\()/gm, (match, p1, p2, offset) => {
+    if (inString(offset)) return match;
+    return p1 + 'await ' + p2;
+  });
   return code;
 }
 

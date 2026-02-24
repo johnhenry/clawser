@@ -328,6 +328,7 @@ export async function newConversation() {
 // ── Switch conversation ─────────────────────────────────────────
 /** Switch to an existing conversation by ID, restoring its history and events. @param {string} convId */
 export async function switchConversation(convId) {
+  if (state.isSending) return;
   if (!state.agent) return;
   const wsId = state.agent.getWorkspace();
 
