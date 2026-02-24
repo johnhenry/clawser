@@ -1,0 +1,37 @@
+# Feature Modules
+
+Feature modules extend the core agent with specialized capabilities. Each module registers tools, state, and UI components.
+
+## Module Manifest
+
+| Module | File | Tools | Description |
+|--------|------|-------|-------------|
+| Tool Builder | `clawser-tool-builder.js` | `tool_create`, `tool_edit`, `tool_delete`, `tool_list` | Dynamic tool creation at runtime |
+| Multi-Channel | `clawser-channels.js` | `channel_create`, `channel_list`, `channel_send`, `channel_receive` | Cross-tab and WebSocket messaging |
+| Delegation | `clawser-delegation.js` | `delegate_task`, `delegate_status`, `delegate_cancel` | Sub-agent task delegation |
+| Git Behavior | `clawser-git-behavior.js` | `git_status`, `git_diff`, `git_commit`, `git_log` | Git-aware operations via OPFS |
+| Git Memory | `clawser-git-memory.js` | `git_memory_store`, `git_memory_recall` | Version-controlled memory |
+| Automation | `clawser-automation.js` | `routine_create`, `routine_list`, `routine_run`, `routine_delete` | Scheduled and triggered routines |
+| Sandbox | `clawser-sandbox.js` | `sandbox_exec`, `sandbox_status` | WASM-isolated code execution |
+| Peripherals | `clawser-peripherals.js` | `peripheral_list`, `peripheral_connect`, `peripheral_send` | Hardware device integration |
+| Pairing | `clawser-pairing.js` | `pair_request`, `pair_accept`, `pair_list` | Agent-to-agent pairing |
+| Bridge | `clawser-bridge.js` | `bridge_connect`, `bridge_send`, `bridge_status` | External system bridges |
+| Goals | `clawser-goals.js` | `goal_add`, `goal_update`, `goal_complete`, `goal_list` | Hierarchical goal tracking |
+| Skill Registry | `clawser-skill-registry-client.js` | `skill_search`, `skill_install`, `skill_rate` | Community skill discovery |
+| Terminal Sessions | `clawser-terminal-sessions.js` | `session_create`, `session_switch`, `session_list` | Multiple terminal sessions |
+| Agent Storage | `clawser-agent-storage.js` | — | Agent definition persistence |
+
+## Module Lifecycle
+
+1. **Import**: Module loaded via dynamic `import()` in `clawser-app.js`
+2. **Instantiate**: Constructor receives agent instance and options
+3. **Register tools**: Each module calls `browserTools.register()` for its tools
+4. **Store reference**: Singleton stored in `state.features.{moduleName}`
+
+## Adding a Module
+
+1. Create `web/clawser-{name}.js`
+2. Export a class with a constructor accepting `(agent, browserTools, opts)`
+3. Register tools in the constructor via `browserTools.register(new YourTool())`
+4. Import and instantiate in `clawser-app.js` during workspace init
+5. Store in `state.features.{name}`
