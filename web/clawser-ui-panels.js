@@ -18,6 +18,7 @@ import { addMsg, addErrorMsg, updateState, resetToolAndEventState } from './claw
 import { loadWorkspaces, getActiveWorkspaceId, renameWorkspace, deleteWorkspace, createWorkspace, getWorkspaceName } from './clawser-workspaces.js';
 import { navigate } from './clawser-router.js';
 import { SkillStorage } from './clawser-skills.js';
+import { OAUTH_PROVIDERS } from './clawser-oauth.js';
 
 // ── OPFS file browser ──────────────────────────────────────────
 const HIDDEN_DIRS = new Set(['.checkpoints', '.skills', '.conversations']);
@@ -86,6 +87,53 @@ export async function refreshFiles(path = '/', el = null) {
     if (count === 0) el.textContent = '(empty — files created by the agent will appear here)';
   } catch (e) {
     el.textContent = `Error: ${e.message}`;
+  }
+}
+
+// ── Mount local folder (Block 2) ─────────────────────────────────
+/** Prompt user to pick a local directory and mount it into the workspace FS. */
+export async function mountLocalFolder() {
+  if (!window.showDirectoryPicker) {
+    addErrorMsg('showDirectoryPicker not supported in this browser.');
+    return;
+  }
+  try {
+    const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    const mountPoint = await modal.prompt('Mount point (under /mnt/):', `/mnt/${handle.name}`);
+    if (!mountPoint) return;
+    state.workspaceFs.mount(mountPoint, handle);
+    renderMountList();
+    refreshFiles();
+    addMsg('system', `Mounted "${handle.name}" at ${mountPoint}`);
+  } catch (e) {
+    if (e.name !== 'AbortError') addErrorMsg(`Mount failed: ${e.message}`);
+  }
+}
+
+/** Render the list of active mounts with unmount buttons. */
+export function renderMountList() {
+  const el = $('mountList');
+  if (!el) return;
+  el.innerHTML = '';
+  if (!state.workspaceFs?.mountTable) return;
+  const mounts = state.workspaceFs.mountTable;
+  if (mounts.length === 0) return;
+  for (const m of mounts) {
+    const d = document.createElement('div');
+    d.className = 'mount-item';
+    d.innerHTML = `<span class="mount-point">${esc(m.path)}</span><span style="color:var(--dim);font-size:10px;">${esc(m.name)}${m.readOnly ? ' (ro)' : ''}</span>`;
+    const btn = document.createElement('button');
+    btn.className = 'mount-unmount';
+    btn.textContent = '✕';
+    btn.title = 'Unmount';
+    btn.addEventListener('click', () => {
+      state.workspaceFs.unmount(m.path);
+      renderMountList();
+      refreshFiles();
+      addMsg('system', `Unmounted ${m.path}`);
+    });
+    d.appendChild(btn);
+    el.appendChild(d);
   }
 }
 
@@ -169,25 +217,96 @@ export function renderMemoryResults(results, el) {
   }
 }
 
-/** Execute a memory search using the query input and render results. */
-export function doMemorySearch() {
+/** Execute a memory search using the query input and render results.
+ *  When semantic toggle is checked, uses async hybrid search. */
+export async function doMemorySearch() {
   if (!state.agent) return;
   const query = $('memQuery').value.trim();
-  renderMemoryResults(state.agent.memoryRecall(query), $('memResults'));
+  const semantic = $('memSemanticToggle')?.checked;
+  const category = $('memCatFilter').value || undefined;
+
+  if (semantic && query) {
+    const el = $('memResults');
+    el.innerHTML = '<div style="color:var(--muted);font-size:11px;padding:8px;">Searching...</div>';
+    try {
+      const results = await state.agent.memoryRecallAsync(query, { category });
+      renderMemoryResults(results, el);
+    } catch (e) {
+      el.textContent = `Search error: ${e.message}`;
+    }
+  } else {
+    renderMemoryResults(state.agent.memoryRecall(query), $('memResults'));
+  }
 }
 
-// ── Goals ──────────────────────────────────────────────────────
-/** Render the goals list with status indicators and completion buttons. */
+// ── Goals (tree view — Block 8) ────────────────────────────────
+const _collapsedGoals = new Set();
+
+/** Toggle goal expand/collapse state. */
+export function toggleGoalExpand(goalId) {
+  if (_collapsedGoals.has(goalId)) _collapsedGoals.delete(goalId);
+  else _collapsedGoals.add(goalId);
+  renderGoals();
+}
+
+/** Render the goals tree with indentation, progress bars, artifact links, and collapse toggles. */
 export function renderGoals() {
   if (!state.agent) return;
   const agentState = state.agent.getState();
   const goals = agentState.goals || [];
   const el = $('goalList');
   el.innerHTML = '';
+
+  // Build parent→children map
+  const childMap = new Map();
+  const roots = [];
   for (const g of goals) {
+    if (g.parentId) {
+      if (!childMap.has(g.parentId)) childMap.set(g.parentId, []);
+      childMap.get(g.parentId).push(g);
+    } else {
+      roots.push(g);
+    }
+  }
+
+  function renderGoalNode(g, depth) {
+    const children = childMap.get(g.id) || [];
+    const hasChildren = children.length > 0;
+    const collapsed = _collapsedGoals.has(g.id);
+
     const d = document.createElement('div');
-    d.className = 'goal-item';
-    d.innerHTML = `<span class="goal-dot ${esc(g.status)}">●</span><span>${esc(g.description)}</span>`;
+    d.className = 'goal-item goal-tree-item';
+    d.style.marginLeft = `${depth * 16}px`;
+
+    // Toggle arrow
+    let arrow = '';
+    if (hasChildren) {
+      arrow = `<span class="goal-toggle" data-gid="${g.id}">${collapsed ? '▶' : '▼'}</span>`;
+    }
+
+    d.innerHTML = `${arrow}<span class="goal-dot ${esc(g.status)}">●</span><span class="goal-desc">${esc(g.description)}</span>`;
+
+    // Progress bar for goals with sub-goals
+    if (hasChildren) {
+      const completed = children.filter(c => c.status === 'completed').length;
+      const pct = Math.round((completed / children.length) * 100);
+      d.insertAdjacentHTML('beforeend',
+        `<div class="goal-progress"><div class="goal-progress-fill" style="width:${pct}%"></div></div>`);
+    }
+
+    // Artifact links
+    if (g.artifacts?.length > 0) {
+      for (const a of g.artifacts) {
+        const link = document.createElement('a');
+        link.className = 'goal-artifact-link';
+        link.href = '#';
+        link.textContent = a.name || a.path || 'artifact';
+        link.addEventListener('click', (e) => { e.preventDefault(); });
+        d.appendChild(link);
+      }
+    }
+
+    // Complete button
     if (g.status === 'active') {
       const btn = document.createElement('button');
       btn.textContent = '✓';
@@ -195,7 +314,31 @@ export function renderGoals() {
       btn.addEventListener('click', () => { state.agent.completeGoal(g.id); renderGoals(); updateState(); });
       d.appendChild(btn);
     }
+
+    // Collapse toggle handler
+    if (hasChildren) {
+      d.querySelector('.goal-toggle').addEventListener('click', () => toggleGoalExpand(g.id));
+    }
+
     el.appendChild(d);
+
+    // Render children recursively if not collapsed
+    if (hasChildren && !collapsed) {
+      for (const child of children) {
+        renderGoalNode(child, depth + 1);
+      }
+    }
+  }
+
+  for (const root of roots) {
+    renderGoalNode(root, 0);
+  }
+
+  // Handle flat goals with no roots (all have parentId but parent doesn't exist)
+  if (roots.length === 0 && goals.length > 0) {
+    for (const g of goals) {
+      renderGoalNode(g, 0);
+    }
   }
 }
 
@@ -590,6 +733,112 @@ export function renderHeartbeatSection() {
   }
 }
 
+/** Render OAuth connected apps section (Block 16). */
+export function renderOAuthSection() {
+  const el = $('oauthProviderList');
+  if (!el) return;
+  el.innerHTML = '';
+
+  for (const [key, prov] of Object.entries(OAUTH_PROVIDERS)) {
+    const connected = state.oauthManager?.isConnected(key);
+    const d = document.createElement('div');
+    d.className = 'oauth-provider-card';
+    d.innerHTML = `
+      <span class="oauth-name">${esc(prov.name)}</span>
+      <span class="oauth-status ${connected ? 'connected' : ''}">${connected ? 'Connected' : 'Not connected'}</span>
+    `;
+    const btn = document.createElement('button');
+    btn.className = `btn-sm ${connected ? 'btn-surface2' : ''}`;
+    btn.textContent = connected ? 'Disconnect' : 'Connect';
+    btn.addEventListener('click', async () => {
+      if (!state.oauthManager) { addErrorMsg('OAuth manager not initialized.'); return; }
+      try {
+        if (connected) {
+          await state.oauthManager.disconnect(key);
+          addMsg('system', `Disconnected from ${prov.name}.`);
+        } else {
+          const clientId = await modal.prompt(`${prov.name} Client ID:`);
+          if (!clientId) return;
+          await state.oauthManager.authenticate(key, clientId);
+          addMsg('system', `Connected to ${prov.name}.`);
+        }
+        renderOAuthSection();
+      } catch (e) {
+        addErrorMsg(`OAuth error: ${e.message}`);
+      }
+    });
+    d.appendChild(btn);
+    el.appendChild(d);
+  }
+}
+
+/** Skill registry URL constant */
+const SKILL_REGISTRY_URL = 'https://raw.githubusercontent.com/nicholasgasior/agent-skills-index/main/index.json';
+
+/** Search the skill registry and render results. */
+export async function searchSkillRegistry(query) {
+  const resultsEl = $('skillBrowseResults');
+  if (!resultsEl) return;
+  if (!query?.trim()) { resultsEl.innerHTML = ''; return; }
+
+  resultsEl.innerHTML = '<div style="color:var(--muted);font-size:11px;padding:8px;">Searching...</div>';
+
+  try {
+    const resp = await fetch(SKILL_REGISTRY_URL);
+    if (!resp.ok) throw new Error(`Registry fetch failed: ${resp.status}`);
+    const index = await resp.json();
+    const skills = (index.skills || index || []);
+    const q = query.toLowerCase();
+    const matches = skills.filter(s =>
+      (s.name || '').toLowerCase().includes(q) ||
+      (s.description || '').toLowerCase().includes(q) ||
+      (s.tags || []).some(t => t.toLowerCase().includes(q))
+    ).slice(0, 20);
+
+    resultsEl.innerHTML = '';
+    if (matches.length === 0) {
+      resultsEl.innerHTML = '<div style="color:var(--dim);font-size:11px;padding:8px;">No results found.</div>';
+      return;
+    }
+
+    for (const skill of matches) {
+      const card = document.createElement('div');
+      card.className = 'skill-browse-card';
+      card.innerHTML = `
+        <div class="skill-browse-name">${esc(skill.name)}</div>
+        <div class="skill-browse-desc">${esc(skill.description || '')}</div>
+      `;
+      const installBtn = document.createElement('button');
+      installBtn.className = 'btn-sm';
+      installBtn.textContent = 'Install';
+      installBtn.addEventListener('click', async () => {
+        if (!skill.url) { addErrorMsg('No download URL for this skill.'); return; }
+        try {
+          installBtn.disabled = true;
+          installBtn.textContent = 'Installing...';
+          const wsId = state.agent?.getWorkspace() || 'default';
+          const zipResp = await fetch(skill.url);
+          if (!zipResp.ok) throw new Error(`Download failed: ${zipResp.status}`);
+          const blob = await zipResp.blob();
+          await state.skillRegistry.installFromZip('global', wsId, blob);
+          await state.skillRegistry.discover(wsId);
+          renderSkills();
+          addMsg('system', `Skill "${skill.name}" installed from registry.`);
+          installBtn.textContent = 'Installed';
+        } catch (e) {
+          addErrorMsg(`Install failed: ${e.message}`);
+          installBtn.disabled = false;
+          installBtn.textContent = 'Install';
+        }
+      });
+      card.appendChild(installBtn);
+      resultsEl.appendChild(card);
+    }
+  } catch (e) {
+    resultsEl.innerHTML = `<div style="color:var(--red);font-size:11px;padding:8px;">Registry error: ${esc(e.message)}</div>`;
+  }
+}
+
 // ── Header badges (Batch 2) ─────────────────────────────────────
 
 /** Update daemon badge in header. */
@@ -686,6 +935,7 @@ export function refreshDashboard() {
 export function initPanelListeners() {
   // File browser
   $('refreshFiles').addEventListener('click', () => refreshFiles());
+  $('mountFolder').addEventListener('click', () => mountLocalFolder());
 
   // Memory
   $('memAddToggle').addEventListener('click', () => {
@@ -843,6 +1093,14 @@ export function initPanelListeners() {
     state.pendingImportBlob = null;
   });
 
+  // Skill registry search
+  $('skillSearchBtn')?.addEventListener('click', () => {
+    searchSkillRegistry($('skillSearchInput').value.trim());
+  });
+  $('skillSearchInput')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') searchSkillRegistry($('skillSearchInput').value.trim());
+  });
+
   // Slash command autocomplete
   $('userInput').addEventListener('input', () => {
     const text = $('userInput').value;
@@ -917,6 +1175,7 @@ export function initPanelListeners() {
   bindToggle('identityToggle', 'identitySection', 'identityArrow');
   bindToggle('routingToggle', 'routingSection', 'routingArrow');
   bindToggle('authProfilesToggle', 'authProfilesSection', 'authProfilesArrow');
+  bindToggle('oauthToggle', 'oauthSection', 'oauthArrow');
   bindToggle('selfRepairToggle', 'selfRepairSection', 'selfRepairArrow');
   bindToggle('cacheToggle', 'cacheSection', 'cacheArrow');
   bindToggle('sandboxToggle', 'sandboxSection', 'sandboxArrow');

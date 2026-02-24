@@ -19,7 +19,7 @@ import { loadConversations } from './clawser-conversations.js';
 import { SERVICES, loadAccounts, createAccount, deleteAccount, saveConfig, applyRestoredConfig, rebuildProviderDropdown, setupProviders, initAccountListeners } from './clawser-accounts.js';
 import { parseHash, navigate, showView, updateRouteHash, activatePanel, initRouterListeners } from './clawser-router.js';
 import { setStatus, addMsg, addErrorMsg, addToolCall, addInlineToolCall, updateInlineToolCall, addEvent, updateState, updateCostDisplay, replaySessionHistory, replayFromEvents, updateConvNameDisplay, persistActiveConversation, switchConversation, initChatListeners, renderToolCalls, resetChatUI, addSubAgentCard, updateSubAgentCard, addSafetyBanner, addUndoButton, addIntentBadge } from './clawser-ui-chat.js';
-import { refreshFiles, renderGoals, renderToolRegistry, renderSkills, applySecuritySettings, initPanelListeners, renderAutonomySection, renderIdentitySection, renderRoutingSection, renderAuthProfilesSection, renderSelfRepairSection, updateCacheStats, renderSandboxSection, renderHeartbeatSection, updateCostMeter, updateAutonomyBadge, updateDaemonBadge, updateRemoteBadge, refreshDashboard } from './clawser-ui-panels.js';
+import { refreshFiles, renderGoals, renderToolRegistry, renderSkills, applySecuritySettings, initPanelListeners, renderAutonomySection, renderIdentitySection, renderRoutingSection, renderAuthProfilesSection, renderSelfRepairSection, updateCacheStats, renderSandboxSection, renderHeartbeatSection, updateCostMeter, updateAutonomyBadge, updateDaemonBadge, updateRemoteBadge, refreshDashboard, renderMountList, renderOAuthSection } from './clawser-ui-panels.js';
 import { initCmdPaletteListeners } from './clawser-cmd-palette.js';
 
 import { ClawserAgent } from './clawser-agent.js';
@@ -38,6 +38,7 @@ import { StuckDetector, SelfRepairEngine } from './clawser-self-repair.js';
 import { UndoManager } from './clawser-undo.js';
 import { HeartbeatRunner } from './clawser-heartbeat.js';
 import { AuthProfileManager } from './clawser-auth-profiles.js';
+import { OAuthManager } from './clawser-oauth.js';
 import { MetricsCollector, RingBufferLog } from './clawser-metrics.js';
 import { DaemonController } from './clawser-daemon.js';
 import { RoutineEngine } from './clawser-routines.js';
@@ -88,6 +89,8 @@ state.routineEngine = new RoutineEngine({
   },
   onNotify: (routine, message) => addEvent('routine', message),
 });
+
+state.oauthManager = new OAuthManager({ vault: state.vault });
 
 // Freeze service singleton slots to prevent accidental reassignment
 Object.defineProperty(state, 'workspaceFs', { value: state.workspaceFs, writable: false, configurable: false });
@@ -271,6 +274,8 @@ async function initWorkspace(wsId, convId) {
       providers: state.providers,
       mcpManager: state.mcpManager,
       responseCache: state.responseCache,
+      selfRepairEngine: state.selfRepairEngine,
+      undoManager: state.undoManager,
       onEvent: (topic, payload) => addEvent(topic, payload),
       onLog: (level, msg) => {
         const methods = ['debug','debug','info','warn','error'];
@@ -401,10 +406,12 @@ async function initWorkspace(wsId, convId) {
     renderIdentitySection();
     renderRoutingSection();
     renderAuthProfilesSection();
+    renderOAuthSection();
     renderSelfRepairSection();
     updateCacheStats();
     renderSandboxSection();
     renderHeartbeatSection();
+    renderMountList();
 
     // Initialize heartbeat (Batch 7)
     state.heartbeatRunner.loadDefault();

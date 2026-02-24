@@ -152,7 +152,8 @@
 
     <!-- Files (OPFS) -->
     <div class="panel" id="panelFiles">
-      <div class="panel-header">Files (OPFS) <button class="btn-sm ml-auto" id="refreshFiles">Refresh</button></div>
+      <div class="panel-header">Files (OPFS) <button class="btn-sm ml-auto" id="mountFolder">Mount</button><button class="btn-sm" id="refreshFiles">Refresh</button></div>
+      <div id="mountList" class="mount-list"></div>
       <div class="panel-body panel-mono" id="fileList"></div>
     </div>
 
@@ -180,6 +181,7 @@
           <option value="user">user</option>
           <option value="context">context</option>
         </select>
+        <label class="mem-semantic-label"><input type="checkbox" id="memSemanticToggle" /> Semantic</label>
         <button class="btn-sm" id="memSearch">Search</button>
         <button class="btn-sm btn-surface2" id="memListAll">All</button>
       </div>
@@ -212,6 +214,11 @@
           Import <input type="file" id="skillImportFile" accept=".zip" style="display:none;" />
         </label>
       </div>
+      <div class="skill-search-row">
+        <input type="text" id="skillSearchInput" class="skill-search-input" placeholder="Search registry..." />
+        <button class="btn-sm" id="skillSearchBtn">Search</button>
+      </div>
+      <div id="skillBrowseResults" class="skill-browse-results"></div>
       <div id="skillScopeSelect" class="skill-scope-bar">
         <label class="skill-scope-label">Install scope:</label>
         <div class="skill-scope-btns">
@@ -427,6 +434,14 @@
           <div class="config-group">
             <button class="btn-sm" id="authProfileAdd">+ Add Profile</button>
           </div>
+        </div>
+
+        <!-- Connected Apps / OAuth (Block 16) -->
+        <div class="config-group config-toggle" id="oauthToggle">
+          <label class="config-toggle">Connected Apps <span id="oauthArrow" class="config-arrow">&#x25B6;</span></label>
+        </div>
+        <div id="oauthSection" class="config-section-hidden">
+          <div id="oauthProviderList"></div>
         </div>
 
         <!-- Self-Repair (Block 22) -->

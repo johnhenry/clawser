@@ -8988,6 +8988,102 @@ section('Router — New Panels');
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  Batch 3: Panel Enhancements + Agent Loop Integration
+// ═══════════════════════════════════════════════════════════════
+
+section('Batch 3 — Files Panel Mount (Block 2)');
+
+{
+  const { MountableFs } = await import('./clawser-mount.js');
+  const mfs = new MountableFs();
+  assert('MountableFs mountTable starts empty', mfs.mountTable.length === 0);
+  assert('MountableFs mountCount is 0', mfs.mountCount === 0);
+}
+
+section('Batch 3 — Memory Semantic Toggle (Block 4)');
+
+{
+  // Verify memoryRecallAsync exists on agent
+  const { ClawserAgent } = await import('./clawser-agent.js');
+  assert('ClawserAgent has memoryRecallAsync', typeof ClawserAgent.prototype.memoryRecallAsync === 'function');
+}
+
+section('Batch 3 — Goals Tree View (Block 8)');
+
+{
+  // Test that renderGoals handles flat goals (no parentId)
+  const { Goal, resetGoalIdCounter } = await import('./clawser-goals.js');
+  resetGoalIdCounter();
+  const g1 = new Goal({ description: 'Test goal 1' });
+  const g2 = new Goal({ description: 'Test goal 2' });
+  assert('Goal has no parentId by default', g1.parentId === undefined || g1.parentId === null);
+  assert('Goals created with unique IDs', g1.id !== g2.id);
+}
+
+section('Batch 3 — OAuth Section (Block 16)');
+
+{
+  const { OAUTH_PROVIDERS, OAuthManager } = await import('./clawser-oauth.js');
+  assert('OAUTH_PROVIDERS has google', 'google' in OAUTH_PROVIDERS);
+  assert('OAUTH_PROVIDERS has github', 'github' in OAUTH_PROVIDERS);
+  assert('OAUTH_PROVIDERS has notion', 'notion' in OAUTH_PROVIDERS);
+  assert('OAUTH_PROVIDERS has slack', 'slack' in OAUTH_PROVIDERS);
+  assert('OAUTH_PROVIDERS has linear', 'linear' in OAUTH_PROVIDERS);
+  const mgr = new OAuthManager();
+  assert('OAuthManager listConnections returns array', Array.isArray(mgr.listConnections()));
+  assert('OAuthManager isConnected returns false for unknown', mgr.isConnected('google') === false);
+}
+
+section('Batch 3 — Skills Registry Search (Block 17)');
+
+{
+  // Verify SkillRegistryClient exists (used for search)
+  const { SkillRegistryClient } = await import('./clawser-skills.js');
+  assert('SkillRegistryClient exists', typeof SkillRegistryClient === 'function');
+}
+
+section('Agent Loop — FallbackExecutor (Block 11)');
+
+{
+  const { FallbackExecutor, FallbackChain, createFallbackEntry } = await import('./clawser-fallback.js');
+  const chain = new FallbackChain();
+  chain.add(createFallbackEntry({ providerId: 'echo', model: 'echo-1' }));
+  const exec = new FallbackExecutor(chain);
+  assert('FallbackExecutor created from chain', exec instanceof FallbackExecutor);
+  assert('FallbackExecutor has execute method', typeof exec.execute === 'function');
+}
+
+section('Agent Loop — StuckDetector / SelfRepairEngine (Block 22)');
+
+{
+  const { StuckDetector, SelfRepairEngine } = await import('./clawser-self-repair.js');
+  const detector = new StuckDetector();
+  const engine = new SelfRepairEngine({ detector });
+  assert('SelfRepairEngine has check method', typeof engine.check === 'function');
+
+  // check with healthy state returns no repairs
+  const repairs = await engine.check({
+    lastActivityAt: Date.now(),
+    recentToolCalls: [{ name: 'test', success: true }],
+    tokenUsage: 100,
+    contextLimit: 128000,
+    consecutiveErrors: 0,
+  });
+  assert('SelfRepairEngine check returns array', Array.isArray(repairs));
+}
+
+section('Agent Loop — UndoManager (Block 25)');
+
+{
+  const { UndoManager, resetTurnCounter } = await import('./clawser-undo.js');
+  resetTurnCounter();
+  const um = new UndoManager();
+  assert('UndoManager has beginTurn method', typeof um.beginTurn === 'function');
+  um.beginTurn({ historyLength: 5 });
+  assert('UndoManager undoDepth after beginTurn', um.undoDepth >= 1);
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  SUMMARY
 // ═══════════════════════════════════════════════════════════════
 

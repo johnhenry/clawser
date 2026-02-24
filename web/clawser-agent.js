@@ -513,6 +513,12 @@ export class ClawserAgent {
   #hooks = new HookPipeline();
   /** @type {SafetyPipeline} */
   #safety = new SafetyPipeline();
+  /** @type {import('./clawser-fallback.js').FallbackExecutor|null} */
+  #fallbackExecutor = null;
+  /** @type {import('./clawser-self-repair.js').SelfRepairEngine|null} */
+  #selfRepairEngine = null;
+  /** @type {import('./clawser-undo.js').UndoManager|null} */
+  #undoManager = null;
 
   // ── Workspace ────────────────────────────────────────────────
   #workspaceId = 'default';
@@ -554,6 +560,9 @@ export class ClawserAgent {
     if (opts.hooks) agent.#hooks = opts.hooks;
     if (opts.safety) agent.#safety = opts.safety;
     if (opts.memory) agent.#memory = opts.memory;
+    if (opts.fallbackExecutor) agent.#fallbackExecutor = opts.fallbackExecutor;
+    if (opts.selfRepairEngine) agent.#selfRepairEngine = opts.selfRepairEngine;
+    if (opts.undoManager) agent.#undoManager = opts.undoManager;
     agent.#onToolCall = opts.onToolCall || (() => {});
 
     if (agent.#browserTools) {
@@ -988,6 +997,11 @@ export class ClawserAgent {
       }
     }
 
+    // Undo: begin turn checkpoint
+    if (this.#undoManager) {
+      this.#undoManager.beginTurn({ historyLength: this.#history.length });
+    }
+
     let maxIterations = this.#config.maxToolIterations || 20;
     let codexDone = false;
 
@@ -1035,7 +1049,14 @@ export class ClawserAgent {
 
       let response;
       try {
-        response = await provider.chat(request, this.#apiKey, this.#model);
+        if (this.#fallbackExecutor) {
+          const { result } = await this.#fallbackExecutor.execute(
+            (pid, mdl) => this.#providers.get(pid).chat(request, this.#apiKey, mdl)
+          );
+          response = result;
+        } else {
+          response = await provider.chat(request, this.#apiKey, this.#model);
+        }
       } catch (e) {
         this.#eventLog.append('error', { message: e.message }, 'system');
         return { status: -1, data: `Provider error: ${e.message}` };
@@ -1109,6 +1130,42 @@ export class ClawserAgent {
           name: tr.name,
           result: tr.result,
         }, 'system');
+
+        // Undo: record file/memory ops for revert
+        if (this.#undoManager && tr.result.success) {
+          if (tr.name === 'fs_write' || tr.name === 'browser_fs_write') {
+            this.#undoManager.recordFileOp?.({ type: 'write', path: tr.name });
+          } else if (tr.name === 'fs_delete' || tr.name === 'browser_fs_delete') {
+            this.#undoManager.recordFileOp?.({ type: 'delete', path: tr.name });
+          } else if (tr.name === 'memory_store') {
+            this.#undoManager.recordMemoryOp?.({ type: 'store' });
+          } else if (tr.name === 'memory_forget') {
+            this.#undoManager.recordMemoryOp?.({ type: 'forget' });
+          }
+        }
+      }
+
+      // Self-repair: stuck detection after tool loop iteration
+      if (this.#selfRepairEngine) {
+        const jobState = {
+          lastActivityAt: Date.now(),
+          recentToolCalls: toolResults.map(tr => ({ name: tr.name, success: tr.result.success })),
+          tokenUsage: this.estimateHistoryTokens(),
+          contextLimit: this.#config.contextLimit || 128000,
+          consecutiveErrors: toolResults.filter(tr => !tr.result.success).length,
+        };
+        try {
+          const repairs = await this.#selfRepairEngine.check(jobState);
+          for (const r of repairs) {
+            if (r.strategy?.action === 'nudge' && r.strategy.prompt) {
+              this.#history.push({ role: 'system', content: r.strategy.prompt });
+            } else if (r.strategy?.action === 'compact') {
+              await this.compactContext();
+            }
+          }
+        } catch (e) {
+          this.#onLog(3, `self-repair check failed: ${e.message}`);
+        }
       }
 
       // Loop back to call LLM again with tool results
@@ -1146,6 +1203,11 @@ export class ClawserAgent {
       if (inbound.ctx.message !== lastUserMsg.content) {
         lastUserMsg.content = inbound.ctx.message;
       }
+    }
+
+    // Undo: begin turn checkpoint
+    if (this.#undoManager) {
+      this.#undoManager.beginTurn({ historyLength: this.#history.length });
     }
 
     let maxIterations = this.#config.maxToolIterations || 20;
@@ -1196,7 +1258,15 @@ export class ClawserAgent {
       // Check if streaming is supported
       if (!provider.supportsStreaming) {
         // Fall back to non-streaming but yield intermediate events so UI stays informed
-        const response = await provider.chat(request, this.#apiKey, this.#model);
+        let response;
+        if (this.#fallbackExecutor) {
+          const { result } = await this.#fallbackExecutor.execute(
+            (pid, mdl) => this.#providers.get(pid).chat(request, this.#apiKey, mdl)
+          );
+          response = result;
+        } else {
+          response = await provider.chat(request, this.#apiKey, this.#model);
+        }
 
         // Codex path
         if (useCodex && (!response.tool_calls || response.tool_calls.length === 0)) {
@@ -1244,6 +1314,27 @@ export class ClawserAgent {
           this.#eventLog.append('tool_result', { call_id: tr.id, name: tr.name, result: tr.result }, 'system');
           yield { type: 'tool_result', name: tr.name, result: tr.result };
         }
+
+        // Self-repair: stuck detection (non-streaming path)
+        if (this.#selfRepairEngine) {
+          try {
+            const repairs = await this.#selfRepairEngine.check({
+              lastActivityAt: Date.now(),
+              recentToolCalls: toolResults.map(tr => ({ name: tr.name, success: tr.result.success })),
+              tokenUsage: this.estimateHistoryTokens(),
+              contextLimit: this.#config.contextLimit || 128000,
+              consecutiveErrors: toolResults.filter(tr => !tr.result.success).length,
+            });
+            for (const r of repairs) {
+              if (r.strategy?.action === 'nudge' && r.strategy.prompt) {
+                this.#history.push({ role: 'system', content: r.strategy.prompt });
+              } else if (r.strategy?.action === 'compact') {
+                await this.compactContext();
+              }
+            }
+          } catch (e) { this.#onLog(3, `self-repair check failed: ${e.message}`); }
+        }
+
         continue; // next iteration of the agent loop
       }
 
@@ -1320,6 +1411,26 @@ export class ClawserAgent {
         });
         this.#eventLog.append('tool_result', { call_id: tr.id, name: tr.name, result: tr.result }, 'system');
         yield { type: 'tool_result', name: tr.name, result: tr.result };
+      }
+
+      // Self-repair: stuck detection (streaming path)
+      if (this.#selfRepairEngine) {
+        try {
+          const repairs = await this.#selfRepairEngine.check({
+            lastActivityAt: Date.now(),
+            recentToolCalls: toolResults.map(tr => ({ name: tr.name, success: tr.result.success })),
+            tokenUsage: this.estimateHistoryTokens(),
+            contextLimit: this.#config.contextLimit || 128000,
+            consecutiveErrors: toolResults.filter(tr => !tr.result.success).length,
+          });
+          for (const r of repairs) {
+            if (r.strategy?.action === 'nudge' && r.strategy.prompt) {
+              this.#history.push({ role: 'system', content: r.strategy.prompt });
+            } else if (r.strategy?.action === 'compact') {
+              await this.compactContext();
+            }
+          }
+        } catch (e) { this.#onLog(3, `self-repair check failed: ${e.message}`); }
       }
 
       continue;

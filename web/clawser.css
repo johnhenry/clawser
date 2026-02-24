@@ -484,9 +484,35 @@ input[type="range"] { width:100%; accent-color:var(--accent); }
 .mount-item .mount-unmount { border:none; background:transparent; cursor:pointer; color:var(--muted); font-size:10px; }
 .mount-item .mount-unmount:hover { color:var(--red); }
 
-.goal-tree { padding-left:16px; }
-.goal-progress { height:3px; background:var(--border); border-radius:2px; margin-top:2px; overflow:hidden; }
+.goal-tree-item { transition:background .15s; }
+.goal-tree-item:hover { background:rgba(88,166,255,.03); }
+.goal-toggle { cursor:pointer; font-size:10px; color:var(--dim); width:14px; display:inline-block; text-align:center; }
+.goal-toggle:hover { color:var(--accent); }
+.goal-desc { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.goal-progress { height:3px; background:var(--border); border-radius:2px; margin-top:2px; overflow:hidden; width:100%; }
 .goal-progress-fill { height:100%; background:var(--green); transition:width .3s; }
+.goal-artifact-link { font-size:9px; color:var(--accent); margin-left:6px; text-decoration:none; }
+.goal-artifact-link:hover { text-decoration:underline; }
+
+/* Memory semantic toggle */
+.mem-semantic-label { font-size:10px; color:var(--muted); display:flex; align-items:center; gap:3px; white-space:nowrap; }
+.mem-semantic-label input[type="checkbox"] { accent-color:var(--accent); width:12px; height:12px; }
+
+/* OAuth connected apps */
+.oauth-provider-card { padding:8px 12px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:8px; font-size:11px; font-family:var(--mono); }
+.oauth-provider-card:hover { background:var(--surface2); }
+.oauth-name { color:var(--text); font-weight:500; flex:1; }
+.oauth-status { color:var(--dim); font-size:10px; }
+.oauth-status.connected { color:var(--green); }
+
+/* Skill registry search */
+.skill-search-row { padding:6px 8px; border-bottom:1px solid var(--border); display:flex; gap:4px; }
+.skill-search-input { flex:1; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--bg); color:var(--text); font-size:11px; font-family:var(--mono); }
+.skill-browse-results { max-height:300px; overflow-y:auto; }
+.skill-browse-card { padding:8px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:8px; }
+.skill-browse-card:hover { background:rgba(88,166,255,.03); }
+.skill-browse-name { color:var(--accent); font-weight:600; font-size:12px; }
+.skill-browse-desc { color:var(--muted); font-size:11px; flex:1; }
 
 /* ── Batch 4: Terminal & Dashboard panels ──────────── */
 .terminal-output { background:var(--bg); color:var(--green); font-size:11px; white-space:pre-wrap; word-break:break-word; min-height:100px; }
