@@ -90,15 +90,50 @@ export function createItemBar(config) {
     nameEl.title = name;
   }
 
+  /** Filter text for dropdown search. */
+  let searchFilter = '';
+
   function renderDropdown() {
     const items = config.listItems();
     const activeId = config.getActiveId();
     dropdown.innerHTML = '';
 
-    if (items.length === 0) {
-      dropdown.innerHTML = `<div class="item-bar-empty">${esc(config.emptyMessage)}</div>`;
-    } else {
-      const sorted = [...items].sort((a, b) => (b.lastUsed || 0) - (a.lastUsed || 0));
+    // Search/filter input
+    const searchRow = document.createElement('div');
+    searchRow.className = 'item-bar-search-row';
+    const searchInput = document.createElement('input');
+    searchInput.type = 'text';
+    searchInput.className = 'item-bar-search';
+    searchInput.placeholder = `Filter ${config.label.toLowerCase()}s...`;
+    searchInput.value = searchFilter;
+    searchInput.addEventListener('input', () => {
+      searchFilter = searchInput.value;
+      renderDropdownEntries();
+    });
+    searchInput.addEventListener('click', (e) => e.stopPropagation());
+    searchRow.appendChild(searchInput);
+    dropdown.appendChild(searchRow);
+
+    // Container for entries (rebuilt on filter change)
+    const entriesContainer = document.createElement('div');
+    entriesContainer.className = 'item-bar-entries';
+    dropdown.appendChild(entriesContainer);
+
+    function renderDropdownEntries() {
+      entriesContainer.innerHTML = '';
+
+      const filtered = items.filter(item => {
+        if (!searchFilter) return true;
+        const q = searchFilter.toLowerCase();
+        return (item.name || '').toLowerCase().includes(q);
+      });
+
+      if (filtered.length === 0) {
+        entriesContainer.innerHTML = `<div class="item-bar-empty">${esc(searchFilter ? 'No matches.' : config.emptyMessage)}</div>`;
+        return;
+      }
+
+      const sorted = [...filtered].sort((a, b) => (b.lastUsed || 0) - (a.lastUsed || 0));
       for (const item of sorted) {
         const entry = document.createElement('div');
         entry.className = 'item-bar-entry' + (item.id === activeId ? ' active' : '');
@@ -122,9 +157,15 @@ export function createItemBar(config) {
             updateName();
           }
         });
-        dropdown.appendChild(entry);
+        entriesContainer.appendChild(entry);
       }
     }
+
+    // Initial render of entries
+    renderDropdownEntries();
+
+    // Focus search input after rendering
+    setTimeout(() => searchInput.focus(), 0);
 
     // Action footer (fork + export)
     const hasActions = config.onFork || (config.exportFormats && config.exportFormats.length > 0);
@@ -179,7 +220,10 @@ export function createItemBar(config) {
   histBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     dropdown.classList.toggle('visible');
-    if (dropdown.classList.contains('visible')) renderDropdown();
+    if (dropdown.classList.contains('visible')) {
+      searchFilter = ''; // Reset search on open
+      renderDropdown();
+    }
   });
 
   // Outside click dismiss

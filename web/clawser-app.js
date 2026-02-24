@@ -19,6 +19,7 @@ import { initRouterListeners } from './clawser-router.js';
 import { initChatListeners } from './clawser-ui-chat.js';
 import { refreshFiles, renderGoals, renderSkills, initPanelListeners, updateCostMeter, updateDaemonBadge, updateRemoteBadge, refreshDashboard } from './clawser-ui-panels.js';
 import { initCmdPaletteListeners } from './clawser-cmd-palette.js';
+import { initKeyboardShortcuts } from './clawser-keys.js';
 import { saveConfig } from './clawser-accounts.js';
 
 import { createDefaultRegistry } from './clawser-tools.js';
@@ -176,6 +177,7 @@ initAccountListeners();
 initPanelListeners();
 initCmdPaletteListeners();
 initChatListeners();
+initKeyboardShortcuts();
 initHomeListeners();
 
 ensureDefaultWorkspace();

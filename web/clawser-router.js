@@ -21,6 +21,31 @@ export const PANEL_NAMES = new Set(Object.keys(PANELS));
 const allPanels = Object.values(PANELS).map(p => p.id);
 const panelMap = Object.fromEntries(Object.entries(PANELS).map(([k, v]) => [k, v.id]));
 
+// ── Lazy Panel Rendering (Gap 10.2) ─────────────────────────────
+/** Track which panels have been rendered at least once. */
+const renderedPanels = new Set();
+
+/**
+ * Check whether a panel has been rendered (activated at least once).
+ * @param {string} panelName
+ * @returns {boolean}
+ */
+export function isPanelRendered(panelName) {
+  return renderedPanels.has(panelName);
+}
+
+/**
+ * Reset the rendered panels tracking (e.g. on workspace switch).
+ * Chat is always considered rendered since it's the default active panel.
+ */
+export function resetRenderedPanels() {
+  renderedPanels.clear();
+  renderedPanels.add('chat'); // Chat is always active by default
+}
+
+// Initialize with chat as rendered
+renderedPanels.add('chat');
+
 /** Parse location.hash into a route descriptor. @returns {{route: string, wsId?: string, convId?: string, panel?: string}} */
 export function parseHash() {
   const hash = location.hash.replace(/^#\/?/, '');
@@ -92,6 +117,18 @@ export function activatePanel(panelName) {
   const btn = document.querySelector(`.sidebar button[data-panel="${panelName}"]`);
   if (btn) btn.classList.add('active');
   allPanels.forEach(id => $(id).classList.toggle('active-panel', id === target));
+
+  // Lazy panel rendering: dispatch event on first activation (Gap 10.2)
+  if (!renderedPanels.has(panelName)) {
+    renderedPanels.add(panelName);
+    const panelEl = $(target);
+    if (panelEl) {
+      panelEl.dispatchEvent(new CustomEvent('panel:firstrender', {
+        detail: { panel: panelName },
+        bubbles: true,
+      }));
+    }
+  }
 }
 
 /** Bind click handlers to sidebar panel buttons for navigation. */

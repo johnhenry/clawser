@@ -103,38 +103,38 @@
 
 <div class="workspace">
   <!-- Sidebar navigation -->
-  <nav class="sidebar">
-    <button class="active" data-panel="chat" title="Chat">💬</button>
-    <button data-panel="tools" title="Tool Calls">🔧</button>
-    <button data-panel="files" title="Files (OPFS)">📁</button>
-    <span class="sep-line"></span>
-    <button data-panel="memory" title="Memory">🧠</button>
-    <button data-panel="goals" title="Goals">🎯</button>
-    <button data-panel="events" title="Events">📡</button>
-    <button data-panel="skills" title="Skills">🧩</button>
-    <button data-panel="terminal" title="Terminal">🖥</button>
-    <button data-panel="dashboard" title="Dashboard">📊</button>
-    <span class="sep-line"></span>
-    <button data-panel="toolMgmt" title="Tool Management">🛠</button>
-    <button data-panel="agents" title="Agents">🤖</button>
-    <span class="sep-line"></span>
-    <button data-panel="config" title="Settings">⚙️</button>
+  <nav class="sidebar" role="navigation" aria-label="Workspace panels">
+    <button class="active" data-panel="chat" title="Chat" aria-label="Chat panel">💬</button>
+    <button data-panel="tools" title="Tool Calls" aria-label="Tool Calls panel">🔧</button>
+    <button data-panel="files" title="Files (OPFS)" aria-label="Files panel">📁</button>
+    <span class="sep-line" role="separator"></span>
+    <button data-panel="memory" title="Memory" aria-label="Memory panel">🧠</button>
+    <button data-panel="goals" title="Goals" aria-label="Goals panel">🎯</button>
+    <button data-panel="events" title="Events" aria-label="Events panel">📡</button>
+    <button data-panel="skills" title="Skills" aria-label="Skills panel">🧩</button>
+    <button data-panel="terminal" title="Terminal" aria-label="Terminal panel">🖥</button>
+    <button data-panel="dashboard" title="Dashboard" aria-label="Dashboard panel">📊</button>
+    <span class="sep-line" role="separator"></span>
+    <button data-panel="toolMgmt" title="Tool Management" aria-label="Tool Management panel">🛠</button>
+    <button data-panel="agents" title="Agents" aria-label="Agents panel">🤖</button>
+    <span class="sep-line" role="separator"></span>
+    <button data-panel="config" title="Settings" aria-label="Settings panel">⚙️</button>
   </nav>
 
-  <div class="panels">
+  <div class="panels" role="main" aria-label="Workspace content">
     <!-- Chat -->
     <div class="panel active-panel" id="panelChat">
       <div class="panel-header panel-header-flush">
         <div id="convBarContainer" class="item-bar-container"></div>
       </div>
-      <div class="panel-body messages" id="messages">
+      <div class="panel-body messages" id="messages" aria-live="polite" aria-label="Chat messages">
         <div class="msg system">Initializing agent...</div>
       </div>
       <div class="input-row input-row-wrap">
-        <div class="slash-autocomplete" id="slashAutocomplete"></div>
-        <input type="text" id="userInput" placeholder="Message the agent..." disabled />
-        <button id="cmdPaletteBtn" class="cmd-palette-btn-style" title="Command Palette (⌘K)" disabled>⚡</button>
-        <button id="sendBtn" disabled>Send</button>
+        <div class="slash-autocomplete" id="slashAutocomplete" role="listbox" aria-label="Command suggestions"></div>
+        <input type="text" id="userInput" placeholder="Message the agent..." disabled aria-label="Message input" />
+        <button id="cmdPaletteBtn" class="cmd-palette-btn-style" title="Command Palette (⌘K)" disabled aria-label="Open command palette">⚡</button>
+        <button id="sendBtn" disabled aria-label="Send message">Send</button>
       </div>
     </div>
 
@@ -230,10 +230,10 @@
         Terminal
         <div id="termSessionBarContainer" class="item-bar-container"></div>
       </div>
-      <div class="panel-body panel-mono terminal-output" id="terminalOutput"></div>
+      <div class="panel-body panel-mono terminal-output" id="terminalOutput" aria-live="polite" aria-label="Terminal output"></div>
       <div class="terminal-input-row">
         <span class="terminal-cwd" id="terminalCwd">~</span>
-        <input type="text" id="terminalInput" class="terminal-input" placeholder="$ command..." />
+        <input type="text" id="terminalInput" class="terminal-input" placeholder="$ command..." aria-label="Terminal command input" />
       </div>
     </div>
 
@@ -336,7 +336,7 @@
         </div>
 
         <!-- MCP (advanced, collapsed by default) -->
-        <div class="config-group config-toggle" id="mcpToggle">
+        <div class="config-group config-toggle" id="mcpToggle" aria-expanded="false" aria-controls="mcpSection">
           <label class="config-toggle">MCP Servers (advanced) <span id="mcpArrow" class="config-arrow">&#x25B6;</span></label>
         </div>
         <div id="mcpSection" class="config-section-hidden">
@@ -348,7 +348,7 @@
         </div>
 
         <!-- Autonomy & Costs (Block 6) -->
-        <div class="config-group config-toggle" id="autonomyToggle">
+        <div class="config-group config-toggle" id="autonomyToggle" aria-expanded="false" aria-controls="autonomySection">
           <label class="config-toggle">Autonomy &amp; Costs <span id="autonomyArrow" class="config-arrow">&#x25B6;</span></label>
         </div>
         <div id="autonomySection" class="config-section-hidden">
@@ -378,7 +378,7 @@
         </div>
 
         <!-- Agent Identity (Block 7) -->
-        <div class="config-group config-toggle" id="identityToggle">
+        <div class="config-group config-toggle" id="identityToggle" aria-expanded="false" aria-controls="identitySection">
           <label class="config-toggle">Agent Identity <span id="identityArrow" class="config-arrow">&#x25B6;</span></label>
         </div>
         <div id="identitySection" class="config-section-hidden">
@@ -414,7 +414,7 @@
         </div>
 
         <!-- Model Routing (Block 11) -->
-        <div class="config-group config-toggle" id="routingToggle">
+        <div class="config-group config-toggle" id="routingToggle" aria-expanded="false" aria-controls="routingSection">
           <label class="config-toggle">Model Routing <span id="routingArrow" class="config-arrow">&#x25B6;</span></label>
         </div>
         <div id="routingSection" class="config-section-hidden">
@@ -432,7 +432,7 @@
         </div>
 
         <!-- Auth Profiles (Block 19) -->
-        <div class="config-group config-toggle" id="authProfilesToggle">
+        <div class="config-group config-toggle" id="authProfilesToggle" aria-expanded="false" aria-controls="authProfilesSection">
           <label class="config-toggle">Auth Profiles <span id="authProfilesArrow" class="config-arrow">&#x25B6;</span></label>
         </div>
         <div id="authProfilesSection" class="config-section-hidden">
@@ -446,7 +446,7 @@
         </div>
 
         <!-- Connected Apps / OAuth (Block 16) -->
-        <div class="config-group config-toggle" id="oauthToggle">
+        <div class="config-group config-toggle" id="oauthToggle" aria-expanded="false" aria-controls="oauthSection">
           <label class="config-toggle">Connected Apps <span id="oauthArrow" class="config-arrow">&#x25B6;</span></label>
         </div>
         <div id="oauthSection" class="config-section-hidden">
@@ -454,7 +454,7 @@
         </div>
 
         <!-- Self-Repair (Block 22) -->
-        <div class="config-group config-toggle" id="selfRepairToggle">
+        <div class="config-group config-toggle" id="selfRepairToggle" aria-expanded="false" aria-controls="selfRepairSection">
           <label class="config-toggle">Self-Repair <span id="selfRepairArrow" class="config-arrow">&#x25B6;</span></label>
         </div>
         <div id="selfRepairSection" class="config-section-hidden">
@@ -486,7 +486,7 @@
         </div>
 
         <!-- Response Cache (Block 26) -->
-        <div class="config-group config-toggle" id="cacheToggle">
+        <div class="config-group config-toggle" id="cacheToggle" aria-expanded="false" aria-controls="cacheSection">
           <label class="config-toggle">Response Cache <span id="cacheArrow" class="config-arrow">&#x25B6;</span></label>
         </div>
         <div id="cacheSection" class="config-section-hidden">
@@ -508,7 +508,7 @@
         </div>
 
         <!-- Sandbox Config (Block 28) -->
-        <div class="config-group config-toggle" id="sandboxToggle">
+        <div class="config-group config-toggle" id="sandboxToggle" aria-expanded="false" aria-controls="sandboxSection">
           <label class="config-toggle">Sandbox Config <span id="sandboxArrow" class="config-arrow">&#x25B6;</span></label>
         </div>
         <div id="sandboxSection" class="config-section-hidden">
@@ -531,7 +531,7 @@
         </div>
 
         <!-- Heartbeat (Block 29) -->
-        <div class="config-group config-toggle" id="heartbeatToggle">
+        <div class="config-group config-toggle" id="heartbeatToggle" aria-expanded="false" aria-controls="heartbeatSection">
           <label class="config-toggle">Heartbeat <span id="heartbeatArrow" class="config-arrow">&#x25B6;</span></label>
         </div>
         <div id="heartbeatSection" class="config-section-hidden">
@@ -559,7 +559,7 @@
         </div>
 
         <!-- Security settings -->
-        <div class="config-group config-toggle" id="securityToggle">
+        <div class="config-group config-toggle" id="securityToggle" aria-expanded="false" aria-controls="securitySection">
           <label class="config-toggle">Security <span id="securityArrow" class="config-arrow">&#x25B6;</span></label>
         </div>
         <div id="securitySection" class="config-section-hidden">
@@ -575,6 +575,12 @@
             <button class="btn-sm" id="btnApplySecurity">Apply</button>
           </div>
         </div>
+
+        <!-- Clean Old Conversations (Gap 12.2) -->
+        <div class="config-group config-toggle" id="cleanConvToggle" aria-expanded="false" aria-controls="cleanConvSection">
+          <label class="config-toggle">Clean Old Conversations <span id="cleanConvArrow" class="config-arrow">&#x25B6;</span></label>
+        </div>
+        <div id="cleanConvSection" class="config-section-hidden"></div>
 
         <!-- Persistence -->
         <div class="config-group">

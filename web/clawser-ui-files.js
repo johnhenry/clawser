@@ -2,7 +2,7 @@
  * clawser-ui-files.js — OPFS file browser panel
  *
  * Renders the OPFS file browser for the active workspace with click-to-preview,
- * mount/unmount local directories, and mount list rendering.
+ * mount/unmount local directories, mount list rendering, and pagination.
  */
 import { $, esc, state } from './clawser-state.js';
 import { modal } from './clawser-modal.js';
@@ -10,6 +10,7 @@ import { addMsg, addErrorMsg } from './clawser-ui-chat.js';
 
 // ── OPFS file browser ──────────────────────────────────────────
 const HIDDEN_DIRS = new Set(['.checkpoints', '.skills', '.conversations']);
+const PAGE_SIZE = 50;
 
 /** Render the OPFS file browser for the active workspace, with click-to-preview.
  * @param {string} [path='/'] - Directory path relative to workspace root
@@ -26,7 +27,7 @@ export async function refreshFiles(path = '/', el = null) {
       const wsId = state.agent?.getWorkspace() || 'default';
       wsDir = await base.getDirectoryHandle(wsId);
     } catch {
-      el.textContent = '(empty — files created by the agent will appear here)';
+      el.textContent = '(empty \u2014 files created by the agent will appear here)';
       return;
     }
 
@@ -45,34 +46,95 @@ export async function refreshFiles(path = '/', el = null) {
       back.addEventListener('click', () => refreshFiles(parentPath, el));
       el.appendChild(back);
     }
-    let count = 0;
+
+    // Collect all entries first for pagination
+    const allEntries = [];
     for await (const [name, handle] of dir) {
       if (path === '/' && HIDDEN_DIRS.has(name)) continue;
-      count++;
-      const d = document.createElement('div');
-      d.className = 'file-item';
-      const icon = handle.kind === 'directory' ? '\u{1F4C1}' : '\u{1F4C4}';
-      d.textContent = `${icon} ${name}`;
-      d.addEventListener('click', async () => {
-        if (handle.kind === 'directory') {
-          await refreshFiles(`${path}${name}/`, el);
-        } else {
-          try {
-            const file = await handle.getFile();
-            if (file.name.endsWith('.bin') || file.name.endsWith('.wasm') || file.size > 100000) {
-              el.insertAdjacentHTML('afterbegin',
-                `<div class="file-binary-info">${esc(name)}: ${(file.size / 1024).toFixed(1)} KB (binary)</div>`);
-            } else {
-              const text = await file.text();
-              el.insertAdjacentHTML('afterbegin',
-                `<div class="file-preview"><div class="file-preview-name">${esc(name)}</div>${esc(text.slice(0, 2000))}</div>`);
-            }
-          } catch (e) { console.debug('[clawser] file preview error', e); }
-        }
-      });
-      el.appendChild(d);
+      allEntries.push({ name, handle });
     }
-    if (count === 0) el.textContent = '(empty — files created by the agent will appear here)';
+
+    // Sort entries: directories first, then alphabetical
+    allEntries.sort((a, b) => {
+      if (a.handle.kind !== b.handle.kind) {
+        return a.handle.kind === 'directory' ? -1 : 1;
+      }
+      return a.name.localeCompare(b.name);
+    });
+
+    if (allEntries.length === 0) {
+      el.textContent = '(empty \u2014 files created by the agent will appear here)';
+      return;
+    }
+
+    // Render paginated entries
+    let visibleCount = 0;
+
+    function renderPage(startIdx) {
+      const end = Math.min(startIdx + PAGE_SIZE, allEntries.length);
+      for (let i = startIdx; i < end; i++) {
+        const { name, handle } = allEntries[i];
+        visibleCount++;
+        const d = document.createElement('div');
+        d.className = 'file-item';
+        const icon = handle.kind === 'directory' ? '\u{1F4C1}' : '\u{1F4C4}';
+        d.textContent = `${icon} ${name}`;
+        d.addEventListener('click', async () => {
+          if (handle.kind === 'directory') {
+            await refreshFiles(`${path}${name}/`, el);
+          } else {
+            try {
+              const file = await handle.getFile();
+              if (file.name.endsWith('.bin') || file.name.endsWith('.wasm') || file.size > 100000) {
+                el.insertAdjacentHTML('afterbegin',
+                  `<div class="file-binary-info">${esc(name)}: ${(file.size / 1024).toFixed(1)} KB (binary)</div>`);
+              } else {
+                const text = await file.text();
+                el.insertAdjacentHTML('afterbegin',
+                  `<div class="file-preview"><div class="file-preview-name">${esc(name)}</div>${esc(text.slice(0, 2000))}</div>`);
+              }
+            } catch (e) { console.debug('[clawser] file preview error', e); }
+          }
+        });
+        // Insert before the load-more button if it exists
+        const loadMoreBtn = el.querySelector('.file-load-more');
+        if (loadMoreBtn) {
+          el.insertBefore(d, loadMoreBtn);
+        } else {
+          el.appendChild(d);
+        }
+      }
+
+      // Remove existing load-more button
+      const existingBtn = el.querySelector('.file-load-more');
+      if (existingBtn) existingBtn.remove();
+
+      // Add "Load more" button if there are more entries
+      if (end < allEntries.length) {
+        const btn = document.createElement('button');
+        btn.className = 'btn-sm file-load-more';
+        btn.textContent = `Load more (${allEntries.length - end} remaining)`;
+        btn.addEventListener('click', () => renderPage(end));
+        el.appendChild(btn);
+      }
+
+      // Show count summary
+      let summary = el.querySelector('.file-count-summary');
+      if (!summary) {
+        summary = document.createElement('div');
+        summary.className = 'file-count-summary';
+        // Insert after back button or at the start
+        const backEl = el.querySelector('.file-back');
+        if (backEl) {
+          backEl.after(summary);
+        } else {
+          el.insertBefore(summary, el.firstChild);
+        }
+      }
+      summary.textContent = `Showing ${visibleCount} of ${allEntries.length} items`;
+    }
+
+    renderPage(0);
   } catch (e) {
     el.textContent = `Error: ${e.message}`;
   }

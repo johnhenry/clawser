@@ -228,6 +228,151 @@ export function parse(input) {
   return parseList();
 }
 
+// ── Variable Expansion ──────────────────────────────────────────
+
+/**
+ * Expand shell variables in a token string.
+ * Handles $VAR, ${VAR}, and $? (last exit code).
+ * Leaves literal $ at end of string or $ followed by non-alphanumeric.
+ * @param {string} token - Token string to expand
+ * @param {object} env - Environment object (Map or plain object with get())
+ * @returns {string} Token with variables expanded
+ */
+export function expandVariables(token, env) {
+  if (!token || typeof token !== 'string') return token || '';
+  const get = (key) => {
+    if (env instanceof Map) return env.get(key);
+    if (env && typeof env === 'object') return env[key];
+    return undefined;
+  };
+
+  let result = '';
+  let i = 0;
+  const len = token.length;
+
+  while (i < len) {
+    if (token[i] === '$') {
+      // End of string — literal $
+      if (i + 1 >= len) {
+        result += '$';
+        i++;
+        continue;
+      }
+
+      // $? — last exit code
+      if (token[i + 1] === '?') {
+        result += (get('?') ?? '0');
+        i += 2;
+        continue;
+      }
+
+      // ${VAR} — braced variable
+      if (token[i + 1] === '{') {
+        const close = token.indexOf('}', i + 2);
+        if (close !== -1) {
+          const varName = token.slice(i + 2, close);
+          result += (get(varName) ?? '');
+          i = close + 1;
+          continue;
+        }
+        // No closing brace — treat as literal
+        result += '$';
+        i++;
+        continue;
+      }
+
+      // $VAR — unbraced variable (alphanumeric + underscore)
+      if (/[a-zA-Z_]/.test(token[i + 1])) {
+        let end = i + 1;
+        while (end < len && /[a-zA-Z0-9_]/.test(token[end])) end++;
+        const varName = token.slice(i + 1, end);
+        result += (get(varName) ?? '');
+        i = end;
+        continue;
+      }
+
+      // $ followed by non-alphanumeric — literal $
+      result += '$';
+      i++;
+      continue;
+    }
+
+    result += token[i];
+    i++;
+  }
+
+  return result;
+}
+
+// ── Glob Expansion ──────────────────────────────────────────────
+
+/**
+ * Expand glob patterns in a token by matching against filesystem entries.
+ * Handles *, ?, and [abc] character classes.
+ * If no matches found, returns the original token (standard shell behavior).
+ * @param {string} token - Token string that may contain glob characters
+ * @param {object} fs - Filesystem object with listDir(path) method
+ * @param {string} cwd - Current working directory
+ * @returns {Promise<string[]>} Array of matched filenames, or [token] if no matches
+ */
+export async function expandGlobs(token, fs, cwd) {
+  if (!token || !fs) return [token];
+
+  // Check if token contains glob characters
+  if (!/[*?\[]/.test(token)) return [token];
+
+  // Convert glob pattern to regex
+  let regexStr = '^';
+  let i = 0;
+  const len = token.length;
+
+  while (i < len) {
+    const ch = token[i];
+    if (ch === '*') {
+      regexStr += '[^/]*';
+      i++;
+    } else if (ch === '?') {
+      regexStr += '[^/]';
+      i++;
+    } else if (ch === '[') {
+      // Character class — find closing ]
+      const close = token.indexOf(']', i + 1);
+      if (close !== -1) {
+        regexStr += token.slice(i, close + 1);
+        i = close + 1;
+      } else {
+        // No closing bracket — treat as literal
+        regexStr += '\\[';
+        i++;
+      }
+    } else {
+      // Escape regex special characters
+      regexStr += ch.replace(/[.+^${}()|\\]/g, '\\$&');
+      i++;
+    }
+  }
+  regexStr += '$';
+
+  let regex;
+  try {
+    regex = new RegExp(regexStr);
+  } catch {
+    return [token];
+  }
+
+  try {
+    const entries = await fs.listDir(cwd || '/');
+    const matches = entries
+      .map(e => e.name)
+      .filter(name => regex.test(name))
+      .sort();
+
+    return matches.length > 0 ? matches : [token];
+  } catch {
+    return [token];
+  }
+}
+
 // ── Path Utilities ──────────────────────────────────────────────
 
 /**
@@ -348,15 +493,31 @@ async function executeCommand(node, state, registry, opts) {
     return { stdout: '', stderr: '', exitCode: 0 };
   }
 
-  const handler = registry.get(node.name);
+  // Variable expansion: expand $VAR, ${VAR}, $? in command name and args
+  const envObj = state.env instanceof Map ? state.env : new Map();
+  envObj.set('?', String(state.lastExitCode));
+  const expandedName = expandVariables(node.name, envObj);
+  let expandedArgs = node.args.map(a => expandVariables(a, envObj));
+
+  // Glob expansion: expand *, ?, [abc] patterns in args
+  if (opts.fs) {
+    const globExpanded = [];
+    for (const arg of expandedArgs) {
+      const matches = await expandGlobs(arg, opts.fs, state.cwd);
+      globExpanded.push(...matches);
+    }
+    expandedArgs = globExpanded;
+  }
+
+  const handler = registry.get(expandedName);
   if (!handler) {
     state.lastExitCode = 127;
-    return { stdout: '', stderr: `command not found: ${node.name}`, exitCode: 127 };
+    return { stdout: '', stderr: `command not found: ${expandedName}`, exitCode: 127 };
   }
 
   try {
     const result = await handler({
-      args: node.args,
+      args: expandedArgs,
       stdin: opts.stdin || '',
       state,
       registry,

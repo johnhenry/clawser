@@ -506,6 +506,12 @@ export class ClawserAgent {
   /** @type {SemanticMemory} */
   #memory = new SemanticMemory();
 
+  // ── Memory Recall LRU Cache (Gap 10.1) ──────────────────────
+  /** @type {Map<string, {result: Array, timestamp: number}>} */
+  #recallCache = new Map();
+  #recallCacheMax = 50;
+  #recallCacheTTL = 120000; // 2 minutes
+
   // ── Scheduler ────────────────────────────────────────────────
   #schedulerJobs = [];    // Array<ScheduledJob>
   #schedulerNextId = 1;
@@ -1672,6 +1678,7 @@ export class ClawserAgent {
       category: entry.category || 'core',
       timestamp: entry.timestamp || Date.now(),
     });
+    this.#recallCache.clear(); // Invalidate recall cache on memory change
     this.#eventLog.append('memory_stored', {
       id,
       key: entry.key,
@@ -1698,6 +1705,18 @@ export class ClawserAgent {
         id: e.id, key: e.key, content: e.content, category: e.category, timestamp: e.timestamp, score: 1.0,
       })).slice(0, opts?.limit || 1000);
     }
+
+    // LRU cache lookup (Gap 10.1)
+    const cacheKey = `${query}|${opts?.category || ''}|${opts?.limit || 20}`;
+    const cached = this.#recallCache.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp) < this.#recallCacheTTL) {
+      // Move to end (most recently used) by re-inserting
+      this.#recallCache.delete(cacheKey);
+      this.#recallCache.set(cacheKey, cached);
+      return cached.result;
+    }
+    // Remove stale entry if expired
+    if (cached) this.#recallCache.delete(cacheKey);
 
     // Synchronous TF-IDF search (no embeddings, backward compat)
     // For full hybrid BM25+vector search, use memoryRecallAsync()
@@ -1735,7 +1754,17 @@ export class ClawserAgent {
     }
 
     scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, opts?.limit || 20);
+    const result = scored.slice(0, opts?.limit || 20);
+
+    // Store in LRU cache
+    if (this.#recallCache.size >= this.#recallCacheMax) {
+      // Evict oldest entry (first key in Map iteration order)
+      const oldestKey = this.#recallCache.keys().next().value;
+      this.#recallCache.delete(oldestKey);
+    }
+    this.#recallCache.set(cacheKey, { result, timestamp: Date.now() });
+
+    return result;
   }
 
   /**
@@ -1755,6 +1784,7 @@ export class ClawserAgent {
    */
   memoryForget(id) {
     if (this.#memory.delete(id)) {
+      this.#recallCache.clear(); // Invalidate recall cache on memory change
       this.#eventLog.append('memory_forgotten', { id }, 'system');
       return 1;
     }
@@ -1770,6 +1800,7 @@ export class ClawserAgent {
   memoryHygiene(opts = {}) {
     const removed = this.#memory.hygiene(opts);
     if (removed > 0) {
+      this.#recallCache.clear(); // Invalidate recall cache after hygiene
       this.#onLog(2, `memory hygiene: removed ${removed} entries`);
     }
     return removed;

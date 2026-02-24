@@ -153,6 +153,119 @@ export function resetConversationState() {
   emit('conversationChanged', { id: null, name: null });
 }
 
+// ── ConfigCache (Gap 10.4) ─────────────────────────────────────
+// Batches localStorage reads/writes to reduce I/O overhead.
+
+/**
+ * ConfigCache — an in-memory cache for localStorage with debounced writes.
+ * Reads are lazy-loaded from localStorage on first access.
+ * Writes go to memory immediately and are flushed to localStorage after 500ms.
+ */
+export class ConfigCache {
+  /** @type {Map<string, string|null>} In-memory cache */
+  #cache = new Map();
+  /** @type {Set<string>} Keys that have been modified but not yet flushed */
+  #dirty = new Set();
+  /** @type {number|null} Debounce timer ID */
+  #flushTimer = null;
+  /** @type {number} Debounce delay in ms */
+  #debounceMs;
+
+  /**
+   * @param {number} [debounceMs=500] - Delay before flushing dirty keys to localStorage
+   */
+  constructor(debounceMs = 500) {
+    this.#debounceMs = debounceMs;
+  }
+
+  /**
+   * Get a value by key. Lazy-loads from localStorage on first access.
+   * @param {string} key
+   * @returns {string|null}
+   */
+  get(key) {
+    if (this.#cache.has(key)) {
+      return this.#cache.get(key);
+    }
+    // Lazy load from localStorage
+    const value = localStorage.getItem(key);
+    this.#cache.set(key, value);
+    return value;
+  }
+
+  /**
+   * Set a value by key. Writes to in-memory cache immediately,
+   * debounces the flush to localStorage.
+   * @param {string} key
+   * @param {string|null} value - null to remove the key
+   */
+  set(key, value) {
+    this.#cache.set(key, value);
+    this.#dirty.add(key);
+    this.#scheduleFlush();
+  }
+
+  /**
+   * Remove a key from both cache and localStorage.
+   * @param {string} key
+   */
+  remove(key) {
+    this.set(key, null);
+  }
+
+  /**
+   * Force-write all dirty keys to localStorage immediately.
+   */
+  flush() {
+    if (this.#flushTimer !== null) {
+      clearTimeout(this.#flushTimer);
+      this.#flushTimer = null;
+    }
+    for (const key of this.#dirty) {
+      const value = this.#cache.get(key);
+      if (value === null || value === undefined) {
+        localStorage.removeItem(key);
+      } else {
+        localStorage.setItem(key, value);
+      }
+    }
+    this.#dirty.clear();
+  }
+
+  /**
+   * Invalidate a cached key, forcing a re-read from localStorage on next get().
+   * @param {string} key
+   */
+  invalidate(key) {
+    this.#cache.delete(key);
+    this.#dirty.delete(key);
+  }
+
+  /**
+   * Clear the entire cache and dirty set.
+   */
+  clear() {
+    if (this.#flushTimer !== null) {
+      clearTimeout(this.#flushTimer);
+      this.#flushTimer = null;
+    }
+    this.#cache.clear();
+    this.#dirty.clear();
+  }
+
+  /** @private Schedule a debounced flush. */
+  #scheduleFlush() {
+    if (this.#flushTimer !== null) return;
+    this.#flushTimer = setTimeout(() => {
+      this.#flushTimer = null;
+      this.flush();
+    }, this.#debounceMs);
+  }
+}
+
+/** Shared ConfigCache instance for the application. */
+export const configCache = new ConfigCache();
+
 // ── Event bus ─────────────────────────────────────────────────
 // Registered events (producers → consumers):
 //   'refreshFiles'        — ui-chat, cmd-palette → app (calls refreshFiles())
