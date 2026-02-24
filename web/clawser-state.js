@@ -1,5 +1,23 @@
 // clawser-state.js — Shared state singleton, DOM helpers, event bus
 
+// ── Configurable Defaults (Gap 10.5) ──────────────────────────────
+// Centralizes hardcoded limits scattered across the codebase.
+// Import and reference these instead of magic numbers.
+export const DEFAULTS = Object.freeze({
+  maxResultLength: 12000,
+  maxHistoryTokens: 12000,
+  contextCompactThreshold: 12000,
+  maxTokens: 4096,
+  costTrackingPrecision: 6,
+  memoryRecallCacheSize: 50,
+  memoryRecallCacheTTL: 120_000,
+  configCacheDebounceMs: 500,
+  codeExecTimeoutMs: 30_000,
+  mcpTimeoutMs: 30_000,
+  maxSchedulerJobs: 50,
+  filePageSize: 50,
+});
+
 /** @param {string} id @returns {HTMLElement|null} */
 export const $ = id => document.getElementById(id);
 
@@ -13,8 +31,30 @@ export function esc(s) {
 }
 
 // ── localStorage key builders (centralized to avoid scattered string literals) ──
+// Versioned with v1_ prefix (Gap 12.4) for safe schema evolution.
+const LS_VERSION = 'v1';
+
 /** @type {{ memories(wsId: string): string, config(wsId: string): string, toolPerms(wsId: string): string, security(wsId: string): string, skillsEnabled(wsId: string): string }} */
 export const lsKey = {
+  memories:      wsId => `${LS_VERSION}_clawser_memories_${wsId}`,
+  config:        wsId => `${LS_VERSION}_clawser_config_${wsId}`,
+  toolPerms:     wsId => `${LS_VERSION}_clawser_tool_perms_${wsId}`,
+  security:      wsId => `${LS_VERSION}_clawser_security_${wsId}`,
+  skillsEnabled: wsId => `${LS_VERSION}_clawser_skills_enabled_${wsId}`,
+  autonomy:      wsId => `${LS_VERSION}_clawser_autonomy_${wsId}`,
+  identity:      wsId => `${LS_VERSION}_clawser_identity_${wsId}`,
+  selfRepair:    wsId => `${LS_VERSION}_clawser_selfrepair_${wsId}`,
+  sandbox:       wsId => `${LS_VERSION}_clawser_sandbox_${wsId}`,
+  heartbeat:     wsId => `${LS_VERSION}_clawser_heartbeat_${wsId}`,
+  routines:      wsId => `${LS_VERSION}_clawser_routines_${wsId}`,
+  termSessions:  wsId => `${LS_VERSION}_clawser_terminal_sessions_${wsId}`,
+};
+
+/**
+ * Old unprefixed key builders (pre-v1) for migration lookup.
+ * @private
+ */
+const _oldKeyBuilders = {
   memories:      wsId => `clawser_memories_${wsId}`,
   config:        wsId => `clawser_config_${wsId}`,
   toolPerms:     wsId => `clawser_tool_perms_${wsId}`,
@@ -28,6 +68,25 @@ export const lsKey = {
   routines:      wsId => `clawser_routines_${wsId}`,
   termSessions:  wsId => `clawser_terminal_sessions_${wsId}`,
 };
+
+/**
+ * Migrate old unprefixed localStorage keys to the versioned format.
+ * Safe to call multiple times — skips keys that already exist in the new format
+ * or don't exist in the old format.
+ * @param {string} wsId - Workspace ID to migrate keys for.
+ */
+export function migrateKeys(wsId) {
+  for (const [name, oldBuilder] of Object.entries(_oldKeyBuilders)) {
+    const oldKey = oldBuilder(wsId);
+    const newKey = lsKey[name](wsId);
+    // Only migrate if old key exists and new key does not
+    const oldVal = localStorage.getItem(oldKey);
+    if (oldVal !== null && localStorage.getItem(newKey) === null) {
+      localStorage.setItem(newKey, oldVal);
+      localStorage.removeItem(oldKey);
+    }
+  }
+}
 
 /** @type {object} Shared mutable state singleton — single owner per field, set in clawser-app.js */
 export const state = {

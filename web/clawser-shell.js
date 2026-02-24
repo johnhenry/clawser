@@ -30,6 +30,9 @@ const T = {
   SEMI: 'SEMI',                     // ;
   REDIRECT_OUT: 'REDIRECT_OUT',     // >
   REDIRECT_APPEND: 'REDIRECT_APPEND', // >>
+  REDIRECT_ERR: 'REDIRECT_ERR',     // 2>
+  REDIRECT_ERR_APPEND: 'REDIRECT_ERR_APPEND', // 2>>
+  REDIRECT_ERR_TO_OUT: 'REDIRECT_ERR_TO_OUT', // 2>&1
   EOF: 'EOF',
 };
 
@@ -73,6 +76,23 @@ export function tokenize(input) {
     if (input[i] === ';') {
       tokens.push({ type: T.SEMI, value: ';' });
       i++;
+      continue;
+    }
+
+    // Stderr redirect: 2>, 2>>, 2>&1
+    // After whitespace skip, we are at a token boundary. If the next two chars are
+    // '2' followed by '>', this is a stderr redirect operator (not a word starting with '2').
+    if (input[i] === '2' && i + 1 < len && input[i + 1] === '>') {
+      if (i + 3 < len && input[i + 2] === '&' && input[i + 3] === '1') {
+        tokens.push({ type: T.REDIRECT_ERR_TO_OUT, value: '2>&1' });
+        i += 4;
+      } else if (i + 2 < len && input[i + 2] === '>') {
+        tokens.push({ type: T.REDIRECT_ERR_APPEND, value: '2>>' });
+        i += 3;
+      } else {
+        tokens.push({ type: T.REDIRECT_ERR, value: '2>' });
+        i += 2;
+      }
       continue;
     }
 
@@ -141,9 +161,9 @@ export function tokenize(input) {
  *
  * Grammar (P0):
  *   list       = pipeline ((';' | '&&' | '||') pipeline)*
- *   pipeline   = command ('|' command)* redirect?
+ *   pipeline   = command ('|' command)* redirect*
  *   command    = WORD+
- *   redirect   = '>' WORD | '>>' WORD
+ *   redirect   = '>' WORD | '>>' WORD | '2>' WORD | '2>>' WORD | '2>&1'
  *
  * @param {string|Array} input - Command string or pre-tokenized array
  * @returns {object|null} AST node or null for empty input
@@ -165,20 +185,54 @@ export function parse(input) {
   }
 
   function parseRedirect() {
-    const tok = peek();
-    if (tok.type === T.REDIRECT_OUT || tok.type === T.REDIRECT_APPEND) {
-      advance();
-      const pathTok = peek();
-      if (pathTok.type !== T.WORD) {
-        throw new SyntaxError('Expected filename after redirect');
+    let redirect = null;
+    let stderrRedirect = null;
+
+    // Parse all redirect tokens (stdout and stderr) in any order
+    while (true) {
+      const tok = peek();
+
+      if (tok.type === T.REDIRECT_OUT || tok.type === T.REDIRECT_APPEND) {
+        advance();
+        const pathTok = peek();
+        if (pathTok.type !== T.WORD) {
+          throw new SyntaxError('Expected filename after redirect');
+        }
+        advance();
+        redirect = {
+          type: tok.type === T.REDIRECT_APPEND ? 'append' : 'write',
+          path: pathTok.value,
+        };
+      } else if (tok.type === T.REDIRECT_ERR || tok.type === T.REDIRECT_ERR_APPEND) {
+        advance();
+        const pathTok = peek();
+        if (pathTok.type !== T.WORD) {
+          throw new SyntaxError('Expected filename after 2>');
+        }
+        advance();
+        stderrRedirect = {
+          type: tok.type === T.REDIRECT_ERR_APPEND ? 'err_append' : 'err_write',
+          path: pathTok.value,
+        };
+      } else if (tok.type === T.REDIRECT_ERR_TO_OUT) {
+        advance();
+        stderrRedirect = { type: 'err_to_out' };
+      } else {
+        break;
       }
-      advance();
-      return {
-        type: tok.type === T.REDIRECT_APPEND ? 'append' : 'write',
-        path: pathTok.value,
-      };
     }
-    return null;
+
+    // Return combined result or null
+    if (!redirect && !stderrRedirect) return null;
+    // Pack stderr info into redirect object for backward compat
+    if (redirect && stderrRedirect) {
+      redirect.stderr = stderrRedirect;
+      return redirect;
+    }
+    if (stderrRedirect) {
+      return { type: null, stderr: stderrRedirect };
+    }
+    return redirect;
   }
 
   function parsePipeline() {
@@ -551,18 +605,57 @@ async function executePipeline(node, state, registry, opts) {
   }
 
   // Handle redirect
-  if (node.redirect && opts.fs) {
-    const path = state.resolvePath(node.redirect.path);
-    try {
-      if (node.redirect.type === 'append') {
-        let existing = '';
-        try { existing = await opts.fs.readFile(path); } catch { /* file doesn't exist yet */ }
-        await opts.fs.writeFile(path, existing + lastResult.stdout);
-      } else {
-        await opts.fs.writeFile(path, lastResult.stdout);
+  if (node.redirect) {
+    const redir = node.redirect;
+
+    // Handle stderr redirect first
+    if (redir.stderr) {
+      const stderrRedir = redir.stderr;
+      if (stderrRedir.type === 'err_to_out') {
+        // 2>&1 — merge stderr into stdout
+        lastResult = {
+          ...lastResult,
+          stdout: lastResult.stdout + lastResult.stderr,
+          stderr: '',
+        };
+      } else if (opts.fs && (stderrRedir.type === 'err_write' || stderrRedir.type === 'err_append')) {
+        const errPath = state.resolvePath(stderrRedir.path);
+        try {
+          if (stderrRedir.path === '/dev/null') {
+            // 2>/dev/null — suppress stderr
+            lastResult = { ...lastResult, stderr: '' };
+          } else if (stderrRedir.type === 'err_append') {
+            let existing = '';
+            try { existing = await opts.fs.readFile(errPath); } catch { /* file doesn't exist yet */ }
+            await opts.fs.writeFile(errPath, existing + lastResult.stderr);
+            lastResult = { ...lastResult, stderr: '' };
+          } else {
+            await opts.fs.writeFile(errPath, lastResult.stderr);
+            lastResult = { ...lastResult, stderr: '' };
+          }
+        } catch (e) {
+          return { stdout: '', stderr: `redirect: ${e.message}`, exitCode: 1 };
+        }
+      } else if (!opts.fs && stderrRedir.path === '/dev/null') {
+        // 2>/dev/null works even without a real filesystem
+        lastResult = { ...lastResult, stderr: '' };
       }
-    } catch (e) {
-      return { stdout: '', stderr: `redirect: ${e.message}`, exitCode: 1 };
+    }
+
+    // Handle stdout redirect
+    if (redir.type && redir.type !== null && opts.fs) {
+      const path = state.resolvePath(redir.path);
+      try {
+        if (redir.type === 'append') {
+          let existing = '';
+          try { existing = await opts.fs.readFile(path); } catch { /* file doesn't exist yet */ }
+          await opts.fs.writeFile(path, existing + lastResult.stdout);
+        } else {
+          await opts.fs.writeFile(path, lastResult.stdout);
+        }
+      } catch (e) {
+        return { stdout: '', stderr: `redirect: ${e.message}`, exitCode: 1 };
+      }
     }
   }
 
@@ -1255,7 +1348,7 @@ export class ShellTool extends BrowserTool {
 
   get name() { return 'shell'; }
   get description() {
-    return 'Execute shell commands in a virtual browser shell. Supports pipes (|), redirects (>, >>), logical operators (&&, ||), and semicolons (;). Built-in commands include: cd, ls, pwd, cat, mkdir, rm, cp, mv, echo, head, tail, grep, wc, sort, uniq, tee, env, export, which, help. All filesystem commands operate on the workspace OPFS.';
+    return 'Execute shell commands in a virtual browser shell. Supports pipes (|), redirects (>, >>), stderr redirects (2>, 2>>, 2>&1, 2>/dev/null), logical operators (&&, ||), and semicolons (;). Built-in commands include: cd, ls, pwd, cat, mkdir, rm, cp, mv, echo, head, tail, grep, wc, sort, uniq, tee, env, export, which, help. All filesystem commands operate on the workspace OPFS.';
   }
   get parameters() {
     return {
