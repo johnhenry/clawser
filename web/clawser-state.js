@@ -31,54 +31,87 @@ export const lsKey = {
 
 /** @type {object} Shared mutable state singleton — single owner per field, set in clawser-app.js */
 export const state = {
-  agent: null,
-  isSending: false,
-  sessionCost: 0,
-  activeConversationId: null,
-  activeConversationName: null,
-  toolCallLog: [],
-  eventLog: [],
-  eventCount: 0,
-  activeSkillPrompts: new Map(),
-  currentRoute: null,
+  // ── Namespaced groups ──────────────────────────────────────────
 
+  /** UI-related transient state */
+  ui: {
+    isSending: false,
+    currentRoute: null,
+    switchingViaRouter: false,
+    slashSelectedIdx: -1,
+    pendingImportBlob: null,
+    cmdSelectedSpec: null,
+  },
+
+  /** Service singletons (set by clawser-app.js) */
+  services: {
+    agent: null,
+    providers: null,
+    browserTools: null,
+    mcpManager: null,
+    vault: null,
+    workspaceFs: null,
+    responseCache: null,
+    shell: null,
+    skillRegistry: null,
+  },
+
+  /** Feature module singletons (set by clawser-app.js) */
+  features: {
+    toolBuilder: null,
+    channelManager: null,
+    delegateManager: null,
+    gitBehavior: null,
+    gitMemory: null,
+    automationManager: null,
+    sandboxManager: null,
+    peripheralManager: null,
+    pairingManager: null,
+    bridgeManager: null,
+    goalManager: null,
+    skillRegistryClient: null,
+    terminalSessions: null,
+    agentStorage: null,
+  },
+
+  /** Per-conversation session state */
+  session: {
+    sessionCost: 0,
+    activeConversationId: null,
+    activeConversationName: null,
+    activeSkillPrompts: new Map(),
+    toolCallLog: [],
+    eventLog: [],
+    eventCount: 0,
+    pendingInlineTools: new Map(),
+  },
+
+  // ── Remaining flat fields (not namespaced) ─────────────────────
   agentInitialized: false,
-  switchingViaRouter: false,
-  pendingInlineTools: new Map(),
-  cmdSelectedSpec: null,
-  slashSelectedIdx: -1,
-  pendingImportBlob: null,
-  skillRegistry: null,
-  shell: null,
-  responseCache: null,
-  // Service singletons (set by clawser-app.js)
-  workspaceFs: null,
-  browserTools: null,
-  providers: null,
-  mcpManager: null,
-  vault: null,
-  // Feature module singletons (set by clawser-app.js)
-  toolBuilder: null,
-  channelManager: null,
-  delegateManager: null,
-  gitBehavior: null,
-  gitMemory: null,
-  automationManager: null,
-  sandboxManager: null,
-  peripheralManager: null,
-  pairingManager: null,
-  // Block 0-29 gap fills
-  bridgeManager: null,
-  goalManager: null,
-  skillRegistryClient: null,
-  // Block 35: Terminal sessions
-  terminalSessions: null,
+  identityManager: null,
   // Block 36: Tool usage tracking
   toolUsageStats: {},
   toolLastUsed: {},
-  // Block 37: Agents
-  agentStorage: null,
 };
+
+// ── Backward-compatible flat aliases (deprecated — use state.ui.X, state.services.X, etc.) ──
+for (const [ns, fields] of [
+  ['ui', ['isSending', 'currentRoute', 'switchingViaRouter', 'slashSelectedIdx', 'pendingImportBlob', 'cmdSelectedSpec']],
+  ['services', ['agent', 'providers', 'browserTools', 'mcpManager', 'vault', 'workspaceFs', 'responseCache', 'shell', 'skillRegistry']],
+  ['features', ['toolBuilder', 'channelManager', 'delegateManager', 'gitBehavior', 'gitMemory', 'automationManager', 'sandboxManager', 'peripheralManager', 'pairingManager', 'bridgeManager', 'goalManager', 'skillRegistryClient', 'terminalSessions', 'agentStorage']],
+  ['session', ['sessionCost', 'activeConversationId', 'activeConversationName', 'activeSkillPrompts', 'toolCallLog', 'eventLog', 'eventCount', 'pendingInlineTools']],
+]) {
+  for (const field of fields) {
+    if (!(field in state)) {
+      Object.defineProperty(state, field, {
+        get() { return state[ns][field]; },
+        set(v) { state[ns][field] = v; },
+        enumerable: true,
+        configurable: true,
+      });
+    }
+  }
+}
 
 // ── State transition helpers ──────────────────────────────────
 
@@ -87,7 +120,7 @@ export const state = {
  * @param {boolean} value - Whether a message send is in progress.
  */
 export function setSending(value) {
-  state.isSending = !!value;
+  state.ui.isSending = !!value;
 }
 
 /**
@@ -96,8 +129,8 @@ export function setSending(value) {
  * @param {string|null} name - Display name, or null to clear.
  */
 export function setConversation(id, name) {
-  state.activeConversationId = id;
-  state.activeConversationName = name;
+  state.session.activeConversationId = id;
+  state.session.activeConversationName = name;
   emit('conversationChanged', { id, name });
 }
 
@@ -106,17 +139,17 @@ export function setConversation(id, name) {
  * Also deactivates any active skills in the skill registry.
  */
 export function resetConversationState() {
-  state.sessionCost = 0;
-  state.activeSkillPrompts.clear();
-  state.pendingInlineTools.clear();
+  state.session.sessionCost = 0;
+  state.session.activeSkillPrompts.clear();
+  state.session.pendingInlineTools.clear();
   // Deactivate all active skills in the registry
-  if (state.skillRegistry?.activeSkills) {
-    for (const name of [...state.skillRegistry.activeSkills.keys()]) {
-      state.skillRegistry.deactivate(name);
+  if (state.services.skillRegistry?.activeSkills) {
+    for (const name of [...state.services.skillRegistry.activeSkills.keys()]) {
+      state.services.skillRegistry.deactivate(name);
     }
   }
-  state.activeConversationId = null;
-  state.activeConversationName = null;
+  state.session.activeConversationId = null;
+  state.session.activeConversationName = null;
   emit('conversationChanged', { id: null, name: null });
 }
 

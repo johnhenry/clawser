@@ -1,10 +1,25 @@
 // clawser-router.js — Routing + panel activation
 import { $, state } from './clawser-state.js';
 
-export const PANEL_NAMES = new Set(['chat', 'tools', 'files', 'memory', 'goals', 'events', 'skills', 'terminal', 'dashboard', 'toolMgmt', 'agents', 'config']);
+/** Single source of truth for all panels. Derive everything from this. */
+export const PANELS = Object.freeze({
+  chat:      { id: 'panelChat',      btn: 'btnChat',      label: 'Chat' },
+  tools:     { id: 'panelTools',     btn: 'btnTools',     label: 'Tools' },
+  files:     { id: 'panelFiles',     btn: 'btnFiles',     label: 'Files' },
+  memory:    { id: 'panelMemory',    btn: 'btnMemory',    label: 'Memory' },
+  goals:     { id: 'panelGoals',     btn: 'btnGoals',     label: 'Goals' },
+  events:    { id: 'panelEvents',    btn: 'btnEvents',    label: 'Events' },
+  skills:    { id: 'panelSkills',    btn: 'btnSkills',    label: 'Skills' },
+  terminal:  { id: 'panelTerminal',  btn: 'btnTerminal',  label: 'Terminal' },
+  dashboard: { id: 'panelDashboard', btn: 'btnDashboard', label: 'Dashboard' },
+  toolMgmt:  { id: 'panelToolMgmt',  btn: 'btnToolMgmt',  label: 'Tool Mgmt' },
+  agents:    { id: 'panelAgents',    btn: 'btnAgents',    label: 'Agents' },
+  config:    { id: 'panelConfig',    btn: 'btnConfig',    label: 'Config' },
+});
 
-const allPanels = ['panelChat','panelTools','panelFiles','panelMemory','panelGoals','panelEvents','panelSkills','panelTerminal','panelDashboard','panelToolMgmt','panelAgents','panelConfig'];
-const panelMap = { chat:'panelChat', tools:'panelTools', files:'panelFiles', memory:'panelMemory', goals:'panelGoals', events:'panelEvents', skills:'panelSkills', terminal:'panelTerminal', dashboard:'panelDashboard', toolMgmt:'panelToolMgmt', agents:'panelAgents', config:'panelConfig' };
+export const PANEL_NAMES = new Set(Object.keys(PANELS));
+const allPanels = Object.values(PANELS).map(p => p.id);
+const panelMap = Object.fromEntries(Object.entries(PANELS).map(([k, v]) => [k, v.id]));
 
 /** Parse location.hash into a route descriptor. @returns {{route: string, wsId?: string, convId?: string, panel?: string}} */
 export function parseHash() {
