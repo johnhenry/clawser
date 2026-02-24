@@ -158,6 +158,16 @@ Open `web/test.html` in Chrome to run the regression test suite (39 modules, bro
 **Rust reference crates:**
 The `crates/` directory contains the original Rust/WASM core, kept as architectural reference. It is not used at runtime.
 
+## `.reference/` Directory
+
+The `.reference/` directory (gitignored) contains historical reference implementations from earlier stages of the project:
+
+- **ironclaw** -- Original Rust/WASM agent core
+- **nullclaw** -- Stripped-down null implementation used for testing the host bridge
+- **zeroclaw** -- Zero-dependency JavaScript prototype that preceded the current architecture
+
+These are kept locally for architectural reference and are not part of the runtime or distribution.
+
 ## License
 
 MIT

@@ -358,3 +358,53 @@ Clawser has no npm dependencies. All external code is loaded via CDN at runtime:
 - **URL scheme validation**: NavigateTool only allows http/https
 - **Hook pipeline**: beforeToolCall hook can block any tool execution
 - **Workspace isolation**: Separate state, memory, and permissions per workspace
+
+## Module Dependency Graph
+
+```mermaid
+graph TD
+    HTML["index.html"] --> APP["clawser-app.js"]
+
+    APP --> STATE["clawser-state.js"]
+    APP --> ROUTER["clawser-router.js"]
+    APP --> AGENT["clawser-agent.js"]
+    APP --> PROVIDERS["clawser-providers.js"]
+    APP --> TOOLS["clawser-tools.js"]
+    APP --> MCP["clawser-mcp.js"]
+    APP --> SKILLS["clawser-skills.js"]
+    APP --> SHELL["clawser-shell.js"]
+    APP --> CLI["clawser-cli.js"]
+    APP --> UI_CHAT["clawser-ui-chat.js"]
+    APP --> UI_PANELS["clawser-ui-panels.js"]
+    APP --> ITEM_BAR["clawser-item-bar.js"]
+    APP --> TERM["clawser-terminal-sessions.js"]
+    APP --> AGENT_REF["clawser-agent-ref.js"]
+    APP --> AGENT_STORE["clawser-agent-storage.js"]
+    APP --> FEATURES["30+ feature modules"]
+
+    AGENT --> CODEX["clawser-codex.js"]
+    AGENT --> SAFETY["clawser-safety.js"]
+    AGENT --> MEMORY["clawser-memory.js"]
+    AGENT --> SELF_REPAIR["clawser-self-repair.js"]
+    AGENT --> UNDO["clawser-undo.js"]
+    AGENT --> STATE
+
+    CODEX --> TOOLS
+    SHELL --> BUILTINS["clawser-shell-builtins.js"]
+    SHELL --> TOOLS
+    SKILLS --> TOOLS
+    SKILLS --> STATE
+    CLI --> STATE
+
+    UI_CHAT --> STATE
+    UI_PANELS --> STATE
+    ROUTER --> STATE
+
+    style HTML fill:#e1f5fe
+    style APP fill:#fff3e0
+    style AGENT fill:#e8f5e9
+    style PROVIDERS fill:#fce4ec
+    style TOOLS fill:#f3e5f5
+    style SKILLS fill:#fff8e1
+    style SHELL fill:#e0f2f1
+```

@@ -1,3 +1,5 @@
+> **Note**: This document describes the original Rust/WASM architecture. The current implementation is a pure JavaScript browser runtime. See [ARCHITECTURE.md](ARCHITECTURE.md) for the current architecture.
+
 # Clawser: Browser-Native Agent Operating System
 
 ## Product Requirements Document (PRD)
