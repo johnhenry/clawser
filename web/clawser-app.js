@@ -18,30 +18,36 @@ import { loadWorkspaces, setActiveWorkspaceId, ensureDefaultWorkspace, createWor
 import { loadConversations } from './clawser-conversations.js';
 import { SERVICES, loadAccounts, createAccount, deleteAccount, saveConfig, applyRestoredConfig, rebuildProviderDropdown, setupProviders, initAccountListeners } from './clawser-accounts.js';
 import { parseHash, navigate, showView, updateRouteHash, activatePanel, initRouterListeners } from './clawser-router.js';
-import { setStatus, addMsg, addErrorMsg, addToolCall, addInlineToolCall, updateInlineToolCall, addEvent, updateState, updateCostDisplay, replaySessionHistory, replayFromEvents, updateConvNameDisplay, persistActiveConversation, switchConversation, initChatListeners, renderToolCalls, resetChatUI, addSubAgentCard, updateSubAgentCard, addSafetyBanner, addUndoButton, addIntentBadge } from './clawser-ui-chat.js';
-import { refreshFiles, renderGoals, renderToolRegistry, renderSkills, applySecuritySettings, initPanelListeners, renderAutonomySection, renderIdentitySection, renderRoutingSection, renderAuthProfilesSection, renderSelfRepairSection, updateCacheStats, renderSandboxSection, renderHeartbeatSection, updateCostMeter, updateAutonomyBadge, updateDaemonBadge, updateRemoteBadge, refreshDashboard, renderMountList, renderOAuthSection } from './clawser-ui-panels.js';
+import { setStatus, addMsg, addErrorMsg, addToolCall, addInlineToolCall, updateInlineToolCall, addEvent, updateState, updateCostDisplay, replaySessionHistory, replayFromEvents, updateConvNameDisplay, persistActiveConversation, switchConversation, initChatListeners, renderToolCalls, resetChatUI, addSubAgentCard, updateSubAgentCard, addSafetyBanner, addUndoButton, addIntentBadge, convItemBar } from './clawser-ui-chat.js';
+import { refreshFiles, renderGoals, renderToolRegistry, renderSkills, applySecuritySettings, initPanelListeners, renderAutonomySection, renderIdentitySection, renderRoutingSection, renderAuthProfilesSection, renderSelfRepairSection, updateCacheStats, renderSandboxSection, renderHeartbeatSection, updateCostMeter, updateAutonomyBadge, updateDaemonBadge, updateRemoteBadge, refreshDashboard, renderMountList, renderOAuthSection, terminalAskUser, renderTerminalSessionBar, replayTerminalSession, termItemBar, renderToolManagementPanel, initAgentPicker, updateAgentLabel, renderAgentPanel } from './clawser-ui-panels.js';
 import { initCmdPaletteListeners } from './clawser-cmd-palette.js';
+import { registerClawserCli } from './clawser-cli.js';
+import { AgentStorage } from './clawser-agent-storage.js';
+import { SwitchAgentTool, ConsultAgentTool } from './clawser-tools.js';
+import { TerminalSessionManager } from './clawser-terminal-sessions.js';
 
 import { ClawserAgent } from './clawser-agent.js';
-import { createDefaultRegistry, WorkspaceFs, registerAgentTools } from './clawser-tools.js';
+import { createDefaultRegistry, WorkspaceFs, registerAgentTools, AskUserQuestionTool } from './clawser-tools.js';
 import { createDefaultProviders, ResponseCache } from './clawser-providers.js';
 import { McpManager } from './clawser-mcp.js';
-import { SkillRegistry, SkillStorage, ActivateSkillTool, DeactivateSkillTool } from './clawser-skills.js';
+import { SkillRegistry, SkillStorage, ActivateSkillTool, DeactivateSkillTool, SkillRegistryClient, SkillSearchTool, SkillInstallTool, SkillUpdateTool, SkillRemoveTool, SkillListTool } from './clawser-skills.js';
 import { ClawserShell, ShellTool } from './clawser-shell.js';
 import { SecretVault, OPFSVaultStorage } from './clawser-vault.js';
 import { AutonomyController, HookPipeline } from './clawser-agent.js';
 import { IdentityManager, compileSystemPrompt } from './clawser-identity.js';
 import { ModelRouter, ProviderHealth, FallbackChain, FallbackExecutor } from './clawser-fallback.js';
-import { IntentRouter } from './clawser-intent.js';
+import { IntentRouter, IntentClassifyTool, IntentOverrideTool } from './clawser-intent.js';
 import { InputSanitizer, ToolCallValidator, SafetyPipeline } from './clawser-safety.js';
-import { StuckDetector, SelfRepairEngine } from './clawser-self-repair.js';
-import { UndoManager } from './clawser-undo.js';
-import { HeartbeatRunner } from './clawser-heartbeat.js';
-import { AuthProfileManager } from './clawser-auth-profiles.js';
-import { OAuthManager } from './clawser-oauth.js';
+import { StuckDetector, SelfRepairEngine, SelfRepairStatusTool, SelfRepairConfigureTool } from './clawser-self-repair.js';
+import { UndoManager, UndoTool, UndoStatusTool } from './clawser-undo.js';
+import { HeartbeatRunner, HeartbeatStatusTool, HeartbeatRunTool } from './clawser-heartbeat.js';
+import { AuthProfileManager, AuthListProfilesTool, AuthSwitchProfileTool, AuthStatusTool } from './clawser-auth-profiles.js';
+import { OAuthManager, OAuthListTool, OAuthConnectTool, OAuthDisconnectTool, OAuthApiTool } from './clawser-oauth.js';
 import { MetricsCollector, RingBufferLog } from './clawser-metrics.js';
-import { DaemonController } from './clawser-daemon.js';
-import { RoutineEngine } from './clawser-routines.js';
+import { DaemonController, DaemonStatusTool, DaemonCheckpointTool } from './clawser-daemon.js';
+import { RoutineEngine, RoutineCreateTool, RoutineListTool, RoutineDeleteTool, RoutineRunTool } from './clawser-routines.js';
+import { BridgeManager, BridgeStatusTool, BridgeListToolsTool, BridgeFetchTool } from './clawser-bridge.js';
+import { GoalManager, GoalAddTool, GoalUpdateTool, GoalAddArtifactTool, GoalListTool } from './clawser-goals.js';
 import { MountableFs, MountListTool, MountResolveTool } from './clawser-mount.js';
 import { ToolBuilder, ToolBuildTool, ToolTestTool, ToolListCustomTool, ToolEditTool, ToolRemoveTool } from './clawser-tool-builder.js';
 import { ChannelManager, ChannelListTool, ChannelSendTool, ChannelHistoryTool } from './clawser-channels.js';
@@ -119,6 +125,9 @@ state.automationManager = new AutomationManager({ onLog: _onLog });
 state.sandboxManager = new SandboxManager({ onLog: _onLog });
 state.peripheralManager = new PeripheralManager({ onLog: _onLog });
 state.pairingManager = new PairingManager({ onLog: _onLog });
+state.bridgeManager = new BridgeManager({});
+state.goalManager = new GoalManager();
+state.skillRegistryClient = new SkillRegistryClient();
 
 // Freeze service singleton slots to prevent accidental reassignment
 Object.defineProperty(state, 'workspaceFs', { value: state.workspaceFs, writable: false, configurable: false });
@@ -153,10 +162,15 @@ state.skillRegistry = new SkillRegistry({
 });
 
 // ── Shell session management ─────────────────────────────────────
-/** Create a fresh shell session for the current workspace. Sources .clawserrc. */
+/** Create a fresh shell session for the current workspace. Sources .clawserrc and registers CLI. */
 async function createShellSession() {
   state.shell = new ClawserShell({ workspaceFs: state.workspaceFs });
   await state.shell.source('/.clawserrc');
+  registerClawserCli(state.shell.registry, () => state.agent, () => state.shell);
+  // Update terminal session manager's shell reference
+  if (state.terminalSessions) {
+    state.terminalSessions.setShell(state.shell);
+  }
 }
 
 // ── Cross-module event bus ──────────────────────────────────────
@@ -185,6 +199,11 @@ async function switchWorkspace(newId, convId) {
   state.routineEngine.stop();
   await state.daemonController.stop().catch(() => {});
 
+  // Persist terminal session before switching
+  if (state.terminalSessions) {
+    await state.terminalSessions.persist().catch(() => {});
+  }
+
   // Save current workspace
   await persistActiveConversation();
   state.agent.persistMemories();
@@ -206,6 +225,24 @@ async function switchWorkspace(newId, convId) {
 
   // Create fresh shell session for new workspace
   await createShellSession();
+
+  // Create terminal session manager for new workspace
+  state.terminalSessions = new TerminalSessionManager({
+    wsId: newId,
+    shell: state.shell,
+    fs: state.shell.fs,
+  });
+  const savedTermSessions = JSON.parse(localStorage.getItem(lsKey.termSessions(newId)) || '[]');
+  if (savedTermSessions.length > 0) {
+    try {
+      const restored = await state.terminalSessions.restore(savedTermSessions[0].id);
+      if (restored) replayTerminalSession(restored.events);
+    } catch { /* fresh session */ }
+  }
+  if (!state.terminalSessions.activeId) {
+    await state.terminalSessions.create('Terminal 1');
+  }
+  renderTerminalSessionBar();
 
   // Clear UI
   resetChatUI();
@@ -334,6 +371,10 @@ async function initWorkspace(wsId, convId) {
       onToolCall: (() => {
         let _toolSeq = 0;
         return (name, params, result) => {
+          if (result !== null) {
+            state.toolUsageStats[name] = (state.toolUsageStats[name] || 0) + 1;
+            state.toolLastUsed[name] = Date.now();
+          }
           addToolCall(name, params, result);
           if (result === null) {
             const key = `${name}_${++_toolSeq}`;
@@ -442,6 +483,106 @@ async function initWorkspace(wsId, convId) {
     state.browserTools.register(new RemotePairTool(state.pairingManager));
     state.browserTools.register(new RemoteRevokeTool(state.pairingManager));
 
+    // ── Gap-fill tools (31 tools from blocks 0–29) ─────────────
+
+    // Bridge (3)
+    state.browserTools.register(new BridgeStatusTool(state.bridgeManager));
+    state.browserTools.register(new BridgeListToolsTool(state.bridgeManager));
+    state.browserTools.register(new BridgeFetchTool(state.bridgeManager));
+
+    // Goals (4)
+    state.browserTools.register(new GoalAddTool(state.goalManager));
+    state.browserTools.register(new GoalUpdateTool(state.goalManager));
+    state.browserTools.register(new GoalAddArtifactTool(state.goalManager));
+    state.browserTools.register(new GoalListTool(state.goalManager));
+
+    // Daemon (2)
+    state.browserTools.register(new DaemonStatusTool(state.daemonController));
+    state.browserTools.register(new DaemonCheckpointTool(state.daemonController));
+
+    // OAuth (4)
+    state.browserTools.register(new OAuthListTool(state.oauthManager));
+    state.browserTools.register(new OAuthConnectTool(state.oauthManager));
+    state.browserTools.register(new OAuthDisconnectTool(state.oauthManager));
+    state.browserTools.register(new OAuthApiTool(state.oauthManager));
+
+    // Auth Profiles (3)
+    state.browserTools.register(new AuthListProfilesTool(state.authProfileManager));
+    state.browserTools.register(new AuthSwitchProfileTool(state.authProfileManager));
+    state.browserTools.register(new AuthStatusTool(state.authProfileManager));
+
+    // Routines (4)
+    state.browserTools.register(new RoutineCreateTool(state.routineEngine));
+    state.browserTools.register(new RoutineListTool(state.routineEngine));
+    state.browserTools.register(new RoutineDeleteTool(state.routineEngine));
+    state.browserTools.register(new RoutineRunTool(state.routineEngine));
+
+    // Self-Repair (2)
+    state.browserTools.register(new SelfRepairStatusTool(state.selfRepairEngine));
+    state.browserTools.register(new SelfRepairConfigureTool(state.selfRepairEngine));
+
+    // Undo (2)
+    state.browserTools.register(new UndoTool(state.undoManager));
+    state.browserTools.register(new UndoStatusTool(state.undoManager));
+
+    // Intent (2)
+    state.browserTools.register(new IntentClassifyTool(state.intentRouter));
+    state.browserTools.register(new IntentOverrideTool(state.intentRouter));
+
+    // Heartbeat (2)
+    state.browserTools.register(new HeartbeatStatusTool(state.heartbeatRunner));
+    state.browserTools.register(new HeartbeatRunTool(state.heartbeatRunner));
+
+    // Skills Registry (5)
+    state.browserTools.register(new SkillSearchTool(state.skillRegistryClient));
+    state.browserTools.register(new SkillInstallTool(state.skillRegistryClient, state.skillRegistry, activeWsId));
+    state.browserTools.register(new SkillUpdateTool(state.skillRegistryClient, state.skillRegistry, activeWsId));
+    state.browserTools.register(new SkillRemoveTool(state.skillRegistry, activeWsId));
+    state.browserTools.register(new SkillListTool(state.skillRegistry));
+
+    // AskUserQuestion (1)
+    state.browserTools.register(new AskUserQuestionTool(async (questions) => {
+      return terminalAskUser(questions);
+    }));
+
+    // Agents (Block 37) — storage + tools
+    try {
+      const opfsRoot = await navigator.storage.getDirectory();
+      let globalAgentDir;
+      try { globalAgentDir = await opfsRoot.getDirectoryHandle('clawser_agents', { create: true }); } catch { globalAgentDir = null; }
+      let wsAgentDir;
+      try {
+        const wsBase = await opfsRoot.getDirectoryHandle('clawser_workspaces', { create: true });
+        const wsHandle = await wsBase.getDirectoryHandle(activeWsId, { create: true });
+        wsAgentDir = await wsHandle.getDirectoryHandle('.agents', { create: true });
+      } catch { wsAgentDir = null; }
+      state.agentStorage = new AgentStorage({ globalDir: globalAgentDir, wsDir: wsAgentDir, wsId: activeWsId });
+      await state.agentStorage.seedBuiltins();
+
+      // Register agent tools
+      state.browserTools.register(new SwitchAgentTool(state.agentStorage, state.agent));
+      state.browserTools.register(new ConsultAgentTool(state.agentStorage, {
+        providers: state.providers,
+        browserTools: state.browserTools,
+        mcpManager: state.mcpManager,
+        onLog: (level, msg) => console.log(`[consult] ${msg}`),
+        createEngine: async (engineOpts) => {
+          const sub = await ClawserAgent.create(engineOpts);
+          sub.init({});
+          return sub;
+        },
+      }));
+
+      // Restore active agent
+      const activeAgent = await state.agentStorage.getActive();
+      if (activeAgent) {
+        state.agent.applyAgent(activeAgent);
+        updateAgentLabel(activeAgent);
+      }
+    } catch (e) {
+      console.warn('[clawser] Agent storage init failed:', e);
+    }
+
     state.agent.refreshToolSpecs();
 
     state.browserTools.setApprovalHandler(async (toolName, params) => {
@@ -463,8 +604,28 @@ async function initWorkspace(wsId, convId) {
     state.agent.setWorkspace(activeWsId);
     touchWorkspace(activeWsId);
 
-    // Create initial shell session for this workspace
+    // Create initial shell session for this workspace (includes CLI registration)
     await createShellSession();
+
+    // Create terminal session manager (Block 35)
+    state.terminalSessions = new TerminalSessionManager({
+      wsId: activeWsId,
+      shell: state.shell,
+      fs: state.shell.fs,
+    });
+    // Create or restore a default terminal session
+    const savedTermSession = JSON.parse(localStorage.getItem(lsKey.termSessions(activeWsId)) || '[]');
+    if (savedTermSession.length > 0) {
+      const lastActive = savedTermSession[0];
+      try {
+        const restored = await state.terminalSessions.restore(lastActive.id);
+        if (restored) replayTerminalSession(restored.events);
+      } catch { /* fresh session */ }
+    }
+    if (!state.terminalSessions.activeId) {
+      await state.terminalSessions.create('Terminal 1');
+    }
+    renderTerminalSessionBar();
 
     const savedConfig = state.agent.restoreConfig();
     const memCount = state.agent.restoreMemories();
@@ -534,6 +695,9 @@ async function initWorkspace(wsId, convId) {
     $('providerLabel').textContent = providerSelect.options[providerSelect.selectedIndex]?.textContent || providerSelect.value;
 
     renderToolRegistry();
+    renderToolManagementPanel();
+    renderAgentPanel();
+    initAgentPicker();
     updateState();
     renderGoals();
     refreshFiles();
@@ -803,3 +967,10 @@ initHomeListeners();
 
 ensureDefaultWorkspace();
 handleRoute();
+
+// Auto-save terminal session on page unload
+window.addEventListener('beforeunload', () => {
+  if (state.terminalSessions?.dirty) {
+    state.terminalSessions.persist().catch(() => {});
+  }
+});

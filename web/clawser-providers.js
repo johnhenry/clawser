@@ -258,6 +258,14 @@ export class ResponseCache {
   set enabled(v) { this.#enabled = !!v; }
   get enabled() { return this.#enabled; }
 
+  /** Set the TTL in milliseconds. */
+  set ttl(ms) { this.#ttlMs = ms; }
+  get ttl() { return this.#ttlMs; }
+
+  /** Set the maximum number of cache entries. */
+  set maxEntries(n) { this.#maxEntries = n; }
+  get maxEntries() { return this.#maxEntries; }
+
   /** FNV-1a hash — fast, non-cryptographic */
   static hash(str) {
     let h = 0x811c9dc5;
@@ -1417,6 +1425,10 @@ export class ProviderRegistry {
 
   has(name) {
     return this.#providers.has(name);
+  }
+
+  names() {
+    return [...this.#providers.keys()];
   }
 
   async listWithAvailability() {

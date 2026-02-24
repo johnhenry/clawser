@@ -148,6 +148,17 @@ export class BrowserToolRegistry {
     }
   }
 
+  /** Reset all permission overrides back to defaults. */
+  resetAllPermissions() {
+    this.#permissions.clear();
+  }
+
+  /** Get a single tool spec by name. */
+  getSpec(name) {
+    const tool = this.#tools.get(name);
+    return tool ? tool.spec : null;
+  }
+
   /** @returns {object[]} All tool specs for registration with WASM */
   allSpecs() {
     return [...this.#tools.values()].map(t => t.spec);
@@ -1157,6 +1168,185 @@ export function registerAgentTools(registry, agent) {
  * @param {WorkspaceFs} workspaceFs - Workspace filesystem scope for FS tools
  * @returns {BrowserToolRegistry}
  */
+// ── AskUserQuestion Tool ─────────────────────────────────────────
+
+/**
+ * Tool that allows the agent to ask the user questions with structured options.
+ * The onAskUser callback handles the UI interaction and returns answers.
+ */
+export class AskUserQuestionTool extends BrowserTool {
+  #onAskUser;
+
+  /**
+   * @param {Function} onAskUser - async (questions) => {answers}
+   *   questions: Array<{question, header, options: [{label, description}], multiSelect?}>
+   *   answers: Object<string, string> — keyed by question text
+   */
+  constructor(onAskUser) {
+    super();
+    this.#onAskUser = onAskUser;
+  }
+
+  get name() { return 'ask_user_question'; }
+  get description() {
+    return 'Ask the user one or more questions with predefined options. Use this when you need user input to proceed. Each question can have 2-4 options. Users can also provide free-text via "Other".';
+  }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        questions: {
+          type: 'array',
+          description: 'Array of questions (1-4)',
+          items: {
+            type: 'object',
+            properties: {
+              question: { type: 'string', description: 'The question to ask' },
+              header: { type: 'string', description: 'Short label (max 12 chars)' },
+              options: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    label: { type: 'string', description: 'Option display text (1-5 words)' },
+                    description: { type: 'string', description: 'What this option means' },
+                  },
+                  required: ['label', 'description'],
+                },
+                minItems: 2,
+                maxItems: 4,
+              },
+              multiSelect: { type: 'boolean', description: 'Allow multiple selections', default: false },
+            },
+            required: ['question', 'header', 'options'],
+          },
+          minItems: 1,
+          maxItems: 4,
+        },
+      },
+      required: ['questions'],
+    };
+  }
+  get permission() { return 'auto'; }
+
+  async execute({ questions }) {
+    if (!questions || !Array.isArray(questions) || questions.length === 0) {
+      return { success: false, output: '', error: 'questions must be a non-empty array' };
+    }
+    if (questions.length > 4) {
+      return { success: false, output: '', error: 'Maximum 4 questions allowed' };
+    }
+    for (const q of questions) {
+      if (!q.question || !q.header || !Array.isArray(q.options)) {
+        return { success: false, output: '', error: 'Each question needs question, header, and options fields' };
+      }
+      if (q.options.length < 2 || q.options.length > 4) {
+        return { success: false, output: '', error: 'Each question must have 2-4 options' };
+      }
+      for (const opt of q.options) {
+        if (!opt.label || !opt.description) {
+          return { success: false, output: '', error: 'Each option needs label and description' };
+        }
+      }
+    }
+
+    try {
+      const answers = await this.#onAskUser(questions);
+      const lines = [];
+      for (const q of questions) {
+        const answer = answers?.[q.question] ?? '(no answer)';
+        lines.push(`[${q.header}] ${q.question}\n  → ${answer}`);
+      }
+      return { success: true, output: lines.join('\n\n') };
+    } catch (e) {
+      return { success: false, output: '', error: `Ask user failed: ${e.message}` };
+    }
+  }
+}
+
+// ── Agent tools (Block 37) ─────────────────────────────────────
+
+/**
+ * SwitchAgentTool — switch to a different agent configuration mid-conversation.
+ * Lists available agents (no args) or switches to one by name or ID.
+ */
+export class SwitchAgentTool extends BrowserTool {
+  #storage; #engine;
+  constructor(storage, engine) { super(); this.#storage = storage; this.#engine = engine; }
+  get name() { return 'switch_agent'; }
+  get description() { return 'Switch to a different agent configuration. Omit agent param to list available agents.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        agent: { type: 'string', description: 'Agent name or ID to switch to. Omit to list available agents.' },
+        reason: { type: 'string', description: 'Brief reason for switching.' },
+      },
+    };
+  }
+  get permission() { return 'approve'; }
+
+  async execute(params) {
+    try {
+      const all = await this.#storage.listAll();
+      if (!params.agent) {
+        const list = all.map(a => ({ name: a.name, id: a.id, provider: `${a.provider}:${a.model || 'default'}`, description: a.description }));
+        return { success: true, output: JSON.stringify(list, null, 2) };
+      }
+      const agent = all.find(a =>
+        a.name.toLowerCase() === params.agent.toLowerCase() || a.id === params.agent
+      );
+      if (!agent) return { success: false, output: '', error: `Agent "${params.agent}" not found.` };
+      this.#engine.applyAgent(agent);
+      this.#storage.setActive(agent.id);
+      return { success: true, output: `Switched to agent "${agent.name}" (${agent.provider}:${agent.model})${params.reason ? `. Reason: ${params.reason}` : ''}` };
+    } catch (e) {
+      return { success: false, output: '', error: `Switch failed: ${e.message}` };
+    }
+  }
+}
+
+/**
+ * ConsultAgentTool — send a message to another agent and get their response.
+ * Used for second opinions, subtask delegation, or model escalation.
+ */
+export class ConsultAgentTool extends BrowserTool {
+  #storage; #opts;
+  constructor(storage, opts) { super(); this.#storage = storage; this.#opts = opts; }
+  get name() { return 'consult_agent'; }
+  get description() { return 'Send a message to another agent and get their response. Use for second opinions, subtask delegation, or escalation.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        agent: { type: 'string', description: 'Name of the agent to consult.' },
+        message: { type: 'string', description: 'The message/question to send to the agent.' },
+      },
+      required: ['agent', 'message'],
+    };
+  }
+  get permission() { return 'auto'; }
+
+  async execute(params) {
+    try {
+      const { executeAgentRef } = await import('./clawser-agent-ref.js');
+      const all = await this.#storage.listAll();
+      const agentDef = all.find(a =>
+        a.name.toLowerCase().replace(/\s+/g, '-') === params.agent.toLowerCase().replace(/\s+/g, '-') ||
+        a.name.toLowerCase() === params.agent.toLowerCase()
+      );
+      if (!agentDef) {
+        const names = all.map(a => a.name).join(', ');
+        return { success: false, output: '', error: `Agent "${params.agent}" not found. Available: ${names}` };
+      }
+      const { response } = await executeAgentRef(agentDef, params.message, this.#opts);
+      return { success: true, output: `[Response from ${agentDef.name}]:\n${response}` };
+    } catch (e) {
+      return { success: false, output: '', error: `Agent error: ${e.message}` };
+    }
+  }
+}
+
 export function createDefaultRegistry(workspaceFs) {
   const registry = new BrowserToolRegistry();
 

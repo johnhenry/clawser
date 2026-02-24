@@ -18,6 +18,7 @@
  */
 
 import { BrowserTool } from './clawser-tools.js';
+import { registerExtendedBuiltins } from './clawser-shell-builtins.js';
 
 // ── Token Types ─────────────────────────────────────────────────
 
@@ -259,6 +260,8 @@ export class ShellState {
     this.lastExitCode = 0;
     /** @type {boolean} Fail-fast on pipeline errors (like bash set -o pipefail) */
     this.pipefail = true;
+    /** @type {Map<string, string>} Shell aliases (name → expanded command) */
+    this.aliases = new Map();
   }
 
   /**
@@ -337,6 +340,14 @@ export async function execute(node, state, registry, opts = {}) {
 }
 
 async function executeCommand(node, state, registry, opts) {
+  // Alias expansion: if the command name is an alias, re-parse and execute the expanded form
+  if (state.aliases?.has(node.name)) {
+    const expanded = state.aliases.get(node.name) + (node.args.length > 0 ? ' ' + node.args.join(' ') : '');
+    const expandedAst = parse(expanded);
+    if (expandedAst) return execute(expandedAst, state, registry, opts);
+    return { stdout: '', stderr: '', exitCode: 0 };
+  }
+
   const handler = registry.get(node.name);
   if (!handler) {
     state.lastExitCode = 127;
@@ -1016,6 +1027,7 @@ export class ClawserShell {
 
     if (!opts.registry) {
       registerBuiltins(this.registry);
+      registerExtendedBuiltins(this.registry);
     }
   }
 

@@ -5,6 +5,7 @@ import { loadConversations, saveConversations, generateConvId } from './clawser-
 import { loadAccounts } from './clawser-accounts.js';
 import { updateRouteHash } from './clawser-router.js';
 import { estimateCost, classifyError } from './clawser-providers.js';
+import { createItemBar, _relativeTime, _downloadText } from './clawser-item-bar.js';
 
 // ── Reset helpers (shared for clearing tool/event + message state) ──
 /** Clear tool call log, event log, and their DOM elements. */
@@ -32,14 +33,24 @@ export function setStatus(statusState, text) {
 }
 
 // ── Message display ─────────────────────────────────────────────
-/** Append a message to the chat panel and auto-scroll. @param {'user'|'agent'|'system'|'error'} type @param {string} text */
-export function addMsg(type, text) {
+/** Append a message to the chat panel and auto-scroll. @param {'user'|'agent'|'system'|'error'} type @param {string} text @param {string} [eventId] - Event ID for fork-from-point (user messages only) */
+export function addMsg(type, text, eventId) {
   const messagesEl = $('messages');
   const d = document.createElement('div');
   d.className = `msg ${type}`;
-  if (type === 'user') d.innerHTML = `<div class="label">You</div>${esc(text)}`;
-  else if (type === 'agent') d.innerHTML = `<div class="label">Agent</div>${esc(text)}`;
-  else d.textContent = text;
+  if (type === 'user') {
+    if (eventId) d.dataset.eventId = eventId;
+    d.innerHTML = `<div class="label">You<span class="msg-fork" title="Fork from here">\u2442</span></div>${esc(text)}`;
+    d.querySelector('.msg-fork').addEventListener('click', (e) => {
+      e.stopPropagation();
+      const evtId = d.dataset.eventId;
+      if (evtId) forkConversationFromEvent(evtId);
+    });
+  } else if (type === 'agent') {
+    d.innerHTML = `<div class="label">Agent</div>${esc(text)}`;
+  } else {
+    d.textContent = text;
+  }
   messagesEl.appendChild(d);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
@@ -261,11 +272,9 @@ export async function persistActiveConversation() {
 }
 
 // ── Conversation name display ───────────────────────────────────
-/** Update the conversation name header element from state. */
+/** Update the conversation name display via the ItemBar. */
 export function updateConvNameDisplay() {
-  const el = $('convName');
-  el.textContent = state.activeConversationName || 'New conversation';
-  el.title = state.activeConversationName || 'New conversation';
+  if (convItemBar) convItemBar.refresh();
 }
 
 /** Rename the active conversation in both localStorage and OPFS. @param {string} name */
@@ -327,7 +336,6 @@ export async function switchConversation(convId) {
   }
 
   setStatus('busy', 'loading conversation...');
-  $('convDropdown').classList.remove('visible');
 
   resetConversationState();
   emit('newShellSession');
@@ -389,42 +397,155 @@ export async function deleteConversationEntry(convId) {
     updateRouteHash();
   }
 
-  renderConversationList();
+  if (convItemBar) convItemBar.refresh();
 }
 
-// ── Conversation list ───────────────────────────────────────────
-/** Render the conversation history dropdown, sorted by last used. */
-export function renderConversationList() {
-  if (!state.agent) return;
+// ── Fork conversation ────────────────────────────────────────────
+/** Fork the active conversation: copy history to a new conversation. */
+export async function forkConversation() {
+  if (!state.agent || !state.activeConversationId) return;
   const wsId = state.agent.getWorkspace();
-  const list = loadConversations(wsId);
-  const el = $('convDropdown');
-  el.innerHTML = '';
+  await persistActiveConversation();
 
-  if (list.length === 0) {
-    el.innerHTML = '<div class="conv-empty">No conversations yet.</div>';
+  const newId = generateConvId();
+  const origName = state.activeConversationName || 'conversation';
+  const forkName = `${origName} (fork)`;
+
+  const list = loadConversations(wsId);
+  const existing = list.find(c => c.id === state.activeConversationId);
+  await state.agent.persistConversation(newId, {
+    name: forkName,
+    created: Date.now(),
+  });
+
+  const messagesEl = $('messages');
+  const msgCount = messagesEl.querySelectorAll('.msg.user, .msg.agent').length;
+  list.push({ id: newId, name: forkName, created: Date.now(), lastUsed: Date.now(), messageCount: msgCount, preview: existing?.preview || '' });
+  saveConversations(wsId, list);
+
+  setConversation(newId, forkName);
+  updateConvNameDisplay();
+  updateRouteHash();
+  addMsg('system', `Forked conversation as "${forkName}".`);
+}
+
+// ── Fork conversation from specific event ────────────────────────
+/** Fork the active conversation from a specific event, keeping only events up to that turn.
+ * @param {string} eventId - The event ID of the user_message to fork from
+ */
+export async function forkConversationFromEvent(eventId) {
+  if (!state.agent || !state.activeConversationId) return;
+  const wsId = state.agent.getWorkspace();
+  await persistActiveConversation();
+
+  const eventLog = state.agent.getEventLog();
+  const sliced = eventLog.sliceToTurnEnd(eventId);
+  if (!sliced || sliced.length === 0) {
+    addMsg('system', 'Fork failed: event not found.');
     return;
   }
 
-  const sorted = [...list].sort((a, b) => b.lastUsed - a.lastUsed);
-  for (const conv of sorted) {
-    const d = document.createElement('div');
-    d.className = `conv-item${conv.id === state.activeConversationId ? ' active' : ''}`;
-    const date = new Date(conv.lastUsed || conv.created).toLocaleDateString();
-    d.innerHTML = `
-      <div class="conv-info">
-        <div class="conv-title">${esc(conv.name)}</div>
-        <div class="conv-meta">${date} · ${conv.messageCount || 0} msgs${conv.preview ? ' · ' + esc(conv.preview.slice(0, 40)) : ''}</div>
-      </div>
-      <span class="conv-del" title="Delete conversation">✕</span>
-    `;
-    d.querySelector('.conv-info').addEventListener('click', () => switchConversation(conv.id));
-    d.querySelector('.conv-del').addEventListener('click', async (e) => {
-      e.stopPropagation();
-      if (await modal.confirm(`Delete conversation "${conv.name}"?`, { danger: true })) deleteConversationEntry(conv.id);
-    });
-    el.appendChild(d);
+  // Count user messages up to the fork point to label it
+  const userMsgCount = sliced.filter(e => e.type === 'user_message').length;
+  const origName = state.activeConversationName || 'conversation';
+  const forkName = `${origName} (fork@msg ${userMsgCount})`;
+  const newId = generateConvId();
+
+  // Persist the sliced events as a new conversation via OPFS
+  try {
+    const root = await navigator.storage.getDirectory();
+    const base = await root.getDirectoryHandle('clawser_workspaces', { create: true });
+    const wsDir = await base.getDirectoryHandle(wsId, { create: true });
+    const convDir = await wsDir.getDirectoryHandle('.conversations', { create: true });
+    const convIdDir = await convDir.getDirectoryHandle(newId, { create: true });
+
+    const meta = { id: newId, name: forkName, created: Date.now(), lastUsed: Date.now(), version: 2 };
+    const metaFile = await convIdDir.getFileHandle('meta.json', { create: true });
+    const metaWritable = await metaFile.createWritable();
+    await metaWritable.write(JSON.stringify(meta));
+    await metaWritable.close();
+
+    const eventsJsonl = sliced.map(e => JSON.stringify(e)).join('\n');
+    const eventsFile = await convIdDir.getFileHandle('events.jsonl', { create: true });
+    const eventsWritable = await eventsFile.createWritable();
+    await eventsWritable.write(eventsJsonl);
+    await eventsWritable.close();
+  } catch (e) {
+    addMsg('system', `Fork failed: ${e.message}`);
+    return;
   }
+
+  // Update conversation list in localStorage
+  const list = loadConversations(wsId);
+  const msgCount = sliced.filter(e => e.type === 'user_message' || e.type === 'agent_message').length;
+  const lastUserMsg = [...sliced].reverse().find(e => e.type === 'user_message');
+  const preview = lastUserMsg?.data?.content?.slice(0, 80) || '';
+  list.push({ id: newId, name: forkName, created: Date.now(), lastUsed: Date.now(), messageCount: msgCount, preview });
+  saveConversations(wsId, list);
+
+  // Switch to the forked conversation
+  await switchConversation(newId);
+  addMsg('system', `Forked conversation as "${forkName}" (${userMsgCount} messages kept).`);
+}
+
+// ── Export conversation ──────────────────────────────────────────
+/** Export the active conversation as JSON. @returns {string} */
+export function exportConversationAsJSON() {
+  if (!state.agent) return '[]';
+  const evts = state.agent.getEventLog().events;
+  return JSON.stringify(evts, null, 2);
+}
+
+/** Export the active conversation as readable text. @returns {string} */
+export function exportConversationAsText() {
+  if (!state.agent) return '';
+  const evts = state.agent.getEventLog().events;
+  return evts.map(evt => {
+    const ts = evt.timestamp ? new Date(evt.timestamp).toISOString() : '';
+    switch (evt.type) {
+      case 'user_message': return `[${ts}] User: ${evt.data.content}`;
+      case 'agent_message': return `[${ts}] Agent: ${evt.data.content || ''}`;
+      case 'system_message': return `[${ts}] System: ${evt.data.content}`;
+      case 'tool_call': return `[${ts}] Tool Call: ${evt.data.name}(${JSON.stringify(evt.data.arguments)})`;
+      case 'tool_result': return `[${ts}] Tool Result: ${evt.data.name} → ${JSON.stringify(evt.data.result)}`;
+      case 'error': return `[${ts}] Error: ${evt.data.message}`;
+      default: return `[${ts}] ${evt.type}: ${JSON.stringify(evt.data)}`;
+    }
+  }).join('\n');
+}
+
+// ── Conversation ItemBar ─────────────────────────────────────────
+/** @type {{refresh: () => void, destroy: () => void}|null} */
+export let convItemBar = null;
+
+/** Initialize the conversation item bar (called once during chat listener setup). */
+function initConvItemBar() {
+  convItemBar = createItemBar({
+    containerId: 'convBarContainer',
+    label: 'Conversation',
+    newLabel: '+ New',
+    emptyMessage: 'No conversations yet.',
+    defaultName: 'New conversation',
+    getActiveName: () => state.activeConversationName,
+    getActiveId: () => state.activeConversationId,
+    listItems: () => {
+      if (!state.agent) return [];
+      return loadConversations(state.agent.getWorkspace());
+    },
+    onNew: () => newConversation(),
+    onSwitch: (id) => switchConversation(id),
+    onRename: (id, newName) => renameCurrentConversation(newName),
+    onDelete: (id) => deleteConversationEntry(id),
+    onFork: () => forkConversation(),
+    exportFormats: [
+      { label: 'Export as JSON', fn: () => exportConversationAsJSON(), filename: 'conversation.json', mime: 'application/json' },
+      { label: 'Export as text', fn: () => exportConversationAsText(), filename: 'conversation.txt', mime: 'text/plain' },
+    ],
+    renderMeta: (item) => {
+      const ago = _relativeTime(item.lastUsed || item.created);
+      return `${item.messageCount || 0} msgs \u00b7 ${ago}`;
+    },
+  });
 }
 
 // ── Replay session history (checkpoint-based, legacy) ───────────
@@ -476,7 +597,7 @@ export function replayFromEvents(events) {
   for (const evt of events) {
     switch (evt.type) {
       case 'user_message':
-        addMsg('user', evt.data.content);
+        addMsg('user', evt.data.content, evt.id);
         break;
       case 'agent_message':
         if (evt.data.content) addMsg('agent', evt.data.content);
@@ -742,6 +863,14 @@ export async function sendMessage() {
 
     state.agent.sendMessage(text);
 
+    // Backfill event ID on the user message div for fork-from-point
+    const lastEvt = state.agent.getEventLog().events.at(-1);
+    if (lastEvt?.type === 'user_message') {
+      const userMsgs = $('messages').querySelectorAll('.msg.user');
+      const lastUserDiv = userMsgs[userMsgs.length - 1];
+      if (lastUserDiv) lastUserDiv.dataset.eventId = lastEvt.id;
+    }
+
     // Check if streaming is supported for the active provider
     const providerSelect = $('providerSelect');
     const providerObj = state.providers.get(providerSelect.value.startsWith('acct_')
@@ -899,31 +1028,8 @@ export function initChatListeners() {
     }
   });
 
-  // Conversation buttons
-  $('convNew').addEventListener('click', () => newConversation());
-
-  $('convRename').addEventListener('click', async () => {
-    if (!state.activeConversationId) { addMsg('system', 'No active conversation to rename. Send a message first.'); return; }
-    const name = await modal.prompt('Rename conversation:', state.activeConversationName || '');
-    if (name === null || !name.trim()) return;
-    renameCurrentConversation(name.trim());
-  });
-
-  $('convHist').addEventListener('click', (e) => {
-    e.stopPropagation();
-    const dd = $('convDropdown');
-    dd.classList.toggle('visible');
-    if (dd.classList.contains('visible')) renderConversationList();
-  });
-
-  // Close conversation dropdown on outside click
-  document.addEventListener('click', (e) => {
-    const dd = $('convDropdown');
-    if (!dd.contains(e.target) && e.target.id !== 'convHist') {
-      dd.classList.remove('visible');
-    }
-  });
-  $('convDropdown').addEventListener('click', (e) => e.stopPropagation());
+  // Initialize unified conversation item bar
+  initConvItemBar();
 
   // System prompt change
   $('systemPrompt').addEventListener('change', () => {

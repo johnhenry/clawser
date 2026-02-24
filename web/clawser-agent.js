@@ -171,6 +171,24 @@ class EventLog {
     return log;
   }
 
+  /**
+   * Slice events up to the end of the turn containing the given event ID.
+   * A "turn" starts at a user_message and extends through all subsequent events
+   * until the next user_message. Returns null if eventId not found.
+   * @param {string} eventId
+   * @returns {Array<object>|null}
+   */
+  sliceToTurnEnd(eventId) {
+    const idx = this.#events.findIndex(e => e.id === eventId);
+    if (idx === -1) return null;
+    let end = idx;
+    for (let i = idx + 1; i < this.#events.length; i++) {
+      if (this.#events[i].type === 'user_message') break;
+      end = i;
+    }
+    return this.#events.slice(0, end + 1);
+  }
+
   /** Rebuild goals array from goal_added/goal_updated events */
   deriveGoals() {
     const goals = new Map();
@@ -558,7 +576,7 @@ export class ClawserAgent {
     agent.#responseCache = opts.responseCache || null;
     if (opts.autonomy) agent.#autonomy = opts.autonomy;
     if (opts.hooks) agent.#hooks = opts.hooks;
-    if (opts.safety) agent.#safety = opts.safety;
+    if (opts.safety || opts.safetyPipeline) agent.#safety = opts.safety || opts.safetyPipeline;
     if (opts.memory) agent.#memory = opts.memory;
     if (opts.fallbackExecutor) agent.#fallbackExecutor = opts.fallbackExecutor;
     if (opts.selfRepairEngine) agent.#selfRepairEngine = opts.selfRepairEngine;
@@ -676,6 +694,54 @@ export class ClawserAgent {
 
   /** Get the safety pipeline for input/output scanning */
   get safety() { return this.#safety; }
+
+  /**
+   * Apply autonomy config to the internal AutonomyController.
+   * @param {object} cfg
+   * @param {'readonly'|'supervised'|'full'} [cfg.level]
+   * @param {number} [cfg.maxActionsPerHour]
+   * @param {number} [cfg.maxCostPerDayCents]
+   */
+  applyAutonomyConfig(cfg) {
+    if (cfg.level) this.#autonomy.level = cfg.level;
+    if (cfg.maxActionsPerHour != null) this.#autonomy.maxActionsPerHour = cfg.maxActionsPerHour;
+    if (cfg.maxCostPerDayCents != null) this.#autonomy.maxCostPerDayCents = cfg.maxCostPerDayCents;
+  }
+
+  /**
+   * Set the fallback executor for provider failover.
+   * @param {import('./clawser-fallback.js').FallbackExecutor} executor
+   */
+  setFallbackExecutor(executor) { this.#fallbackExecutor = executor; }
+
+  // ── Agent definitions ─────────────────────────────────────
+
+  /** @type {Object|null} Currently applied agent definition */
+  #activeAgent = null;
+
+  /** Get the active agent definition (if any). */
+  get activeAgent() { return this.#activeAgent; }
+
+  /**
+   * Apply an agent definition to the engine. Sets provider, model, API key,
+   * system prompt, and config overrides from the agent config.
+   * @param {Object} agentDef — AgentDefinition from clawser-agent-storage.js
+   */
+  applyAgent(agentDef) {
+    this.#activeAgent = agentDef;
+
+    // Set provider / model
+    if (agentDef.provider) this.#activeProvider = agentDef.provider;
+    if (agentDef.model) this.#model = agentDef.model;
+
+    // Set system prompt
+    if (agentDef.systemPrompt) this.setSystemPrompt(agentDef.systemPrompt);
+
+    // Apply config overrides
+    if (agentDef.maxTurnsPerRun != null) {
+      this.#config.maxToolIterations = agentDef.maxTurnsPerRun;
+    }
+  }
 
   /** Get available providers with availability info */
   async getProviders() {

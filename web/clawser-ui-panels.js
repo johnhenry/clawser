@@ -19,6 +19,13 @@ import { loadWorkspaces, getActiveWorkspaceId, renameWorkspace, deleteWorkspace,
 import { navigate } from './clawser-router.js';
 import { SkillStorage } from './clawser-skills.js';
 import { OAUTH_PROVIDERS } from './clawser-oauth.js';
+import { createItemBar, _relativeTime } from './clawser-item-bar.js';
+
+/** Sanitize a color value for safe use in style attributes. */
+function safeColor(c, fallback = '#8b949e') {
+  if (!c || typeof c !== 'string') return fallback;
+  return /^#[0-9a-fA-F]{3,8}$/.test(c) ? c : fallback;
+}
 
 // ── OPFS file browser ──────────────────────────────────────────
 const HIDDEN_DIRS = new Set(['.checkpoints', '.skills', '.conversations']);
@@ -541,24 +548,40 @@ function bindToggle(toggleId, sectionId, arrowId) {
 /** Render autonomy & costs section (Block 6). */
 export function renderAutonomySection() {
   const wsId = state.agent?.getWorkspace() || 'default';
-  const saved = JSON.parse(localStorage.getItem(`clawser_autonomy_${wsId}`) || '{}');
+  const saved = JSON.parse(localStorage.getItem(lsKey.autonomy(wsId)) || '{}');
   if (saved.level) {
     const radio = document.querySelector(`input[name="autonomyLevel"][value="${saved.level}"]`);
     if (radio) radio.checked = true;
   }
   if (saved.maxActions) $('cfgMaxActions').value = saved.maxActions;
   if (saved.dailyCostLimit != null) $('cfgDailyCostLimit').value = saved.dailyCostLimit;
+  // Apply saved config to agent's AutonomyController
+  if (state.agent && saved.level) {
+    state.agent.applyAutonomyConfig({
+      level: saved.level || 'supervised',
+      maxActionsPerHour: parseInt(saved.maxActions) || Infinity,
+      maxCostPerDayCents: parseInt(saved.dailyCostLimit) || Infinity,
+    });
+  }
   updateCostMeter();
   updateAutonomyBadge();
 }
 
-/** Save autonomy settings to localStorage. */
+/** Save autonomy settings to localStorage and apply live. */
 export function saveAutonomySettings() {
   const wsId = state.agent?.getWorkspace() || 'default';
   const level = document.querySelector('input[name="autonomyLevel"]:checked')?.value || 'supervised';
   const maxActions = parseInt($('cfgMaxActions').value) || 100;
   const dailyCostLimit = parseFloat($('cfgDailyCostLimit').value) || 5;
-  localStorage.setItem(`clawser_autonomy_${wsId}`, JSON.stringify({ level, maxActions, dailyCostLimit }));
+  localStorage.setItem(lsKey.autonomy(wsId), JSON.stringify({ level, maxActions, dailyCostLimit }));
+  // Apply live to agent's AutonomyController
+  if (state.agent) {
+    state.agent.applyAutonomyConfig({
+      level,
+      maxActionsPerHour: parseInt(maxActions) || Infinity,
+      maxCostPerDayCents: parseInt(dailyCostLimit) || Infinity,
+    });
+  }
   updateCostMeter();
   updateAutonomyBadge();
 }
@@ -590,13 +613,15 @@ export function updateAutonomyBadge() {
 /** Render identity section (Block 7). */
 export function renderIdentitySection() {
   const wsId = state.agent?.getWorkspace() || 'default';
-  const saved = JSON.parse(localStorage.getItem(`clawser_identity_${wsId}`) || '{}');
+  const saved = JSON.parse(localStorage.getItem(lsKey.identity(wsId)) || '{}');
   if (saved.format) $('identityFormat').value = saved.format;
   if (saved.plain) $('identityPlain').value = saved.plain;
   if (saved.name) $('identityName').value = saved.name;
   if (saved.role) $('identityRole').value = saved.role;
   if (saved.personality) $('identityPersonality').value = saved.personality;
   toggleIdentityFormat();
+  // Apply saved identity to system prompt on init
+  applyIdentityToAgent(saved);
 }
 
 function toggleIdentityFormat() {
@@ -607,16 +632,38 @@ function toggleIdentityFormat() {
   else aieosWrap.classList.remove('visible');
 }
 
+/** Apply identity config to agent's system prompt. */
+function applyIdentityToAgent(saved) {
+  if (!state.agent || !state.identityManager || !saved?.format) return;
+  try {
+    if (saved.format === 'plain') {
+      state.identityManager.load(saved.plain || '');
+    } else {
+      state.identityManager.load({
+        version: '1.1',
+        names: { display: saved.name || '' },
+        bio: saved.role || '',
+        linguistics: { tone: saved.personality || '' },
+      });
+    }
+    const compiled = state.identityManager.compile();
+    if (compiled) state.agent.setSystemPrompt(compiled);
+  } catch (e) { console.warn('[clawser] identity compile failed', e); }
+}
+
 function saveIdentitySettings() {
   const wsId = state.agent?.getWorkspace() || 'default';
   const format = $('identityFormat').value;
-  localStorage.setItem(`clawser_identity_${wsId}`, JSON.stringify({
+  const saved = {
     format,
     plain: $('identityPlain').value,
     name: $('identityName').value,
     role: $('identityRole').value,
     personality: $('identityPersonality').value,
-  }));
+  };
+  localStorage.setItem(lsKey.identity(wsId), JSON.stringify(saved));
+  // Apply live to agent's system prompt
+  applyIdentityToAgent(saved);
 }
 
 /** Render model routing section (Block 11). */
@@ -673,8 +720,34 @@ export function renderAuthProfilesSection() {
   if (!list.children.length) list.innerHTML = '<div style="color:var(--dim);font-size:10px;padding:4px 0;">No profiles. Add one to manage multiple auth credentials.</div>';
 }
 
+/** Save self-repair slider settings and apply to StuckDetector. */
+export function saveSelfRepairSettings() {
+  const wsId = state.agent?.getWorkspace() || 'default';
+  const cfg = {
+    toolTimeout: parseInt($('cfgToolTimeout')?.value) || 60,
+    noProgress: parseInt($('cfgNoProgress')?.value) || 120,
+    loopDetection: parseInt($('cfgLoopDetection')?.value) || 3,
+    consecErrors: parseInt($('cfgConsecErrors')?.value) || 5,
+    costRunaway: parseFloat($('cfgCostRunaway')?.value) || 2.0,
+  };
+  localStorage.setItem(lsKey.selfRepair(wsId), JSON.stringify(cfg));
+  // Apply live to StuckDetector
+  if (state.stuckDetector) {
+    state.stuckDetector.setThresholds({
+      toolTimeout: cfg.toolTimeout * 1000,
+      noProgress: cfg.noProgress * 1000,
+      loopDetection: cfg.loopDetection,
+      consecutiveErrors: cfg.consecErrors,
+      costRunaway: cfg.costRunaway,
+    });
+  }
+}
+
 /** Render self-repair section (Block 22). */
 export function renderSelfRepairSection() {
+  const wsId = state.agent?.getWorkspace() || 'default';
+  const saved = JSON.parse(localStorage.getItem(lsKey.selfRepair(wsId)) || 'null');
+
   const sliders = [
     ['cfgToolTimeout', 'cfgToolTimeoutVal'],
     ['cfgNoProgress', 'cfgNoProgressVal'],
@@ -682,13 +755,32 @@ export function renderSelfRepairSection() {
     ['cfgConsecErrors', 'cfgConsecErrorsVal'],
     ['cfgCostRunaway', 'cfgCostRunawayVal'],
   ];
-  for (const [sliderId, valId] of sliders) {
+  const keys = ['toolTimeout', 'noProgress', 'loopDetection', 'consecErrors', 'costRunaway'];
+
+  for (let i = 0; i < sliders.length; i++) {
+    const [sliderId, valId] = sliders[i];
     const slider = $(sliderId);
     const val = $(valId);
     if (slider && val) {
+      // Restore saved value
+      if (saved && saved[keys[i]] != null) slider.value = saved[keys[i]];
       val.textContent = slider.value;
-      slider.addEventListener('input', () => { val.textContent = slider.value; });
+      slider.addEventListener('input', () => {
+        val.textContent = slider.value;
+        saveSelfRepairSettings();
+      });
     }
+  }
+
+  // Apply saved thresholds on init
+  if (saved && state.stuckDetector) {
+    state.stuckDetector.setThresholds({
+      toolTimeout: (saved.toolTimeout || 60) * 1000,
+      noProgress: (saved.noProgress || 120) * 1000,
+      loopDetection: saved.loopDetection || 3,
+      consecutiveErrors: saved.consecErrors || 5,
+      costRunaway: saved.costRunaway || 2.0,
+    });
   }
 }
 
@@ -700,18 +792,62 @@ export function updateCacheStats() {
   el.textContent = `Hits: ${stats.totalHits || 0} · Misses: ${stats.totalMisses || 0} · Entries: ${stats.entries || 0}`;
 }
 
+/** Save sandbox capability gates and apply to tool permissions. */
+export function saveSandboxSettings() {
+  const wsId = state.agent?.getWorkspace() || 'default';
+  const caps = {};
+  for (const cb of document.querySelectorAll('#sandboxCapabilities input[type=checkbox]')) {
+    caps[cb.value] = cb.checked;
+  }
+  localStorage.setItem(lsKey.sandbox(wsId), JSON.stringify(caps));
+  // Apply: update tool permissions based on capability gates
+  const toolMap = { net_fetch: 'fetch', fs_write: 'fs_write', fs_read: 'fs_read', dom_access: 'dom_query', eval: 'code_eval' };
+  if (state.browserTools) {
+    for (const [cap, toolName] of Object.entries(toolMap)) {
+      if (caps[cap] === false) state.browserTools.setPermission(toolName, 'denied');
+      else state.browserTools.setPermission(toolName, 'auto');
+    }
+  }
+}
+
 /** Render sandbox capabilities (Block 28). */
 export function renderSandboxSection() {
   const el = $('sandboxCapabilities');
   if (!el) return;
   el.innerHTML = '';
+
+  const wsId = state.agent?.getWorkspace() || 'default';
+  const saved = JSON.parse(localStorage.getItem(lsKey.sandbox(wsId)) || 'null');
+
   const caps = ['net_fetch', 'fs_read', 'fs_write', 'dom_access', 'eval', 'crypto'];
   for (const cap of caps) {
     const label = document.createElement('label');
     label.className = 'sandbox-cap';
-    label.innerHTML = `<input type="checkbox" value="${cap}" /> ${cap}`;
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = cap;
+    cb.dataset.cap = cap;
+    // Restore saved state (default: checked/enabled)
+    cb.checked = saved ? (saved[cap] !== false) : true;
+    cb.addEventListener('change', () => saveSandboxSettings());
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(` ${cap}`));
     el.appendChild(label);
   }
+
+  // Apply saved capability gates on init
+  if (saved) saveSandboxSettings();
+}
+
+/** Save heartbeat check list to localStorage. */
+export function saveHeartbeatSettings() {
+  const wsId = state.agent?.getWorkspace() || 'default';
+  const items = [];
+  for (const el of document.querySelectorAll('#heartbeatChecks .heartbeat-check-item')) {
+    const nameEl = el.querySelector('.hb-name');
+    if (nameEl) items.push({ description: nameEl.textContent, interval: 300000 });
+  }
+  localStorage.setItem(lsKey.heartbeat(wsId), JSON.stringify(items));
 }
 
 /** Render heartbeat checks (Block 29). */
@@ -719,16 +855,29 @@ export function renderHeartbeatSection() {
   const el = $('heartbeatChecks');
   if (!el) return;
   el.innerHTML = '';
-  const defaultChecks = ['Memory health', 'Provider connectivity', 'OPFS accessible', 'Event bus responsive'];
-  for (const check of defaultChecks) {
+
+  const wsId = state.agent?.getWorkspace() || 'default';
+  const saved = JSON.parse(localStorage.getItem(lsKey.heartbeat(wsId)) || 'null');
+  const defaultChecks = [
+    { description: 'Memory health', interval: 300000 },
+    { description: 'Provider connectivity', interval: 300000 },
+    { description: 'OPFS accessible', interval: 300000 },
+    { description: 'Event bus responsive', interval: 300000 },
+  ];
+  const checks = saved || defaultChecks;
+
+  for (const check of checks) {
     const d = document.createElement('div');
     d.className = 'heartbeat-check-item';
     d.innerHTML = `
       <span class="hb-status"></span>
-      <span class="hb-name">${esc(check)}</span>
+      <span class="hb-name">${esc(check.description || check)}</span>
       <button class="hb-remove" title="Remove">✕</button>
     `;
-    d.querySelector('.hb-remove').addEventListener('click', () => d.remove());
+    d.querySelector('.hb-remove').addEventListener('click', () => {
+      d.remove();
+      saveHeartbeatSettings();
+    });
     el.appendChild(d);
   }
 }
@@ -881,25 +1030,764 @@ export function terminalAppend(html) {
 }
 
 /** Run a command in the terminal panel. */
+/** Track terminal agent mode state */
+let _terminalAgentMode = false;
+
 export async function terminalExec(cmd) {
   if (!cmd.trim()) return;
   terminalHistory.unshift(cmd);
   termHistoryIdx = -1;
+
+  // In agent mode, forward input to the agent instead of the shell
+  if (_terminalAgentMode && !cmd.startsWith('clawser ') && cmd !== 'clawser exit') {
+    terminalAppend(`<div class="terminal-cmd"><span class="agent-mode-prompt">agent&gt;</span> ${esc(cmd)}</div>`);
+    state.terminalSessions?.recordAgentPrompt(cmd);
+    try {
+      const agent = state.agent;
+      if (!agent) { terminalAppend(`<div class="terminal-stderr">No agent available.</div>`); return; }
+      agent.sendMessage(cmd);
+      const resp = await agent.run();
+      const text = resp?.content || resp?.text || '(no response)';
+      terminalAppend(`<div class="terminal-stdout">${esc(text)}</div>`);
+      state.terminalSessions?.recordAgentResponse(text);
+    } catch (e) {
+      terminalAppend(`<div class="terminal-stderr">${esc(e.message)}</div>`);
+    }
+    return;
+  }
+
   terminalAppend(`<div class="terminal-cmd">$ ${esc(cmd)}</div>`);
+
+  // Record command event for terminal session
+  state.terminalSessions?.recordCommand(cmd);
 
   if (state.shell) {
     try {
       const result = await state.shell.exec(cmd);
+
+      // Record result event for terminal session
+      state.terminalSessions?.recordResult(result.stdout || '', result.stderr || '', result.exitCode ?? 0);
+
+      // Handle special return flags
+      if (result.__clearTerminal) {
+        const el = $('terminalOutput');
+        if (el) el.innerHTML = '';
+        return;
+      }
+      if (result.__enterAgentMode) {
+        _terminalAgentMode = true;
+        const badge = $('terminalModeBadge');
+        if (badge) { badge.textContent = '[AGENT ⏎]'; badge.classList.add('agent'); }
+      }
+      if (result.__exitAgentMode) {
+        _terminalAgentMode = false;
+        const badge = $('terminalModeBadge');
+        if (badge) { badge.textContent = '[SHELL]'; badge.classList.remove('agent'); }
+      }
       if (result.stdout) terminalAppend(`<div class="terminal-stdout">${esc(result.stdout)}</div>`);
       if (result.stderr) terminalAppend(`<div class="terminal-stderr">${esc(result.stderr)}</div>`);
       const cwd = $('terminalCwd');
-      if (cwd) cwd.textContent = state.shell.cwd || '~';
+      if (cwd) cwd.textContent = state.shell.state.cwd || '~';
     } catch (e) {
       terminalAppend(`<div class="terminal-stderr">${esc(e.message)}</div>`);
     }
   } else {
     terminalAppend(`<div class="terminal-stderr">No shell session available.</div>`);
   }
+}
+
+// ── AskUserQuestion terminal UI ─────────────────────────────────
+
+/**
+ * Render interactive question cards in the terminal and collect answers.
+ * @param {Array<{question, header, options: [{label, description}], multiSelect?}>} questions
+ * @returns {Promise<Object<string, string>>} answers keyed by question text
+ */
+export async function terminalAskUser(questions) {
+  const answers = {};
+
+  for (const q of questions) {
+    await new Promise((resolve) => {
+      const card = document.createElement('div');
+      card.className = 'ask-user-card';
+      card.innerHTML = `
+        <div class="ask-user-header">${esc(q.header)}</div>
+        <div class="ask-user-question">${esc(q.question)}</div>
+        <div class="ask-user-options">
+          ${q.options.map((opt, i) =>
+            `<div class="ask-user-option" data-idx="${i}">
+              <span class="ask-user-idx">${i + 1}</span>
+              <span class="ask-user-label">${esc(opt.label)}</span>
+              <span class="ask-user-desc">${esc(opt.description)}</span>
+            </div>`
+          ).join('')}
+          <div class="ask-user-option ask-user-other" data-idx="other">
+            <span class="ask-user-idx">${q.options.length + 1}</span>
+            <span class="ask-user-label">Other</span>
+            <span class="ask-user-desc">Provide custom text</span>
+          </div>
+        </div>
+        <div class="ask-user-input-row" style="display:none">
+          <input type="text" class="ask-user-text" placeholder="Type your answer...">
+          <button class="ask-user-submit">OK</button>
+        </div>
+      `;
+
+      const optEls = card.querySelectorAll('.ask-user-option');
+      const inputRow = card.querySelector('.ask-user-input-row');
+      const textInput = card.querySelector('.ask-user-text');
+      const submitBtn = card.querySelector('.ask-user-submit');
+
+      function finalize(answer) {
+        answers[q.question] = answer;
+        card.classList.add('ask-user-answered');
+        const ansDiv = document.createElement('div');
+        ansDiv.className = 'ask-user-answer';
+        ansDiv.textContent = `→ ${answer}`;
+        card.appendChild(ansDiv);
+        // Collapse options
+        card.querySelector('.ask-user-options').style.display = 'none';
+        inputRow.style.display = 'none';
+        resolve();
+      }
+
+      if (q.multiSelect) {
+        const selected = new Set();
+        const confirmBtn = document.createElement('button');
+        confirmBtn.className = 'ask-user-submit';
+        confirmBtn.textContent = 'Confirm';
+        confirmBtn.style.display = 'none';
+        card.querySelector('.ask-user-options').appendChild(confirmBtn);
+
+        optEls.forEach(el => {
+          if (el.dataset.idx === 'other') return;
+          el.addEventListener('click', () => {
+            const idx = parseInt(el.dataset.idx);
+            if (selected.has(idx)) { selected.delete(idx); el.classList.remove('selected'); }
+            else { selected.add(idx); el.classList.add('selected'); }
+            confirmBtn.style.display = selected.size > 0 ? '' : 'none';
+          });
+        });
+
+        confirmBtn.addEventListener('click', () => {
+          const labels = [...selected].sort().map(i => q.options[i].label);
+          finalize(labels.join(', '));
+        });
+
+        // Other option
+        card.querySelector('.ask-user-other').addEventListener('click', () => {
+          inputRow.style.display = '';
+          textInput.focus();
+        });
+        submitBtn.addEventListener('click', () => { if (textInput.value.trim()) finalize(textInput.value.trim()); });
+        textInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && textInput.value.trim()) finalize(textInput.value.trim()); });
+      } else {
+        optEls.forEach(el => {
+          if (el.dataset.idx === 'other') {
+            el.addEventListener('click', () => {
+              inputRow.style.display = '';
+              textInput.focus();
+            });
+          } else {
+            el.addEventListener('click', () => {
+              const idx = parseInt(el.dataset.idx);
+              finalize(q.options[idx].label);
+            });
+          }
+        });
+        submitBtn.addEventListener('click', () => { if (textInput.value.trim()) finalize(textInput.value.trim()); });
+        textInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && textInput.value.trim()) finalize(textInput.value.trim()); });
+      }
+
+      const termOut = $('terminalOutput') || $('messages');
+      if (termOut) {
+        termOut.appendChild(card);
+        termOut.scrollTop = termOut.scrollHeight;
+      }
+    });
+  }
+
+  return answers;
+}
+
+// ── Terminal Session Bar UI (Block 35) ──────────────────────────
+
+/** Render the terminal session bar with name, new/rename/history buttons. */
+/** @type {{refresh: () => void, destroy: () => void}|null} */
+export let termItemBar = null;
+let _termItemBarWsId = null;
+
+/** Initialize or refresh the terminal session item bar. */
+export function renderTerminalSessionBar() {
+  const ts = state.terminalSessions;
+  if (!ts) return;
+
+  // Rebuild if workspace changed (terminal sessions manager was recreated)
+  const wsId = state.agent?.getWorkspace();
+  if (termItemBar && _termItemBarWsId === wsId) {
+    termItemBar.refresh();
+    return;
+  }
+
+  // Destroy old bar if it exists
+  if (termItemBar) {
+    termItemBar.destroy();
+    termItemBar = null;
+  }
+  _termItemBarWsId = wsId;
+
+  termItemBar = createItemBar({
+    containerId: 'termSessionBarContainer',
+    label: 'Session',
+    newLabel: '+',
+    emptyMessage: 'No sessions yet.',
+    defaultName: 'New session',
+    getActiveName: () => ts.activeName,
+    getActiveId: () => ts.activeId,
+    listItems: () => ts.list(),
+    onNew: async () => {
+      await ts.create();
+      $('terminalOutput').innerHTML = '';
+    },
+    onSwitch: async (id) => {
+      await ts.switchTo(id);
+      const restored = await ts.restore(id);
+      if (restored) replayTerminalSession(restored.events);
+    },
+    onRename: async (id, newName) => {
+      ts.rename(id, newName);
+    },
+    onDelete: async (id) => {
+      await ts.delete(id);
+    },
+    onFork: async () => {
+      await ts.fork();
+    },
+    exportFormats: [
+      { label: 'Export as script', fn: () => ts.exportAsScript(), filename: `${ts.activeName || 'session'}.sh`, mime: 'text/x-shellscript' },
+      { label: 'Export as log', fn: () => ts.exportAsLog('text'), filename: `${ts.activeName || 'session'}.log`, mime: 'text/plain' },
+    ],
+    renderMeta: (item) => {
+      const ago = _relativeTime(item.lastUsed);
+      return `${item.commandCount || 0} cmds \u00b7 ${ago}`;
+    },
+  });
+}
+
+/** Replay terminal session events to rebuild terminal output DOM. */
+export function replayTerminalSession(events) {
+  const el = $('terminalOutput');
+  if (!el) return;
+  el.innerHTML = '';
+
+  for (let i = 0; i < events.length; i++) {
+    const e = events[i];
+    switch (e.type) {
+      case 'shell_command': {
+        const div = document.createElement('div');
+        div.className = 'terminal-cmd';
+        div.dataset.eventIndex = i;
+        div.innerHTML = `$ ${esc(e.data.command)}<span class="term-fork" title="Fork from here">\u2442</span>`;
+        div.querySelector('.term-fork').addEventListener('click', async (ev) => {
+          ev.stopPropagation();
+          const idx = parseInt(div.dataset.eventIndex, 10);
+          const ts = state.terminalSessions;
+          if (!ts) return;
+          try {
+            await ts.forkFromEvent(idx);
+            const restored = await ts.restore(ts.activeId);
+            if (restored) replayTerminalSession(restored.events);
+            if (termItemBar) termItemBar.refresh();
+            addMsg('system', `Terminal session forked from command ${idx + 1}.`);
+          } catch (err) {
+            addMsg('system', `Fork failed: ${err.message}`);
+          }
+        });
+        el.appendChild(div);
+        el.scrollTop = el.scrollHeight;
+        break;
+      }
+      case 'shell_result':
+        if (e.data.stdout) terminalAppend(`<div class="terminal-stdout">${esc(e.data.stdout)}</div>`);
+        if (e.data.stderr) terminalAppend(`<div class="terminal-stderr">${esc(e.data.stderr)}</div>`);
+        break;
+      case 'agent_prompt':
+        terminalAppend(`<div class="terminal-cmd"><span class="agent-mode-prompt">agent&gt;</span> ${esc(e.data.content)}</div>`);
+        break;
+      case 'agent_response':
+        terminalAppend(`<div class="terminal-stdout">${esc(e.data.content)}</div>`);
+        break;
+      case 'state_snapshot':
+        // Silently restore — don't render
+        break;
+    }
+  }
+
+  // Update CWD from last snapshot
+  const lastSnap = [...events].reverse().find(e => e.type === 'state_snapshot');
+  if (lastSnap) {
+    const cwd = $('terminalCwd');
+    if (cwd) cwd.textContent = lastSnap.data.cwd || '~';
+  }
+}
+
+// renderTermSessionDropdown, _relativeTime, _downloadText moved to clawser-item-bar.js
+
+// ── Tool Management Panel (Block 36) ─────────────────────────────
+
+let activeToolFilter = 'all';
+
+const TOOL_CATEGORIES = {
+  browser_fetch: 'Network', web_search: 'Network', browser_navigate: 'Network', screenshot: 'Network',
+  browser_dom_query: 'DOM', browser_dom_modify: 'DOM', browser_eval_js: 'DOM', browser_screen_info: 'DOM',
+  shell: 'Shell', delegate: 'Delegation', ask_user_question: 'Agent',
+  activate_skill: 'Skills', deactivate_skill: 'Skills',
+};
+
+function categorize(toolName) {
+  if (TOOL_CATEGORIES[toolName]) return TOOL_CATEGORIES[toolName];
+  if (toolName.startsWith('mcp_')) {
+    const serverName = state.mcpManager?.serverNames?.find(n => {
+      const client = state.mcpManager.getClient(n);
+      return client?.tools?.some(t => t.name === toolName);
+    });
+    return serverName ? `MCP: ${serverName}` : 'MCP';
+  }
+  if (toolName.startsWith('browser_fs_') || toolName.startsWith('fs_')) return 'File System';
+  if (toolName.startsWith('agent_') || toolName.startsWith('memory_') ||
+      toolName.startsWith('goal_') || toolName.startsWith('schedule_')) return 'Agent';
+  if (toolName.startsWith('browser_')) return 'Browser Automation';
+  if (toolName.startsWith('git_')) return 'Git';
+  if (toolName.startsWith('hw_')) return 'Hardware';
+  if (toolName.startsWith('channel_')) return 'Channels';
+  if (toolName.startsWith('tool_')) return 'Builder';
+  if (toolName.startsWith('sandbox_')) return 'Sandbox';
+  if (toolName.startsWith('oauth_')) return 'OAuth';
+  if (toolName.startsWith('auth_')) return 'Auth';
+  if (toolName.startsWith('routine_')) return 'Routines';
+  if (toolName.startsWith('remote_')) return 'Remote';
+  if (toolName.startsWith('bridge_')) return 'Bridge';
+  if (toolName.startsWith('daemon_') || toolName.startsWith('self_repair_')) return 'System';
+  if (toolName.startsWith('switch_agent') || toolName.startsWith('consult_agent')) return 'Agents';
+  if (toolName.startsWith('skill_') || toolName.startsWith('activate_skill') || toolName.startsWith('deactivate_skill')) return 'Skills';
+  return 'Other';
+}
+
+function persistToolPermissions() {
+  const wsId = state.agent?.getWorkspace() || 'default';
+  localStorage.setItem(lsKey.toolPerms(wsId), JSON.stringify(state.browserTools.getAllPermissions()));
+}
+
+export function renderToolManagementPanel() {
+  const panelBody = $('panelToolMgmt')?.querySelector('.panel-body');
+  if (!panelBody) return;
+
+  const allTools = state.browserTools.allSpecs().map(s => ({ ...s, source: 'built-in' }));
+
+  const query = panelBody.querySelector('#toolSearch')?.value?.toLowerCase() || '';
+  const filtered = query
+    ? allTools.filter(t => t.name.toLowerCase().includes(query) || (t.description || '').toLowerCase().includes(query))
+    : allTools;
+
+  const statusFiltered = filtered.filter(t => {
+    const perm = state.browserTools.getPermission(t.name);
+    if (activeToolFilter === 'enabled') return perm !== 'denied';
+    if (activeToolFilter === 'disabled') return perm === 'denied';
+    if (activeToolFilter === 'approve') return perm === 'approve';
+    return true;
+  });
+
+  const groups = new Map();
+  for (const tool of statusFiltered) {
+    const cat = categorize(tool.name);
+    if (!groups.has(cat)) groups.set(cat, []);
+    groups.get(cat).push(tool);
+  }
+
+  const sortedGroups = [...groups.entries()].sort((a, b) => {
+    const aM = a[0].startsWith('MCP:'), bM = b[0].startsWith('MCP:');
+    if (aM !== bM) return aM ? 1 : -1;
+    return a[0].localeCompare(b[0]);
+  });
+
+  let html = `<div class="tool-search-bar"><input id="toolSearch" type="text" placeholder="Search tools..." class="tool-search-input" value="${esc(query)}" /><span class="tool-count">${statusFiltered.length} / ${allTools.length}</span></div>`;
+  html += `<div class="tool-filters">${['all','enabled','disabled','approve'].map(f =>
+    `<button class="tool-filter-btn ${activeToolFilter === f ? 'active' : ''}" data-filter="${f}">${f === 'approve' ? 'Needs Approval' : f[0].toUpperCase() + f.slice(1)}</button>`
+  ).join('')}</div>`;
+
+  for (const [category, tools] of sortedGroups) {
+    const enabledCount = tools.filter(t => state.browserTools.getPermission(t.name) !== 'denied').length;
+    const allEnabled = enabledCount === tools.length;
+    html += `<div class="tool-category"><div class="tool-category-header"><span class="tool-category-name">${esc(category)} (${tools.length})</span><button class="tool-category-toggle" data-category="${esc(category)}" data-action="${allEnabled ? 'disable' : 'enable'}">${allEnabled ? 'Disable All' : 'Enable All'}</button></div><div class="tool-category-items">`;
+    for (const tool of tools) {
+      const perm = state.browserTools.getPermission(tool.name);
+      const checked = perm !== 'denied';
+      const permClass = perm === 'auto' ? 'perm-auto' : perm === 'approve' ? 'perm-approve' : 'perm-denied';
+      const desc = (tool.description || '').replace(/^\[MCP\] /, '').slice(0, 50);
+      const usage = state.toolUsageStats?.[tool.name] || 0;
+      html += `<div class="tool-item ${permClass}" data-tool="${esc(tool.name)}"><label class="tool-checkbox"><input type="checkbox" ${checked ? 'checked' : ''} data-tool="${esc(tool.name)}" /></label><span class="tool-name">${esc(tool.name)}</span><span class="tool-perm-badge">${perm}</span><span class="tool-desc">${esc(desc)}</span>${usage > 0 ? `<span class="tool-usage">${usage}\u00d7</span>` : ''}</div>`;
+    }
+    html += `</div></div>`;
+  }
+
+  html += `<div class="tool-bulk-actions"><button id="toolEnableAll">Enable All</button><button id="toolDisableAll">Disable All</button><button id="toolResetDefaults">Reset to Defaults</button></div>`;
+  panelBody.innerHTML = html;
+  bindToolPanelEvents(panelBody);
+}
+
+function bindToolPanelEvents(panelBody) {
+  panelBody.querySelector('#toolSearch')?.addEventListener('input', () => {
+    clearTimeout(bindToolPanelEvents._debounce);
+    bindToolPanelEvents._debounce = setTimeout(() => renderToolManagementPanel(), 200);
+  });
+
+  for (const btn of panelBody.querySelectorAll('.tool-filter-btn')) {
+    btn.addEventListener('click', () => { activeToolFilter = btn.dataset.filter; renderToolManagementPanel(); });
+  }
+
+  for (const cb of panelBody.querySelectorAll('.tool-item input[type="checkbox"]')) {
+    cb.addEventListener('change', () => {
+      const name = cb.dataset.tool;
+      if (cb.checked) {
+        const spec = state.browserTools.getSpec(name);
+        const defaultPerm = (spec?.required_permission === 'internal' || spec?.required_permission === 'read') ? 'auto' : 'approve';
+        state.browserTools.setPermission(name, defaultPerm);
+      } else {
+        state.browserTools.setPermission(name, 'denied');
+      }
+      persistToolPermissions();
+      renderToolManagementPanel();
+    });
+  }
+
+  for (const btn of panelBody.querySelectorAll('.tool-category-toggle')) {
+    btn.addEventListener('click', () => {
+      const cat = btn.dataset.category;
+      const action = btn.dataset.action;
+      const specs = state.browserTools.allSpecs().filter(s => categorize(s.name) === cat);
+      for (const s of specs) state.browserTools.setPermission(s.name, action === 'enable' ? 'auto' : 'denied');
+      persistToolPermissions();
+      renderToolManagementPanel();
+    });
+  }
+
+  for (const nameEl of panelBody.querySelectorAll('.tool-name')) {
+    nameEl.addEventListener('click', () => {
+      const item = nameEl.closest('.tool-item');
+      toggleToolDetail(item, item.dataset.tool);
+    });
+  }
+
+  panelBody.querySelector('#toolEnableAll')?.addEventListener('click', () => {
+    for (const s of state.browserTools.allSpecs()) state.browserTools.setPermission(s.name, 'auto');
+    persistToolPermissions(); renderToolManagementPanel();
+  });
+  panelBody.querySelector('#toolDisableAll')?.addEventListener('click', () => {
+    for (const s of state.browserTools.allSpecs()) state.browserTools.setPermission(s.name, 'denied');
+    persistToolPermissions(); renderToolManagementPanel();
+  });
+  panelBody.querySelector('#toolResetDefaults')?.addEventListener('click', () => {
+    if (state.browserTools.resetAllPermissions) state.browserTools.resetAllPermissions();
+    persistToolPermissions(); renderToolManagementPanel();
+  });
+}
+
+function toggleToolDetail(itemEl, toolName) {
+  const existing = itemEl.parentElement.querySelector('.tool-detail-expanded');
+  if (existing) { existing.remove(); itemEl.classList.remove('expanded'); if (existing.previousElementSibling === itemEl) return; }
+
+  const spec = state.browserTools.getSpec(toolName);
+  if (!spec) return;
+
+  const perm = state.browserTools.getPermission(toolName);
+  const usage = state.toolUsageStats?.[toolName] || 0;
+  const lastUsed = state.toolLastUsed?.[toolName];
+  const params = spec.parameters?.properties || {};
+
+  const detail = document.createElement('div');
+  detail.className = 'tool-detail-expanded';
+  let paramHtml = '';
+  if (Object.keys(params).length > 0) {
+    paramHtml = `<div class="tool-detail-params"><div class="tool-detail-label">Parameters:</div>${Object.entries(params).map(([n, s]) => {
+      const req = (spec.parameters?.required || []).includes(n);
+      return `<div class="tool-param"><span class="tool-param-name">${esc(n)}</span><span class="tool-param-type">${esc(s.type || 'any')}${req ? ' (required)' : ''}</span><span class="tool-param-desc">${esc(s.description || '')}</span></div>`;
+    }).join('')}</div>`;
+  }
+  detail.innerHTML = `<div class="tool-detail-desc">${esc(spec.description || 'No description')}</div>${paramHtml}<div class="tool-detail-meta">Source: built-in${usage > 0 ? ` \u00b7 Calls: ${usage}` : ''}${lastUsed ? ` \u00b7 Last: ${_relativeTime(lastUsed)}` : ''}</div><div class="tool-detail-perm">Permission: ${['auto','approve','denied'].map(p => `<label class="tool-perm-radio"><input type="radio" name="perm_${esc(toolName)}" value="${p}" ${perm === p ? 'checked' : ''} /> ${p}</label>`).join('')}</div>`;
+
+  itemEl.after(detail);
+  itemEl.classList.add('expanded');
+
+  for (const radio of detail.querySelectorAll('input[type="radio"]')) {
+    radio.addEventListener('change', () => {
+      state.browserTools.setPermission(toolName, radio.value);
+      persistToolPermissions();
+      renderToolManagementPanel();
+    });
+  }
+}
+
+// ── Agent Picker (Block 37) ─────────────────────────────────────
+
+let agentPickerVisible = false;
+
+export function initAgentPicker() {
+  const label = $('providerLabel');
+  if (!label) return;
+  let dropdown = $('agentPicker');
+  if (!dropdown) {
+    dropdown = document.createElement('div');
+    dropdown.id = 'agentPicker';
+    dropdown.className = 'agent-picker';
+    label.parentElement.appendChild(dropdown);
+  }
+  label.style.cursor = 'pointer';
+  label.addEventListener('click', (e) => { e.stopPropagation(); toggleAgentPicker(); });
+  document.addEventListener('click', () => { if (agentPickerVisible) closeAgentPicker(); });
+}
+
+export function updateAgentLabel(agentDef) {
+  const label = $('providerLabel');
+  if (!label) return;
+  if (!agentDef) { label.textContent = 'No agent'; return; }
+  label.innerHTML = `<span class="agent-dot" style="background:${safeColor(agentDef.color)}"></span> ${esc(agentDef.name)}`;
+}
+
+async function toggleAgentPicker() {
+  if (agentPickerVisible) { closeAgentPicker(); return; }
+  if (!state.agentStorage) return;
+  const agents = await state.agentStorage.listAll();
+  const activeId = state.agent?.activeAgent?.id;
+  renderAgentPickerDropdown(agents, activeId);
+  $('agentPicker')?.classList.add('visible');
+  agentPickerVisible = true;
+  $('agentPicker')?.querySelector('.agent-search')?.focus();
+}
+
+function closeAgentPicker() {
+  $('agentPicker')?.classList.remove('visible');
+  agentPickerVisible = false;
+}
+
+function renderAgentPickerDropdown(agents, activeId) {
+  const picker = $('agentPicker');
+  if (!picker) return;
+  const ws = agents.filter(a => a.scope === 'workspace');
+  const global = agents.filter(a => a.scope !== 'workspace');
+
+  function entry(a) {
+    const active = a.id === activeId;
+    const provModel = a.model ? `${a.provider}:${a.model.split('/').pop()}` : a.provider;
+    return `<div class="agent-pick-item ${active ? 'active' : ''}" data-id="${esc(a.id)}"><span class="agent-pick-dot" style="background:${safeColor(a.color)}"></span><div class="agent-pick-info"><div class="agent-pick-name">${active ? '\u25cf ' : ''}${esc(a.name)} <span class="agent-pick-model">${esc(provModel)}</span></div><div class="agent-pick-desc">${esc(a.description || '')}</div></div></div>`;
+  }
+
+  let html = `<div class="agent-search-bar"><input class="agent-search" type="text" placeholder="Search agents..." /></div>`;
+  if (ws.length > 0) { html += `<div class="agent-group-label">WORKSPACE AGENTS</div>${ws.map(entry).join('')}`; }
+  html += `<div class="agent-group-label">GLOBAL AGENTS</div>${global.map(entry).join('')}`;
+  html += `<div class="agent-pick-footer"><button class="agent-pick-new">+ New agent...</button><button class="agent-pick-manage">Manage agents \u2192</button></div>`;
+  picker.innerHTML = html;
+
+  picker.querySelectorAll('.agent-pick-item').forEach(el => {
+    el.addEventListener('click', async () => {
+      const agent = agents.find(a => a.id === el.dataset.id);
+      if (!agent || !state.agent) return;
+      state.agent.applyAgent(agent);
+      state.agentStorage.setActive(agent.id);
+      updateAgentLabel(agent);
+      closeAgentPicker();
+    });
+  });
+
+  const searchInput = picker.querySelector('.agent-search');
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      clearTimeout(renderAgentPickerDropdown._debounce);
+      renderAgentPickerDropdown._debounce = setTimeout(() => {
+        const q = searchInput.value.toLowerCase();
+        const filtered = agents.filter(a => a.name.toLowerCase().includes(q) || (a.description || '').toLowerCase().includes(q) || a.provider.toLowerCase().includes(q));
+        renderAgentPickerDropdown(filtered, activeId);
+        const s = picker.querySelector('.agent-search');
+        if (s) { s.value = searchInput.value; s.focus(); }
+      }, 150);
+    });
+  }
+
+  picker.querySelector('.agent-pick-new')?.addEventListener('click', () => {
+    closeAgentPicker();
+    const btn = document.querySelector('nav.sidebar button[data-panel="agents"]');
+    if (btn) btn.click();
+    setTimeout(() => document.dispatchEvent(new CustomEvent('agent-edit', { detail: { new: true } })), 100);
+  });
+  picker.querySelector('.agent-pick-manage')?.addEventListener('click', () => {
+    closeAgentPicker();
+    const btn = document.querySelector('nav.sidebar button[data-panel="agents"]');
+    if (btn) btn.click();
+  });
+}
+
+// ── Agent Management Panel (Block 37) ─────────────────────────────
+
+let agentEditingId = null;
+
+export async function renderAgentPanel() {
+  const panelBody = $('panelAgents')?.querySelector('.panel-body');
+  if (!panelBody || !state.agentStorage) return;
+  if (agentEditingId) { renderAgentEditor(panelBody, agentEditingId); return; }
+
+  const agents = await state.agentStorage.listAll();
+  const activeId = state.agent?.activeAgent?.id;
+  const ws = agents.filter(a => a.scope === 'workspace');
+  const global = agents.filter(a => a.scope !== 'workspace');
+
+  function renderCard(a) {
+    const isActive = a.id === activeId;
+    const provModel = a.model ? `${a.provider}:${a.model.split('/').pop()}` : a.provider;
+    const toolSummary = a.tools?.mode === 'all' ? 'all tools' : a.tools?.mode === 'none' ? 'no tools' : `${(a.tools?.list || []).length} tools (${a.tools?.mode})`;
+    return `<div class="agent-card ${isActive ? 'active' : ''}" data-id="${esc(a.id)}"><div class="agent-card-header"><span class="agent-card-dot" style="background:${safeColor(a.color)}"></span><span class="agent-card-name">${isActive ? '\u25cf ' : ''}${esc(a.name)}</span><span class="agent-card-model">${esc(provModel)}</span></div><div class="agent-card-desc">${esc(a.description || '')}</div><div class="agent-card-meta">tools: ${toolSummary} \u00b7 ${a.autonomy || 'balanced'}</div><div class="agent-card-actions"><button class="agent-edit-btn" data-id="${esc(a.id)}">Edit</button><button class="agent-dup-btn" data-id="${esc(a.id)}">Duplicate</button>${!isActive ? `<button class="agent-activate-btn" data-id="${esc(a.id)}">Activate</button>` : ''}${a.scope !== 'builtin' ? `<button class="agent-delete-btn" data-id="${esc(a.id)}">Delete</button>` : ''}</div></div>`;
+  }
+
+  let html = `<div class="agent-panel-header"><button class="btn-sm" id="agentNewBtn">+ New Agent</button></div><div class="agent-filter-bar"><input id="agentFilterInput" type="text" placeholder="Filter agents..." /></div>`;
+  if (ws.length > 0) { html += `<div class="agent-group-label">WORKSPACE</div>${ws.map(renderCard).join('')}`; }
+  html += `<div class="agent-group-label">GLOBAL</div>${global.map(renderCard).join('')}`;
+  html += `<div class="agent-panel-footer"><button class="btn-sm" id="agentImportBtn">Import</button><button class="btn-sm" id="agentExportAllBtn">Export All</button></div>`;
+  panelBody.innerHTML = html;
+
+  panelBody.querySelector('#agentNewBtn')?.addEventListener('click', () => { agentEditingId = '__new__'; renderAgentPanel(); });
+
+  for (const btn of panelBody.querySelectorAll('.agent-edit-btn')) {
+    btn.addEventListener('click', () => { agentEditingId = btn.dataset.id; renderAgentPanel(); });
+  }
+  for (const btn of panelBody.querySelectorAll('.agent-dup-btn')) {
+    btn.addEventListener('click', async () => {
+      const orig = await state.agentStorage.load(btn.dataset.id);
+      if (!orig) return;
+      const dup = { ...orig, id: undefined, name: orig.name + ' (copy)', scope: 'global', createdAt: null, updatedAt: null };
+      const { generateAgentId } = await import('./clawser-agent-storage.js');
+      dup.id = generateAgentId();
+      await state.agentStorage.save(dup);
+      renderAgentPanel();
+    });
+  }
+  for (const btn of panelBody.querySelectorAll('.agent-activate-btn')) {
+    btn.addEventListener('click', async () => {
+      const agent = await state.agentStorage.load(btn.dataset.id);
+      if (!agent || !state.agent) return;
+      state.agent.applyAgent(agent);
+      state.agentStorage.setActive(agent.id);
+      updateAgentLabel(agent);
+      renderAgentPanel();
+    });
+  }
+  for (const btn of panelBody.querySelectorAll('.agent-delete-btn')) {
+    btn.addEventListener('click', async () => {
+      const ok = await modal.confirm(`Delete agent "${btn.dataset.id}"?`);
+      if (!ok) return;
+      await state.agentStorage.delete(btn.dataset.id);
+      renderAgentPanel();
+    });
+  }
+  panelBody.querySelector('#agentImportBtn')?.addEventListener('click', async () => {
+    const json = prompt('Paste agent JSON:');
+    if (!json) return;
+    try { await state.agentStorage.importAgent(json); renderAgentPanel(); } catch (e) { addErrorMsg('Import failed: ' + e.message); }
+  });
+  panelBody.querySelector('#agentExportAllBtn')?.addEventListener('click', async () => {
+    const agents2 = await state.agentStorage.listAll();
+    const exported = agents2.filter(a => a.scope !== 'builtin').map(a => state.agentStorage.exportAgent(a));
+    const blob = new Blob([`[${exported.join(',')}]`], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a'); link.href = url; link.download = 'clawser-agents.json'; link.click();
+    URL.revokeObjectURL(url);
+  });
+
+  panelBody.querySelector('#agentFilterInput')?.addEventListener('input', (e) => {
+    const q = e.target.value.toLowerCase();
+    for (const card of panelBody.querySelectorAll('.agent-card')) {
+      const name = card.querySelector('.agent-card-name')?.textContent?.toLowerCase() || '';
+      const desc = card.querySelector('.agent-card-desc')?.textContent?.toLowerCase() || '';
+      card.style.display = (name.includes(q) || desc.includes(q)) ? '' : 'none';
+    }
+  });
+
+  // Listen for new-agent event from picker
+  document.addEventListener('agent-edit', (e) => {
+    if (e.detail?.new) { agentEditingId = '__new__'; renderAgentPanel(); }
+  }, { once: true });
+}
+
+async function renderAgentEditor(panelBody, agentId) {
+  let agent;
+  if (agentId === '__new__') {
+    const { generateAgentId } = await import('./clawser-agent-storage.js');
+    agent = {
+      id: generateAgentId(), name: '', description: '', color: '#58a6ff', icon: '', provider: 'echo', model: '',
+      accountId: null, systemPrompt: '', temperature: 0.7, maxTokens: 4096, contextWindow: null,
+      autonomy: 'balanced', tools: { mode: 'all', list: [], permissionOverrides: {} },
+      domainAllowlist: [], maxCostPerTurn: null, maxTurnsPerRun: 20, scope: 'global', workspaceId: null,
+    };
+  } else {
+    agent = await state.agentStorage.load(agentId);
+    if (!agent) { agentEditingId = null; renderAgentPanel(); return; }
+  }
+
+  const isBuiltin = agent.scope === 'builtin';
+  const providerOptions = state.providers?.names ? state.providers.names().map(k => `<option value="${esc(k)}" ${agent.provider === k ? 'selected' : ''}>${esc(k)}</option>`).join('') : '';
+
+  panelBody.innerHTML = `
+    <div class="agent-editor">
+      <button class="btn-sm agent-back-btn" id="agentBackBtn">\u2190 Back to list</button>
+      <h3>${isBuiltin ? 'View' : (agentId === '__new__' ? 'New' : 'Edit')}: ${esc(agent.name || 'Agent')}</h3>
+      <div class="config-group"><label>Name</label><input id="aeditName" type="text" value="${esc(agent.name)}" ${isBuiltin ? 'disabled' : ''} /></div>
+      <div class="config-group"><label>Description</label><input id="aeditDesc" type="text" value="${esc(agent.description || '')}" ${isBuiltin ? 'disabled' : ''} /></div>
+      <div class="config-group"><label>Color</label><input id="aeditColor" type="color" value="${safeColor(agent.color, '#58a6ff')}" ${isBuiltin ? 'disabled' : ''} /></div>
+      <div class="config-group"><label>Scope</label><select id="aeditScope" ${isBuiltin ? 'disabled' : ''}><option value="global" ${agent.scope === 'global' ? 'selected' : ''}>Global</option><option value="workspace" ${agent.scope === 'workspace' ? 'selected' : ''}>This workspace</option></select></div>
+      <div class="config-group"><label>Provider</label><select id="aeditProvider" ${isBuiltin ? 'disabled' : ''}>${providerOptions}</select></div>
+      <div class="config-group"><label>Model</label><input id="aeditModel" type="text" value="${esc(agent.model || '')}" ${isBuiltin ? 'disabled' : ''} /></div>
+      <div class="config-group"><label>System Prompt</label><textarea id="aeditPrompt" rows="4" ${isBuiltin ? 'disabled' : ''}>${esc(agent.systemPrompt || '')}</textarea></div>
+      <div class="config-group"><label>Temperature</label><input id="aeditTemp" type="range" min="0" max="2" step="0.1" value="${agent.temperature ?? 0.7}" ${isBuiltin ? 'disabled' : ''} /> <span id="aeditTempVal">${agent.temperature ?? 0.7}</span></div>
+      <div class="config-group"><label>Max Tokens</label><input id="aeditMaxTok" type="number" value="${agent.maxTokens || 4096}" ${isBuiltin ? 'disabled' : ''} /></div>
+      <div class="config-group"><label>Autonomy</label><select id="aeditAutonomy" ${isBuiltin ? 'disabled' : ''}><option value="full" ${agent.autonomy === 'full' ? 'selected' : ''}>Full</option><option value="balanced" ${agent.autonomy === 'balanced' ? 'selected' : ''}>Balanced</option><option value="cautious" ${agent.autonomy === 'cautious' ? 'selected' : ''}>Cautious</option><option value="manual" ${agent.autonomy === 'manual' ? 'selected' : ''}>Manual</option></select></div>
+      <div class="config-group"><label>Tool Mode</label><select id="aeditToolMode" ${isBuiltin ? 'disabled' : ''}><option value="all" ${agent.tools?.mode === 'all' ? 'selected' : ''}>All tools</option><option value="none" ${agent.tools?.mode === 'none' ? 'selected' : ''}>No tools</option><option value="allowlist" ${agent.tools?.mode === 'allowlist' ? 'selected' : ''}>Allowlist</option><option value="blocklist" ${agent.tools?.mode === 'blocklist' ? 'selected' : ''}>Blocklist</option></select></div>
+      <div class="config-group"><label>Max Turns/Run</label><input id="aeditMaxTurns" type="number" value="${agent.maxTurnsPerRun || 20}" ${isBuiltin ? 'disabled' : ''} /></div>
+      ${!isBuiltin ? `<div class="btn-row"><button class="btn-sm" id="agentSaveBtn">Save</button><button class="btn-sm btn-surface2" id="agentCancelBtn">Cancel</button>${agentId !== '__new__' ? `<button class="btn-sm btn-danger" id="agentDeleteBtn">Delete</button>` : ''}</div>` : ''}
+    </div>
+  `;
+
+  panelBody.querySelector('#aeditTemp')?.addEventListener('input', (e) => { $('aeditTempVal').textContent = e.target.value; });
+  panelBody.querySelector('#agentBackBtn')?.addEventListener('click', () => { agentEditingId = null; renderAgentPanel(); });
+  panelBody.querySelector('#agentCancelBtn')?.addEventListener('click', () => { agentEditingId = null; renderAgentPanel(); });
+
+  panelBody.querySelector('#agentSaveBtn')?.addEventListener('click', async () => {
+    const wsId = state.agent?.getWorkspace() || 'default';
+    const scope = $('aeditScope').value;
+    const updated = {
+      ...agent,
+      name: $('aeditName').value.trim() || 'Untitled Agent',
+      description: $('aeditDesc').value.trim(),
+      color: $('aeditColor').value,
+      scope,
+      workspaceId: scope === 'workspace' ? wsId : null,
+      provider: $('aeditProvider').value,
+      model: $('aeditModel').value.trim(),
+      systemPrompt: $('aeditPrompt').value,
+      temperature: parseFloat($('aeditTemp').value) || 0.7,
+      maxTokens: parseInt($('aeditMaxTok').value) || 4096,
+      autonomy: $('aeditAutonomy').value,
+      tools: { ...agent.tools, mode: $('aeditToolMode').value },
+      maxTurnsPerRun: parseInt($('aeditMaxTurns').value) || 20,
+    };
+    await state.agentStorage.save(updated);
+    agentEditingId = null;
+    renderAgentPanel();
+  });
+
+  panelBody.querySelector('#agentDeleteBtn')?.addEventListener('click', async () => {
+    const ok = await modal.confirm(`Delete agent "${agent.name}"?`);
+    if (!ok) return;
+    await state.agentStorage.delete(agent.id);
+    agentEditingId = null;
+    renderAgentPanel();
+  });
 }
 
 // ── Dashboard panel (Batch 4) ────────────────────────────────────
@@ -1169,6 +2057,8 @@ export function initPanelListeners() {
 
   document.addEventListener('click', () => { $('wsDropdown').classList.remove('visible'); });
   $('wsDropdown').addEventListener('click', (e) => e.stopPropagation());
+
+  // Terminal session bar is now managed by createItemBar via renderTerminalSessionBar()
 
   // ── Batch 1: Config section toggles + listeners ──
   bindToggle('autonomyToggle', 'autonomySection', 'autonomyArrow');

@@ -1,5 +1,2 @@
 /target
-extracted_conversations/
-ironclaw/
-nullclaw/
-zeroclaw/
+.reference/

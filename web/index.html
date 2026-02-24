@@ -115,6 +115,9 @@
     <button data-panel="terminal" title="Terminal">🖥</button>
     <button data-panel="dashboard" title="Dashboard">📊</button>
     <span class="sep-line"></span>
+    <button data-panel="toolMgmt" title="Tool Management">🛠</button>
+    <button data-panel="agents" title="Agents">🤖</button>
+    <span class="sep-line"></span>
     <button data-panel="config" title="Settings">⚙️</button>
   </nav>
 
@@ -122,16 +125,7 @@
     <!-- Chat -->
     <div class="panel active-panel" id="panelChat">
       <div class="panel-header panel-header-flush">
-        <div class="conv-bar conv-bar-wrap">
-          <span class="conv-label">Conversation</span>
-          <span class="conv-name" id="convName" title="New conversation">New conversation</span>
-          <span class="spacer"></span>
-          <button class="btn-new" id="convNew" title="New conversation">+ New</button>
-          <button class="btn-save" id="convRename" title="Rename conversation">Rename</button>
-          <button class="btn-hist" id="convHist" title="Conversation history">History</button>
-          <!-- Conversation history dropdown -->
-          <div class="conv-dropdown" id="convDropdown"></div>
-        </div>
+        <div id="convBarContainer" class="item-bar-container"></div>
       </div>
       <div class="panel-body messages" id="messages">
         <div class="msg system">Initializing agent...</div>
@@ -232,7 +226,10 @@
 
     <!-- Terminal (Block 1) -->
     <div class="panel" id="panelTerminal">
-      <div class="panel-header">Terminal</div>
+      <div class="panel-header">
+        Terminal
+        <div id="termSessionBarContainer" class="item-bar-container"></div>
+      </div>
       <div class="panel-body panel-mono terminal-output" id="terminalOutput"></div>
       <div class="terminal-input-row">
         <span class="terminal-cwd" id="terminalCwd">~</span>
@@ -253,6 +250,18 @@
         <div class="config-group"><label>Recent Logs</label></div>
         <div class="panel-body panel-mono dash-log-wrap" id="dashLogViewer"></div>
       </div>
+    </div>
+
+    <!-- Tool Management (Block 36) -->
+    <div class="panel" id="panelToolMgmt">
+      <div class="panel-header">Tool Management <span class="badge" id="toolMgmtBadge"></span></div>
+      <div class="panel-body panel-body-flush"></div>
+    </div>
+
+    <!-- Agents (Block 37) -->
+    <div class="panel" id="panelAgents">
+      <div class="panel-header">Agents</div>
+      <div class="panel-body panel-body-flush"></div>
     </div>
 
     <!-- Config -->

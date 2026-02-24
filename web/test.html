@@ -23,8 +23,20 @@ import {
   FetchTool, DomQueryTool, DomModifyTool, FsReadTool, FsWriteTool, FsListTool, FsDeleteTool,
   StorageGetTool, StorageSetTool, StorageListTool, NavigateTool, EvalJsTool,
   ScreenshotTool, ScreenInfoTool, NotifyTool,
-  createDefaultRegistry,
+  createDefaultRegistry, AskUserQuestionTool,
+  BrowserToolRegistry, SwitchAgentTool, ConsultAgentTool,
 } from './clawser-tools.js';
+
+import {
+  parseAgentRefs, hasAgentRefs, filterToolsForAgent,
+} from './clawser-agent-ref.js';
+
+import {
+  AgentStorage, BUILTIN_AGENTS, generateAgentId,
+} from './clawser-agent-storage.js';
+
+import { registerExtendedBuiltins } from './clawser-shell-builtins.js';
+import { registerClawserCli, parseFlags } from './clawser-cli.js';
 
 import {
   MODEL_PRICING, estimateCost, LLMProvider, EchoProvider,
@@ -205,6 +217,14 @@ import {
   tokenize, parse, normalizePath, ShellState, CommandRegistry,
   execute, registerBuiltins, ClawserShell, ShellTool, MemoryFs,
 } from './clawser-shell.js';
+
+import {
+  createTerminalSessionId, TerminalSessionManager,
+} from './clawser-terminal-sessions.js';
+
+import {
+  createItemBar, _relativeTime, _downloadText,
+} from './clawser-item-bar.js';
 
 const results = document.getElementById('results');
 let passed = 0, failed = 0;
@@ -9476,6 +9496,1247 @@ section('Integration — Mount Wiring');
 
   const listResult = await reg.execute('mount_list', {});
   assert('Mount: mount_list returns ToolResult shape', listResult && typeof listResult.success === 'boolean' && 'output' in listResult);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  INTEGRATION — Gap-fill Tool Wiring (31 tools from blocks 0-29)
+// ═══════════════════════════════════════════════════════════════
+
+section('Integration — Bridge Tool Wiring');
+{
+  const reg = new BrowserToolRegistry();
+  const bm = new BridgeManager({});
+  reg.register(new BridgeStatusTool(bm));
+  reg.register(new BridgeListToolsTool(bm));
+  reg.register(new BridgeFetchTool(bm));
+  assert('Bridge: bridge_status registered', reg.has('bridge_status'));
+  assert('Bridge: bridge_list_tools registered', reg.has('bridge_list_tools'));
+  assert('Bridge: bridge_fetch registered', reg.has('bridge_fetch'));
+  const r = await reg.execute('bridge_status', {});
+  assert('Bridge: bridge_status returns ToolResult', r && typeof r.success === 'boolean');
+}
+
+section('Integration — Goal Tool Wiring');
+{
+  const reg = new BrowserToolRegistry();
+  resetGoalIdCounter();
+  const gm = new GoalManager();
+  reg.register(new GoalAddTool(gm));
+  reg.register(new GoalUpdateTool(gm));
+  reg.register(new GoalAddArtifactTool(gm));
+  reg.register(new GoalListTool(gm));
+  assert('Goals: goal_add registered', reg.has('goal_add'));
+  assert('Goals: goal_update registered', reg.has('goal_update'));
+  assert('Goals: goal_add_artifact registered', reg.has('goal_add_artifact'));
+  assert('Goals: goal_list registered', reg.has('goal_list'));
+  const r = await reg.execute('goal_list', {});
+  assert('Goals: goal_list returns ToolResult', r && typeof r.success === 'boolean');
+}
+
+section('Integration — Daemon Tool Wiring');
+{
+  const reg = new BrowserToolRegistry();
+  const dc = new DaemonController({ getStateFn: () => ({}) });
+  reg.register(new DaemonStatusTool(dc));
+  reg.register(new DaemonCheckpointTool(dc));
+  assert('Daemon: daemon_status registered', reg.has('daemon_status'));
+  assert('Daemon: daemon_checkpoint registered', reg.has('daemon_checkpoint'));
+  const r = await reg.execute('daemon_status', {});
+  assert('Daemon: daemon_status returns ToolResult', r && typeof r.success === 'boolean');
+}
+
+section('Integration — OAuth Tool Wiring');
+{
+  const reg = new BrowserToolRegistry();
+  const vault = new SecretVault(new MemoryVaultStorage());
+  const om = new OAuthManager({ vault });
+  reg.register(new OAuthListTool(om));
+  reg.register(new OAuthConnectTool(om));
+  reg.register(new OAuthDisconnectTool(om));
+  reg.register(new OAuthApiTool(om));
+  assert('OAuth: oauth_list registered', reg.has('oauth_list'));
+  assert('OAuth: oauth_connect registered', reg.has('oauth_connect'));
+  assert('OAuth: oauth_disconnect registered', reg.has('oauth_disconnect'));
+  assert('OAuth: oauth_api registered', reg.has('oauth_api'));
+  const r = await reg.execute('oauth_list', {});
+  assert('OAuth: oauth_list returns ToolResult', r && typeof r.success === 'boolean');
+}
+
+section('Integration — Auth Profiles Tool Wiring');
+{
+  const reg = new BrowserToolRegistry();
+  const vault = new SecretVault(new MemoryVaultStorage());
+  const apm = new AuthProfileManager({ vault });
+  reg.register(new AuthListProfilesTool(apm));
+  reg.register(new AuthSwitchProfileTool(apm));
+  reg.register(new AuthStatusTool(apm));
+  assert('AuthProfiles: auth_list_profiles registered', reg.has('auth_list_profiles'));
+  assert('AuthProfiles: auth_switch_profile registered', reg.has('auth_switch_profile'));
+  assert('AuthProfiles: auth_status registered', reg.has('auth_status'));
+  const r = await reg.execute('auth_status', {});
+  assert('AuthProfiles: auth_status returns ToolResult', r && typeof r.success === 'boolean');
+}
+
+section('Integration — Routines Tool Wiring');
+{
+  const reg = new BrowserToolRegistry();
+  resetRoutineCounter();
+  const re = new RoutineEngine({ executeFn: async () => {}, onNotify: () => {} });
+  reg.register(new RoutineCreateTool(re));
+  reg.register(new RoutineListTool(re));
+  reg.register(new RoutineDeleteTool(re));
+  reg.register(new RoutineRunTool(re));
+  assert('Routines: routine_create registered', reg.has('routine_create'));
+  assert('Routines: routine_list registered', reg.has('routine_list'));
+  assert('Routines: routine_delete registered', reg.has('routine_delete'));
+  assert('Routines: routine_run registered', reg.has('routine_run'));
+  const r = await reg.execute('routine_list', {});
+  assert('Routines: routine_list returns ToolResult', r && typeof r.success === 'boolean');
+}
+
+section('Integration — Self-Repair Tool Wiring');
+{
+  const reg = new BrowserToolRegistry();
+  const sd = new StuckDetector();
+  const sre = new SelfRepairEngine({ detector: sd });
+  reg.register(new SelfRepairStatusTool(sre));
+  reg.register(new SelfRepairConfigureTool(sre));
+  assert('SelfRepair: self_repair_status registered', reg.has('self_repair_status'));
+  assert('SelfRepair: self_repair_configure registered', reg.has('self_repair_configure'));
+  const r = await reg.execute('self_repair_status', {});
+  assert('SelfRepair: self_repair_status returns ToolResult', r && typeof r.success === 'boolean');
+}
+
+section('Integration — Undo Tool Wiring');
+{
+  const reg = new BrowserToolRegistry();
+  resetTurnCounter();
+  const um = new UndoManager({ handlers: {} });
+  reg.register(new UndoTool(um));
+  reg.register(new UndoStatusTool(um));
+  assert('Undo: undo registered', reg.has('undo'));
+  assert('Undo: undo_status registered', reg.has('undo_status'));
+  const r = await reg.execute('undo_status', {});
+  assert('Undo: undo_status returns ToolResult', r && typeof r.success === 'boolean');
+}
+
+section('Integration — Intent Tool Wiring');
+{
+  const reg = new BrowserToolRegistry();
+  const ir = new IntentRouter();
+  reg.register(new IntentClassifyTool(ir));
+  reg.register(new IntentOverrideTool(ir));
+  assert('Intent: intent_classify registered', reg.has('intent_classify'));
+  assert('Intent: intent_override registered', reg.has('intent_override'));
+  const r = await reg.execute('intent_classify', { message: 'hello' });
+  assert('Intent: intent_classify returns ToolResult', r && typeof r.success === 'boolean');
+}
+
+section('Integration — Heartbeat Tool Wiring');
+{
+  const reg = new BrowserToolRegistry();
+  const hr = new HeartbeatRunner({ onAlert: () => {} });
+  reg.register(new HeartbeatStatusTool(hr));
+  reg.register(new HeartbeatRunTool(hr));
+  assert('Heartbeat: heartbeat_status registered', reg.has('heartbeat_status'));
+  assert('Heartbeat: heartbeat_run registered', reg.has('heartbeat_run'));
+  const r = await reg.execute('heartbeat_status', {});
+  assert('Heartbeat: heartbeat_status returns ToolResult', r && typeof r.success === 'boolean');
+}
+
+section('Integration — Skills Registry Tool Wiring');
+{
+  const reg = new BrowserToolRegistry();
+  const client = new SkillRegistryClient();
+  const skReg = new SkillRegistry({ onLog: () => {} });
+  reg.register(new SkillSearchTool(client));
+  reg.register(new SkillInstallTool(client, skReg, 'test'));
+  reg.register(new SkillUpdateTool(client, skReg, 'test'));
+  reg.register(new SkillRemoveTool(skReg, 'test'));
+  reg.register(new SkillListTool(skReg));
+  assert('Skills: skill_search registered', reg.has('skill_search'));
+  assert('Skills: skill_install registered', reg.has('skill_install'));
+  assert('Skills: skill_update registered', reg.has('skill_update'));
+  assert('Skills: skill_remove registered', reg.has('skill_remove'));
+  assert('Skills: skill_list registered', reg.has('skill_list'));
+  const r = await reg.execute('skill_list', {});
+  assert('Skills: skill_list returns ToolResult', r && typeof r.success === 'boolean');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  BLOCK 33 — AskUserQuestionTool
+// ═══════════════════════════════════════════════════════════════
+
+section('AskUserQuestion — Validation');
+{
+  // Test with mock callback
+  const mockAnswers = { 'Which color?': 'Blue' };
+  const tool = new AskUserQuestionTool(async (questions) => mockAnswers);
+
+  // Valid call
+  const r = await tool.execute({
+    questions: [{
+      question: 'Which color?',
+      header: 'Color',
+      options: [
+        { label: 'Red', description: 'A warm color' },
+        { label: 'Blue', description: 'A cool color' },
+      ],
+    }],
+  });
+  assert('AskUser: valid call succeeds', r.success === true);
+  assert('AskUser: output contains answer', r.output.includes('Blue'));
+
+  // Empty questions
+  const r2 = await tool.execute({ questions: [] });
+  assert('AskUser: empty questions fails', r2.success === false);
+
+  // Too many questions
+  const r3 = await tool.execute({
+    questions: Array(5).fill({
+      question: 'Q?', header: 'H',
+      options: [{ label: 'A', description: 'a' }, { label: 'B', description: 'b' }],
+    }),
+  });
+  assert('AskUser: >4 questions fails', r3.success === false);
+
+  // Too few options
+  const r4 = await tool.execute({
+    questions: [{
+      question: 'Q?', header: 'H',
+      options: [{ label: 'Only', description: 'one' }],
+    }],
+  });
+  assert('AskUser: <2 options fails', r4.success === false);
+
+  // Missing fields
+  const r5 = await tool.execute({
+    questions: [{ question: 'Q?', header: 'H' }],
+  });
+  assert('AskUser: missing options fails', r5.success === false);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  BLOCK 34 — Extended Shell Builtins
+// ═══════════════════════════════════════════════════════════════
+
+section('Extended Builtins — Registration & Smoke');
+{
+  const reg2 = new CommandRegistry();
+  registerBuiltins(reg2);
+  const beforeCount = reg2.names().length;
+  registerExtendedBuiltins(reg2);
+  const afterCount = reg2.names().length;
+  assert('ExtBuiltins: registered new commands', afterCount > beforeCount);
+  assert('ExtBuiltins: touch registered', reg2.has('touch'));
+  assert('ExtBuiltins: find registered', reg2.has('find'));
+  assert('ExtBuiltins: tr registered', reg2.has('tr'));
+  assert('ExtBuiltins: cut registered', reg2.has('cut'));
+  assert('ExtBuiltins: seq registered', reg2.has('seq'));
+  assert('ExtBuiltins: date registered', reg2.has('date'));
+  assert('ExtBuiltins: base64 registered', reg2.has('base64'));
+  assert('ExtBuiltins: sha256sum registered', reg2.has('sha256sum'));
+  assert('ExtBuiltins: test registered', reg2.has('test'));
+  assert('ExtBuiltins: [ registered', reg2.has('['));
+  assert('ExtBuiltins: history registered', reg2.has('history'));
+  assert('ExtBuiltins: alias registered', reg2.has('alias'));
+  assert('ExtBuiltins: clear registered', reg2.has('clear'));
+  assert('ExtBuiltins: tree registered', reg2.has('tree'));
+  assert('ExtBuiltins: sed registered', reg2.has('sed'));
+  assert('ExtBuiltins: diff registered', reg2.has('diff'));
+  assert('ExtBuiltins: xargs registered', reg2.has('xargs'));
+  assert('ExtBuiltins: xxd registered', reg2.has('xxd'));
+  assert('ExtBuiltins: md5sum registered', reg2.has('md5sum'));
+  assert('ExtBuiltins: yes registered', reg2.has('yes'));
+  assert('ExtBuiltins: sleep registered', reg2.has('sleep'));
+  assert('ExtBuiltins: time registered', reg2.has('time'));
+  assert('ExtBuiltins: printf registered', reg2.has('printf'));
+  assert('ExtBuiltins: du registered', reg2.has('du'));
+  assert('ExtBuiltins: realpath registered', reg2.has('realpath'));
+  assert('ExtBuiltins: column registered', reg2.has('column'));
+  assert('ExtBuiltins: paste registered', reg2.has('paste'));
+  assert('ExtBuiltins: fold registered', reg2.has('fold'));
+  assert('ExtBuiltins: unset registered', reg2.has('unset'));
+  assert('ExtBuiltins: read registered', reg2.has('read'));
+  assert('ExtBuiltins: set registered', reg2.has('set'));
+  assert('ExtBuiltins: unalias registered', reg2.has('unalias'));
+}
+
+section('Extended Builtins — Functional Tests');
+{
+  const shell = new ClawserShell({ fs: new MemoryFs() });
+
+  // touch creates files
+  await shell.exec('touch /testfile.txt');
+  const stat = await shell.fs.stat('/testfile.txt');
+  assert('touch: creates file', stat && stat.kind === 'file');
+
+  // basename
+  const bn = await shell.exec('basename /foo/bar/baz.txt');
+  assert('basename: strips path', bn.stdout.trim() === 'baz.txt');
+
+  // dirname
+  const dn = await shell.exec('dirname /foo/bar/baz.txt');
+  assert('dirname: strips filename', dn.stdout.trim() === '/foo/bar');
+
+  // realpath
+  const rp = await shell.exec('realpath test/../hello');
+  assert('realpath: resolves path', rp.stdout.trim() === '/hello');
+
+  // rev
+  const rev = await shell.exec('echo "hello" | rev');
+  assert('rev: reverses text', rev.stdout.trim() === 'olleh');
+
+  // nl
+  const nl = await shell.exec('echo "a\nb\nc" | nl');
+  assert('nl: numbers lines', nl.stdout.includes('1') && nl.stdout.includes('a'));
+
+  // seq
+  const seq = await shell.exec('seq 5');
+  const seqLines = seq.stdout.trim().split('\n');
+  assert('seq: generates 1-5', seqLines.length === 5 && seqLines[0] === '1' && seqLines[4] === '5');
+
+  // seq with start and end
+  const seq2 = await shell.exec('seq 3 7');
+  const seq2Lines = seq2.stdout.trim().split('\n');
+  assert('seq: generates 3-7', seq2Lines.length === 5 && seq2Lines[0] === '3');
+
+  // date
+  const d = await shell.exec('date');
+  assert('date: returns output', d.stdout.trim().length > 0);
+
+  // base64 (echo doesn't support -n, so output will include newline)
+  const b64 = await shell.exec('echo "hello" | base64');
+  assert('base64: encodes', b64.exitCode === 0 && b64.stdout.trim().length > 0);
+
+  // tr
+  const tr = await shell.exec('echo "hello" | tr a-z A-Z');
+  assert('tr: translates case', tr.stdout.trim() === 'HELLO');
+
+  // cut
+  const cut = await shell.exec('echo "a:b:c" | cut -d: -f2');
+  assert('cut: extracts field', cut.stdout.trim() === 'b');
+
+  // test command
+  const t1 = await shell.exec('test -z ""');
+  assert('test: -z empty string is true', t1.exitCode === 0);
+  const t2 = await shell.exec('test -n "hello"');
+  assert('test: -n non-empty is true', t2.exitCode === 0);
+  const t3 = await shell.exec('test "a" = "a"');
+  assert('test: string equality', t3.exitCode === 0);
+  const t4 = await shell.exec('test "a" != "b"');
+  assert('test: string inequality', t4.exitCode === 0);
+
+  // clear
+  const cl = await shell.exec('clear');
+  assert('clear: returns __clearTerminal flag', cl.__clearTerminal === true);
+
+  // history
+  assert('history: records commands', shell.state.history.length > 0);
+
+  // alias / unalias
+  await shell.exec('alias ll="ls -l"');
+  assert('alias: set alias', shell.state.aliases.has('ll'));
+  await shell.exec('unalias ll');
+  assert('unalias: removes alias', !shell.state.aliases.has('ll'));
+
+  // set pipefail
+  await shell.exec('set +o pipefail');
+  assert('set: disable pipefail', shell.state.pipefail === false);
+  await shell.exec('set -o pipefail');
+  assert('set: enable pipefail', shell.state.pipefail === true);
+
+  // unset
+  shell.state.env.set('FOO', 'bar');
+  await shell.exec('unset FOO');
+  assert('unset: removes env var', !shell.state.env.has('FOO'));
+
+  // read
+  // read uses stdin, but in shell exec it's piped, so we test via the handler directly
+  const readHandler = shell.registry.get('read');
+  if (readHandler) {
+    const readResult = await readHandler({ args: ['MYVAR'], stdin: 'hello world\n', state: shell.state, registry: shell.registry, fs: shell.fs });
+    assert('read: sets env var from stdin', shell.state.env.get('MYVAR') === 'hello world');
+  }
+
+  // sed
+  const sedResult = await shell.exec('echo "hello world" | sed s/world/earth/');
+  assert('sed: substitution', sedResult.stdout.trim() === 'hello earth');
+
+  // xargs
+  const xargsResult = await shell.exec('echo "a b c" | xargs echo');
+  assert('xargs: passes args to echo', xargsResult.stdout.trim() === 'a b c');
+
+  // diff (write two files, diff them)
+  await shell.fs.writeFile('/file1.txt', 'line1\nline2\nline3\n');
+  await shell.fs.writeFile('/file2.txt', 'line1\nchanged\nline3\n');
+  const diffResult = await shell.exec('diff /file1.txt /file2.txt');
+  assert('diff: detects differences', diffResult.exitCode === 1 && diffResult.stdout.length > 0);
+
+  // tree
+  await shell.fs.mkdir('/treedir');
+  await shell.fs.writeFile('/treedir/a.txt', 'a');
+  await shell.fs.writeFile('/treedir/b.txt', 'b');
+  const treeResult = await shell.exec('tree /treedir');
+  assert('tree: shows directory structure', treeResult.stdout.includes('a.txt') && treeResult.stdout.includes('b.txt'));
+
+  // fold
+  const foldResult = await shell.exec('echo "abcdefghij" | fold -w5');
+  assert('fold: wraps at width', foldResult.stdout.includes('abcde'));
+
+  // column -t
+  const colResult = await shell.exec('echo "a b c\nd e f" | column -t');
+  assert('column: table mode produces output', colResult.exitCode === 0 && colResult.stdout.length > 0);
+
+  // paste
+  const pasteResult = await shell.exec('echo "a\nb\nc" | paste -d,');
+  assert('paste: joins with delimiter', pasteResult.stdout.trim() === 'a,b,c');
+
+  // printf
+  const pfResult = await shell.exec('printf "Hello %s, you are %d" world 42');
+  assert('printf: formats string', pfResult.stdout.includes('Hello world') && pfResult.stdout.includes('42'));
+
+  // du
+  const duResult = await shell.exec('du -s /treedir');
+  assert('du: shows size', duResult.exitCode === 0 && duResult.stdout.length > 0);
+
+  // find
+  const findResult = await shell.exec('find /treedir -name "*.txt"');
+  assert('find: locates files', findResult.stdout.includes('a.txt'));
+
+  // stat
+  const statResult = await shell.exec('stat /treedir/a.txt');
+  assert('stat: shows file info', statResult.stdout.includes('file') || statResult.stdout.includes('File'));
+
+  // yes (piped to head to limit output)
+  const yesResult = await shell.exec('yes | head -5');
+  const yesLines = yesResult.stdout.trim().split('\n');
+  assert('yes: generates y lines', yesLines.length === 5 && yesLines[0] === 'y');
+
+  // xxd
+  const xxdResult = await shell.exec('echo "AB" | xxd');
+  assert('xxd: hex dump output', xxdResult.exitCode === 0 && xxdResult.stdout.includes('41'));
+
+  // md5sum
+  const md5Result = await shell.exec('echo "hello" | md5sum');
+  assert('md5sum: produces hash', md5Result.exitCode === 0 && md5Result.stdout.trim().length >= 32);
+
+  // sha256sum
+  const shaResult = await shell.exec('echo "hello" | sha256sum');
+  assert('sha256sum: produces hash', shaResult.exitCode === 0 && shaResult.stdout.trim().length >= 64);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  BLOCKS 31-32 — Clawser CLI
+// ═══════════════════════════════════════════════════════════════
+
+section('Clawser CLI — Flag Parser');
+{
+  const { flags, positional } = parseFlags(['-p', 'hello', '--model', 'gpt-4', 'extra'], {
+    p: 'print', m: 'model',
+  });
+  assert('parseFlags: -p maps to print', flags.print === 'hello');
+  assert('parseFlags: --model captured', flags.model === 'gpt-4');
+  assert('parseFlags: positional captured', positional.includes('extra'));
+
+  const r2 = parseFlags(['--no-stream', 'text'], { 'no-stream': true });
+  assert('parseFlags: boolean flag', r2.flags['no-stream'] === true);
+  assert('parseFlags: positional after boolean', r2.positional.includes('text'));
+}
+
+section('Clawser CLI — Command Registration');
+{
+  const reg3 = new CommandRegistry();
+  const mockAgent = {
+    getState: () => ({ model: 'test-model', total_tokens: 100, memory_count: 2, tool_count: 5 }),
+    getToolSpecs: () => [{ name: 'test_tool', description: 'A test tool' }],
+    getEventLog: () => ({ events: [] }),
+    getModel: () => 'test-model',
+    sendMessage: () => {},
+    run: async () => ({ content: 'response text' }),
+    reinit: () => {},
+    getCheckpointJSON: () => null,
+  };
+  const mockShell = { registry: reg3, state: new ShellState() };
+
+  registerClawserCli(reg3, () => mockAgent, () => mockShell);
+  assert('CLI: clawser command registered', reg3.has('clawser'));
+
+  // Test clawser status
+  const shellState = new ShellState();
+  const statusResult = await reg3.get('clawser')({
+    args: ['status'], stdin: '', state: shellState, registry: reg3, fs: null,
+  });
+  assert('CLI: status returns output', statusResult.stdout.length > 0);
+  assert('CLI: status shows model', statusResult.stdout.includes('test-model'));
+
+  // Test clawser tools
+  const toolsResult = await reg3.get('clawser')({
+    args: ['tools'], stdin: '', state: shellState, registry: reg3, fs: null,
+  });
+  assert('CLI: tools returns output', toolsResult.stdout.length > 0);
+
+  // Test clawser chat mode toggle
+  const chatResult = await reg3.get('clawser')({
+    args: ['chat'], stdin: '', state: shellState, registry: reg3, fs: null,
+  });
+  assert('CLI: chat returns __enterAgentMode', chatResult.__enterAgentMode === true);
+
+  // Test clawser exit
+  const exitResult = await reg3.get('clawser')({
+    args: ['exit'], stdin: '', state: shellState, registry: reg3, fs: null,
+  });
+  assert('CLI: exit returns __exitAgentMode', exitResult.__exitAgentMode === true);
+
+  // Test clawser clear
+  const clearResult = await reg3.get('clawser')({
+    args: ['clear'], stdin: '', state: shellState, registry: reg3, fs: null,
+  });
+  assert('CLI: clear succeeds', clearResult.exitCode === 0);
+
+  // Test one-shot mode
+  const osResult = await reg3.get('clawser')({
+    args: ['-p', 'hello world'], stdin: '', state: shellState, registry: reg3, fs: null,
+  });
+  assert('CLI: one-shot returns response', osResult.stdout.includes('response text'));
+
+  // Test clawser (no args) shows help
+  const helpResult = await reg3.get('clawser')({
+    args: [], stdin: '', state: shellState, registry: reg3, fs: null,
+  });
+  assert('CLI: no args shows help', helpResult.stdout.includes('clawser') && helpResult.exitCode === 0);
+
+  // Test clawser config
+  const configResult = await reg3.get('clawser')({
+    args: ['config'], stdin: '', state: shellState, registry: reg3, fs: null,
+  });
+  assert('CLI: config returns output', configResult.stdout.includes('Model'));
+
+  // Test clawser do "task"
+  const doResult = await reg3.get('clawser')({
+    args: ['do', 'write a test'], stdin: '', state: shellState, registry: reg3, fs: null,
+  });
+  assert('CLI: do returns agent response', doResult.stdout.includes('response text'));
+
+  // Test clawser model (show)
+  const modelResult = await reg3.get('clawser')({
+    args: ['model'], stdin: '', state: shellState, registry: reg3, fs: null,
+  });
+  assert('CLI: model shows current', modelResult.stdout.includes('test-model'));
+
+  // Test clawser history
+  const histResult = await reg3.get('clawser')({
+    args: ['history'], stdin: '', state: shellState, registry: reg3, fs: null,
+  });
+  assert('CLI: history returns output', histResult.exitCode === 0);
+
+  // Test clawser mcp
+  const mcpResult = await reg3.get('clawser')({
+    args: ['mcp'], stdin: '', state: shellState, registry: reg3, fs: null,
+  });
+  assert('CLI: mcp returns output', mcpResult.exitCode === 0 && mcpResult.stdout.includes('MCP'));
+}
+
+section('Clawser CLI — Extended Mock Tests');
+{
+  const reg4 = new CommandRegistry();
+  const memories = [
+    { id: 'm1', key: 'test_key', content: 'test_value', category: 'user' },
+  ];
+  const extendedMockAgent = {
+    getState: () => ({ model: 'test-model', total_tokens: 100, memory_count: 1, tool_count: 5 }),
+    getToolSpecs: () => [],
+    getEventLog: () => ({ events: [] }),
+    getModel: () => 'test-model',
+    setModel: () => {},
+    setSystemPrompt: () => {},
+    sendMessage: () => {},
+    run: async () => ({ content: 'done' }),
+    reinit: () => {},
+    getCheckpointJSON: () => null,
+    compactContext: async () => ({ compacted: true }),
+    memoryRecall: () => memories,
+    memoryStore: (entry) => 'm2',
+    memoryForget: (id) => true,
+    autonomy: { getState: () => ({ costTodayCents: 123 }) },
+  };
+  const mockShell4 = { registry: reg4, state: new ShellState() };
+
+  registerClawserCli(reg4, () => extendedMockAgent, () => mockShell4);
+
+  const shellState4 = new ShellState();
+  const exec = (args) => reg4.get('clawser')({ args, stdin: '', state: shellState4, registry: reg4, fs: null });
+
+  // clawser cost
+  const costResult = await exec(['cost']);
+  assert('CLI: cost returns output', costResult.exitCode === 0 && costResult.stdout.length > 0);
+
+  // clawser compact
+  const compactResult = await exec(['compact']);
+  assert('CLI: compact succeeds', compactResult.exitCode === 0);
+
+  // clawser memory list
+  const memListResult = await exec(['memory', 'list']);
+  assert('CLI: memory list shows entries', memListResult.stdout.includes('test_key'));
+
+  // clawser memory add
+  const memAddResult = await exec(['memory', 'add', 'new_key', 'new_value']);
+  assert('CLI: memory add succeeds', memAddResult.exitCode === 0);
+
+  // clawser memory remove
+  const memRmResult = await exec(['memory', 'remove', 'test_key']);
+  assert('CLI: memory remove succeeds', memRmResult.exitCode === 0);
+
+  // clawser config set model
+  const cfgSetResult = await exec(['config', 'set', 'model', 'gpt-5']);
+  assert('CLI: config set model succeeds', cfgSetResult.exitCode === 0 && cfgSetResult.stdout.includes('gpt-5'));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  INTEGRATION — Shell Alias Expansion
+// ═══════════════════════════════════════════════════════════════
+
+section('Shell — Alias Expansion');
+{
+  const shell = new ClawserShell({ fs: new MemoryFs() });
+  shell.state.aliases.set('ll', 'ls -l');
+  const r = await shell.exec('ll');
+  // ll expands to "ls -l" which runs ls in long format on /
+  assert('Alias: ll expands to ls -l', r.exitCode === 0);
+
+  // Alias with args
+  shell.state.aliases.set('greet', 'echo hello');
+  const r2 = await shell.exec('greet world');
+  assert('Alias: greet world → echo hello world', r2.stdout.trim() === 'hello world');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  BLOCK 35 — Terminal Sessions
+// ═══════════════════════════════════════════════════════════════
+
+section('Block 35 — createTerminalSessionId');
+{
+  const id1 = createTerminalSessionId();
+  const id2 = createTerminalSessionId();
+  assert('Session ID starts with term_', id1.startsWith('term_'));
+  assert('Session IDs are unique', id1 !== id2);
+}
+
+section('Block 35 — TerminalSessionManager CRUD');
+{
+  // Create a mock fs that stores in-memory
+  const store = {};
+  const mockFs = {
+    async readFile(path) {
+      if (store[path] !== undefined) return store[path];
+      throw new Error('ENOENT');
+    },
+    async writeFile(path, content) { store[path] = content; },
+    async mkdir() {},
+    async delete(path) { delete store[path]; },
+  };
+
+  const shell = new ClawserShell({ fs: new MemoryFs() });
+  const tsm = new TerminalSessionManager({ wsId: 'test_ws', shell, fs: mockFs });
+
+  // Initially empty
+  assertEq('TSM: no sessions initially', tsm.list().length, 0);
+  assert('TSM: no active session', tsm.activeId === null);
+
+  // Create a session
+  const meta1 = await tsm.create('Test Session 1');
+  assert('TSM: create returns metadata', meta1.name === 'Test Session 1');
+  assert('TSM: create sets active', tsm.activeId === meta1.id);
+  assertEq('TSM: list has 1 session', tsm.list().length, 1);
+
+  // Record events
+  tsm.recordCommand('echo hello');
+  tsm.recordResult('hello\n', '', 0);
+  assert('TSM: events recorded', tsm.events.length === 2);
+  assert('TSM: dirty after recording', tsm.dirty);
+
+  // Persist
+  await tsm.persist();
+  assert('TSM: events.jsonl written', store['/.terminal-sessions/' + meta1.id + '/events.jsonl'] !== undefined);
+  assert('TSM: state.json written', store['/.terminal-sessions/' + meta1.id + '/state.json'] !== undefined);
+  assert('TSM: not dirty after persist', !tsm.dirty);
+
+  // Create second session (persists first, resets)
+  const meta2 = await tsm.create('Test Session 2');
+  assert('TSM: second session created', meta2.name === 'Test Session 2');
+  assertEq('TSM: list has 2 sessions', tsm.list().length, 2);
+  assertEq('TSM: active is second', tsm.activeId, meta2.id);
+  assertEq('TSM: events reset', tsm.events.length, 0);
+
+  // Switch back to first
+  await tsm.switchTo(meta1.id);
+  assertEq('TSM: switched to first', tsm.activeId, meta1.id);
+  assertEq('TSM: events restored', tsm.events.length, 2);
+
+  // Rename
+  tsm.rename(meta1.id, 'Renamed Session');
+  const renamed = tsm.list().find(s => s.id === meta1.id);
+  assert('TSM: rename works', renamed.name === 'Renamed Session');
+  assert('TSM: activeName updated', tsm.activeName === 'Renamed Session');
+
+  // Delete second session
+  await tsm.delete(meta2.id);
+  assertEq('TSM: list has 1 after delete', tsm.list().length, 1);
+
+  // Clean up localStorage
+  localStorage.removeItem('clawser_terminal_sessions_test_ws');
+}
+
+section('Block 35 — TerminalSessionManager Fork');
+{
+  const store = {};
+  const mockFs = {
+    async readFile(path) {
+      if (store[path] !== undefined) return store[path];
+      throw new Error('ENOENT');
+    },
+    async writeFile(path, content) { store[path] = content; },
+    async mkdir() {},
+    async delete(path) { delete store[path]; },
+  };
+
+  const shell = new ClawserShell({ fs: new MemoryFs() });
+  const tsm = new TerminalSessionManager({ wsId: 'test_fork', shell, fs: mockFs });
+
+  await tsm.create('Original');
+  tsm.recordCommand('ls');
+  tsm.recordResult('file.txt\n', '', 0);
+  const original = tsm.activeId;
+
+  const forked = await tsm.fork('Forked Copy');
+  assert('TSM: fork creates new session', forked.id !== original);
+  assert('TSM: fork copies events', tsm.events.length === 2);
+  assert('TSM: fork has correct name', forked.name === 'Forked Copy');
+  assertEq('TSM: 2 sessions after fork', tsm.list().length, 2);
+
+  localStorage.removeItem('clawser_terminal_sessions_test_fork');
+}
+
+section('Block 35 — TerminalSessionManager Export');
+{
+  const store = {};
+  const mockFs = {
+    async readFile(path) {
+      if (store[path] !== undefined) return store[path];
+      throw new Error('ENOENT');
+    },
+    async writeFile(path, content) { store[path] = content; },
+    async mkdir() {},
+    async delete(path) { delete store[path]; },
+  };
+
+  const shell = new ClawserShell({ fs: new MemoryFs() });
+  const tsm = new TerminalSessionManager({ wsId: 'test_export', shell, fs: mockFs });
+
+  await tsm.create('Export Test');
+  tsm.recordCommand('echo hello');
+  tsm.recordResult('hello\n', '', 0);
+  tsm.recordCommand('ls -la');
+  tsm.recordResult('total 0\n', '', 0);
+
+  // Export as script
+  const script = tsm.exportAsScript();
+  assert('TSM: script starts with shebang', script.startsWith('#!/bin/sh'));
+  assert('TSM: script has echo', script.includes('echo hello'));
+  assert('TSM: script has ls', script.includes('ls -la'));
+
+  // Export as markdown
+  const md = tsm.exportAsMarkdown();
+  assert('TSM: markdown has title', md.includes('# Export Test'));
+  assert('TSM: markdown has code blocks', md.includes('```sh'));
+
+  // Export as JSON
+  const json = tsm.exportAsLog('json');
+  const parsed = JSON.parse(json);
+  assert('TSM: JSON export is array', Array.isArray(parsed));
+  assertEq('TSM: JSON has 4 events', parsed.length, 4);
+
+  // Export as text
+  const text = tsm.exportAsLog('text');
+  assert('TSM: text export has commands', text.includes('$ echo hello'));
+
+  localStorage.removeItem('clawser_terminal_sessions_test_export');
+}
+
+section('Block 35 — TerminalSessionManager setShell');
+{
+  const mockFs = {
+    async readFile() { throw new Error('ENOENT'); },
+    async writeFile() {},
+    async mkdir() {},
+    async delete() {},
+  };
+
+  const shell1 = new ClawserShell({ fs: new MemoryFs() });
+  const tsm = new TerminalSessionManager({ wsId: 'test_setshell', shell: shell1, fs: mockFs });
+
+  await tsm.create('Shell Test');
+  tsm.recordCommand('pwd');
+
+  // Replace shell (simulates createShellSession)
+  const shell2 = new ClawserShell({ fs: new MemoryFs() });
+  tsm.setShell(shell2);
+
+  // Record with new shell — should not throw
+  tsm.recordCommand('echo new shell');
+  assertEq('TSM: events still recorded after setShell', tsm.events.length, 2);
+
+  localStorage.removeItem('clawser_terminal_sessions_test_setshell');
+}
+
+section('Block 35 — CLI Session Subcommands');
+{
+  // Create a shell with CLI registered and mock terminal sessions
+  const shell = new ClawserShell({ fs: new MemoryFs() });
+
+  const store = {};
+  const mockFs = {
+    async readFile(path) {
+      if (store[path] !== undefined) return store[path];
+      throw new Error('ENOENT');
+    },
+    async writeFile(path, content) { store[path] = content; },
+    async mkdir() {},
+    async delete(path) { delete store[path]; },
+  };
+
+  // Set up terminal sessions in state
+  const tsm = new TerminalSessionManager({ wsId: 'test_cli_session', shell, fs: mockFs });
+  await tsm.create('CLI Test Session');
+  tsm.recordCommand('echo test');
+  tsm.recordResult('test\n', '', 0);
+  state.terminalSessions = tsm;
+
+  registerClawserCli(shell.registry, () => null, () => shell);
+
+  // clawser session list
+  const listR = await shell.exec('clawser session list');
+  assert('CLI session list succeeds', listR.exitCode === 0);
+  assert('CLI session list shows session', listR.stdout.includes('CLI Test Session'));
+
+  // clawser session new
+  const newR = await shell.exec('clawser session new "Fresh Session"');
+  assert('CLI session new succeeds', newR.exitCode === 0);
+  assert('CLI session new shows name', newR.stdout.includes('Fresh Session'));
+
+  // clawser session rename
+  const renameR = await shell.exec('clawser session rename "Renamed CLI"');
+  assert('CLI session rename succeeds', renameR.exitCode === 0);
+  assert('CLI session rename shows new name', renameR.stdout.includes('Renamed CLI'));
+
+  // clawser session export --script
+  const exportR = await shell.exec('clawser session export --script');
+  assert('CLI session export succeeds', exportR.exitCode === 0);
+  assert('CLI session export has shebang', exportR.stdout.includes('#!/bin/sh'));
+
+  // clawser session save
+  const saveR = await shell.exec('clawser session save');
+  assert('CLI session save succeeds', saveR.exitCode === 0);
+
+  // Restore state
+  state.terminalSessions = null;
+  localStorage.removeItem('clawser_terminal_sessions_test_cli_session');
+}
+
+section('Block 35 — Session/Conv Bar Container Elements');
+{
+  assert('convBarContainer exists', document.getElementById('convBarContainer') !== null);
+  assert('termSessionBarContainer exists', document.getElementById('termSessionBarContainer') !== null);
+}
+
+section('Block 35 — lsKey.termSessions');
+{
+  assert('lsKey.termSessions exists', typeof lsKey.termSessions === 'function');
+  assertEq('lsKey.termSessions format', lsKey.termSessions('ws1'), 'clawser_terminal_sessions_ws1');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  ITEM BAR TESTS
+// ═══════════════════════════════════════════════════════════════
+
+section('ItemBar — _relativeTime');
+{
+  assert('_relativeTime is a function', typeof _relativeTime === 'function');
+  assertEq('null returns never', _relativeTime(null), 'never');
+  assertEq('just now', _relativeTime(Date.now() - 10000), 'just now');
+  assertEq('minutes ago', _relativeTime(Date.now() - 300000), '5m ago');
+  assertEq('hours ago', _relativeTime(Date.now() - 7200000), '2h ago');
+  assertEq('days ago', _relativeTime(Date.now() - 172800000), '2d ago');
+}
+
+section('ItemBar — _downloadText');
+{
+  assert('_downloadText is a function', typeof _downloadText === 'function');
+  // Just verify it doesn't throw — actual download behavior can't be easily tested
+  let threw = false;
+  try { _downloadText('test', 'test.txt', 'text/plain'); } catch { threw = true; }
+  assert('_downloadText does not throw', !threw);
+}
+
+section('ItemBar — createItemBar renders DOM');
+{
+  // Create a temp container in the document
+  const testContainer = document.createElement('div');
+  testContainer.id = 'testItemBarContainer';
+  document.body.appendChild(testContainer);
+
+  let newCalled = false;
+  const bar = createItemBar({
+    containerId: 'testItemBarContainer',
+    label: 'Test',
+    newLabel: '+ New',
+    emptyMessage: 'No items.',
+    defaultName: 'Untitled',
+    getActiveName: () => 'Active Item',
+    getActiveId: () => 'item1',
+    listItems: () => [
+      { id: 'item1', name: 'First', lastUsed: Date.now(), messageCount: 3 },
+      { id: 'item2', name: 'Second', lastUsed: Date.now() - 60000, messageCount: 1 },
+    ],
+    onNew: async () => { newCalled = true; },
+    onSwitch: async () => {},
+    onRename: async () => {},
+    onDelete: async () => {},
+    onFork: async () => {},
+    exportFormats: [
+      { label: 'Export JSON', fn: () => '{}', filename: 'test.json', mime: 'application/json' },
+    ],
+    renderMeta: (item) => `${item.messageCount || 0} msgs`,
+  });
+
+  assert('createItemBar returns object', bar !== null && typeof bar === 'object');
+  assert('createItemBar has refresh', typeof bar.refresh === 'function');
+  assert('createItemBar has destroy', typeof bar.destroy === 'function');
+
+  const renderedBar = testContainer.querySelector('.item-bar');
+  assert('renders .item-bar', renderedBar !== null);
+  assert('renders .item-bar-name', testContainer.querySelector('.item-bar-name') !== null);
+  assert('renders .item-bar-new', testContainer.querySelector('.item-bar-new') !== null);
+  assert('renders .item-bar-rename', testContainer.querySelector('.item-bar-rename') !== null);
+  assert('renders .item-bar-hist', testContainer.querySelector('.item-bar-hist') !== null);
+  assert('renders .item-bar-dropdown', testContainer.querySelector('.item-bar-dropdown') !== null);
+
+  const nameEl = testContainer.querySelector('.item-bar-name');
+  assertEq('name shows active name', nameEl.textContent, 'Active Item');
+
+  // Test refresh updates name
+  bar.refresh();
+  assertEq('refresh preserves name', nameEl.textContent, 'Active Item');
+
+  // Test destroy clears container
+  bar.destroy();
+  assertEq('destroy clears container', testContainer.innerHTML, '');
+
+  // Clean up
+  document.body.removeChild(testContainer);
+}
+
+section('ItemBar — createItemBar without fork/export');
+{
+  const testContainer2 = document.createElement('div');
+  testContainer2.id = 'testItemBarContainer2';
+  document.body.appendChild(testContainer2);
+
+  const bar2 = createItemBar({
+    containerId: 'testItemBarContainer2',
+    label: 'Simple',
+    newLabel: '+',
+    emptyMessage: 'Empty.',
+    defaultName: 'Default',
+    getActiveName: () => null,
+    getActiveId: () => null,
+    listItems: () => [],
+    onNew: async () => {},
+    onSwitch: async () => {},
+    onRename: async () => {},
+    onDelete: async () => {},
+    onFork: null,
+    exportFormats: null,
+    renderMeta: () => '',
+  });
+
+  const nameEl2 = testContainer2.querySelector('.item-bar-name');
+  assertEq('default name when no active', nameEl2.textContent, 'Default');
+
+  bar2.destroy();
+  document.body.removeChild(testContainer2);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  FORK FROM POINT — EventLog.sliceToTurnEnd
+// ═══════════════════════════════════════════════════════════════
+
+section('Fork from Point — EventLog.sliceToTurnEnd');
+{
+  const agent = await ClawserAgent.create({});
+  agent.init({});
+
+  // Simulate a conversation with multiple turns
+  // Turn 1: user → agent → tool_call → tool_result
+  agent.sendMessage('Hello');
+  agent.recordEvent('agent_message', { content: 'Hi there!' }, 'agent');
+  agent.recordEvent('tool_call', { call_id: 'tc1', name: 'fetch', arguments: { url: 'example.com' } }, 'agent');
+  agent.recordEvent('tool_result', { call_id: 'tc1', name: 'fetch', result: { success: true, output: 'ok' } }, 'system');
+
+  // Turn 2: user → agent
+  agent.sendMessage('How are you?');
+  agent.recordEvent('agent_message', { content: 'I am fine!' }, 'agent');
+
+  // Turn 3: user → agent
+  agent.sendMessage('Bye');
+  agent.recordEvent('agent_message', { content: 'Goodbye!' }, 'agent');
+
+  const evts = agent.getEventLog().events;
+  assertEq('sliceToTurnEnd: 8 events total', evts.length, 8);
+
+  // Fork from first user message (Turn 1): should include user + agent + tool_call + tool_result
+  const firstUserId = evts[0].id;
+  const sliced1 = agent.getEventLog().sliceToTurnEnd(firstUserId);
+  assertEq('sliceToTurnEnd: fork from msg 1 has 4 events', sliced1.length, 4);
+  assertEq('sliceToTurnEnd: last event is tool_result', sliced1[3].type, 'tool_result');
+
+  // Fork from second user message (Turn 2): should include Turn 1 + Turn 2
+  const secondUserId = evts[4].id;
+  const sliced2 = agent.getEventLog().sliceToTurnEnd(secondUserId);
+  assertEq('sliceToTurnEnd: fork from msg 2 has 6 events', sliced2.length, 6);
+  assertEq('sliceToTurnEnd: last event is agent_message', sliced2[5].type, 'agent_message');
+
+  // Fork from last user message (Turn 3): should include all 8 events
+  const thirdUserId = evts[6].id;
+  const sliced3 = agent.getEventLog().sliceToTurnEnd(thirdUserId);
+  assertEq('sliceToTurnEnd: fork from last msg has all 8', sliced3.length, 8);
+
+  // Non-existent event ID returns null
+  const slicedNull = agent.getEventLog().sliceToTurnEnd('evt_nonexistent');
+  assert('sliceToTurnEnd: unknown ID returns null', slicedNull === null);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  FORK FROM POINT — TerminalSessionManager.forkFromEvent
+// ═══════════════════════════════════════════════════════════════
+
+section('Fork from Point — TerminalSessionManager.forkFromEvent');
+{
+  const store = {};
+  const mockFs = {
+    async readFile(path) {
+      if (store[path] !== undefined) return store[path];
+      throw new Error('ENOENT');
+    },
+    async writeFile(path, content) { store[path] = content; },
+    async mkdir() {},
+    async delete(path) { delete store[path]; },
+  };
+
+  const shell = new ClawserShell({ fs: new MemoryFs() });
+  const tsm = new TerminalSessionManager({ wsId: 'test_fork_event', shell, fs: mockFs });
+
+  const meta = await tsm.create('Fork Event Test');
+
+  // Record 3 command/result pairs
+  tsm.recordCommand('echo one');
+  tsm.recordResult('one\n', '', 0);
+  tsm.recordCommand('echo two');
+  tsm.recordResult('two\n', '', 0);
+  tsm.recordCommand('echo three');
+  tsm.recordResult('three\n', '', 0);
+  assertEq('forkFromEvent: 6 events before fork', tsm.events.length, 6);
+
+  // Fork from first command (index 0) — should include cmd 0 + result 1
+  const forked1 = await tsm.forkFromEvent(0, 'Fork@1');
+  assertEq('forkFromEvent: fork name', forked1.name, 'Fork@1');
+  assertEq('forkFromEvent: fork has 2 events (cmd+result)', tsm.events.length, 2);
+  assertEq('forkFromEvent: 1 command counted', forked1.commandCount, 1);
+
+  // Switch back to original to fork from second command
+  await tsm.switchTo(meta.id);
+  assertEq('forkFromEvent: original has 6 events', tsm.events.length, 6);
+
+  // Fork from second command (index 2) — should include [0..3]
+  const forked2 = await tsm.forkFromEvent(2);
+  assertEq('forkFromEvent: auto-named fork has 4 events', tsm.events.length, 4);
+  assertEq('forkFromEvent: 2 commands counted', forked2.commandCount, 2);
+
+  // Error on out-of-range index
+  await assertThrows('forkFromEvent: out of range throws', () => tsm.forkFromEvent(100));
+
+  // Clean up
+  localStorage.removeItem('clawser_terminal_sessions_test_fork_event');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Block 36: BrowserToolRegistry — getSpec, resetAllPermissions
+// ═══════════════════════════════════════════════════════════════
+
+section('Block 36 — BrowserToolRegistry.getSpec + resetAllPermissions');
+{
+  const reg = new BrowserToolRegistry();
+  // Minimal tool for testing
+  class TestTool {
+    get spec() { return { name: 'test_tool', description: 'A test', parameters: { type: 'object', properties: { x: { type: 'string', description: 'param' } }, required: ['x'] }, required_permission: 'auto' }; }
+    get name() { return 'test_tool'; }
+    get description() { return 'A test'; }
+    get parameters() { return { type: 'object', properties: { x: { type: 'string' } } }; }
+    get permission() { return 'internal'; }
+    async execute(p) { return { success: true, output: p.x || '' }; }
+  }
+  reg.register(new TestTool());
+
+  assert('getSpec returns spec for known tool', reg.getSpec('test_tool') !== null);
+  assertEq('getSpec name matches', reg.getSpec('test_tool').name, 'test_tool');
+  assert('getSpec returns null for unknown', reg.getSpec('nope') === null);
+
+  reg.setPermission('test_tool', 'denied');
+  assertEq('permission set to denied', reg.getPermission('test_tool'), 'denied');
+
+  reg.resetAllPermissions();
+  assertEq('resetAllPermissions clears overrides', reg.getPermission('test_tool'), 'auto');
+
+  const allPerms = reg.getAllPermissions();
+  assertEq('getAllPermissions empty after reset', Object.keys(allPerms).length, 0);
+
+  reg.setPermission('test_tool', 'approve');
+  const perms2 = reg.getAllPermissions();
+  assertEq('getAllPermissions returns set perms', perms2['test_tool'], 'approve');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Block 37a: parseAgentRefs (real import)
+// ═══════════════════════════════════════════════════════════════
+
+section('Block 37 — parseAgentRefs (imported)');
+{
+  const s1 = parseAgentRefs('hello world');
+  assertEq('no refs → single text segment', s1.length, 1);
+  assertEq('text content preserved', s1[0].content, 'hello world');
+  assertEq('text type', s1[0].type, 'text');
+
+  const s2 = parseAgentRefs('@sql-expert What index for this query?');
+  assertEq('single @ref → 1 segment', s2.length, 1);
+  assertEq('ref type', s2[0].type, 'ref');
+  assertEq('agent name', s2[0].agent, 'sql-expert');
+  assertEq('ref content', s2[0].content, 'What index for this query?');
+
+  const s3 = parseAgentRefs('@sonnet Explain this, then @haiku simplify it');
+  assertEq('multiple refs → 2 segments', s3.length, 2);
+  assertEq('first ref agent', s3[0].agent, 'sonnet');
+  assertEq('second ref agent', s3[1].agent, 'haiku');
+
+  const s4 = parseAgentRefs('Please @helper do this');
+  assertEq('text before ref → 2 segments', s4.length, 2);
+  assertEq('leading text type', s4[0].type, 'text');
+  assertEq('leading text content', s4[0].content, 'Please');
+  assertEq('trailing ref type', s4[1].type, 'ref');
+
+  const s5 = parseAgentRefs('');
+  assertEq('empty → 1 segment', s5.length, 1);
+  assertEq('empty text content', s5[0].content, '');
+
+  assert('hasAgentRefs detects refs', hasAgentRefs('@foo bar'));
+  assert('hasAgentRefs no refs', !hasAgentRefs('plain text'));
+  assert('hasAgentRefs null safe', !hasAgentRefs(null));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Block 37b: filterToolsForAgent (real import)
+// ═══════════════════════════════════════════════════════════════
+
+section('Block 37 — filterToolsForAgent (imported)');
+{
+  const tools = [{ name: 'fs_read' }, { name: 'fs_write' }, { name: 'web_search' }];
+
+  assertEq('mode=all returns all', filterToolsForAgent(tools, { mode: 'all', list: [] }).length, 3);
+  assertEq('mode=none returns empty', filterToolsForAgent(tools, { mode: 'none', list: [] }).length, 0);
+
+  const allowed = filterToolsForAgent(tools, { mode: 'allowlist', list: ['fs_read'] });
+  assertEq('allowlist count', allowed.length, 1);
+  assertEq('allowlist correct tool', allowed[0].name, 'fs_read');
+
+  const blocked = filterToolsForAgent(tools, { mode: 'blocklist', list: ['fs_write'] });
+  assertEq('blocklist count', blocked.length, 2);
+  assert('blocklist excludes fs_write', !blocked.some(t => t.name === 'fs_write'));
+
+  assertEq('null config returns all', filterToolsForAgent(tools, null).length, 3);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Block 37c: BUILTIN_AGENTS + generateAgentId (real import)
+// ═══════════════════════════════════════════════════════════════
+
+section('Block 37 — BUILTIN_AGENTS (imported)');
+{
+  assertEq('5 built-in agents', BUILTIN_AGENTS.length, 5);
+  assertEq('unique IDs', new Set(BUILTIN_AGENTS.map(a => a.id)).size, 5);
+  assertEq('unique names', new Set(BUILTIN_AGENTS.map(a => a.name)).size, 5);
+  assert('all scope=builtin', BUILTIN_AGENTS.every(a => a.scope === 'builtin'));
+  assert('echo agent present', BUILTIN_AGENTS.some(a => a.provider === 'echo'));
+  assert('chrome-ai agent present', BUILTIN_AGENTS.some(a => a.provider === 'chrome-ai'));
+  assert('anthropic agents present', BUILTIN_AGENTS.filter(a => a.provider === 'anthropic').length >= 2);
+  assert('openai agent present', BUILTIN_AGENTS.some(a => a.provider === 'openai'));
+
+  // All built-ins have required fields
+  for (const a of BUILTIN_AGENTS) {
+    assert(`${a.name} has id`, !!a.id);
+    assert(`${a.name} has systemPrompt`, typeof a.systemPrompt === 'string' && a.systemPrompt.length > 0);
+    assert(`${a.name} has tools config`, a.tools && typeof a.tools.mode === 'string');
+    assert(`${a.name} has maxTurnsPerRun`, typeof a.maxTurnsPerRun === 'number');
+  }
+
+  const id1 = generateAgentId();
+  const id2 = generateAgentId();
+  assert('generateAgentId starts with agt_', id1.startsWith('agt_'));
+  assert('generateAgentId unique', id1 !== id2);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Block 37d: SwitchAgentTool + ConsultAgentTool (spec checks)
+// ═══════════════════════════════════════════════════════════════
+
+section('Block 37 — SwitchAgentTool + ConsultAgentTool');
+{
+  // Mock storage
+  const mockStorage = {
+    _agents: BUILTIN_AGENTS.map(a => ({ ...a })),
+    async listAll() { return this._agents; },
+    setActive(id) { this._activeId = id; },
+    _activeId: null,
+  };
+  // Mock engine
+  const mockEngine = {
+    _applied: null,
+    applyAgent(def) { this._applied = def; },
+  };
+
+  const switchTool = new SwitchAgentTool(mockStorage, mockEngine);
+  assertEq('SwitchAgentTool name', switchTool.name, 'switch_agent');
+  assert('SwitchAgentTool has description', switchTool.description.length > 0);
+  assertEq('SwitchAgentTool requires approve', switchTool.spec.required_permission, 'approve');
+
+  // list agents (no agent param)
+  const listResult = await switchTool.execute({});
+  assert('list agents succeeds', listResult.success);
+  const listed = JSON.parse(listResult.output);
+  assertEq('lists all builtin agents', listed.length, 5);
+
+  // switch to echo
+  const switchResult = await switchTool.execute({ agent: 'Echo (Test)' });
+  assert('switch succeeds', switchResult.success);
+  assertEq('engine applied echo', mockEngine._applied.name, 'Echo (Test)');
+  assertEq('storage active set', mockStorage._activeId, 'agt_builtin_echo');
+
+  // switch to unknown
+  const failResult = await switchTool.execute({ agent: 'nonexistent' });
+  assert('switch to unknown fails', !failResult.success);
+
+  const consultTool = new ConsultAgentTool(mockStorage, {});
+  assertEq('ConsultAgentTool name', consultTool.name, 'consult_agent');
+  assert('ConsultAgentTool has description', consultTool.description.length > 0);
+  assertEq('ConsultAgentTool requires auto', consultTool.spec.required_permission, 'auto');
 }
 
 // ═══════════════════════════════════════════════════════════════

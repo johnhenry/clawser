@@ -26,6 +26,7 @@ export const lsKey = {
   sandbox:       wsId => `clawser_sandbox_${wsId}`,
   heartbeat:     wsId => `clawser_heartbeat_${wsId}`,
   routines:      wsId => `clawser_routines_${wsId}`,
+  termSessions:  wsId => `clawser_terminal_sessions_${wsId}`,
 };
 
 /** @type {object} Shared mutable state singleton — single owner per field, set in clawser-app.js */
@@ -66,6 +67,17 @@ export const state = {
   sandboxManager: null,
   peripheralManager: null,
   pairingManager: null,
+  // Block 0-29 gap fills
+  bridgeManager: null,
+  goalManager: null,
+  skillRegistryClient: null,
+  // Block 35: Terminal sessions
+  terminalSessions: null,
+  // Block 36: Tool usage tracking
+  toolUsageStats: {},
+  toolLastUsed: {},
+  // Block 37: Agents
+  agentStorage: null,
 };
 
 // ── State transition helpers ──────────────────────────────────

@@ -1,10 +1,10 @@
 // clawser-router.js — Routing + panel activation
 import { $, state } from './clawser-state.js';
 
-export const PANEL_NAMES = new Set(['chat', 'tools', 'files', 'memory', 'goals', 'events', 'skills', 'terminal', 'dashboard', 'config']);
+export const PANEL_NAMES = new Set(['chat', 'tools', 'files', 'memory', 'goals', 'events', 'skills', 'terminal', 'dashboard', 'toolMgmt', 'agents', 'config']);
 
-const allPanels = ['panelChat','panelTools','panelFiles','panelMemory','panelGoals','panelEvents','panelSkills','panelTerminal','panelDashboard','panelConfig'];
-const panelMap = { chat:'panelChat', tools:'panelTools', files:'panelFiles', memory:'panelMemory', goals:'panelGoals', events:'panelEvents', skills:'panelSkills', terminal:'panelTerminal', dashboard:'panelDashboard', config:'panelConfig' };
+const allPanels = ['panelChat','panelTools','panelFiles','panelMemory','panelGoals','panelEvents','panelSkills','panelTerminal','panelDashboard','panelToolMgmt','panelAgents','panelConfig'];
+const panelMap = { chat:'panelChat', tools:'panelTools', files:'panelFiles', memory:'panelMemory', goals:'panelGoals', events:'panelEvents', skills:'panelSkills', terminal:'panelTerminal', dashboard:'panelDashboard', toolMgmt:'panelToolMgmt', agents:'panelAgents', config:'panelConfig' };
 
 /** Parse location.hash into a route descriptor. @returns {{route: string, wsId?: string, convId?: string, panel?: string}} */
 export function parseHash() {
