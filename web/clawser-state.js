@@ -20,6 +20,12 @@ export const lsKey = {
   toolPerms:     wsId => `clawser_tool_perms_${wsId}`,
   security:      wsId => `clawser_security_${wsId}`,
   skillsEnabled: wsId => `clawser_skills_enabled_${wsId}`,
+  autonomy:      wsId => `clawser_autonomy_${wsId}`,
+  identity:      wsId => `clawser_identity_${wsId}`,
+  selfRepair:    wsId => `clawser_selfrepair_${wsId}`,
+  sandbox:       wsId => `clawser_sandbox_${wsId}`,
+  heartbeat:     wsId => `clawser_heartbeat_${wsId}`,
+  routines:      wsId => `clawser_routines_${wsId}`,
 };
 
 /** @type {object} Shared mutable state singleton — single owner per field, set in clawser-app.js */
@@ -50,6 +56,16 @@ export const state = {
   providers: null,
   mcpManager: null,
   vault: null,
+  // Feature module singletons (set by clawser-app.js)
+  toolBuilder: null,
+  channelManager: null,
+  delegateManager: null,
+  gitBehavior: null,
+  gitMemory: null,
+  automationManager: null,
+  sandboxManager: null,
+  peripheralManager: null,
+  pairingManager: null,
 };
 
 // ── State transition helpers ──────────────────────────────────

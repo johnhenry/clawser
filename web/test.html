@@ -9084,6 +9084,401 @@ section('Agent Loop — UndoManager (Block 25)');
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  PHASE: Config-to-Module Wiring Tests
+// ═══════════════════════════════════════════════════════════════
+
+section('Autonomy Config Application');
+
+{
+  const ac = new AutonomyController();
+  assertEq('AutonomyController default level', ac.level, 'supervised');
+
+  // Simulate agent with applyAutonomyConfig
+  const agent = await ClawserAgent.create({});
+  agent.init({});
+  agent.applyAutonomyConfig({ level: 'full', maxActionsPerHour: 50, maxCostPerDayCents: 200 });
+  assertEq('applyAutonomyConfig sets level', agent.autonomy.level, 'full');
+  assertEq('applyAutonomyConfig sets maxActionsPerHour', agent.autonomy.maxActionsPerHour, 50);
+  assertEq('applyAutonomyConfig sets maxCostPerDayCents', agent.autonomy.maxCostPerDayCents, 200);
+
+  // Partial update
+  agent.applyAutonomyConfig({ level: 'readonly' });
+  assertEq('applyAutonomyConfig partial update', agent.autonomy.level, 'readonly');
+  assertEq('applyAutonomyConfig preserves maxActions', agent.autonomy.maxActionsPerHour, 50);
+}
+
+section('Identity Config Application');
+
+{
+  const { IdentityManager: IM } = await import('./clawser-identity.js');
+  const im = new IM();
+  im.load({ version: '1.1', names: { display: 'TestBot' }, bio: 'A helpful test bot', linguistics: { tone: 'friendly' } });
+  const compiled = im.compile();
+  assert('IdentityManager compiles AIEOS', compiled && compiled.includes('TestBot'));
+
+  // Verify agent can receive compiled identity as system prompt
+  const agent = await ClawserAgent.create({});
+  agent.init({});
+  agent.setSystemPrompt(compiled);
+  const st = agent.getState();
+  assert('Agent system prompt includes identity', st.systemPrompt && st.systemPrompt.includes('TestBot'));
+
+  // Plain format
+  const im2 = new IM();
+  im2.load('You are a plain agent.');
+  const compiled2 = im2.compile();
+  assert('IdentityManager compiles plain', compiled2 && compiled2.includes('plain agent'));
+}
+
+section('Self-Repair Config Persistence');
+
+{
+  const { StuckDetector } = await import('./clawser-self-repair.js');
+  const detector = new StuckDetector();
+
+  // Apply custom thresholds
+  detector.setThresholds({
+    toolTimeout: 30000,
+    noProgress: 60000,
+    loopDetection: 5,
+    consecutiveErrors: 10,
+    costRunaway: 3.5,
+  });
+
+  // Verify round-trip through lsKey
+  const wsId = 'test_selfrepair';
+  const cfg = { toolTimeout: 30, noProgress: 60, loopDetection: 5, consecErrors: 10, costRunaway: 3.5 };
+  localStorage.setItem(lsKey.selfRepair(wsId), JSON.stringify(cfg));
+  const restored = JSON.parse(localStorage.getItem(lsKey.selfRepair(wsId)));
+  assertEq('selfRepair round-trip toolTimeout', restored.toolTimeout, 30);
+  assertEq('selfRepair round-trip loopDetection', restored.loopDetection, 5);
+  assertEq('selfRepair round-trip costRunaway', restored.costRunaway, 3.5);
+  localStorage.removeItem(lsKey.selfRepair(wsId));
+
+  assert('StuckDetector setThresholds exists', typeof detector.setThresholds === 'function');
+}
+
+section('Sandbox Config Persistence');
+
+{
+  const wsId = 'test_sandbox';
+  const caps = { net_fetch: true, fs_read: true, fs_write: false, dom_access: true, eval: false, crypto: true };
+  localStorage.setItem(lsKey.sandbox(wsId), JSON.stringify(caps));
+  const restored = JSON.parse(localStorage.getItem(lsKey.sandbox(wsId)));
+  assertEq('sandbox round-trip fs_write', restored.fs_write, false);
+  assertEq('sandbox round-trip eval', restored.eval, false);
+  assertEq('sandbox round-trip net_fetch', restored.net_fetch, true);
+  localStorage.removeItem(lsKey.sandbox(wsId));
+
+  // Verify lsKey entries exist
+  assert('lsKey.sandbox exists', typeof lsKey.sandbox === 'function');
+  assert('lsKey.heartbeat exists', typeof lsKey.heartbeat === 'function');
+  assert('lsKey.routines exists', typeof lsKey.routines === 'function');
+  assert('lsKey.autonomy exists', typeof lsKey.autonomy === 'function');
+  assert('lsKey.identity exists', typeof lsKey.identity === 'function');
+  assert('lsKey.selfRepair exists', typeof lsKey.selfRepair === 'function');
+}
+
+section('DaemonController Start/Stop');
+
+{
+  const { DaemonController } = await import('./clawser-daemon.js');
+  const dc = new DaemonController({ autoCheckpointMs: 0 });
+  assert('DaemonController has start method', typeof dc.start === 'function');
+  assert('DaemonController has stop method', typeof dc.stop === 'function');
+  assert('DaemonController has phase getter', dc.phase != null);
+
+  const started = await dc.start();
+  assert('DaemonController start returns true', started === true);
+  assertEq('DaemonController phase is RUNNING after start', dc.phase, 'RUNNING');
+
+  const stopped = await dc.stop();
+  assert('DaemonController stop returns true', stopped === true);
+  assertEq('DaemonController phase is STOPPED after stop', dc.phase, 'STOPPED');
+}
+
+section('RoutineEngine Start/Stop + fromJSON/toJSON');
+
+{
+  const { RoutineEngine } = await import('./clawser-routines.js');
+  const re = new RoutineEngine({ tickInterval: 60000 });
+
+  assert('RoutineEngine has start method', typeof re.start === 'function');
+  assert('RoutineEngine has stop method', typeof re.stop === 'function');
+  assert('RoutineEngine has toJSON method', typeof re.toJSON === 'function');
+  assert('RoutineEngine has fromJSON method', typeof re.fromJSON === 'function');
+
+  re.start();
+  // toJSON returns array of routines (empty initially)
+  const data = re.toJSON();
+  assert('toJSON returns array', Array.isArray(data));
+
+  // fromJSON round-trip
+  re.fromJSON([{ id: 'r1', name: 'test', schedule: { type: 'interval', intervalMs: 5000 }, action: { prompt: 'hello' } }]);
+  const data2 = re.toJSON();
+  assert('fromJSON restores routines', data2.length === 1);
+  assertEq('fromJSON routine name', data2[0].name, 'test');
+
+  re.stop();
+}
+
+section('ModelRouter buildDefaults');
+
+{
+  const { ModelRouter } = await import('./clawser-fallback.js');
+  const mr = new ModelRouter();
+  assert('ModelRouter has buildDefaults method', typeof mr.buildDefaults === 'function');
+
+  mr.buildDefaults(['openai', 'anthropic', 'groq']);
+  // After buildDefaults, chains should exist for available providers
+  assert('ModelRouter builds chains with hints', mr.hints.length > 0 || mr.defaultChain != null);
+}
+
+section('ResponseCache TTL/maxEntries Setters');
+
+{
+  const { ResponseCache } = await import('./clawser-providers.js');
+  const cache = new ResponseCache({ maxEntries: 100, ttlMs: 60000 });
+
+  // Verify initial values via stats
+  assertEq('ResponseCache initial maxEntries', cache.stats.maxEntries, 100);
+  assertEq('ResponseCache initial ttl', cache.stats.ttlMs, 60000);
+
+  // Use setters
+  cache.ttl = 120000;
+  cache.maxEntries = 200;
+  assertEq('ResponseCache ttl setter', cache.ttl, 120000);
+  assertEq('ResponseCache maxEntries setter', cache.maxEntries, 200);
+  assertEq('ResponseCache stats reflects new ttl', cache.stats.ttlMs, 120000);
+  assertEq('ResponseCache stats reflects new maxEntries', cache.stats.maxEntries, 200);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  INTEGRATION — ToolBuilder Wiring
+// ═══════════════════════════════════════════════════════════════
+
+section('Integration — ToolBuilder Wiring');
+
+{
+  const reg = new BrowserToolRegistry();
+  const sandbox = async (code) => ({ success: true, output: String(eval(code)) });
+  const builder = new ToolBuilder(reg, sandbox);
+
+  reg.register(new ToolBuildTool(builder));
+  reg.register(new ToolTestTool(builder));
+  reg.register(new ToolListCustomTool(builder));
+  reg.register(new ToolEditTool(builder));
+  reg.register(new ToolRemoveTool(builder));
+
+  assert('ToolBuilder: tool_build registered', reg.has('tool_build'));
+  assert('ToolBuilder: tool_test registered', reg.has('tool_test'));
+  assert('ToolBuilder: tool_list_custom registered', reg.has('tool_list_custom'));
+  assert('ToolBuilder: tool_edit registered', reg.has('tool_edit'));
+  assert('ToolBuilder: tool_remove registered', reg.has('tool_remove'));
+
+  const listResult = await reg.execute('tool_list_custom', {});
+  assert('ToolBuilder: tool_list_custom returns ToolResult shape', listResult && typeof listResult.success === 'boolean' && 'output' in listResult);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  INTEGRATION — Channels Wiring
+// ═══════════════════════════════════════════════════════════════
+
+section('Integration — Channels Wiring');
+
+{
+  const reg = new BrowserToolRegistry();
+  const mgr = new ChannelManager({ onLog: () => {} });
+
+  reg.register(new ChannelListTool(mgr));
+  reg.register(new ChannelSendTool(mgr));
+  reg.register(new ChannelHistoryTool(mgr));
+
+  assert('Channels: channel_list registered', reg.has('channel_list'));
+  assert('Channels: channel_send registered', reg.has('channel_send'));
+  assert('Channels: channel_history registered', reg.has('channel_history'));
+
+  const listResult = await reg.execute('channel_list', {});
+  assert('Channels: channel_list returns ToolResult shape', listResult && typeof listResult.success === 'boolean' && 'output' in listResult);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  INTEGRATION — Delegate Wiring
+// ═══════════════════════════════════════════════════════════════
+
+section('Integration — Delegate Wiring');
+
+{
+  const reg = new BrowserToolRegistry();
+  const mgr = new DelegateManager({ maxConcurrency: 2 });
+  const tool = new DelegateTool({
+    manager: mgr,
+    chatFn: async () => ({ content: 'test', tool_calls: [] }),
+    executeFn: async () => ({ success: true, output: 'ok' }),
+    toolSpecs: [],
+  });
+
+  reg.register(tool);
+
+  assert('Delegate: agent_delegate registered', reg.has('agent_delegate'));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  INTEGRATION — Git Wiring
+// ═══════════════════════════════════════════════════════════════
+
+section('Integration — Git Wiring');
+
+{
+  const reg = new BrowserToolRegistry();
+  const mockOps = {
+    exec: async () => ({ code: 0, stdout: '', stderr: '' }),
+  };
+  const behavior = new GitBehavior({ ops: mockOps });
+  const memory = new GitEpisodicMemory(behavior);
+
+  reg.register(new GitStatusTool(behavior));
+  reg.register(new GitDiffTool(behavior));
+  reg.register(new GitLogTool(behavior));
+  reg.register(new GitCommitTool(behavior));
+  reg.register(new GitBranchTool(behavior));
+  reg.register(new GitRecallTool(memory));
+
+  assert('Git: git_status registered', reg.has('git_status'));
+  assert('Git: git_diff registered', reg.has('git_diff'));
+  assert('Git: git_log registered', reg.has('git_log'));
+  assert('Git: git_commit registered', reg.has('git_commit'));
+  assert('Git: git_branch registered', reg.has('git_branch'));
+  assert('Git: git_recall registered', reg.has('git_recall'));
+
+  const statusResult = await reg.execute('git_status', {});
+  assert('Git: git_status returns ToolResult shape', statusResult && typeof statusResult.success === 'boolean' && 'output' in statusResult);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  INTEGRATION — Browser Automation Wiring
+// ═══════════════════════════════════════════════════════════════
+
+section('Integration — Browser Automation Wiring');
+
+{
+  const reg = new BrowserToolRegistry();
+  const mgr = new AutomationManager({ onLog: () => {} });
+
+  reg.register(new BrowserOpenTool(mgr));
+  reg.register(new BrowserReadPageTool(mgr));
+  reg.register(new BrowserClickTool(mgr));
+  reg.register(new BrowserFillTool(mgr));
+  reg.register(new BrowserWaitTool(mgr));
+  reg.register(new BrowserEvaluateTool(mgr));
+  reg.register(new BrowserListTabsTool(mgr));
+  reg.register(new BrowserCloseTabTool(mgr));
+
+  assert('BrowserAuto: browser_open registered', reg.has('browser_open'));
+  assert('BrowserAuto: browser_read_page registered', reg.has('browser_read_page'));
+  assert('BrowserAuto: browser_click registered', reg.has('browser_click'));
+  assert('BrowserAuto: browser_fill registered', reg.has('browser_fill'));
+  assert('BrowserAuto: browser_wait registered', reg.has('browser_wait'));
+  assert('BrowserAuto: browser_evaluate registered', reg.has('browser_evaluate'));
+  assert('BrowserAuto: browser_list_tabs registered', reg.has('browser_list_tabs'));
+  assert('BrowserAuto: browser_close_tab registered', reg.has('browser_close_tab'));
+
+  const tabsResult = await reg.execute('browser_list_tabs', {});
+  assert('BrowserAuto: browser_list_tabs returns ToolResult shape', tabsResult && typeof tabsResult.success === 'boolean' && 'output' in tabsResult);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  INTEGRATION — Sandbox Wiring
+// ═══════════════════════════════════════════════════════════════
+
+section('Integration — Sandbox Wiring');
+
+{
+  const reg = new BrowserToolRegistry();
+  const mgr = new SandboxManager({ onLog: () => {} });
+
+  reg.register(new SandboxRunTool(mgr));
+  reg.register(new SandboxStatusTool(mgr));
+
+  assert('Sandbox: sandbox_run registered', reg.has('sandbox_run'));
+  assert('Sandbox: sandbox_status registered', reg.has('sandbox_status'));
+
+  const statusResult = await reg.execute('sandbox_status', {});
+  assert('Sandbox: sandbox_status returns ToolResult shape', statusResult && typeof statusResult.success === 'boolean' && 'output' in statusResult);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  INTEGRATION — Hardware Wiring
+// ═══════════════════════════════════════════════════════════════
+
+section('Integration — Hardware Wiring');
+
+{
+  const reg = new BrowserToolRegistry();
+  const mgr = new PeripheralManager({ onLog: () => {} });
+
+  reg.register(new HwListTool(mgr));
+  reg.register(new HwConnectTool(mgr));
+  reg.register(new HwSendTool(mgr));
+  reg.register(new HwReadTool(mgr));
+  reg.register(new HwDisconnectTool(mgr));
+  reg.register(new HwInfoTool(mgr));
+
+  assert('Hardware: hw_list registered', reg.has('hw_list'));
+  assert('Hardware: hw_connect registered', reg.has('hw_connect'));
+  assert('Hardware: hw_send registered', reg.has('hw_send'));
+  assert('Hardware: hw_read registered', reg.has('hw_read'));
+  assert('Hardware: hw_disconnect registered', reg.has('hw_disconnect'));
+  assert('Hardware: hw_info registered', reg.has('hw_info'));
+
+  const listResult = await reg.execute('hw_list', {});
+  assert('Hardware: hw_list returns ToolResult shape', listResult && typeof listResult.success === 'boolean' && 'output' in listResult);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  INTEGRATION — Remote Wiring
+// ═══════════════════════════════════════════════════════════════
+
+section('Integration — Remote Wiring');
+
+{
+  const reg = new BrowserToolRegistry();
+  const mgr = new PairingManager({ onLog: () => {} });
+
+  reg.register(new RemoteStatusTool(mgr));
+  reg.register(new RemotePairTool(mgr));
+  reg.register(new RemoteRevokeTool(mgr));
+
+  assert('Remote: remote_status registered', reg.has('remote_status'));
+  assert('Remote: remote_pair registered', reg.has('remote_pair'));
+  assert('Remote: remote_revoke registered', reg.has('remote_revoke'));
+
+  const statusResult = await reg.execute('remote_status', {});
+  assert('Remote: remote_status returns ToolResult shape', statusResult && typeof statusResult.success === 'boolean' && 'output' in statusResult);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  INTEGRATION — Mount Wiring
+// ═══════════════════════════════════════════════════════════════
+
+section('Integration — Mount Wiring');
+
+{
+  const reg = new BrowserToolRegistry();
+  const mfs = new MountableFs();
+
+  reg.register(new MountListTool(mfs));
+  reg.register(new MountResolveTool(mfs));
+
+  assert('Mount: mount_list registered', reg.has('mount_list'));
+  assert('Mount: mount_resolve registered', reg.has('mount_resolve'));
+  assert('Mount: MountableFs extends WorkspaceFs', mfs instanceof WorkspaceFs);
+
+  const listResult = await reg.execute('mount_list', {});
+  assert('Mount: mount_list returns ToolResult shape', listResult && typeof listResult.success === 'boolean' && 'output' in listResult);
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  SUMMARY
 // ═══════════════════════════════════════════════════════════════
 

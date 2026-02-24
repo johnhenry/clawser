@@ -42,9 +42,18 @@ import { OAuthManager } from './clawser-oauth.js';
 import { MetricsCollector, RingBufferLog } from './clawser-metrics.js';
 import { DaemonController } from './clawser-daemon.js';
 import { RoutineEngine } from './clawser-routines.js';
+import { MountableFs, MountListTool, MountResolveTool } from './clawser-mount.js';
+import { ToolBuilder, ToolBuildTool, ToolTestTool, ToolListCustomTool, ToolEditTool, ToolRemoveTool } from './clawser-tool-builder.js';
+import { ChannelManager, ChannelListTool, ChannelSendTool, ChannelHistoryTool } from './clawser-channels.js';
+import { DelegateManager, DelegateTool } from './clawser-delegate.js';
+import { GitBehavior, GitEpisodicMemory, GitStatusTool, GitDiffTool, GitLogTool, GitCommitTool, GitBranchTool, GitRecallTool } from './clawser-git.js';
+import { AutomationManager, BrowserOpenTool, BrowserReadPageTool, BrowserClickTool, BrowserFillTool, BrowserWaitTool, BrowserEvaluateTool, BrowserListTabsTool, BrowserCloseTabTool } from './clawser-browser-auto.js';
+import { SandboxManager, SandboxRunTool, SandboxStatusTool } from './clawser-sandbox.js';
+import { PeripheralManager, HwListTool, HwConnectTool, HwSendTool, HwReadTool, HwDisconnectTool, HwInfoTool } from './clawser-hardware.js';
+import { PairingManager, RemoteStatusTool, RemotePairTool, RemoteRevokeTool } from './clawser-remote.js';
 
 // ── Create service singletons ───────────────────────────────────
-state.workspaceFs = new WorkspaceFs();
+state.workspaceFs = new MountableFs();
 state.browserTools = createDefaultRegistry(state.workspaceFs);
 state.providers = createDefaultProviders();
 state.mcpManager = new McpManager({
@@ -91,6 +100,25 @@ state.routineEngine = new RoutineEngine({
 });
 
 state.oauthManager = new OAuthManager({ vault: state.vault });
+
+// ── Feature module singletons ────────────────────────────────────
+const _onLog = (level, msg) => console.log(`[clawser] ${msg}`);
+state.toolBuilder = new ToolBuilder(state.browserTools, (code) => new Function(code)());
+state.channelManager = new ChannelManager({ onLog: _onLog });
+state.delegateManager = new DelegateManager({ maxConcurrency: 3 });
+state.gitBehavior = new GitBehavior({
+  ops: {
+    exec: async (cmd) => {
+      if (!state.shell) return { code: 1, stdout: '', stderr: 'No shell available' };
+      return state.shell.exec(cmd);
+    },
+  },
+});
+state.gitMemory = new GitEpisodicMemory(state.gitBehavior);
+state.automationManager = new AutomationManager({ onLog: _onLog });
+state.sandboxManager = new SandboxManager({ onLog: _onLog });
+state.peripheralManager = new PeripheralManager({ onLog: _onLog });
+state.pairingManager = new PairingManager({ onLog: _onLog });
 
 // Freeze service singleton slots to prevent accidental reassignment
 Object.defineProperty(state, 'workspaceFs', { value: state.workspaceFs, writable: false, configurable: false });
@@ -153,11 +181,22 @@ async function switchWorkspace(newId, convId) {
   setStatus('busy', 'switching workspace...');
   history.replaceState(null, '', '#workspace/' + newId);
 
+  // Stop daemon and routine engine before saving
+  state.routineEngine.stop();
+  await state.daemonController.stop().catch(() => {});
+
   // Save current workspace
   await persistActiveConversation();
   state.agent.persistMemories();
   await state.agent.persistCheckpoint();
   saveConfig();
+
+  // Save routine state before switching
+  try {
+    const wsId = state.agent.getWorkspace();
+    const routineData = state.routineEngine.toJSON();
+    if (routineData) localStorage.setItem(lsKey.routines(wsId), JSON.stringify(routineData));
+  } catch (e) { console.warn('[clawser] routine save failed', e); }
 
   // Reset agent state
   state.agent.reinit({});
@@ -239,6 +278,16 @@ async function switchWorkspace(newId, convId) {
   await state.skillRegistry.discover(newId);
   renderSkills();
 
+  // Restart daemon and routine engine for new workspace
+  state.daemonController.start().then(started => {
+    if (started) updateDaemonBadge(state.daemonController.phase);
+  }).catch(() => {});
+  try {
+    const savedRoutines = JSON.parse(localStorage.getItem(lsKey.routines(newId)) || 'null');
+    if (savedRoutines) state.routineEngine.fromJSON(savedRoutines);
+  } catch (e) { console.warn('[clawser] routine restore failed', e); }
+  state.routineEngine.start();
+
   const parts = [`Switched to "${wsName}".`];
   if (wsRestored) parts.push(`Session restored (${$('messages').querySelectorAll('.msg.user, .msg.agent').length} messages).`);
   if (memCount > 0) parts.push(`${memCount} memories loaded.`);
@@ -274,6 +323,7 @@ async function initWorkspace(wsId, convId) {
       providers: state.providers,
       mcpManager: state.mcpManager,
       responseCache: state.responseCache,
+      safetyPipeline: state.safetyPipeline,
       selfRepairEngine: state.selfRepairEngine,
       undoManager: state.undoManager,
       onEvent: (topic, payload) => addEvent(topic, payload),
@@ -325,6 +375,73 @@ async function initWorkspace(wsId, convId) {
     // Register shell tool (reads current shell from state.shell)
     state.browserTools.register(new ShellTool(() => state.shell));
 
+    // ── Feature module tools (36 tools) ──────────────────────────
+
+    // Mount (2)
+    state.browserTools.register(new MountListTool(state.workspaceFs));
+    state.browserTools.register(new MountResolveTool(state.workspaceFs));
+
+    // Tool Builder (5)
+    state.browserTools.register(new ToolBuildTool(state.toolBuilder));
+    state.browserTools.register(new ToolTestTool(state.toolBuilder));
+    state.browserTools.register(new ToolListCustomTool(state.toolBuilder));
+    state.browserTools.register(new ToolEditTool(state.toolBuilder));
+    state.browserTools.register(new ToolRemoveTool(state.toolBuilder));
+
+    // Channels (3)
+    state.browserTools.register(new ChannelListTool(state.channelManager));
+    state.browserTools.register(new ChannelSendTool(state.channelManager));
+    state.browserTools.register(new ChannelHistoryTool(state.channelManager));
+
+    // Delegate (1) — uses lazy closures for provider/tool access
+    state.browserTools.register(new DelegateTool({
+      manager: state.delegateManager,
+      chatFn: async (messages, tools) => {
+        const providerSelect = $('providerSelect');
+        const provId = providerSelect?.value || 'echo';
+        const provider = state.providers?.get(provId);
+        if (!provider) return { content: 'No provider available', tool_calls: [] };
+        return provider.chat(messages, { tools });
+      },
+      executeFn: async (name, params) => state.browserTools.execute(name, params),
+      toolSpecs: state.browserTools.allSpecs(),
+    }));
+
+    // Git (6)
+    state.browserTools.register(new GitStatusTool(state.gitBehavior));
+    state.browserTools.register(new GitDiffTool(state.gitBehavior));
+    state.browserTools.register(new GitLogTool(state.gitBehavior));
+    state.browserTools.register(new GitCommitTool(state.gitBehavior));
+    state.browserTools.register(new GitBranchTool(state.gitBehavior));
+    state.browserTools.register(new GitRecallTool(state.gitMemory));
+
+    // Browser Automation (8)
+    state.browserTools.register(new BrowserOpenTool(state.automationManager));
+    state.browserTools.register(new BrowserReadPageTool(state.automationManager));
+    state.browserTools.register(new BrowserClickTool(state.automationManager));
+    state.browserTools.register(new BrowserFillTool(state.automationManager));
+    state.browserTools.register(new BrowserWaitTool(state.automationManager));
+    state.browserTools.register(new BrowserEvaluateTool(state.automationManager));
+    state.browserTools.register(new BrowserListTabsTool(state.automationManager));
+    state.browserTools.register(new BrowserCloseTabTool(state.automationManager));
+
+    // Sandbox (2)
+    state.browserTools.register(new SandboxRunTool(state.sandboxManager));
+    state.browserTools.register(new SandboxStatusTool(state.sandboxManager));
+
+    // Hardware (6)
+    state.browserTools.register(new HwListTool(state.peripheralManager));
+    state.browserTools.register(new HwConnectTool(state.peripheralManager));
+    state.browserTools.register(new HwSendTool(state.peripheralManager));
+    state.browserTools.register(new HwReadTool(state.peripheralManager));
+    state.browserTools.register(new HwDisconnectTool(state.peripheralManager));
+    state.browserTools.register(new HwInfoTool(state.peripheralManager));
+
+    // Remote (3)
+    state.browserTools.register(new RemoteStatusTool(state.pairingManager));
+    state.browserTools.register(new RemotePairTool(state.pairingManager));
+    state.browserTools.register(new RemoteRevokeTool(state.pairingManager));
+
     state.agent.refreshToolSpecs();
 
     state.browserTools.setApprovalHandler(async (toolName, params) => {
@@ -355,6 +472,26 @@ async function initWorkspace(wsId, convId) {
     state.agent.memoryHygiene();
 
     state.agent.setSystemPrompt($('systemPrompt').value);
+
+    // Apply saved identity to compile system prompt (B1)
+    try {
+      const savedIdentity = JSON.parse(localStorage.getItem(lsKey.identity(activeWsId)) || 'null');
+      if (savedIdentity?.format) {
+        if (savedIdentity.format === 'plain') {
+          state.identityManager.load(savedIdentity.plain || '');
+        } else {
+          state.identityManager.load({
+            version: '1.1',
+            names: { display: savedIdentity.name || '' },
+            bio: savedIdentity.role || '',
+            linguistics: { tone: savedIdentity.personality || '' },
+          });
+        }
+        const compiled = state.identityManager.compile();
+        if (compiled) state.agent.setSystemPrompt(compiled);
+      }
+    } catch (e) { console.warn('[clawser] identity compile failed', e); }
+
     await setupProviders();
 
     await applyRestoredConfig(savedConfig);
@@ -416,6 +553,24 @@ async function initWorkspace(wsId, convId) {
     // Initialize heartbeat (Batch 7)
     state.heartbeatRunner.loadDefault();
 
+    // Build default routing chains from available providers (B3)
+    try {
+      const providerIds = state.providers ? [...(await state.providers.listWithAvailability().catch(() => []))].map(p => p.name) : [];
+      if (providerIds.length > 0) state.modelRouter.buildDefaults(providerIds);
+    } catch (e) { console.warn('[clawser] modelRouter buildDefaults failed', e); }
+
+    // Start daemon controller (B4)
+    state.daemonController.start().then(started => {
+      if (started) updateDaemonBadge(state.daemonController.phase);
+    }).catch(e => console.warn('[clawser] daemon start failed', e));
+
+    // Start routine engine (B5)
+    try {
+      const savedRoutines = JSON.parse(localStorage.getItem(lsKey.routines(activeWsId)) || 'null');
+      if (savedRoutines) state.routineEngine.fromJSON(savedRoutines);
+    } catch (e) { console.warn('[clawser] routine restore failed', e); }
+    state.routineEngine.start();
+
     await state.skillRegistry.discover(activeWsId);
     renderSkills();
 
@@ -450,6 +605,8 @@ async function initWorkspace(wsId, convId) {
       updateCostMeter();
       updateCacheStats();
       refreshDashboard();
+      updateDaemonBadge(state.daemonController.phase);
+      updateAutonomyBadge();
     }, 5000);
   } catch (e) {
     addErrorMsg(`Init failed: ${e.message}`);
