@@ -27,15 +27,18 @@ export class McpClient {
   #tools = [];
   #connected = false;
   #onLog;
+  #timeoutMs = 30_000;
 
   /**
    * @param {string} endpoint - MCP server endpoint URL
    * @param {object} [opts]
    * @param {Function} [opts.onLog] - Log callback (level, msg)
+   * @param {number} [opts.timeoutMs] - Request timeout in milliseconds (default 30000)
    */
   constructor(endpoint, opts = {}) {
     this.#endpoint = endpoint;
     this.#onLog = opts.onLog || (() => {});
+    if (opts.timeoutMs) this.#timeoutMs = opts.timeoutMs;
   }
 
   get endpoint() { return this.#endpoint; }
@@ -69,11 +72,24 @@ export class McpClient {
       headers['Mcp-Session-Id'] = this.#sessionId;
     }
 
-    const resp = await fetch(this.#endpoint, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.#timeoutMs);
+    let resp;
+    try {
+      resp = await fetch(this.#endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } catch (e) {
+      clearTimeout(timer);
+      if (e.name === 'AbortError') {
+        throw new Error(`MCP request timed out after ${this.#timeoutMs / 1000}s`);
+      }
+      throw e;
+    }
+    clearTimeout(timer);
 
     // Capture session ID from response
     const sid = resp.headers.get('Mcp-Session-Id');

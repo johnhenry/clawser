@@ -77,6 +77,8 @@ function autoAwait(code) {
 }
 
 export class Codex {
+  static #EXEC_TIMEOUT_MS = 30_000;
+
   /** @type {import('./clawser-tools.js').BrowserToolRegistry} */
   #tools;
   /** @type {Function} */
@@ -124,7 +126,7 @@ export class Codex {
       ctx[name] = async (params = {}) => {
         const result = await tools.execute(name, params);
         if (!result.success) {
-          throw new Error(result.error || `${name} failed`);
+          return { _error: true, message: result.error || `${name} failed` };
         }
         try { return JSON.parse(result.output); }
         catch { return result.output; }
@@ -219,7 +221,10 @@ export class Codex {
 
       try {
         this.#onLog(2, `codex: executing ${lang || 'code'} block (${code.length} chars)`);
-        const returnValue = await run(code, context);
+        const timeout = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Code execution timed out after 30s')), Codex.#EXEC_TIMEOUT_MS)
+        );
+        const returnValue = await Promise.race([run(code, context), timeout]);
 
         let output = localConsole.result;
         if (!output && returnValue !== undefined) {
@@ -277,6 +282,9 @@ export class Codex {
       }
     }
 
+    lines.push('');
+    lines.push('If a tool fails, it returns { _error: true, message: "..." } instead of throwing.');
+    lines.push('Check the _error field to handle failures gracefully.');
     lines.push('');
     lines.push('fetch() is also available for HTTP requests.');
     lines.push('');

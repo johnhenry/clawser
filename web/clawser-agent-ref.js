@@ -74,6 +74,9 @@ export function hasAgentRefs(prompt) {
   return /@[\w][\w-]*/.test(prompt || '');
 }
 
+/** Maximum depth for nested @agent references */
+const MAX_AGENT_REF_DEPTH = 3;
+
 /**
  * Execute a sub-conversation with a referenced agent definition.
  * Creates a temporary engine, applies the agent config, and runs to completion.
@@ -87,6 +90,8 @@ export function hasAgentRefs(prompt) {
  * @param {Function} [opts.onLog] — Log callback
  * @param {Function} [opts.onStream] — Stream callback for progressive rendering
  * @param {Function} [opts.createEngine] — Factory to create a new engine instance
+ * @param {Set<string>} [opts.visited] — Set of already-visited agent names (recursion guard)
+ * @param {number} [opts.depth] — Current recursion depth (recursion guard)
  * @returns {Promise<{response: string, usage?: Object}>}
  */
 export async function executeAgentRef(agentDef, message, opts = {}) {
@@ -145,9 +150,11 @@ export async function executeAgentRef(agentDef, message, opts = {}) {
  * @param {Function} [opts.onRefStart] — Called when a ref starts: (agentName, content) => void
  * @param {Function} [opts.onRefEnd] — Called when a ref ends: (agentName, response, error?) => void
  * @param {Function} [opts.createEngine]
+ * @param {Set<string>} [visited] — Set of already-visited agent names (recursion guard)
+ * @param {number} [depth] — Current recursion depth (recursion guard)
  * @returns {Promise<{prompt: string, refs: Array<{agent: string, response?: string, error?: string}>}>}
  */
-export async function processAgentRefs(prompt, opts) {
+export async function processAgentRefs(prompt, opts, visited = new Set(), depth = 0) {
   const { agentStorage, onRefStart, onRefEnd } = opts;
 
   const segments = parseAgentRefs(prompt);
@@ -179,10 +186,35 @@ export async function processAgentRefs(prompt, opts) {
       continue;
     }
 
+    // Recursion guard: check depth limit
+    if (depth >= MAX_AGENT_REF_DEPTH) {
+      const errMsg = `maximum agent reference depth (${MAX_AGENT_REF_DEPTH}) exceeded`;
+      augmented += `[@${seg.agent}: error — ${errMsg}]\n`;
+      results.push({ agent: seg.agent, error: errMsg });
+      onRefEnd?.(seg.agent, null, new Error(errMsg));
+      continue;
+    }
+
+    // Recursion guard: check for circular references
+    if (visited.has(seg.agent.toLowerCase())) {
+      const errMsg = `circular agent reference detected for @${seg.agent}`;
+      augmented += `[@${seg.agent}: error — ${errMsg}]\n`;
+      results.push({ agent: seg.agent, error: errMsg });
+      onRefEnd?.(seg.agent, null, new Error(errMsg));
+      continue;
+    }
+
+    // Track this agent in the visited set for this chain
+    visited.add(seg.agent.toLowerCase());
+
     onRefStart?.(seg.agent, seg.content);
 
     try {
-      const { response } = await executeAgentRef(agentDef, seg.content, opts);
+      const { response } = await executeAgentRef(agentDef, seg.content, {
+        ...opts,
+        visited,
+        depth: depth + 1,
+      });
       augmented += `[Response from @${seg.agent}]:\n${response}\n\n`;
       results.push({ agent: seg.agent, response });
       onRefEnd?.(seg.agent, response);

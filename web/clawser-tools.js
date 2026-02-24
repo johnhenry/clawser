@@ -358,12 +358,12 @@ export class DomModifyTool extends BrowserTool {
           else {
             const t = document.createElement('template');
             t.innerHTML = value;
-            t.content.querySelectorAll('script,iframe,object,embed').forEach(s => s.remove());
-            // Strip on* event handlers and javascript: URLs from all surviving elements
+            t.content.querySelectorAll('script,iframe,object,embed,base,meta,link,form,svg').forEach(s => s.remove());
+            // Strip on* event handlers and javascript:/data:text/html URLs from all surviving elements
             for (const node of t.content.querySelectorAll('*')) {
               for (const attr of [...node.attributes]) {
                 if (/^on/i.test(attr.name)) node.removeAttribute(attr.name);
-                if (/^(href|src|action|formaction)$/i.test(attr.name) && /^\s*javascript:/i.test(attr.value)) node.removeAttribute(attr.name);
+                if (/^(href|src|action|formaction)$/i.test(attr.name) && /^\s*(javascript:|data:text\/html)/i.test(attr.value)) node.removeAttribute(attr.name);
               }
             }
             el.innerHTML = t.innerHTML;
@@ -373,9 +373,9 @@ export class DomModifyTool extends BrowserTool {
           if (!attribute) return { success: false, output: '', error: 'setAttribute requires "attribute" parameter' };
           // Block event handler attributes (XSS vector)
           if (/^on/i.test(attribute)) return { success: false, output: '', error: `Blocked: setting event handler attribute "${attribute}" is not allowed` };
-          // Block javascript: in href/src/action attributes
-          if (/^(href|src|action|formaction)$/i.test(attribute) && /^\s*javascript:/i.test(value)) {
-            return { success: false, output: '', error: `Blocked: javascript: URLs in "${attribute}" are not allowed` };
+          // Block javascript: and data:text/html in href/src/action attributes
+          if (/^(href|src|action|formaction)$/i.test(attribute) && /^\s*(javascript:|data:text\/html)/i.test(value)) {
+            return { success: false, output: '', error: `Blocked: javascript: and data:text/html URLs in "${attribute}" are not allowed` };
           }
           el.setAttribute(attribute, value); break;
         case 'setStyle': el.style.cssText += value; break;
@@ -387,11 +387,11 @@ export class DomModifyTool extends BrowserTool {
           else {
             const t = document.createElement('template');
             t.innerHTML = value;
-            t.content.querySelectorAll('script,iframe,object,embed').forEach(s => s.remove());
+            t.content.querySelectorAll('script,iframe,object,embed,base,meta,link,form,svg').forEach(s => s.remove());
             for (const node of t.content.querySelectorAll('*')) {
               for (const attr of [...node.attributes]) {
                 if (/^on/i.test(attr.name)) node.removeAttribute(attr.name);
-                if (/^(href|src|action|formaction)$/i.test(attr.name) && /^\s*javascript:/i.test(attr.value)) node.removeAttribute(attr.name);
+                if (/^(href|src|action|formaction)$/i.test(attr.name) && /^\s*(javascript:|data:text\/html)/i.test(attr.value)) node.removeAttribute(attr.name);
               }
             }
             el.insertAdjacentHTML('beforeend', t.innerHTML);
@@ -789,7 +789,7 @@ export class NotifyTool extends BrowserTool {
 export class EvalJsTool extends BrowserTool {
   get name() { return 'browser_eval_js'; }
   get description() {
-    return 'Evaluate JavaScript code in the page context. Returns the result as a string. Use for dynamic computation and page interaction.';
+    return 'Evaluate JavaScript code in the page global scope. WARNING: Runs with full page access — use for trusted code only. Returns the result as a string.';
   }
   get parameters() {
     return {
@@ -800,7 +800,7 @@ export class EvalJsTool extends BrowserTool {
       required: ['code'],
     };
   }
-  get permission() { return 'browser'; }
+  get permission() { return 'approve'; }
 
   async execute({ code }) {
     try {

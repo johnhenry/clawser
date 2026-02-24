@@ -241,6 +241,33 @@ export class SkillParser {
   }
 
   /**
+   * Validate skill script content for dangerous patterns.
+   * Scans for eval, dynamic Function creation, cookie access,
+   * storage access, direct XHR, and dynamic imports.
+   * @param {string} content - Script source text
+   * @returns {{ safe: boolean, warnings: string[] }}
+   */
+  static validateScript(content) {
+    const warnings = [];
+    const patterns = [
+      { regex: /\beval\s*\(/g,           label: 'eval() — dynamic code execution' },
+      { regex: /\bFunction\s*\(/g,       label: 'Function() — dynamic function creation' },
+      { regex: /\bdocument\.cookie\b/g,  label: 'document.cookie — cookie access' },
+      { regex: /\blocalStorage[\.\[]/g,  label: 'localStorage — storage access' },
+      { regex: /\bXMLHttpRequest\b/g,    label: 'XMLHttpRequest — direct XHR' },
+      { regex: /(?<!\w)import\s*\(/g,    label: 'import() — dynamic import' },
+    ];
+
+    for (const { regex, label } of patterns) {
+      if (regex.test(content)) {
+        warnings.push(label);
+      }
+    }
+
+    return { safe: warnings.length === 0, warnings };
+  }
+
+  /**
    * Escape a string for use in an XML/HTML attribute.
    */
   static escAttr(str) {
@@ -666,11 +693,24 @@ export class SkillRegistry {
       const skillMd = await SkillStorage.readFile(dir, 'SKILL.md');
       const { metadata, body } = SkillParser.parseFrontmatter(skillMd);
 
+      // Validate skill body for dangerous patterns
+      const bodyCheck = SkillParser.validateScript(body);
+      if (!bodyCheck.safe) {
+        this.#onLog(3, `Skill "${name}" body contains unsafe patterns: ${bodyCheck.warnings.join(', ')}`);
+        return null;
+      }
+
       // Load scripts
       const scriptNames = await SkillStorage.listSubdir(dir, 'scripts');
       const scripts = [];
       for (const sn of scriptNames) {
         const content = await SkillStorage.readFile(dir, `scripts/${sn}`);
+        // Validate each script for dangerous patterns
+        const scriptCheck = SkillParser.validateScript(content);
+        if (!scriptCheck.safe) {
+          this.#onLog(3, `Skill "${name}" script "${sn}" blocked: ${scriptCheck.warnings.join(', ')}`);
+          return null;
+        }
         scripts.push({ name: sn, content });
       }
 
