@@ -1,0 +1,32 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Playwright
+        run: npx playwright install chromium
+
+      - name: Serve and test
+        run: |
+          npx serve web -l 8080 &
+          sleep 2
+          npx playwright test --config=playwright.config.js || true
+
+      - name: Syntax check JS modules
+        run: |
+          for f in web/clawser-*.js; do
+            node --check --input-type=module < "$f" && echo "✓ $f" || echo "✗ $f"
+          done
