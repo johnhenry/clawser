@@ -136,6 +136,29 @@ Flags:
   --max-turns N                 Max agent loop iterations
 `;
 
+// ── Subcommand Metadata ─────────────────────────────────────────
+
+/**
+ * Metadata for all `clawser` subcommands, for use by the Shell Commands UI panel.
+ * @type {Array<{name: string, description: string, usage: string, flags?: object}>}
+ */
+export const CLAWSER_SUBCOMMAND_META = [
+  { name: 'chat', description: 'Enter interactive agent chat mode', usage: 'clawser chat' },
+  { name: 'exit', description: 'Exit agent chat mode', usage: 'clawser exit' },
+  { name: 'do', description: 'Agentic task execution with tool use', usage: 'clawser do "TASK"' },
+  { name: 'config', description: 'Show or set agent configuration', usage: 'clawser config [set KEY VALUE]' },
+  { name: 'status', description: 'Show agent state summary', usage: 'clawser status' },
+  { name: 'history', description: 'List past conversation events', usage: 'clawser history' },
+  { name: 'clear', description: 'Clear conversation history', usage: 'clawser clear' },
+  { name: 'tools', description: 'List available tools', usage: 'clawser tools' },
+  { name: 'model', description: 'Show or set the current model', usage: 'clawser model [NAME]' },
+  { name: 'cost', description: 'Show session cost estimate', usage: 'clawser cost' },
+  { name: 'compact', description: 'Trigger context compaction', usage: 'clawser compact' },
+  { name: 'memory', description: 'Manage agent memory entries', usage: 'clawser memory [list|add|remove] [KEY] [VALUE]' },
+  { name: 'mcp', description: 'Show MCP server status', usage: 'clawser mcp' },
+  { name: 'session', description: 'Manage terminal sessions', usage: 'clawser session [list|new|switch|rename|delete|fork|export|save]' },
+];
+
 // ── Command Registration ────────────────────────────────────────
 
 /**
@@ -709,5 +732,5 @@ export function registerClawserCli(registry, getAgent, getShell) {
     }
 
     return { stdout: HELP_TEXT, stderr: '', exitCode: 0 };
-  });
+  }, { description: 'AI agent CLI with subcommands', category: 'Agent CLI', usage: 'clawser [SUBCOMMAND|PROMPT] [FLAGS]' });
 }

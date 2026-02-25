@@ -15,7 +15,8 @@ test('test.html — all tests pass', async ({ page }) => {
   await page.goto('/test.html');
 
   // Wait for #testResults element (created after all tests finish)
-  await page.waitForSelector('#testResults', { timeout: 90_000 });
+  // Element has display:none, so wait for 'attached' state not 'visible'
+  await page.waitForSelector('#testResults', { state: 'attached', timeout: 90_000 });
 
   const json = await page.textContent('#testResults');
   const results = JSON.parse(json);
@@ -39,7 +40,8 @@ test('bench.html — benchmarks complete without error', async ({ page }) => {
   await page.goto('/bench.html');
 
   // Wait for structured results element (Gap 7.2b)
-  await page.waitForSelector('#benchResults', { timeout: 30_000 });
+  // Element has display:none, so wait for 'attached' state not 'visible'
+  await page.waitForSelector('#benchResults', { state: 'attached', timeout: 30_000 });
 
   // No unhandled errors during benchmark
   expect(errors.length).toBe(0);

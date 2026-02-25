@@ -252,7 +252,7 @@ export function registerExtendedBuiltins(registry) {
       // If file exists, touch is a no-op (OPFS has no utime API)
     }
     return { stdout: '', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Create empty files or update timestamps', category: 'File Operations', usage: 'touch FILE...' });
 
   // ── stat ──
   registry.register('stat', async ({ args, state, fs }) => {
@@ -274,7 +274,7 @@ export function registerExtendedBuiltins(registry) {
       }
     }
     return { stdout: lines.join('\n') + '\n', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Display file status', category: 'File Operations', usage: 'stat FILE...' });
 
   // ── find ──
   registry.register('find', async ({ args, state, fs }) => {
@@ -330,7 +330,7 @@ export function registerExtendedBuiltins(registry) {
       stderr: '',
       exitCode: 0,
     };
-  });
+  }, { description: 'Search for files in directory hierarchy', category: 'File Operations', usage: 'find [PATH] [-name PATTERN] [-type f|d]', flags: { '-name': 'Match pattern', '-type': 'Filter by type (f=file, d=dir)' } });
 
   // ── du ──
   registry.register('du', async ({ args, state, fs }) => {
@@ -381,7 +381,7 @@ export function registerExtendedBuiltins(registry) {
       : result.lines.join('\n') + '\n';
 
     return { stdout: output, stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Estimate file space usage', category: 'File Operations', usage: 'du [-sh] [PATH]', flags: { '-s': 'Summary only', '-h': 'Human readable' } });
 
   // ── basename ──
   registry.register('basename', ({ args }) => {
@@ -399,7 +399,7 @@ export function registerExtendedBuiltins(registry) {
     // Edge case: empty result from '/'
     if (!name) name = '/';
     return { stdout: name + '\n', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Strip directory from filename', category: 'File Operations', usage: 'basename PATH [SUFFIX]' });
 
   // ── dirname ──
   registry.register('dirname', ({ args }) => {
@@ -411,7 +411,7 @@ export function registerExtendedBuiltins(registry) {
     if (idx < 0) return { stdout: '.\n', stderr: '', exitCode: 0 };
     if (idx === 0) return { stdout: '/\n', stderr: '', exitCode: 0 };
     return { stdout: path.slice(0, idx) + '\n', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Strip last component from path', category: 'File Operations', usage: 'dirname PATH' });
 
   // ── realpath ──
   registry.register('realpath', ({ args, state }) => {
@@ -421,7 +421,7 @@ export function registerExtendedBuiltins(registry) {
       results.push(state.resolvePath(p));
     }
     return { stdout: results.join('\n') + '\n', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Resolve to absolute path', category: 'File Operations', usage: 'realpath PATH...' });
 
   // ── tree ──
   registry.register('tree', async ({ args, state, fs }) => {
@@ -473,7 +473,7 @@ export function registerExtendedBuiltins(registry) {
     lines.push(`${dirCount} directories, ${fileCount} files`);
 
     return { stdout: lines.join('\n') + '\n', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Display directory tree', category: 'File Operations', usage: 'tree [-L N] [PATH]', flags: { '-L': 'Max depth' } });
 
   // ════════════════════════════════════════════════════════════════
   // TEXT PROCESSING (9)
@@ -509,7 +509,7 @@ export function registerExtendedBuiltins(registry) {
       result += map.has(ch) ? map.get(ch) : ch;
     }
     return { stdout: result, stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Translate or delete characters', category: 'Text Processing', usage: 'tr [-d] SET1 [SET2]', flags: { '-d': 'Delete characters' } });
 
   // ── cut ──
   registry.register('cut', ({ args, stdin }) => {
@@ -562,7 +562,7 @@ export function registerExtendedBuiltins(registry) {
     });
 
     return { stdout: result.join('\n') + '\n', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Extract fields or character ranges', category: 'Text Processing', usage: 'cut [-d DELIM] [-f FIELDS] [-c RANGE]', flags: { '-d': 'Delimiter', '-f': 'Field list', '-c': 'Character range' } });
 
   // ── paste ──
   registry.register('paste', ({ args, stdin }) => {
@@ -580,7 +580,7 @@ export function registerExtendedBuiltins(registry) {
     const lines = stdin.split('\n');
     if (lines[lines.length - 1] === '') lines.pop();
     return { stdout: lines.join(delimiter) + '\n', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Merge lines with delimiter', category: 'Text Processing', usage: 'paste [-d DELIM]', flags: { '-d': 'Delimiter' } });
 
   // ── rev ──
   registry.register('rev', ({ stdin }) => {
@@ -589,7 +589,7 @@ export function registerExtendedBuiltins(registry) {
     const inputLines = hasTrailingNewline ? lines.slice(0, -1) : lines;
     const reversed = inputLines.map(line => [...line].reverse().join(''));
     return { stdout: reversed.join('\n') + '\n', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Reverse each line', category: 'Text Processing', usage: 'rev' });
 
   // ── nl ──
   registry.register('nl', ({ args, stdin }) => {
@@ -608,7 +608,7 @@ export function registerExtendedBuiltins(registry) {
     });
 
     return { stdout: result.join('\n') + '\n', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Number lines', category: 'Text Processing', usage: 'nl [-ba]', flags: { '-ba': 'Number all lines' } });
 
   // ── fold ──
   registry.register('fold', ({ args, stdin }) => {
@@ -649,7 +649,7 @@ export function registerExtendedBuiltins(registry) {
     }
 
     return { stdout: result.join('\n'), stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Wrap lines at specified width', category: 'Text Processing', usage: 'fold [-w N] [-s]', flags: { '-w': 'Width', '-s': 'Break at spaces' } });
 
   // ── column ──
   registry.register('column', ({ args, stdin }) => {
@@ -686,7 +686,7 @@ export function registerExtendedBuiltins(registry) {
     });
 
     return { stdout: formatted.join('\n') + '\n', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Format input into columns', category: 'Text Processing', usage: 'column [-t]', flags: { '-t': 'Table mode' } });
 
   // ── diff ──
   registry.register('diff', async ({ args, state, fs }) => {
@@ -770,7 +770,7 @@ export function registerExtendedBuiltins(registry) {
     }
 
     return { stdout: output.join('\n') + '\n', stderr: '', exitCode: 1 };
-  });
+  }, { description: 'Compare two files line by line', category: 'Text Processing', usage: 'diff FILE1 FILE2' });
 
   // ── sed ──
   registry.register('sed', ({ args, stdin }) => {
@@ -815,7 +815,7 @@ export function registerExtendedBuiltins(registry) {
     }
 
     return { stdout: '', stderr: `sed: unsupported expression: ${expr}`, exitCode: 1 };
-  });
+  }, { description: 'Stream editor for text substitution', category: 'Text Processing', usage: 'sed EXPRESSION' });
 
   // ════════════════════════════════════════════════════════════════
   // GENERATORS (6)
@@ -860,7 +860,7 @@ export function registerExtendedBuiltins(registry) {
     }
 
     return { stdout: numbers.join('\n') + '\n', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Generate numeric sequences', category: 'Generators', usage: 'seq [FIRST [INCREMENT]] LAST' });
 
   // ── yes ──
   registry.register('yes', ({ args }) => {
@@ -868,7 +868,7 @@ export function registerExtendedBuiltins(registry) {
     const cap = 1000;
     const lines = new Array(cap).fill(text);
     return { stdout: lines.join('\n') + '\n', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Output string repeatedly', category: 'Generators', usage: 'yes [STRING]' });
 
   // ── printf ──
   registry.register('printf', ({ args }) => {
@@ -919,7 +919,7 @@ export function registerExtendedBuiltins(registry) {
     }
 
     return { stdout: result, stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Format and print data', category: 'Generators', usage: 'printf FORMAT [ARGS...]' });
 
   // ── date ──
   registry.register('date', ({ args }) => {
@@ -944,7 +944,7 @@ export function registerExtendedBuiltins(registry) {
     }
 
     return { stdout: now.toString() + '\n', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Display current date and time', category: 'Generators', usage: 'date [+FORMAT]' });
 
   // ── sleep ──
   registry.register('sleep', async ({ args }) => {
@@ -955,7 +955,7 @@ export function registerExtendedBuiltins(registry) {
     const capped = Math.min(seconds, 30);
     await new Promise(resolve => setTimeout(resolve, capped * 1000));
     return { stdout: '', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Pause for specified seconds', category: 'Generators', usage: 'sleep SECONDS' });
 
   // ── time ──
   registry.register('time', async ({ args, stdin, state, registry: reg, fs }) => {
@@ -980,7 +980,7 @@ export function registerExtendedBuiltins(registry) {
       stderr: result.stderr ?? '',
       exitCode: result.exitCode ?? 0,
     };
-  });
+  }, { description: 'Measure command execution time', category: 'Generators', usage: 'time COMMAND [ARGS...]' });
 
   // ════════════════════════════════════════════════════════════════
   // SHELL SESSION (7)
@@ -989,7 +989,7 @@ export function registerExtendedBuiltins(registry) {
   // ── clear ──
   registry.register('clear', () => {
     return { stdout: '', stderr: '', exitCode: 0, __clearTerminal: true };
-  });
+  }, { description: 'Clear terminal screen', category: 'Shell', usage: 'clear' });
 
   // ── history ──
   registry.register('history', ({ state }) => {
@@ -997,7 +997,7 @@ export function registerExtendedBuiltins(registry) {
       String(i + 1).padStart(5, ' ') + '  ' + cmd
     );
     return { stdout: lines.join('\n') + '\n', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Show command history', category: 'Shell', usage: 'history' });
 
   // ── alias ──
   registry.register('alias', ({ args, state }) => {
@@ -1033,7 +1033,7 @@ export function registerExtendedBuiltins(registry) {
       }
     }
     return { stdout: '', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Define or list command aliases', category: 'Shell', usage: 'alias [NAME=VALUE...]' });
 
   // ── unalias ──
   registry.register('unalias', ({ args, state }) => {
@@ -1051,7 +1051,7 @@ export function registerExtendedBuiltins(registry) {
       state.aliases.delete(name);
     }
     return { stdout: '', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Remove command aliases', category: 'Shell', usage: 'unalias [-a] NAME...', flags: { '-a': 'Remove all' } });
 
   // ── set ──
   registry.register('set', ({ args, state }) => {
@@ -1073,7 +1073,7 @@ export function registerExtendedBuiltins(registry) {
     }
 
     return { stdout: '', stderr: `set: unsupported arguments: ${args.join(' ')}`, exitCode: 1 };
-  });
+  }, { description: 'Set shell options', category: 'Shell', usage: 'set [-o|+o] OPTION' });
 
   // ── unset ──
   registry.register('unset', ({ args, state }) => {
@@ -1082,7 +1082,7 @@ export function registerExtendedBuiltins(registry) {
       state.env.delete(name);
     }
     return { stdout: '', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Remove environment variables', category: 'Shell', usage: 'unset NAME...' });
 
   // ── read ──
   registry.register('read', ({ args, stdin, state }) => {
@@ -1090,7 +1090,7 @@ export function registerExtendedBuiltins(registry) {
     const varName = args[0];
     state.env.set(varName, stdin.trim());
     return { stdout: '', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Read stdin into a variable', category: 'Shell', usage: 'read VARNAME' });
 
   // ════════════════════════════════════════════════════════════════
   // DATA & CONVERSION (4)
@@ -1134,7 +1134,7 @@ export function registerExtendedBuiltins(registry) {
     }
 
     return { stdout: lines.join('\n') + '\n', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Hex dump or reverse', category: 'Data & Conversion', usage: 'xxd [-r]', flags: { '-r': 'Reverse hex dump' } });
 
   // ── base64 ──
   registry.register('base64', ({ args, stdin }) => {
@@ -1159,7 +1159,7 @@ export function registerExtendedBuiltins(registry) {
     } catch (e) {
       return { stdout: '', stderr: `base64: encoding error: ${e.message}`, exitCode: 1 };
     }
-  });
+  }, { description: 'Base64 encode or decode', category: 'Data & Conversion', usage: 'base64 [-d]', flags: { '-d': 'Decode' } });
 
   // ── sha256sum ──
   registry.register('sha256sum', async ({ stdin }) => {
@@ -1172,7 +1172,7 @@ export function registerExtendedBuiltins(registry) {
     } catch (e) {
       return { stdout: '', stderr: `sha256sum: ${e.message}`, exitCode: 1 };
     }
-  });
+  }, { description: 'Compute SHA-256 hash', category: 'Data & Conversion', usage: 'sha256sum' });
 
   // ── md5sum ──
   registry.register('md5sum', ({ stdin }) => {
@@ -1182,7 +1182,7 @@ export function registerExtendedBuiltins(registry) {
     } catch (e) {
       return { stdout: '', stderr: `md5sum: ${e.message}`, exitCode: 1 };
     }
-  });
+  }, { description: 'Compute MD5 hash', category: 'Data & Conversion', usage: 'md5sum' });
 
   // ════════════════════════════════════════════════════════════════
   // PROCESS-LIKE (3)
@@ -1256,7 +1256,7 @@ export function registerExtendedBuiltins(registry) {
     }
 
     return { stdout, stderr, exitCode };
-  });
+  }, { description: 'Build and execute commands from stdin', category: 'Process', usage: 'xargs [-n N] COMMAND [ARGS...]', flags: { '-n': 'Max args per execution' } });
 
   // ── test / [ ──
   const testHandler = async ({ args, state, fs }) => {
@@ -1330,6 +1330,6 @@ export function registerExtendedBuiltins(registry) {
     return { stdout: '', stderr: 'test: unsupported expression', exitCode: 2 };
   };
 
-  registry.register('test', testHandler);
-  registry.register('[', testHandler);
+  registry.register('test', testHandler, { description: 'Evaluate conditional expression', category: 'Process', usage: 'test EXPRESSION' });
+  registry.register('[', testHandler, { description: 'Evaluate conditional expression (bracket form)', category: 'Process', usage: '[ EXPRESSION ]' });
 }

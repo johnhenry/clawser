@@ -240,9 +240,15 @@ Features:
 
 **File**: `web/clawser-ui-panels.js`
 
-### Tool Registry Panel
+The Tool Management panel has two tabs: **Browser Tools** and **Shell Commands**.
+
+### Browser Tools Tab
 
 Lists all registered tools with clickable permission badges. Click to cycle: auto → approve → denied → auto. Permissions persist per-workspace.
+
+### Shell Commands Tab
+
+Browsable interface for all ~60 CLI commands and shell builtins. Grouped by category (File Operations, Text Processing, Shell, Generators, Data & Conversion, Process, Agent CLI). Each command is expandable to show description, usage, and flags. Includes a search bar for filtering. Metadata is sourced from `CommandRegistry` annotations on each builtin and `CLAWSER_SUBCOMMAND_META` for `clawser` CLI subcommands.
 
 ### MCP Server List
 

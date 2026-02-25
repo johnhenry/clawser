@@ -19,6 +19,7 @@ import { loadWorkspaces, getActiveWorkspaceId, renameWorkspace, deleteWorkspace,
 import { navigate } from './clawser-router.js';
 import { SkillStorage } from './clawser-skills.js';
 import { createItemBar, _relativeTime } from './clawser-item-bar.js';
+import { CLAWSER_SUBCOMMAND_META } from './clawser-cli.js';
 
 // ── Re-exports from extracted modules ──────────────────────────
 export { refreshFiles, mountLocalFolder, renderMountList } from './clawser-ui-files.js';
@@ -682,7 +683,7 @@ function persistToolPermissions() {
 }
 
 export function renderToolManagementPanel() {
-  const panelBody = $('panelToolMgmt')?.querySelector('.panel-body');
+  const panelBody = $('panelToolMgmt')?.querySelector('[data-tab-body="browser-tools"]');
   if (!panelBody) return;
 
   const allTools = state.browserTools.allSpecs().map(s => ({ ...s, source: 'built-in' }));
@@ -849,6 +850,105 @@ function toggleToolDetail(itemEl, toolName) {
       renderToolManagementPanel();
     });
   }
+}
+
+// ── Shell Command Management Panel ──────────────────────────────
+
+let shellCmdSearchQuery = '';
+
+export function renderShellCommandPanel() {
+  const panelBody = $('panelToolMgmt')?.querySelector('[data-tab-body="shell-commands"]');
+  if (!panelBody) return;
+
+  // Get registry from shell on state
+  const registry = state.shell?.registry;
+  if (!registry) {
+    panelBody.innerHTML = '<div style="padding:16px;color:var(--muted)">Shell not initialized.</div>';
+    return;
+  }
+
+  // Merge registry entries + virtual clawser subcommands
+  let entries = registry.allEntries();
+
+  // Add clawser subcommands as virtual entries
+  for (const sub of CLAWSER_SUBCOMMAND_META) {
+    entries.push({
+      name: `clawser ${sub.name}`,
+      description: sub.description,
+      category: 'Agent CLI',
+      usage: sub.usage,
+      flags: sub.flags,
+    });
+  }
+
+  const query = shellCmdSearchQuery.toLowerCase();
+  const filtered = query
+    ? entries.filter(e => e.name.toLowerCase().includes(query) || (e.description || '').toLowerCase().includes(query))
+    : entries;
+
+  // Group by category
+  const groups = new Map();
+  for (const entry of filtered) {
+    const cat = entry.category || 'Other';
+    if (!groups.has(cat)) groups.set(cat, []);
+    groups.get(cat).push(entry);
+  }
+
+  const sortedGroups = [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+
+  let html = `<div class="tool-search-bar"><input id="shellCmdSearch" type="text" placeholder="Search commands..." class="tool-search-input" value="${esc(shellCmdSearchQuery)}" /><span class="tool-count">${filtered.length} / ${entries.length}</span></div>`;
+
+  for (const [category, cmds] of sortedGroups) {
+    cmds.sort((a, b) => a.name.localeCompare(b.name));
+    html += `<div class="tool-category"><div class="tool-category-header"><span class="tool-category-name">${esc(category)} (${cmds.length})</span></div><div class="tool-category-items">`;
+    for (const cmd of cmds) {
+      const desc = (cmd.description || '').slice(0, 60);
+      html += `<div class="tool-item" data-cmd="${esc(cmd.name)}"><span class="tool-name">${esc(cmd.name)}</span><span class="tool-desc">${esc(desc)}</span></div>`;
+    }
+    html += `</div></div>`;
+  }
+
+  panelBody.innerHTML = html;
+
+  // Bind search
+  panelBody.querySelector('#shellCmdSearch')?.addEventListener('input', (e) => {
+    clearTimeout(renderShellCommandPanel._debounce);
+    renderShellCommandPanel._debounce = setTimeout(() => {
+      shellCmdSearchQuery = e.target.value;
+      renderShellCommandPanel();
+    }, 200);
+  });
+
+  // Bind expand on click
+  for (const nameEl of panelBody.querySelectorAll('.tool-name')) {
+    nameEl.addEventListener('click', () => {
+      const item = nameEl.closest('.tool-item');
+      toggleShellCmdDetail(item, item.dataset.cmd, entries);
+    });
+  }
+}
+
+function toggleShellCmdDetail(itemEl, cmdName, entries) {
+  const existing = itemEl.parentElement.querySelector('.tool-detail-expanded');
+  if (existing) { existing.remove(); itemEl.classList.remove('expanded'); if (existing.previousElementSibling === itemEl) return; }
+
+  const entry = entries.find(e => e.name === cmdName);
+  if (!entry) return;
+
+  const detail = document.createElement('div');
+  detail.className = 'tool-detail-expanded';
+  let html = `<div class="tool-detail-desc">${esc(entry.description || 'No description')}</div>`;
+  if (entry.usage) html += `<div class="tool-detail-meta">Usage: <code>${esc(entry.usage)}</code></div>`;
+  if (entry.flags) {
+    html += '<div class="tool-detail-params"><div class="tool-detail-label">Flags:</div>';
+    for (const [flag, desc] of Object.entries(entry.flags)) {
+      html += `<div class="tool-param"><span class="tool-param-name">${esc(flag)}</span><span class="tool-param-desc">${esc(desc)}</span></div>`;
+    }
+    html += '</div>';
+  }
+  detail.innerHTML = html;
+  itemEl.after(detail);
+  itemEl.classList.add('expanded');
 }
 
 // ── Agent Picker (Block 37) ─────────────────────────────────────
@@ -1135,6 +1235,21 @@ function bindToggle(toggleId, sectionId, arrowId, onOpen) {
 // ── Panel event listeners ───────────────────────────────────────
 /** Bind event listeners for all secondary panels (files, memory, goals, MCP, security, skills, workspace). */
 export function initPanelListeners() {
+  // Tool Management tabs
+  const toolMgmtPanel = $('panelToolMgmt');
+  if (toolMgmtPanel) {
+    for (const tab of toolMgmtPanel.querySelectorAll('.tool-mgmt-tab')) {
+      tab.addEventListener('click', () => {
+        const tabId = tab.dataset.tab;
+        for (const t of toolMgmtPanel.querySelectorAll('.tool-mgmt-tab')) t.classList.remove('active');
+        for (const b of toolMgmtPanel.querySelectorAll('.tool-mgmt-tab-body')) b.classList.remove('active');
+        tab.classList.add('active');
+        toolMgmtPanel.querySelector(`[data-tab-body="${tabId}"]`)?.classList.add('active');
+        if (tabId === 'shell-commands') renderShellCommandPanel();
+      });
+    }
+  }
+
   // File browser
   $('refreshFiles').addEventListener('click', () => refreshFiles());
   $('mountFolder').addEventListener('click', () => mountLocalFolder());

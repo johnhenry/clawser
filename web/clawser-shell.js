@@ -489,17 +489,19 @@ export class CommandRegistry {
   #commands = new Map();
 
   /**
-   * Register a command handler.
+   * Register a command handler with optional metadata.
    * @param {string} name
    * @param {Function} handler - async ({ args, stdin, state, registry, fs }) → { stdout, stderr, exitCode }
+   * @param {object} [meta] - { description, category, usage, flags? }
    */
-  register(name, handler) {
-    this.#commands.set(name, handler);
+  register(name, handler, meta) {
+    this.#commands.set(name, { handler, meta: meta || {} });
   }
 
   /** @returns {Function|null} */
   get(name) {
-    return this.#commands.get(name) || null;
+    const entry = this.#commands.get(name);
+    return entry ? entry.handler : null;
   }
 
   /** @returns {boolean} */
@@ -510,6 +512,21 @@ export class CommandRegistry {
   /** @returns {string[]} */
   names() {
     return [...this.#commands.keys()];
+  }
+
+  /** @returns {object|null} metadata for a command, or null if not found */
+  getMeta(name) {
+    const entry = this.#commands.get(name);
+    return entry ? entry.meta : null;
+  }
+
+  /** @returns {Array<{name: string, description?: string, category?: string, usage?: string, flags?: object}>} */
+  allEntries() {
+    const result = [];
+    for (const [name, { meta }] of this.#commands) {
+      result.push({ name, ...meta });
+    }
+    return result;
   }
 }
 
@@ -919,16 +936,18 @@ export function registerBuiltins(registry) {
   // ── echo ──
   registry.register('echo', ({ args }) => {
     return { stdout: args.join(' ') + '\n', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Print arguments to stdout', category: 'Generators', usage: 'echo [STRING...]' });
 
   // ── true / false ──
-  registry.register('true', () => ({ stdout: '', stderr: '', exitCode: 0 }));
-  registry.register('false', () => ({ stdout: '', stderr: '', exitCode: 1 }));
+  registry.register('true', () => ({ stdout: '', stderr: '', exitCode: 0 }),
+    { description: 'Return success (exit 0)', category: 'Shell', usage: 'true' });
+  registry.register('false', () => ({ stdout: '', stderr: '', exitCode: 1 }),
+    { description: 'Return failure (exit 1)', category: 'Shell', usage: 'false' });
 
   // ── pwd ──
   registry.register('pwd', ({ state }) => {
     return { stdout: state.cwd + '\n', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Print current working directory', category: 'Shell', usage: 'pwd' });
 
   // ── cd ──
   registry.register('cd', async ({ args, state, fs }) => {
@@ -951,7 +970,7 @@ export function registerBuiltins(registry) {
     }
     state.cwd = resolved;
     return { stdout: '', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Change current directory', category: 'Shell', usage: 'cd [DIR]' });
 
   // ── ls ──
   registry.register('ls', async ({ args, state, fs }) => {
@@ -977,7 +996,7 @@ export function registerBuiltins(registry) {
     } catch {
       return { stdout: '', stderr: `ls: ${target}: No such file or directory`, exitCode: 1 };
     }
-  });
+  }, { description: 'List directory contents', category: 'File Operations', usage: 'ls [-l] [PATH]', flags: { '-l': 'Long format' } });
 
   // ── cat ──
   registry.register('cat', async ({ args, stdin, state, fs }) => {
@@ -996,7 +1015,7 @@ export function registerBuiltins(registry) {
       }
     }
     return { stdout: output, stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Concatenate and print files', category: 'File Operations', usage: 'cat [FILE...]' });
 
   // ── mkdir ──
   registry.register('mkdir', async ({ args, state, fs }) => {
@@ -1012,7 +1031,7 @@ export function registerBuiltins(registry) {
       }
     }
     return { stdout: '', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Create directories', category: 'File Operations', usage: 'mkdir [-p] DIR...' });
 
   // ── rm ──
   registry.register('rm', async ({ args, state, fs }) => {
@@ -1029,7 +1048,7 @@ export function registerBuiltins(registry) {
       }
     }
     return { stdout: '', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Remove files or directories', category: 'File Operations', usage: 'rm [-r] FILE...', flags: { '-r': 'Recursive' } });
 
   // ── cp ──
   registry.register('cp', async ({ args, state, fs }) => {
@@ -1043,7 +1062,7 @@ export function registerBuiltins(registry) {
     } catch (e) {
       return { stdout: '', stderr: `cp: ${e.message}`, exitCode: 1 };
     }
-  });
+  }, { description: 'Copy files', category: 'File Operations', usage: 'cp SRC DST' });
 
   // ── mv ──
   registry.register('mv', async ({ args, state, fs }) => {
@@ -1057,7 +1076,7 @@ export function registerBuiltins(registry) {
     } catch (e) {
       return { stdout: '', stderr: `mv: ${e.message}`, exitCode: 1 };
     }
-  });
+  }, { description: 'Move or rename files', category: 'File Operations', usage: 'mv SRC DST' });
 
   // ── head ──
   registry.register('head', ({ args, stdin }) => {
@@ -1070,7 +1089,7 @@ export function registerBuiltins(registry) {
     }
     const lines = stdin.split('\n');
     return { stdout: lines.slice(0, n).join('\n') + '\n', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Output first lines of stdin', category: 'Text Processing', usage: 'head [-n N]', flags: { '-n': 'Number of lines' } });
 
   // ── tail ──
   registry.register('tail', ({ args, stdin }) => {
@@ -1084,7 +1103,7 @@ export function registerBuiltins(registry) {
     // Remove trailing empty line from split
     if (lines[lines.length - 1] === '') lines.pop();
     return { stdout: lines.slice(-n).join('\n') + '\n', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Output last lines of stdin', category: 'Text Processing', usage: 'tail [-n N]', flags: { '-n': 'Number of lines' } });
 
   // ── grep ──
   registry.register('grep', ({ args, stdin }) => {
@@ -1127,7 +1146,7 @@ export function registerBuiltins(registry) {
       return { stdout: '', stderr: '', exitCode: 1 };
     }
     return { stdout: matched.join('\n') + '\n', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Search stdin for pattern matches', category: 'Text Processing', usage: 'grep [-ivc] PATTERN', flags: { '-i': 'Case insensitive', '-v': 'Invert match', '-c': 'Count only' } });
 
   // ── wc ──
   registry.register('wc', ({ args, stdin }) => {
@@ -1145,7 +1164,7 @@ export function registerBuiltins(registry) {
     if (onlyChars) return { stdout: charCount + '\n', stderr: '', exitCode: 0 };
 
     return { stdout: `${lineCount} ${wordCount} ${charCount}\n`, stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Count lines, words, and characters', category: 'Text Processing', usage: 'wc [-lwc]', flags: { '-l': 'Lines only', '-w': 'Words only', '-c': 'Chars only' } });
 
   // ── sort ──
   registry.register('sort', ({ args, stdin }) => {
@@ -1165,7 +1184,7 @@ export function registerBuiltins(registry) {
     if (unique) lines = [...new Set(lines)];
 
     return { stdout: lines.join('\n') + '\n', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Sort lines of stdin', category: 'Text Processing', usage: 'sort [-rnu]', flags: { '-r': 'Reverse', '-n': 'Numeric', '-u': 'Unique' } });
 
   // ── uniq ──
   registry.register('uniq', ({ args, stdin }) => {
@@ -1193,7 +1212,7 @@ export function registerBuiltins(registry) {
     }
 
     return { stdout: result.join('\n') + '\n', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Filter adjacent duplicate lines', category: 'Text Processing', usage: 'uniq [-c]', flags: { '-c': 'Prefix count' } });
 
   // ── tee ──
   registry.register('tee', async ({ args, stdin, state, fs }) => {
@@ -1218,7 +1237,7 @@ export function registerBuiltins(registry) {
     }
     // tee passes stdin through to stdout
     return { stdout: stdin, stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Write stdin to files and stdout', category: 'File Operations', usage: 'tee [-a] FILE...', flags: { '-a': 'Append' } });
 
   // ── env ──
   registry.register('env', ({ state }) => {
@@ -1227,7 +1246,7 @@ export function registerBuiltins(registry) {
       lines.push(`${k}=${v}`);
     }
     return { stdout: lines.join('\n') + (lines.length > 0 ? '\n' : ''), stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Print environment variables', category: 'Shell', usage: 'env' });
 
   // ── export ──
   registry.register('export', ({ args, state }) => {
@@ -1238,7 +1257,7 @@ export function registerBuiltins(registry) {
       }
     }
     return { stdout: '', stderr: '', exitCode: 0 };
-  });
+  }, { description: 'Set environment variables', category: 'Shell', usage: 'export KEY=VALUE...' });
 
   // ── which ──
   registry.register('which', ({ args, registry }) => {
@@ -1248,13 +1267,50 @@ export function registerBuiltins(registry) {
       return { stdout: `${name}: shell built-in\n`, stderr: '', exitCode: 0 };
     }
     return { stdout: '', stderr: `${name} not found`, exitCode: 1 };
-  });
+  }, { description: 'Show command location', category: 'Shell', usage: 'which COMMAND' });
 
   // ── help ──
-  registry.register('help', ({ registry }) => {
-    const names = registry.names().sort();
-    return { stdout: 'Available commands:\n' + names.map(n => `  ${n}`).join('\n') + '\n', stderr: '', exitCode: 0 };
-  });
+  registry.register('help', ({ args, registry }) => {
+    // help NAME — show specific command details
+    if (args.length > 0) {
+      const name = args[0];
+      if (!registry.has(name)) {
+        return { stdout: '', stderr: `help: no such command: ${name}`, exitCode: 1 };
+      }
+      const meta = registry.getMeta(name) || {};
+      const lines = [name];
+      if (meta.description) lines.push(`  ${meta.description}`);
+      if (meta.usage) lines.push(`\n  Usage: ${meta.usage}`);
+      if (meta.flags) {
+        lines.push('\n  Flags:');
+        for (const [flag, desc] of Object.entries(meta.flags)) {
+          lines.push(`    ${flag.padEnd(16)}${desc}`);
+        }
+      }
+      return { stdout: lines.join('\n') + '\n', stderr: '', exitCode: 0 };
+    }
+
+    // help (no args) — grouped by category
+    const entries = registry.allEntries();
+    const groups = new Map();
+    for (const entry of entries) {
+      const cat = entry.category || 'Other';
+      if (!groups.has(cat)) groups.set(cat, []);
+      groups.get(cat).push(entry);
+    }
+
+    const sortedGroups = [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    const lines = [];
+    for (const [category, cmds] of sortedGroups) {
+      lines.push(`\n${category}:`);
+      cmds.sort((a, b) => a.name.localeCompare(b.name));
+      for (const cmd of cmds) {
+        const desc = cmd.description ? ` — ${cmd.description}` : '';
+        lines.push(`  ${cmd.name.padEnd(16)}${desc}`);
+      }
+    }
+    return { stdout: lines.join('\n') + '\n', stderr: '', exitCode: 0 };
+  }, { description: 'Show help for commands', category: 'Shell', usage: 'help [COMMAND]' });
 }
 
 // ── ClawserShell (main API) ─────────────────────────────────────

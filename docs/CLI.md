@@ -115,7 +115,7 @@ The shell supports pipes (`|`), output redirects (`>`, `>>`), logical operators 
 |---------|-------------|
 | `true` | Exit with code 0 |
 | `false` | Exit with code 1 |
-| `help` | List all available commands |
+| `help [command]` | Show commands grouped by category, or detailed help for a specific command |
 
 ---
 

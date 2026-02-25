@@ -255,8 +255,14 @@
 
     <!-- Tool Management (Block 36) -->
     <div class="panel" id="panelToolMgmt">
-      <div class="panel-header">Tool Management <span class="badge" id="toolMgmtBadge"></span></div>
-      <div class="panel-body panel-body-flush"></div>
+      <div class="panel-header">Tool Management <span class="badge" id="toolMgmtBadge"></span>
+        <div class="tool-mgmt-tabs">
+          <button class="tool-mgmt-tab active" data-tab="browser-tools">Browser Tools</button>
+          <button class="tool-mgmt-tab" data-tab="shell-commands">Shell Commands</button>
+        </div>
+      </div>
+      <div class="panel-body panel-body-flush tool-mgmt-tab-body active" data-tab-body="browser-tools"></div>
+      <div class="panel-body panel-body-flush tool-mgmt-tab-body" data-tab-body="shell-commands"></div>
     </div>
 
     <!-- Agents (Block 37) -->
