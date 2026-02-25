@@ -302,3 +302,13 @@ Virtual shell with AST-based parsing and OPFS file operations.
 **Supporting classes**: `ShellState`, `CommandRegistry`, `ShellFs`, `MemoryFs`
 
 **Exported utilities**: `tokenize(input)`, `parse(input)`, `normalizePath(p)`
+
+---
+
+## Additional References
+
+For complete tool specifications (parameters, permissions, return values), see [TOOLS.md](TOOLS.md).
+
+For configuration panel options and storage keys, see [CONFIG.md](CONFIG.md).
+
+For advanced features (routines, delegation, channels, vault, self-repair, etc.), see [FEATURES.md](FEATURES.md).

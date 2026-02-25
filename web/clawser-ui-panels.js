@@ -35,6 +35,8 @@ export {
   saveSelfRepairSettings,
   renderSelfRepairSection,
   updateCacheStats,
+  saveLimitsSettings,
+  renderLimitsSection,
   saveSandboxSettings,
   renderSandboxSection,
   saveHeartbeatSettings,
@@ -64,6 +66,8 @@ import {
   renderAuthProfilesSection,
   renderSelfRepairSection,
   updateCacheStats,
+  saveLimitsSettings,
+  renderLimitsSection,
   renderSandboxSection,
   renderHeartbeatSection,
   renderOAuthSection,
@@ -91,8 +95,11 @@ export function renderToolRegistry() {
     d.className = 'tl-item';
     const perm = state.browserTools.getPermission(s.name);
     const permClass = `tl-perm-${perm}`;
-    d.innerHTML = `<span class="tl-name">${esc(s.name)}</span><span class="tl-source ${permClass}">${perm}</span>`;
-    d.title = `Click to change permission (current: ${perm})`;
+    const permTip = perm === 'auto' ? 'Tool runs automatically without asking'
+      : perm === 'approve' ? 'Tool asks for your confirmation before running'
+      : 'Tool is blocked and cannot run';
+    d.innerHTML = `<span class="tl-name">${esc(s.name)}</span><span class="tl-source ${permClass}" title="${permTip}">${perm}</span>`;
+    d.title = `Click to change permission (current: ${perm}) \u2014 ${permTip}`;
     d.addEventListener('click', () => {
       const levels = ['auto', 'approve', 'denied'];
       const nextIdx = (levels.indexOf(perm) + 1) % levels.length;
@@ -738,7 +745,10 @@ export function renderToolManagementPanel() {
       const permClass = perm === 'auto' ? 'perm-auto' : perm === 'approve' ? 'perm-approve' : 'perm-denied';
       const desc = (tool.description || '').replace(/^\[MCP\] /, '').slice(0, 50);
       const usage = state.toolUsageStats?.[tool.name] || 0;
-      html += `<div class="tool-item ${permClass}" data-tool="${esc(tool.name)}"><label class="tool-checkbox"><input type="checkbox" ${checked ? 'checked' : ''} data-tool="${esc(tool.name)}" /></label><span class="tool-name">${esc(tool.name)}</span><span class="tool-perm-badge">${perm}</span><span class="tool-desc">${esc(desc)}</span>${usage > 0 ? `<span class="tool-usage">${usage}\u00d7</span>` : ''}</div>`;
+      const permTip = perm === 'auto' ? 'Tool runs automatically without asking'
+        : perm === 'approve' ? 'Tool asks for your confirmation before running'
+        : 'Tool is blocked and cannot run';
+      html += `<div class="tool-item ${permClass}" data-tool="${esc(tool.name)}"><label class="tool-checkbox"><input type="checkbox" ${checked ? 'checked' : ''} data-tool="${esc(tool.name)}" /></label><span class="tool-name">${esc(tool.name)}</span><span class="tool-perm-badge" title="${permTip}">${perm}</span><span class="tool-desc">${esc(desc)}</span>${usage > 0 ? `<span class="tool-usage">${usage}\u00d7</span>` : ''}</div>`;
     }
     html += `</div></div>`;
   }
@@ -826,7 +836,8 @@ function toggleToolDetail(itemEl, toolName) {
       return `<div class="tool-param"><span class="tool-param-name">${esc(n)}</span><span class="tool-param-type">${esc(s.type || 'any')}${req ? ' (required)' : ''}</span><span class="tool-param-desc">${esc(s.description || '')}</span></div>`;
     }).join('')}</div>`;
   }
-  detail.innerHTML = `<div class="tool-detail-desc">${esc(spec.description || 'No description')}</div>${paramHtml}<div class="tool-detail-meta">Source: built-in${usage > 0 ? ` \u00b7 Calls: ${usage}` : ''}${lastUsed ? ` \u00b7 Last: ${_relativeTime(lastUsed)}` : ''}</div><div class="tool-detail-perm">Permission: ${['auto','approve','denied'].map(p => `<label class="tool-perm-radio"><input type="radio" name="perm_${esc(toolName)}" value="${p}" ${perm === p ? 'checked' : ''} /> ${p}</label>`).join('')}</div>`;
+  const _permTips = { auto: 'Tool runs automatically without asking', approve: 'Tool asks for your confirmation before running', denied: 'Tool is blocked and cannot run' };
+  detail.innerHTML = `<div class="tool-detail-desc">${esc(spec.description || 'No description')}</div>${paramHtml}<div class="tool-detail-meta">Source: built-in${usage > 0 ? ` \u00b7 Calls: ${usage}` : ''}${lastUsed ? ` \u00b7 Last: ${_relativeTime(lastUsed)}` : ''}</div><div class="tool-detail-perm">Permission: ${['auto','approve','denied'].map(p => `<label class="tool-perm-radio perm-radio-${p}" title="${_permTips[p]}"><input type="radio" name="perm_${esc(toolName)}" value="${p}" ${perm === p ? 'checked' : ''} /> ${p}</label>`).join('')}</div>`;
 
   itemEl.after(detail);
   itemEl.classList.add('expanded');
@@ -1375,7 +1386,7 @@ export function initPanelListeners() {
   bindToggle('authProfilesToggle', 'authProfilesSection', 'authProfilesArrow');
   bindToggle('oauthToggle', 'oauthSection', 'oauthArrow');
   bindToggle('selfRepairToggle', 'selfRepairSection', 'selfRepairArrow');
-  bindToggle('cacheToggle', 'cacheSection', 'cacheArrow');
+  bindToggle('cacheToggle', 'cacheSection', 'cacheArrow', () => renderLimitsSection());
   bindToggle('sandboxToggle', 'sandboxSection', 'sandboxArrow');
   bindToggle('heartbeatToggle', 'heartbeatSection', 'heartbeatArrow');
   bindToggle('cleanConvToggle', 'cleanConvSection', 'cleanConvArrow', () => renderCleanConversationsSection());
@@ -1410,7 +1421,10 @@ export function initPanelListeners() {
     addMsg('system', 'Model routing chain test: all providers reachable.');
   });
 
-  // Cache controls
+  // Cache & Limits controls (Gap 11.2 / 11.3)
+  $('cfgCacheTTL')?.addEventListener('change', saveLimitsSettings);
+  $('cfgCacheMaxEntries')?.addEventListener('change', saveLimitsSettings);
+  $('cfgMaxToolIter')?.addEventListener('change', saveLimitsSettings);
   $('cacheClear')?.addEventListener('click', () => {
     if (state.responseCache) { state.responseCache.clear(); updateCacheStats(); }
     addMsg('system', 'Response cache cleared.');

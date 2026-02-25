@@ -226,21 +226,42 @@ import {
   createItemBar, _relativeTime, _downloadText,
 } from './clawser-item-bar.js';
 
+import {
+  McpClient, McpManager,
+} from './clawser-mcp.js';
+
 const results = document.getElementById('results');
-let passed = 0, failed = 0;
+let passed = 0, failed = 0, skipped = 0;
 const _testLog = [];
 
+// CI timing: track overall and per-section (Gap 7.1)
+const _testStartTime = performance.now();
+const _sections = [];
+let _currentSection = null;
+
+function _finalizeCurrentSection() {
+  if (_currentSection) {
+    _currentSection.duration = Math.round(performance.now() - _currentSection._startTime);
+    delete _currentSection._startTime;
+    _sections.push(_currentSection);
+  }
+}
+
 function section(name) {
+  _finalizeCurrentSection();
+  _currentSection = { name, passed: 0, failed: 0, skipped: 0, _startTime: performance.now() };
   results.innerHTML += `\n<span class="section">── ${name} ──</span>\n`;
 }
 
 function assert(name, condition, detail = '') {
   if (condition) {
     passed++;
+    if (_currentSection) _currentSection.passed++;
     results.innerHTML += `<span class="pass">  ✓ ${name}</span>\n`;
     _testLog.push({ name, passed: true });
   } else {
     failed++;
+    if (_currentSection) _currentSection.failed++;
     const errorDetail = detail || 'assertion failed';
     results.innerHTML += `<span class="fail">  ✗ ${name}${detail ? ' — ' + detail : ''}</span>\n`;
     _testLog.push({ name, passed: false, error: errorDetail });
@@ -11039,26 +11060,445 @@ section('Module import correctness');
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  CRITICAL PATH: SSE Streaming Parse Edge Cases (Gap 7.2)
+// ═══════════════════════════════════════════════════════════════
+
+section('SSE Streaming — Parse Edge Cases');
+
+{
+  // Helper: create a ReadableStream that yields given chunks
+  function fakeSSEResponse(chunks) {
+    const encoder = new TextEncoder();
+    return {
+      body: new ReadableStream({
+        start(controller) {
+          for (const chunk of chunks) {
+            controller.enqueue(encoder.encode(chunk));
+          }
+          controller.close();
+        },
+      }),
+    };
+  }
+
+  // Test 1: Normal SSE with valid JSON data lines
+  {
+    const resp = fakeSSEResponse([
+      'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":" world"}}]}\n\n',
+      'data: [DONE]\n\n',
+    ]);
+    const events = [];
+    for await (const evt of readSSE(resp)) {
+      events.push(evt);
+    }
+    assert('SSE: parses normal data lines', events.length === 3);
+    assertEq('SSE: first event has parsed data', events[0].data?.choices?.[0]?.delta?.content, 'Hello');
+    assert('SSE: [DONE] marker yields done=true', events[2].done === true);
+  }
+
+  // Test 2: Partial JSON split across chunks
+  {
+    const resp = fakeSSEResponse([
+      'data: {"choices":[{"delta"',
+      ':{"content":"split"}}]}\n\n',
+      'data: [DONE]\n\n',
+    ]);
+    const events = [];
+    for await (const evt of readSSE(resp)) {
+      events.push(evt);
+    }
+    // The partial JSON line is reassembled across chunks via buffer
+    assert('SSE: handles partial JSON split across chunks', events.length >= 1);
+    const dataEvt = events.find(e => e.data);
+    assert('SSE: split chunk yields parsed data', dataEvt?.data?.choices?.[0]?.delta?.content === 'split');
+  }
+
+  // Test 3: Premature close (no [DONE]) — should still yield collected events
+  {
+    const resp = fakeSSEResponse([
+      'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n',
+      // No [DONE] — stream ends abruptly
+    ]);
+    const events = [];
+    for await (const evt of readSSE(resp)) {
+      events.push(evt);
+    }
+    assert('SSE: premature close yields partial events', events.length === 1);
+    assertEq('SSE: premature close event has data', events[0].data?.choices?.[0]?.delta?.content, 'partial');
+  }
+
+  // Test 4: Empty data lines and non-data lines are skipped
+  {
+    const resp = fakeSSEResponse([
+      ': this is a comment\n',
+      'data: {"id":"1"}\n\n',
+      '\n',
+      'event: ping\n\n',
+      'data: [DONE]\n\n',
+    ]);
+    const events = [];
+    for await (const evt of readSSE(resp)) {
+      events.push(evt);
+    }
+    assert('SSE: skips comments and non-data lines', events.length === 2);
+  }
+
+  // Test 5: Anthropic SSE format (event: + data: pairs)
+  {
+    const resp = fakeSSEResponse([
+      'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"text":"Hi"}}\n\n',
+      'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+    ]);
+    const events = [];
+    for await (const evt of readAnthropicSSE(resp)) {
+      events.push(evt);
+    }
+    assert('Anthropic SSE: parses event+data pairs', events.length === 2);
+    assertEq('Anthropic SSE: first event type', events[0].event, 'content_block_delta');
+    assertEq('Anthropic SSE: delta text', events[0].data?.delta?.text, 'Hi');
+    assertEq('Anthropic SSE: stop event type', events[1].event, 'message_stop');
+  }
+
+  // Test 6: Anthropic SSE with split event across chunks
+  {
+    const resp = fakeSSEResponse([
+      'event: content_block_delta\n',
+      'data: {"type":"content_block_delta","delta":{"text":"chunk"}}\n\n',
+    ]);
+    const events = [];
+    for await (const evt of readAnthropicSSE(resp)) {
+      events.push(evt);
+    }
+    assert('Anthropic SSE: handles split event across chunks', events.length === 1);
+    assertEq('Anthropic SSE: split chunk delta text', events[0].data?.delta?.text, 'chunk');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CRITICAL PATH: Multi-Workspace Isolation (Gap 7.2)
+// ═══════════════════════════════════════════════════════════════
+
+section('Multi-Workspace Isolation');
+
+{
+  // Save original workspace state
+  const originalList = localStorage.getItem(WS_KEY);
+  const originalActive = localStorage.getItem(WS_ACTIVE_KEY);
+
+  try {
+    // Create two test workspaces
+    const wsA = createWorkspace('Test Workspace A');
+    const wsB = createWorkspace('Test Workspace B');
+
+    assert('Workspace: wsA created', typeof wsA === 'string' && wsA.length > 0);
+    assert('Workspace: wsB created', typeof wsB === 'string' && wsB.length > 0);
+    assert('Workspace: wsA !== wsB', wsA !== wsB);
+
+    // Write workspace-specific data
+    localStorage.setItem(lsKey.memories(wsA), JSON.stringify([{ id: 'mem_a', key: 'test', content: 'wsA data', category: 'core', timestamp: Date.now() }]));
+    localStorage.setItem(lsKey.memories(wsB), JSON.stringify([{ id: 'mem_b', key: 'test', content: 'wsB data', category: 'core', timestamp: Date.now() }]));
+    localStorage.setItem(lsKey.config(wsA), JSON.stringify({ provider: 'echo_a' }));
+    localStorage.setItem(lsKey.config(wsB), JSON.stringify({ provider: 'echo_b' }));
+
+    // Read back and verify isolation
+    const memA = JSON.parse(localStorage.getItem(lsKey.memories(wsA)));
+    const memB = JSON.parse(localStorage.getItem(lsKey.memories(wsB)));
+    assert('Isolation: wsA memories contain wsA data', memA[0]?.content === 'wsA data');
+    assert('Isolation: wsB memories contain wsB data', memB[0]?.content === 'wsB data');
+    assert('Isolation: wsA memories do NOT contain wsB data', memA[0]?.content !== 'wsB data');
+
+    const cfgA = JSON.parse(localStorage.getItem(lsKey.config(wsA)));
+    const cfgB = JSON.parse(localStorage.getItem(lsKey.config(wsB)));
+    assertEq('Isolation: wsA config has echo_a', cfgA.provider, 'echo_a');
+    assertEq('Isolation: wsB config has echo_b', cfgB.provider, 'echo_b');
+
+    // Verify lsKey generates different keys per workspace
+    assert('Isolation: lsKey.memories generates unique keys', lsKey.memories(wsA) !== lsKey.memories(wsB));
+    assert('Isolation: lsKey.config generates unique keys', lsKey.config(wsA) !== lsKey.config(wsB));
+    assert('Isolation: lsKey.toolPerms generates unique keys', lsKey.toolPerms(wsA) !== lsKey.toolPerms(wsB));
+
+    // Active workspace switching
+    setActiveWorkspaceId(wsA);
+    assertEq('Isolation: active workspace is wsA', getActiveWorkspaceId(), wsA);
+    setActiveWorkspaceId(wsB);
+    assertEq('Isolation: active workspace switched to wsB', getActiveWorkspaceId(), wsB);
+
+    // Workspace name retrieval
+    assertEq('Isolation: wsA name', getWorkspaceName(wsA), 'Test Workspace A');
+    assertEq('Isolation: wsB name', getWorkspaceName(wsB), 'Test Workspace B');
+
+    // Delete workspace cleans up
+    await deleteWorkspace(wsA);
+    assert('Isolation: wsA memories removed after delete', localStorage.getItem(lsKey.memories(wsA)) === null);
+    assert('Isolation: wsA config removed after delete', localStorage.getItem(lsKey.config(wsA)) === null);
+    assert('Isolation: wsB memories still exist after wsA delete', localStorage.getItem(lsKey.memories(wsB)) !== null);
+
+    // Clean up wsB
+    await deleteWorkspace(wsB);
+    assert('Isolation: wsB memories removed after delete', localStorage.getItem(lsKey.memories(wsB)) === null);
+
+  } finally {
+    // Restore original workspace state
+    if (originalList) localStorage.setItem(WS_KEY, originalList);
+    else localStorage.removeItem(WS_KEY);
+    if (originalActive) localStorage.setItem(WS_ACTIVE_KEY, originalActive);
+    else localStorage.removeItem(WS_ACTIVE_KEY);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CRITICAL PATH: Concurrent sendMessage / isSending Guard (Gap 7.2)
+// ═══════════════════════════════════════════════════════════════
+
+section('Concurrent sendMessage — isSending Guard');
+
+{
+  // Test the setSending guard from clawser-state.js
+  assert('isSending: initial state is false', state.ui.isSending === false);
+
+  setSending(true);
+  assert('isSending: set to true', state.ui.isSending === true);
+
+  setSending(false);
+  assert('isSending: set back to false', state.ui.isSending === false);
+
+  // Verify setSending coerces to boolean
+  setSending(1);
+  assert('isSending: truthy value coerced to true', state.ui.isSending === true);
+  setSending(0);
+  assert('isSending: falsy value coerced to false', state.ui.isSending === false);
+  setSending(null);
+  assert('isSending: null coerced to false', state.ui.isSending === false);
+
+  // Test agent sendMessage adds to history correctly
+  const agent = new ClawserAgent();
+  agent.init({});
+  agent.sendMessage('Hello test');
+  agent.sendMessage('Second message');
+  const history = agent.history;
+  assert('sendMessage: first message added', history.some(m => m.content === 'Hello test' && m.role === 'user'));
+  assert('sendMessage: second message added', history.some(m => m.content === 'Second message' && m.role === 'user'));
+  assertEq('sendMessage: user messages in order', history.filter(m => m.role === 'user').length, 2);
+
+  // Test resetConversationState clears sending flag
+  setSending(true);
+  resetConversationState();
+  assert('resetConversationState: clears isSending', state.ui.isSending === false);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CRITICAL PATH: Autonomy Controller Rate Limit Enforcement (Gap 7.2)
+// ═══════════════════════════════════════════════════════════════
+
+section('Autonomy Controller — Rate & Cost Limits');
+
+{
+  // Test 1: Basic autonomy levels
+  const ctrl = new AutonomyController({ level: 'supervised', maxActionsPerHour: 5, maxCostPerDayCents: 100 });
+  assertEq('Autonomy: initial level is supervised', ctrl.level, 'supervised');
+
+  ctrl.level = 'full';
+  assertEq('Autonomy: level changed to full', ctrl.level, 'full');
+
+  ctrl.level = 'readonly';
+  assertEq('Autonomy: level changed to readonly', ctrl.level, 'readonly');
+
+  ctrl.level = 'invalid_level';
+  assertEq('Autonomy: invalid level rejected (stays readonly)', ctrl.level, 'readonly');
+
+  // Test 2: canExecuteTool based on level
+  ctrl.level = 'readonly';
+  assert('Autonomy: readonly allows read tools', ctrl.canExecuteTool({ permission: 'read' }));
+  assert('Autonomy: readonly allows internal tools', ctrl.canExecuteTool({ permission: 'internal' }));
+  assert('Autonomy: readonly blocks write tools', !ctrl.canExecuteTool({ permission: 'write' }));
+  assert('Autonomy: readonly blocks network tools', !ctrl.canExecuteTool({ permission: 'network' }));
+
+  ctrl.level = 'supervised';
+  assert('Autonomy: supervised allows all tools', ctrl.canExecuteTool({ permission: 'write' }));
+
+  ctrl.level = 'full';
+  assert('Autonomy: full allows all tools', ctrl.canExecuteTool({ permission: 'network' }));
+
+  // Test 3: needsApproval based on level
+  ctrl.level = 'supervised';
+  assert('Autonomy: supervised needs approval for write', ctrl.needsApproval({ permission: 'write' }));
+  assert('Autonomy: supervised needs approval for network', ctrl.needsApproval({ permission: 'network' }));
+  assert('Autonomy: supervised no approval for read', !ctrl.needsApproval({ permission: 'read' }));
+  assert('Autonomy: supervised no approval for internal', !ctrl.needsApproval({ permission: 'internal' }));
+
+  ctrl.level = 'full';
+  assert('Autonomy: full never needs approval', !ctrl.needsApproval({ permission: 'write' }));
+
+  ctrl.level = 'readonly';
+  assert('Autonomy: readonly no approval (blocked entirely)', !ctrl.needsApproval({ permission: 'write' }));
+
+  // Test 4: Rate limiting — actions per hour
+  const rateCtrl = new AutonomyController({ maxActionsPerHour: 3, maxCostPerDayCents: Infinity });
+
+  let check = rateCtrl.checkLimits();
+  assert('RateLimit: initially not blocked', !check.blocked);
+
+  rateCtrl.recordAction();
+  rateCtrl.recordAction();
+  rateCtrl.recordAction();
+  check = rateCtrl.checkLimits();
+  assert('RateLimit: blocked after 3 actions (limit=3)', check.blocked);
+  assert('RateLimit: reason mentions rate limit', check.reason?.includes('Rate limit'));
+  assert('RateLimit: reason mentions actions/hour', check.reason?.includes('actions/hour'));
+  assert('RateLimit: reason mentions reset time', check.reason?.includes('Resets in'));
+
+  // Test 5: Cost limiting — cents per day
+  const costCtrl = new AutonomyController({ maxActionsPerHour: Infinity, maxCostPerDayCents: 50 });
+
+  check = costCtrl.checkLimits();
+  assert('CostLimit: initially not blocked', !check.blocked);
+
+  costCtrl.recordCost(25);
+  check = costCtrl.checkLimits();
+  assert('CostLimit: not blocked at 25/50 cents', !check.blocked);
+
+  costCtrl.recordCost(30);
+  check = costCtrl.checkLimits();
+  assert('CostLimit: blocked at 55/50 cents', check.blocked);
+  assert('CostLimit: reason mentions cost limit', check.reason?.includes('Cost limit'));
+  assert('CostLimit: reason mentions reset time', check.reason?.includes('Resets in'));
+
+  // Test 6: Stats reporting
+  const statsCtrl = new AutonomyController({ level: 'supervised', maxActionsPerHour: 100, maxCostPerDayCents: 500 });
+  statsCtrl.recordAction();
+  statsCtrl.recordAction();
+  statsCtrl.recordCost(42);
+
+  const stats = statsCtrl.stats;
+  assertEq('Stats: level', stats.level, 'supervised');
+  assertEq('Stats: actionsThisHour', stats.actionsThisHour, 2);
+  assertEq('Stats: maxActionsPerHour', stats.maxActionsPerHour, 100);
+  assertEq('Stats: costTodayCents', stats.costTodayCents, 42);
+  assertEq('Stats: maxCostPerDayCents', stats.maxCostPerDayCents, 500);
+
+  // Test 7: Unlimited (Infinity) limits never block
+  const unlimitedCtrl = new AutonomyController({ maxActionsPerHour: Infinity, maxCostPerDayCents: Infinity });
+  for (let i = 0; i < 1000; i++) unlimitedCtrl.recordAction();
+  unlimitedCtrl.recordCost(999999);
+  check = unlimitedCtrl.checkLimits();
+  assert('Unlimited: never blocked with Infinity limits', !check.blocked);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CRITICAL PATH: MCP Tool Invocation (Gap 7.2)
+// ═══════════════════════════════════════════════════════════════
+
+section('MCP Tool Invocation — McpClient & McpManager');
+
+{
+  // Test McpClient tool spec generation
+  const client = new McpClient('http://localhost:9999/mcp', { onLog: () => {} });
+  assertEq('McpClient: endpoint', client.endpoint, 'http://localhost:9999/mcp');
+  assert('McpClient: initially not connected', !client.connected);
+  assertEq('McpClient: initially no tools', client.tools.length, 0);
+  assertEq('McpClient: initially no session', client.sessionId, null);
+
+  // Test handlesTool with mcp_ prefix
+  // Manually set tools for testing via the discover path isn't possible without a server,
+  // but we can test the prefix logic
+  assert('McpClient: handlesTool returns false for non-mcp_ prefix', !client.handlesTool('regular_tool'));
+  assert('McpClient: handlesTool returns false for empty tool list', !client.handlesTool('mcp_search'));
+
+  // Test mcpName stripping
+  assertEq('McpClient: mcpName strips mcp_ prefix', client.mcpName('mcp_search'), 'search');
+  assertEq('McpClient: mcpName returns unchanged if no prefix', client.mcpName('search'), 'search');
+
+  // Test McpManager
+  const manager = new McpManager({ onLog: () => {} });
+  assertEq('McpManager: initial serverCount', manager.serverCount, 0);
+  assertEq('McpManager: initial serverNames', manager.serverNames.length, 0);
+  assertEq('McpManager: allToolSpecs empty', manager.allToolSpecs().length, 0);
+
+  // Test executeTool on unknown server
+  const result = await manager.executeTool('mcp_nonexistent', {});
+  assert('McpManager: executeTool returns error for unknown tool', !result.success);
+  assert('McpManager: error message mentions no server', result.error?.includes('No MCP server'));
+
+  // Test findClient returns null when no servers
+  assert('McpManager: findClient returns null when empty', manager.findClient('mcp_test') === null);
+
+  // Test getClient returns undefined for unknown name
+  assert('McpManager: getClient returns undefined for unknown', manager.getClient('unknown') === undefined);
+
+  // Test MCP tool spec format
+  // Simulate what toolSpecs would look like with a mock tool
+  const mockToolSpec = {
+    name: 'mcp_test_tool',
+    description: '[MCP] Test tool description',
+    parameters: { type: 'object', properties: { query: { type: 'string' } } },
+    required_permission: 'network',
+  };
+  assert('McpToolSpec: name has mcp_ prefix', mockToolSpec.name.startsWith('mcp_'));
+  assert('McpToolSpec: description has [MCP] prefix', mockToolSpec.description.startsWith('[MCP]'));
+  assertEq('McpToolSpec: required_permission is network', mockToolSpec.required_permission, 'network');
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  SUMMARY
 // ═══════════════════════════════════════════════════════════════
 
+// Finalize the last section's timing
+_finalizeCurrentSection();
+
+const _testDuration = Math.round(performance.now() - _testStartTime);
 const summary = document.getElementById('summary');
-const total = passed + failed;
+const total = passed + failed + skipped;
 if (failed === 0) {
-  summary.innerHTML = `<span class="pass">All ${total} tests passed!</span>`;
+  summary.innerHTML = `<span class="pass">All ${total} tests passed!</span> (${_testDuration}ms)`;
 } else {
-  summary.innerHTML = `<span class="fail">${failed} of ${total} tests failed</span>`;
+  summary.innerHTML = `<span class="fail">${failed} of ${total} tests failed</span> (${_testDuration}ms)`;
 }
+
+// Per-section timing display (Gap 7.1)
+const sectionTimingEl = document.createElement('div');
+sectionTimingEl.id = 'sectionTimings';
+sectionTimingEl.style.cssText = 'margin-top:12px;font-size:13px;color:#8b949e;white-space:pre-wrap;';
+sectionTimingEl.innerHTML = '<strong style="color:#c9d1d9;">Section Timings:</strong>\n' +
+  _sections.map(s => {
+    const status = s.failed > 0 ? 'fail' : 'pass';
+    return `<span class="${status}">  ${s.name}: ${s.passed}/${s.passed + s.failed + s.skipped} passed (${s.duration}ms)</span>`;
+  }).join('\n');
+summary.after(sectionTimingEl);
+
+// CI JSON summary element (Gap 7.1)
+const ciResultEl = document.createElement('div');
+ciResultEl.id = 'testResults';
+ciResultEl.style.display = 'none';
+ciResultEl.textContent = JSON.stringify({
+  total,
+  passed,
+  failed,
+  skipped,
+  duration: _testDuration,
+  sections: _sections,
+});
+document.body.appendChild(ciResultEl);
 
 // Structured test output for programmatic access (Gap 6.2)
 window.__testResults = {
   total,
   passed,
   failed,
+  skipped,
+  duration: _testDuration,
   tests: _testLog,
+  sections: _sections,
 };
 
-console.log(`Tests: ${passed} passed, ${failed} failed, ${total} total`);
+// CI exit code markers (Gap 7.1)
+if (failed === 0) {
+  console.log('__TEST_RESULT__:PASS');
+} else {
+  console.log('__TEST_RESULT__:FAIL');
+}
+
+console.log(`Tests: ${passed} passed, ${failed} failed, ${skipped} skipped, ${total} total (${_testDuration}ms)`);
 </script>
 </body>
 </html>

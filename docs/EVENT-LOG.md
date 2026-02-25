@@ -143,3 +143,51 @@ Clawser supports three persistence formats with automatic migration:
 3. **v0**: Binary checkpoint only
 
 On restore, v1 and v0 formats are automatically migrated to v2.
+
+---
+
+## Checkpoint Format
+
+Checkpoints serialize the agent's in-memory state to OPFS for crash recovery.
+
+### Binary Encoding
+
+Checkpoints are stored as JSON-encoded `Uint8Array` files:
+
+1. Agent state object is constructed:
+   ```json
+   {
+     "history": [...],
+     "goals": [...],
+     "schedulerJobs": [...],
+     "goalIdCounter": 42
+   }
+   ```
+2. Serialized to JSON string via `JSON.stringify()`
+3. Encoded to `Uint8Array` via `TextEncoder`
+4. Written to OPFS file (e.g., `latest.bin`)
+
+### Storage Location
+
+```
+clawser_workspaces/{workspaceId}/.checkpoints/latest.bin
+```
+
+### Migration Chain
+
+Checkpoint restore follows a 3-level fallback hierarchy:
+
+1. **v2**: OPFS directory-based (`clawser_workspaces/{wsId}/.checkpoints/latest.bin`)
+2. **v1**: OPFS single-file (`clawser_conversations/{conversationId}.bin`)
+3. **v0**: Legacy binary format (raw `Uint8Array` without JSON wrapper)
+
+Each level is attempted in order. If a higher-priority checkpoint is found, lower-priority ones are ignored.
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `history` | `Message[]` | Full conversation history (role, content, tool_calls) |
+| `goals` | `Goal[]` | Active goals with status, progress, artifacts |
+| `schedulerJobs` | `SchedulerJob[]` | Pending scheduled tasks (once, interval, cron) |
+| `goalIdCounter` | `number` | Auto-increment counter for goal IDs |

@@ -459,10 +459,20 @@ export class AutonomyController {
     }
 
     if (this.#actionsThisHour >= this.#maxActionsPerHour) {
-      return { blocked: true, reason: `Rate limit: ${this.#maxActionsPerHour} actions/hour exceeded` };
+      const minsUntilReset = Math.ceil((3_600_000 - (now - this.#hourStart)) / 60_000);
+      return {
+        blocked: true,
+        reason: `Rate limit: ${this.#maxActionsPerHour} actions/hour exceeded. Resets in ~${minsUntilReset} min.`,
+        stats: this.stats,
+      };
     }
     if (this.#costTodayCents >= this.#maxCostPerDayCents) {
-      return { blocked: true, reason: `Cost limit: $${(this.#maxCostPerDayCents / 100).toFixed(2)}/day exceeded` };
+      const hoursUntilReset = Math.ceil((86_400_000 - (now - this.#dayStart)) / 3_600_000);
+      return {
+        blocked: true,
+        reason: `Cost limit: $${(this.#maxCostPerDayCents / 100).toFixed(2)}/day exceeded. Resets in ~${hoursUntilReset}h.`,
+        stats: this.stats,
+      };
     }
     return { blocked: false };
   }
@@ -754,6 +764,14 @@ export class ClawserAgent {
     if (agentDef.maxTurnsPerRun != null) {
       this.#config.maxToolIterations = agentDef.maxTurnsPerRun;
     }
+  }
+
+  /**
+   * Set the maximum tool call iterations per run (Gap 11.3).
+   * @param {number} n
+   */
+  setMaxToolIterations(n) {
+    if (typeof n === 'number' && n > 0) this.#config.maxToolIterations = n;
   }
 
   /** Get available providers with availability info */
@@ -1426,16 +1444,38 @@ export class ClawserAgent {
       let fullToolCalls = [];
       let fullResponse = null;
 
-      for await (const chunk of provider.chatStream(request, this.#apiKey, this.#model, options)) {
-        yield chunk;
+      try {
+        for await (const chunk of provider.chatStream(request, this.#apiKey, this.#model, options)) {
+          yield chunk;
 
-        if (chunk.type === 'text') {
-          fullContent += chunk.text;
-        } else if (chunk.type === 'done') {
-          fullResponse = chunk.response;
-          fullContent = chunk.response.content || fullContent;
-          fullToolCalls = chunk.response.tool_calls || [];
-        } else if (chunk.type === 'error') {
+          if (chunk.type === 'text') {
+            fullContent += chunk.text;
+          } else if (chunk.type === 'done') {
+            fullResponse = chunk.response;
+            fullContent = chunk.response.content || fullContent;
+            fullToolCalls = chunk.response.tool_calls || [];
+          } else if (chunk.type === 'error') {
+            return;
+          }
+        }
+      } catch (streamErr) {
+        // Stream interrupted (network drop, timeout, etc.)
+        this.#eventLog.append('stream_error', {
+          message: streamErr.message,
+          partialContentLength: fullContent.length,
+        }, 'system');
+
+        if (fullContent) {
+          // Partial content was received — keep it and continue
+          this.#onLog(3, `Stream interrupted with ${fullContent.length} chars of partial content: ${streamErr.message}`);
+          fullResponse = {
+            content: fullContent, tool_calls: [],
+            usage: { input_tokens: 0, output_tokens: 0 },
+            model: this.#model || '',
+          };
+        } else {
+          // No content received — yield error and stop
+          yield { type: 'error', error: `Stream error: ${streamErr.message}` };
           return;
         }
       }
@@ -2166,6 +2206,9 @@ export class ClawserAgent {
       const wsDir = await this.#getWorkspaceDir(root, true);
       const cpDir = await wsDir.getDirectoryHandle('.checkpoints', { create: true });
       const file = await cpDir.getFileHandle('latest.bin', { create: true });
+      // Atomic write: per WHATWG File System spec, createWritable() writes to a
+      // swap file; the original is only replaced when close() succeeds. If close()
+      // is never called (crash, error), the previous file remains intact.
       const writable = await file.createWritable();
       await writable.write(bytes);
       await writable.close();
@@ -2264,6 +2307,7 @@ export class ClawserAgent {
       const convIdDir = await convDir.getDirectoryHandle(convId, { create: true });
 
       // Write meta.json
+      // Atomic write: createWritable() uses a swap file; original only replaced on close().
       const meta = {
         id: convId,
         name: metadata.name || convId,
@@ -2276,7 +2320,7 @@ export class ClawserAgent {
       await metaWritable.write(JSON.stringify(meta));
       await metaWritable.close();
 
-      // Write events.jsonl
+      // Write events.jsonl (same atomic guarantee via createWritable swap file)
       const eventsFile = await convIdDir.getFileHandle('events.jsonl', { create: true });
       const eventsWritable = await eventsFile.createWritable();
       await eventsWritable.write(this.#eventLog.toJSONL());

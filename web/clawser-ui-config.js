@@ -5,7 +5,7 @@
  * identity, model routing, auth profiles, OAuth, self-repair, cache, sandbox,
  * heartbeat, dashboard, and header badges (cost meter, autonomy, daemon, remote).
  */
-import { $, esc, state, lsKey } from './clawser-state.js';
+import { $, esc, state, lsKey, DEFAULTS } from './clawser-state.js';
 import { modal } from './clawser-modal.js';
 import { addMsg, addErrorMsg } from './clawser-ui-chat.js';
 import { OAUTH_PROVIDERS } from './clawser-oauth.js';
@@ -279,6 +279,70 @@ export function updateCacheStats() {
   if (!el || !state.responseCache) return;
   const stats = state.responseCache.stats;
   el.textContent = `Hits: ${stats.totalHits || 0} \u00b7 Misses: ${stats.totalMisses || 0} \u00b7 Entries: ${stats.entries || 0}`;
+}
+
+// ── Cache & Limits (Gap 11.2 / 11.3) ──────────────────────────────
+
+/**
+ * Save cache TTL, max entries, and max tool iterations to workspace config
+ * and apply them live to the ResponseCache instance and agent config.
+ */
+export function saveLimitsSettings() {
+  const wsId = state.agent?.getWorkspace() || 'default';
+  const cacheTtlMin = parseInt($('cfgCacheTTL')?.value) || 30;
+  const cacheMaxEntries = parseInt($('cfgCacheMaxEntries')?.value) || DEFAULTS.cacheMaxEntries;
+  const maxToolIter = parseInt($('cfgMaxToolIter')?.value) || DEFAULTS.maxToolIterations;
+
+  // Persist to workspace config
+  try {
+    const raw = localStorage.getItem(lsKey.config(wsId));
+    const config = raw ? JSON.parse(raw) : {};
+    config.cacheTtlMs = cacheTtlMin * 60_000;
+    config.cacheMaxEntries = cacheMaxEntries;
+    config.maxToolIterations = maxToolIter;
+    localStorage.setItem(lsKey.config(wsId), JSON.stringify(config));
+  } catch (e) { console.warn('[clawser] saveLimitsSettings failed', e); }
+
+  // Apply live to ResponseCache
+  if (state.responseCache) {
+    state.responseCache.ttl = cacheTtlMin * 60_000;
+    state.responseCache.maxEntries = cacheMaxEntries;
+  }
+
+  // Apply live to agent config
+  if (state.agent) {
+    state.agent.setMaxToolIterations(maxToolIter);
+  }
+}
+
+/**
+ * Render/restore cached limits section values from workspace config.
+ * Called when the "Cache & Limits" config section is opened or on workspace init.
+ */
+export function renderLimitsSection() {
+  const wsId = state.agent?.getWorkspace() || 'default';
+  let saved = null;
+  try {
+    saved = JSON.parse(localStorage.getItem(lsKey.config(wsId)) || 'null');
+  } catch { /* ignore */ }
+
+  // Restore input values from saved config (or use DEFAULTS)
+  const ttlMin = saved?.cacheTtlMs != null ? Math.round(saved.cacheTtlMs / 60_000) : 30;
+  const maxEntries = saved?.cacheMaxEntries ?? DEFAULTS.cacheMaxEntries;
+  const maxToolIter = saved?.maxToolIterations ?? DEFAULTS.maxToolIterations;
+
+  if ($('cfgCacheTTL')) $('cfgCacheTTL').value = ttlMin;
+  if ($('cfgCacheMaxEntries')) $('cfgCacheMaxEntries').value = maxEntries;
+  if ($('cfgMaxToolIter')) $('cfgMaxToolIter').value = maxToolIter;
+
+  // Apply to runtime objects
+  if (state.responseCache) {
+    state.responseCache.ttl = ttlMin * 60_000;
+    state.responseCache.maxEntries = maxEntries;
+  }
+  if (state.agent) {
+    state.agent.setMaxToolIterations(maxToolIter);
+  }
 }
 
 /** Save sandbox capability gates and apply to tool permissions. */

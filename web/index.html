@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>clawser — browser agent workspace</title>
   <link rel="manifest" href="./manifest.json">
+  <link rel="apple-touch-icon" href="./icons/icon-192.png">
   <meta name="theme-color" content="#58a6ff">
   <link rel="stylesheet" href="./clawser.css">
 </head>
@@ -485,18 +486,22 @@
           </div>
         </div>
 
-        <!-- Response Cache (Block 26) -->
+        <!-- Response Cache & Agent Limits (Block 26 + Gap 11.2/11.3) -->
         <div class="config-group config-toggle" id="cacheToggle" aria-expanded="false" aria-controls="cacheSection">
-          <label class="config-toggle">Response Cache <span id="cacheArrow" class="config-arrow">&#x25B6;</span></label>
+          <label class="config-toggle">Cache &amp; Limits <span id="cacheArrow" class="config-arrow">&#x25B6;</span></label>
         </div>
         <div id="cacheSection" class="config-section-hidden">
           <div class="config-group">
-            <label>TTL (minutes)</label>
+            <label>Cache TTL (minutes)</label>
             <input type="number" id="cfgCacheTTL" class="cfg-narrow" min="1" max="1440" value="30" />
           </div>
           <div class="config-group">
-            <label>Max Entries</label>
+            <label>Cache Max Entries</label>
             <input type="number" id="cfgCacheMaxEntries" class="cfg-narrow" min="10" max="5000" value="500" />
+          </div>
+          <div class="config-group">
+            <label>Max Tool Iterations</label>
+            <input type="number" id="cfgMaxToolIter" class="cfg-narrow" min="1" max="100" value="20" />
           </div>
           <div class="config-group">
             <label>Cache Stats</label>

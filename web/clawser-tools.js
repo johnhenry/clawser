@@ -487,6 +487,12 @@ export class FsWriteTool extends BrowserTool {
       return { success: false, output: '', error: `File exceeds ${maxMB}MB limit (${byteSize} bytes)` };
     }
 
+    // Storage quota check before write
+    const quota = await checkQuota();
+    if (quota.critical) {
+      return { success: false, output: '', error: `Storage quota critically low (${quota.percent.toFixed(1)}% used). Free space before writing.` };
+    }
+
     const resolved = this.#ws.resolve(path);
     const root = await navigator.storage.getDirectory();
     const parts = resolved.split('/');

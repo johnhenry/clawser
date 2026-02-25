@@ -101,15 +101,19 @@ export function createItemBar(config) {
     // Search/filter input
     const searchRow = document.createElement('div');
     searchRow.className = 'item-bar-search-row';
+    searchRow.style.cssText = 'padding:4px;border-bottom:1px solid var(--border,#555);';
     const searchInput = document.createElement('input');
     searchInput.type = 'text';
     searchInput.className = 'item-bar-search';
-    searchInput.placeholder = `Filter ${config.label.toLowerCase()}s...`;
+    searchInput.placeholder = 'Filter...';
+    searchInput.style.cssText = 'width:100%;padding:4px 8px;border:1px solid var(--border,#555);border-radius:4px;background:var(--bg,#1e1e1e);color:var(--text,#ccc);font-size:11px;box-sizing:border-box;outline:none;';
     searchInput.value = searchFilter;
     searchInput.addEventListener('input', () => {
       searchFilter = searchInput.value;
       renderDropdownEntries();
     });
+    searchInput.addEventListener('focus', () => { searchInput.style.borderColor = 'var(--accent,#007acc)'; });
+    searchInput.addEventListener('blur', () => { searchInput.style.borderColor = 'var(--border,#555)'; });
     searchInput.addEventListener('click', (e) => e.stopPropagation());
     searchRow.appendChild(searchInput);
     dropdown.appendChild(searchRow);

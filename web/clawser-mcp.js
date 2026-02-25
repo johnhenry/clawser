@@ -175,7 +175,7 @@ export class McpClient {
       method: 'POST',
       headers,
       body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
-    });
+    }).catch(e => this.#onLog(3, `MCP: initialized notification failed (non-blocking): ${e.message}`));
 
     // Discover tools
     await this.discoverTools();

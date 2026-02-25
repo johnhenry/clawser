@@ -332,9 +332,9 @@ header .dot.error { background:var(--red); }
 .ti-summary { margin-left:auto; color:var(--dim); }
 
 /* ── Tool registry permission states ──────────────── */
-.tl-perm-auto { color:var(--green); }
-.tl-perm-approve { color:var(--orange); }
-.tl-perm-denied { color:var(--red); }
+.tl-perm-auto { color:var(--green); background:rgba(63,185,80,.13); padding:1px 4px; border-radius:2px; font-size:10px; }
+.tl-perm-approve { color:var(--orange); background:rgba(234,179,8,.13); padding:1px 4px; border-radius:2px; font-size:10px; }
+.tl-perm-denied { color:var(--red); background:rgba(248,84,84,.13); padding:1px 4px; border-radius:2px; font-size:10px; }
 
 /* ── Extracted inline styles ─────────────────────────── */
 
@@ -626,8 +626,11 @@ input[type="range"] { width:100%; accent-color:var(--accent); }
 .tool-param-desc { color:var(--muted); }
 .tool-detail-meta { color:var(--muted); font-size:10px; margin-top:8px; }
 .tool-detail-perm { margin-top:6px; display:flex; gap:12px; align-items:center; }
-.tool-perm-radio { font-size:10px; color:var(--text); cursor:pointer; }
+.tool-perm-radio { font-size:10px; color:var(--text); cursor:pointer; padding:2px 6px; border-radius:3px; }
 .tool-perm-radio input { accent-color:var(--accent); }
+.perm-radio-auto { color:var(--green); }
+.perm-radio-approve { color:#eab308; }
+.perm-radio-denied { color:var(--red); }
 .tool-bulk-actions { display:flex; gap:8px; padding:8px; border-top:1px solid var(--border); }
 .tool-bulk-actions button { padding:4px 10px; border:1px solid var(--border); border-radius:3px; background:none; color:var(--muted); font-size:10px; cursor:pointer; }
 .tool-bulk-actions button:hover { background:rgba(88,166,255,.04); color:var(--text); }

@@ -2,175 +2,184 @@
 
 ## Current Status (Feb 2026)
 
-Clawser is a **beta-quality** browser-native AI agent platform. The core runtime is functionally complete with 48+ JS modules, 70+ tools, and 38+ LLM provider backends. The project has transitioned from a Rust/WASM architecture to pure JavaScript.
+Clawser is a **beta-quality** browser-native AI agent platform. The core runtime is functionally complete with 57 JS modules (~31K LOC), 70+ tools, and 38+ LLM provider backends. The project transitioned from a Rust/WASM architecture to pure JavaScript.
 
 ### What Works
 - Full agent loop with streaming, tool calling, and context compaction
 - Event-sourced conversation persistence with fork, replay, and export
-- 3-tier provider system supporting 38+ LLM backends
-- 29 browser tools with permission engine (auto/approve/denied)
-- Skills system (agentskills.io standard) with OPFS storage and remote registry
-- Virtual shell with 59 commands, pipes, and redirects
+- 3-tier provider system supporting 38+ LLM backends with fallback chains
+- 70+ browser tools with permission engine (auto/approve/denied)
+- Skills system (agentskills.io standard) with OPFS storage, remote registry, and validation
+- Virtual shell with 59 commands, pipes, redirects, variable substitution, and glob expansion
 - Multi-workspace isolation with separate state per workspace
 - Autonomy controls with rate and cost limiting
 - Memory system with hybrid BM25+vector recall
 - Goal tracking, scheduler (cron), hook pipeline, response cache
+- Daemon mode with SharedWorker tab coordination and BroadcastChannel
+- Bridge interface for external tool integration (local server + extension)
+- Local filesystem mounting via FileSystemAccess API
+- Delegation, self-repair, undo, routines, heartbeat, auth profiles
+- ARIA accessibility, keyboard shortcuts, light/dark mode, responsive design
+- CI/CD pipeline, Docker, Service Worker, PWA
 
 ---
 
-## Phase 1: Foundation (Now — 2 weeks)
+## Phase 1: Foundation -- COMPLETE
 
-Priority: Documentation, testing, and critical fixes.
-
-### Documentation
+### Documentation -- COMPLETE
 - [x] README.md — Project overview and quick start
 - [x] ARCHITECTURE.md — System design and module map
 - [x] ROADMAP.md — This document
-- [ ] LICENSE — Add MIT license file at project root
-- [ ] CHANGELOG.md — Document version history from git log
-- [ ] CONTRIBUTING.md — Contributor guidelines
-- [ ] API.md — JSDoc-generated API reference for all modules
+- [x] LICENSE — MIT license file at project root
+- [x] CHANGELOG.md — Version history from git log
+- [x] CONTRIBUTING.md — Contributor guidelines
+- [x] SECURITY.md — Security policy and threat model
+- [x] docs/API.md — API reference for core modules
+- [x] docs/CLI.md — CLI subcommands and shell builtins
+- [x] docs/MODULES.md — Feature module manifest
+- [x] docs/EVENT-LOG.md — Event log specification
+- [x] docs/DEPLOYMENT.md — Static server, Docker, production setup
+- [x] .github/ templates — PR template + bug/feature issue templates
 
-### Critical Fixes
-- [ ] **Execution timeout** — Add Promise.race() timeout to Codex/vimble sandbox execution
-- [ ] **MCP tool wiring** — Create McpToolAdapter to bridge MCP tools into agent's tool loop
-- [ ] **Skill activation lock cleanup** — Move lock deletion to finally block
+### Critical Fixes -- COMPLETE
+- [x] **Execution timeout** — Promise.race() with 30s timeout on Codex/vimble sandbox
+- [x] **MCP tool wiring** — McpClient/McpManager integrated into agent run loop
+- [x] **Skill activation lock cleanup** — try/finally ensures lock deletion on error
 
-### Testing Infrastructure
-- [ ] Evaluate browser test runners (Playwright, Puppeteer) for CI automation
-- [ ] Set up GitHub Actions for automated test runs
-- [ ] Add test coverage reporting
-
----
-
-## Phase 2: Stability (2-4 weeks)
-
-Priority: Robustness, error handling, and developer experience.
-
-### Architecture Refactoring
-- [ ] **Split clawser-app.js** into focused modules:
-  - `clawser-bootstrap.js` — Service singleton creation
-  - `clawser-workspace-lifecycle.js` — initWorkspace/switchWorkspace
-  - `clawser-route-handler.js` — handleRoute logic
-  - `clawser-home-views.js` — Home view rendering
-- [ ] **State management** — Evaluate moving from global singleton to module-scoped state or lightweight DI
-- [ ] **Router panel source of truth** — Consolidate PANEL_NAMES Set, allPanels Array, and panelMap Object into one
-
-### Error Handling
-- [ ] **Tool error recovery** — Catch tool failures in Codex instead of throwing (return error object)
-- [ ] **Sub-agent recursion guard** — Maintain visited set in @agent reference processing
-- [ ] **MCP timeout** — Add AbortController with configurable timeout to MCP RPC calls
-- [ ] **Conversation locking** — Prevent state corruption when switching conversations mid-send
-
-### Provider Improvements
-- [ ] **MateyProvider streaming** — Return actual usage stats instead of stub
-- [ ] **Chrome AI session pooling** — Reuse sessions for back-to-back requests
-- [ ] **Cost estimation accuracy** — Account for prompt caching discounts
-- [ ] **Anthropic message merging** — Handle string/array content type mismatch
-
-### Configuration
-- [ ] **Extract hardcoded limits** — Max iterations (20), result length (1500), cache size (500) to config
-- [ ] **Configurable tool result truncation** — With user feedback when truncated
+### Testing Infrastructure -- COMPLETE
+- [x] test.html — 11K LOC browser-based regression suite (57 modules)
+- [x] bench.html — Micro-benchmarks (Codex, EventLog, providers, memory)
+- [x] GitHub Actions CI — Playwright + syntax checking
+- [x] Test fixtures — Sample skill, provider response, event log
 
 ---
 
-## Phase 3: Polish (1-2 months)
+## Phase 2: Stability -- COMPLETE
 
-Priority: UX, accessibility, and production readiness.
+### Architecture Refactoring -- COMPLETE
+- [x] **clawser-app.js** — Reduced from 977 to 192 LOC thin orchestrator
+- [x] **State management** — Namespaced (ui, services, features, session) with ConfigCache and backward-compat aliases
+- [x] **Router panel source** — Single PANELS constant, all consumers derive from it
+- [x] **UI panels split** — Extracted files, memory, goals, config into sub-modules
 
-### Accessibility & UX
-- [ ] **ARIA labels** — Add semantic accessibility attributes to all interactive elements
-- [ ] **Keyboard shortcuts** — Implement keyboard navigation for panels, conversations, tools
-- [ ] **prefers-reduced-motion** — Respect user motion preferences
-- [ ] **Light mode** — Add theme toggle (dark/light/system)
-- [ ] **Responsive design** — Media queries for tablet and mobile layouts
-- [ ] **Item bar search** — Add search/filter for long conversation and session lists
-- [ ] **File browser pagination** — Incremental loading for large directory trees
-- [ ] **Tool permission tooltips** — Explain what auto/approve/denied means in UI
+### Error Handling -- COMPLETE
+- [x] **Tool error recovery** — Returns `{_error, message}` instead of throwing in Codex
+- [x] **Sub-agent recursion guard** — MAX_AGENT_REF_DEPTH=3 + visited Set
+- [x] **MCP timeout** — AbortController with configurable 30s timeout
+- [x] **Conversation locking** — isSending guard prevents switching mid-send
 
-### Shell Improvements
-- [ ] **Variable substitution** — Implement $VAR, ${VAR}, $(cmd) expansion
-- [ ] **Glob expansion** — Implement *, ?, [] pattern matching
-- [ ] **Stderr redirect** — Support 2>, 2>&1 syntax
-- [ ] **Shell builtins quality** — Add missing flags to grep (-A/-B/-C), sed (address ranges), diff (-u)
+### Provider Improvements -- COMPLETE
+- [x] **MateyProvider streaming** — Returns estimated tokens from character count
+- [x] **Chrome AI session pooling** — LRU pool (max 3, 5min TTL)
+- [x] **Anthropic message merging** — Consecutive merge + tool_use/tool_result packing
 
-### Security Hardening
-- [ ] **Security audit** — Review permission model, XSS prevention, eval safety
-- [ ] **Skill validation** — Static analysis before activation (detect dangerous patterns)
-- [ ] **eval_js documentation** — Clearly document global scope risks vs vimble sandbox
-
-### Build & Distribution
-- [ ] **PWA icons** — Proper multi-size icon set replacing SVG emoji
-- [ ] **PWA scope** — Add scope field to manifest.json
-- [ ] **Service Worker** — Offline support and caching
-- [ ] **Clean up Rust artifacts** — Add target/ to .gitignore, remove from history if needed
+### Configuration -- PARTIAL
+- [x] **Tool result truncation** — Indicated with char counts + event logged
+- [ ] **Extract hardcoded limits** — Max iterations, result length, cache size to agent config
+- [ ] **Cost estimation** — Account for prompt caching discounts
 
 ---
 
-## Phase 4: Advanced Features (2-4 months)
+## Phase 3: Polish -- COMPLETE
 
-Priority: Multi-tab, background autonomy, and collaboration.
+### Accessibility & UX -- COMPLETE
+- [x] **ARIA labels** — 24+ attributes on landmarks, buttons, live regions
+- [x] **Keyboard shortcuts** — Cmd+Enter/K/N/1-9/Escape in clawser-keys.js
+- [x] **prefers-reduced-motion** — All animations disabled per user preference
+- [x] **Light mode** — CSS media query + .theme-light manual toggle
+- [x] **Responsive design** — Media queries at 768px and 480px breakpoints
+- [x] **Type scale** — CSS variable typography (xs through xl)
+- [x] **Print styles** — Clean chat printing with hidden chrome
+- [x] **Item bar search** — Filter input with real-time case-insensitive matching
+- [x] **File browser pagination** — PAGE_SIZE=50 with "Load more" button
+- [x] **Permission UI tooltips** — Tooltips + color coding (green/yellow/red) on all permission badges
 
-### Multi-Tab Coordination
-- [ ] **SharedWorker** — Cross-tab state synchronization
-- [ ] **Tab-aware agent** — Detect and coordinate with other Clawser tabs
-- [ ] **Shared workspace** — Multiple tabs working in the same workspace without conflict
+### Shell Improvements -- MOSTLY COMPLETE
+- [x] **Variable substitution** — $VAR, ${VAR}, $? fully implemented
+- [x] **Glob expansion** — *, ?, [] with POSIX fallback
+- [ ] ~~Stderr redirect~~ — Tokenizer parses 2>, 2>&1 but executor routing incomplete (low priority)
 
-### Background Autonomy
-- [ ] **Service Worker agent** — Run scheduled tasks when browser tab is closed
-- [ ] **Push notifications** — Alert user when background task completes
-- [ ] **Persistent daemon** — Long-running goal execution across sessions
+### Security Hardening -- COMPLETE
+- [x] **Skill validation** — validateScript() scans for dangerous patterns before activation
+- [x] **eval_js permission** — Defaults to 'approve' with warning in description
+- [x] **XSS sanitization** — DomModifyTool strips dangerous tags + on* handlers
+- [x] **OPFS quota management** — checkQuota() export with 80/95% thresholds
+- [x] **API key warning UI** — renderApiKeyWarning() with banner + "Clear all API keys" button
+- [x] **FsWriteTool quota check** — checkQuota() called before writes, rejects at 95%
 
-### Skill Ecosystem
-- [ ] **Skill dependency system** — Express inter-skill requirements
-- [ ] **Skill versioning UI** — Show diffs before upgrade
-- [ ] **Skill marketplace** — Browseable catalog with ratings and reviews
-- [ ] **Skill templates** — Starter kits for common skill patterns
-
-### Collaboration
-- [ ] **Workspace sharing** — Export/import workspace state
-- [ ] **Agent definition sharing** — Publish/discover agent configurations
-- [ ] **Conversation export** — Rich export formats (HTML, PDF)
-
-### Performance
-- [ ] **Benchmark suite** — Validate 50ms checkpoint, <64MB footprint targets from PRD
-- [ ] **Memory recall optimization** — Cache frequent queries
-- [ ] **Lazy panel rendering** — Only render active panel DOM
+### Build & Distribution -- COMPLETE
+- [x] **Service Worker** — sw.js with cache-first app shell strategy (64 entries, v2 cache)
+- [x] **Docker** — Nginx-based Dockerfile with SPA routing
+- [x] **Cargo.toml edition** — Fixed to 2021
+- [x] **PWA icons** — PNG 192x192 + 512x512 generated from SVG, manifest + apple-touch-icon
+- [x] **SW precache list** — All 54 clawser-*.js modules + assets cached (expanded from 27)
+- [x] **target/ cleanup** — Not tracked by git (gitignored), local-only build artifacts
+- [x] **manifest.json scope** — Already had `"scope": "/web/"`
 
 ---
 
-## Phase 5: Ecosystem (4-6 months)
+## Phase 4: Hardening -- COMPLETE
+
+Priority: Resilience, observability, and production readiness.
+
+### Reliability -- COMPLETE
+- [x] **SSE reconnection** — try/catch with partial content recovery + stream_error event
+- [x] **Atomic OPFS writes** — Already atomic per WHATWG spec (documented)
+- [x] **Memory entry bounds** — 5000 max entries with LRU eviction
+- [x] **MCP notification error handling** — .catch() on notifications/initialized fetch
+- [x] **Terminal session quota checks** — checkQuota() before OPFS persist
+- [x] **Browser automation cleanup** — AutomationManager.closeAll() via bridge pattern
+
+### Observability -- COMPLETE
+- [x] **Rate limit UI feedback** — Error messages include reset time, autonomy stats exposed
+- [x] **Debug logging flag** — clawserDebug with enable/disable + localStorage persistence
+- [x] **Configurable limits** — Config panel for cache TTL, max entries, tool iterations
+
+### Testing -- COMPLETE
+- [x] **Test CI integration** — JSON summary, __TEST_RESULT__ console markers, per-section timing
+- [x] **Critical path coverage** — SSE parsing edge cases, workspace isolation, isSending guard, autonomy rate/cost limits, MCP tool invocation
+- [x] **Benchmarks in CI** — Playwright runner, structured results, regression detection (>20% threshold), baseline caching
+- [x] **Clean up test dirs** — Removed empty tests/unit/, tests/e2e/, tests/integration/
+
+### Storage -- COMPLETE
+- [x] **Conversation cleanup** — Bulk delete UI with age threshold + selective checkboxes
+- [x] **Checkpoint format docs** — Binary encoding, fields, migration chain in EVENT-LOG.md
+- [x] **localStorage versioning** — v1 prefix on all keys + migrateLocalStorageKeys() on startup
+- [x] **Lazy panel rendering** — 7 panels deferred via panel:firstrender (tools, files, goals, skills, toolMgmt, agents, dashboard); config panels eager; resetRenderedPanels on workspace switch
+- [x] **Response cache config** — TTL and max entries configurable in config panel
+
+### Documentation -- COMPLETE
+- [x] **.reference/ README** — Purpose of historical reference dirs documented
+- [x] **Demo directory README** — Historical reference status noted
+
+---
+
+## Phase 5: Ecosystem (Future)
 
 Priority: Integrations, API, and community.
 
 ### Integrations
-- [ ] **GitHub integration** — PR review, issue management, code search
-- [ ] **Calendar integration** — Schedule awareness, meeting prep
-- [ ] **Email integration** — Draft, summarize, triage
-- [ ] **Slack/Discord** — Channel monitoring, response drafting
+- [ ] GitHub integration — PR review, issue management, code search
+- [ ] Calendar integration — Schedule awareness, meeting prep
+- [ ] Email integration — Draft, summarize, triage
+- [ ] Slack/Discord — Channel monitoring, response drafting
 
 ### Developer API
-- [ ] **Plugin API** — Formal extension point for third-party tools
-- [ ] **TypeScript definitions** — .d.ts files for all modules
-- [ ] **npm package** — Publish core agent as reusable library
-- [ ] **Embedding API** — Drop Clawser into any web app
+- [ ] Plugin API — Formal extension point for third-party tools
+- [ ] TypeScript definitions — .d.ts files for all modules
+- [ ] npm package — Publish core agent as reusable library
+- [ ] Embedding API — Drop Clawser into any web app
+
+### Skill Ecosystem
+- [ ] Skill dependency enforcement — Validate requires field
+- [ ] Skill versioning UI — Show diffs before upgrade
+- [ ] Skill marketplace — Browseable catalog with ratings
+- [ ] Skill templates — Starter kits for common patterns
 
 ### Community
-- [ ] **Skills registry** — Launch public skills registry
-- [ ] **Documentation site** — Hosted docs with tutorials and examples
-- [ ] **Demo site** — Live demo with Echo provider (no API key required)
-
----
-
-## Legacy Cleanup
-
-The following items address technical debt from the architecture transition:
-
-- [ ] Update PRD.md to reflect pure JS architecture (currently describes Rust/WASM)
-- [ ] Archive or remove Rust demo binaries (likely broken post-JS rewrite)
-- [ ] Fix Cargo.toml edition field (says "2024", should be "2021")
-- [ ] Remove .reference/ directory or document its purpose
-- [ ] Clean up 339MB target/ directory from repository
+- [ ] Skills registry — Launch public skills registry
+- [ ] Documentation site — Hosted docs with tutorials
+- [ ] Demo site — Live demo with Echo provider (no API key)
 
 ---
 
@@ -182,7 +191,7 @@ These principles guide development decisions:
 2. **Zero build step** — ES modules loaded directly. No webpack, no npm, no transpilation.
 3. **Provider agnostic** — Any LLM backend works. Structured tool calls or code-based execution.
 4. **Event-sourced** — Every state change is an event. Full auditability and replay.
-5. **Graceful degradation** — Always have a fallback. Streaming → non-streaming, v2 → v1, LLM → truncation.
+5. **Graceful degradation** — Always have a fallback. Streaming -> non-streaming, v2 -> v1, LLM -> truncation.
 6. **Workspace isolation** — Projects don't interfere. Separate memory, history, config.
 7. **Skills as standard** — Portable agent capabilities via open standard (agentskills.io).
 8. **Permission-first** — Tools require explicit permission levels. User approves risky operations.

@@ -12,7 +12,7 @@
  *
  * All cross-module coordination flows through the event bus (on/emit).
  */
-import { $, state, on } from './clawser-state.js';
+import { $, state, on, migrateLocalStorageKeys } from './clawser-state.js';
 import { ensureDefaultWorkspace } from './clawser-workspaces.js';
 import { initAccountListeners } from './clawser-accounts.js';
 import { initRouterListeners } from './clawser-router.js';
@@ -56,6 +56,9 @@ import { addEvent } from './clawser-ui-chat.js';
 import { createShellSession } from './clawser-workspace-lifecycle.js';
 import { handleRoute } from './clawser-route-handler.js';
 import { initHomeListeners } from './clawser-home-views.js';
+
+// ── Migrate localStorage keys to versioned format (Gap 13.3) ────
+migrateLocalStorageKeys();
 
 // ── Create service singletons ───────────────────────────────────
 state.workspaceFs = new MountableFs();

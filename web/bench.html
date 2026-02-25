@@ -211,6 +211,15 @@ window.__benchResults = {
   })),
 };
 
+// CI structured output element (Gap 7.2b) — same pattern as test.html #testResults
+const benchResultEl = document.createElement('div');
+benchResultEl.id = 'benchResults';
+benchResultEl.style.display = 'none';
+benchResultEl.textContent = JSON.stringify(window.__benchResults);
+document.body.appendChild(benchResultEl);
+
+// CI exit marker
+console.log('__BENCH_RESULT__:DONE');
 console.log(`Benchmarks: ${benchmarks.length} completed, total ${totalDuration.toFixed(1)}ms`);
 </script>
 </body>

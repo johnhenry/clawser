@@ -16,7 +16,29 @@ export const DEFAULTS = Object.freeze({
   mcpTimeoutMs: 30_000,
   maxSchedulerJobs: 50,
   filePageSize: 50,
+  debugMode: false,
+  // Gap 11.2 / 11.3 — configurable limits
+  maxToolIterations: 20,
+  cacheMaxEntries: 500,
+  cacheTtlMs: 1_800_000,     // 30 minutes
+  maxFileWriteSize: 10_485_760, // 10 MB
 });
+
+// ── Debug logging (Gap 7.5) ─────────────────────────────────────
+// Toggle with: clawserDebug.enable() / clawserDebug.disable() in DevTools
+// Or set localStorage key 'clawser_debug' to 'true'
+
+/** @type {boolean} */
+let _debugEnabled = localStorage.getItem('clawser_debug') === 'true';
+
+export const clawserDebug = {
+  get enabled() { return _debugEnabled; },
+  enable()  { _debugEnabled = true;  localStorage.setItem('clawser_debug', 'true'); },
+  disable() { _debugEnabled = false; localStorage.removeItem('clawser_debug'); },
+  /** Log only when debug mode is active. @param {...*} args */
+  log(...args)  { if (_debugEnabled) console.log('[clawser]', ...args); },
+  warn(...args) { if (_debugEnabled) console.warn('[clawser]', ...args); },
+};
 
 /** @param {string} id @returns {HTMLElement|null} */
 export const $ = id => document.getElementById(id);
@@ -31,21 +53,65 @@ export function esc(s) {
 }
 
 // ── localStorage key builders (centralized to avoid scattered string literals) ──
+// Keys include version prefix (v1) for forward compatibility. See migrateLocalStorageKeys().
+const LS_VERSION = 'v1';
 /** @type {{ memories(wsId: string): string, config(wsId: string): string, toolPerms(wsId: string): string, security(wsId: string): string, skillsEnabled(wsId: string): string }} */
 export const lsKey = {
-  memories:      wsId => `clawser_memories_${wsId}`,
-  config:        wsId => `clawser_config_${wsId}`,
-  toolPerms:     wsId => `clawser_tool_perms_${wsId}`,
-  security:      wsId => `clawser_security_${wsId}`,
-  skillsEnabled: wsId => `clawser_skills_enabled_${wsId}`,
-  autonomy:      wsId => `clawser_autonomy_${wsId}`,
-  identity:      wsId => `clawser_identity_${wsId}`,
-  selfRepair:    wsId => `clawser_selfrepair_${wsId}`,
-  sandbox:       wsId => `clawser_sandbox_${wsId}`,
-  heartbeat:     wsId => `clawser_heartbeat_${wsId}`,
-  routines:      wsId => `clawser_routines_${wsId}`,
-  termSessions:  wsId => `clawser_terminal_sessions_${wsId}`,
+  memories:      wsId => `clawser_${LS_VERSION}_memories_${wsId}`,
+  config:        wsId => `clawser_${LS_VERSION}_config_${wsId}`,
+  toolPerms:     wsId => `clawser_${LS_VERSION}_tool_perms_${wsId}`,
+  security:      wsId => `clawser_${LS_VERSION}_security_${wsId}`,
+  skillsEnabled: wsId => `clawser_${LS_VERSION}_skills_enabled_${wsId}`,
+  autonomy:      wsId => `clawser_${LS_VERSION}_autonomy_${wsId}`,
+  identity:      wsId => `clawser_${LS_VERSION}_identity_${wsId}`,
+  selfRepair:    wsId => `clawser_${LS_VERSION}_selfrepair_${wsId}`,
+  sandbox:       wsId => `clawser_${LS_VERSION}_sandbox_${wsId}`,
+  heartbeat:     wsId => `clawser_${LS_VERSION}_heartbeat_${wsId}`,
+  routines:      wsId => `clawser_${LS_VERSION}_routines_${wsId}`,
+  termSessions:  wsId => `clawser_${LS_VERSION}_terminal_sessions_${wsId}`,
 };
+
+/**
+ * Migrate unversioned localStorage keys to versioned format.
+ * Called once on app startup. Copies data from old key to new key
+ * and removes the old key. Safe to call multiple times (idempotent).
+ */
+export function migrateLocalStorageKeys() {
+  if (localStorage.getItem('clawser_ls_migrated') === LS_VERSION) return;
+
+  const keyPatterns = [
+    'memories', 'config', 'tool_perms', 'security', 'skills_enabled',
+    'autonomy', 'identity', 'selfrepair', 'sandbox', 'heartbeat',
+    'routines', 'terminal_sessions',
+  ];
+
+  let migrated = 0;
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key || !key.startsWith('clawser_')) continue;
+    // Skip already-versioned keys and non-workspace keys
+    if (key.includes(`_${LS_VERSION}_`)) continue;
+    // Check if it matches an old workspace key pattern
+    for (const pat of keyPatterns) {
+      const prefix = `clawser_${pat}_`;
+      if (key.startsWith(prefix)) {
+        const wsId = key.slice(prefix.length);
+        const newKey = `clawser_${LS_VERSION}_${pat}_${wsId}`;
+        if (!localStorage.getItem(newKey)) {
+          localStorage.setItem(newKey, localStorage.getItem(key));
+          migrated++;
+        }
+        localStorage.removeItem(key);
+        break;
+      }
+    }
+  }
+
+  localStorage.setItem('clawser_ls_migrated', LS_VERSION);
+  if (migrated > 0) {
+    console.log(`[clawser] Migrated ${migrated} localStorage keys to ${LS_VERSION} format`);
+  }
+}
 
 /** @type {object} Shared mutable state singleton — single owner per field, set in clawser-app.js */
 export const state = {

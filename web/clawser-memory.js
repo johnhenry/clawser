@@ -202,6 +202,8 @@ export class SemanticMemory {
   /** @type {EmbeddingProvider} */
   #embedder;
   #embeddingCache = new EmbeddingCache(500);
+  /** Maximum number of memory entries. Oldest non-core entries evicted when exceeded. */
+  #maxEntries = 5000;
 
   // Pre-computed tokenization for BM25
   /** @type {Map<string, {tokens: string[], length: number}>} */
@@ -255,6 +257,24 @@ export class SemanticMemory {
 
     this.#entries.push(record);
     this.#updateTokenIndex(record);
+
+    // Evict oldest non-core entries if over capacity
+    if (this.#entries.length > this.#maxEntries) {
+      const nonCore = this.#entries
+        .map((e, i) => ({ e, i }))
+        .filter(({ e }) => e.category !== 'core')
+        .sort((a, b) => a.e.timestamp - b.e.timestamp);
+      const toRemove = this.#entries.length - this.#maxEntries;
+      const removeIdxs = new Set(nonCore.slice(0, toRemove).map(({ i }) => i));
+      for (let i = this.#entries.length - 1; i >= 0; i--) {
+        if (removeIdxs.has(i)) {
+          this.#tokenIndex.delete(this.#entries[i].id);
+          this.#entries.splice(i, 1);
+        }
+      }
+      this.#recomputeAvgDocLength();
+    }
+
     return record.id;
   }
 

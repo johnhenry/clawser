@@ -17,6 +17,7 @@
  */
 
 import { ShellState } from './clawser-shell.js';
+import { checkQuota } from './clawser-tools.js';
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -185,6 +186,13 @@ export class TerminalSessionManager {
       await this.#fs.mkdir(dirPath);
     } catch (_) {
       // Directory may already exist
+    }
+
+    // Check storage quota before writing
+    const quota = await checkQuota();
+    if (quota.critical) {
+      console.warn(`[TerminalSessions] Storage quota critically low (${quota.percent.toFixed(1)}%) — skipping persist`);
+      return;
     }
 
     // Write events as JSONL

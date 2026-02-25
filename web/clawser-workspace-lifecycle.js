@@ -11,9 +11,9 @@ import { modal } from './clawser-modal.js';
 import { loadWorkspaces, setActiveWorkspaceId, ensureDefaultWorkspace, getWorkspaceName, touchWorkspace } from './clawser-workspaces.js';
 import { loadConversations } from './clawser-conversations.js';
 import { saveConfig, applyRestoredConfig, rebuildProviderDropdown, setupProviders } from './clawser-accounts.js';
-import { updateRouteHash } from './clawser-router.js';
+import { updateRouteHash, PANELS, resetRenderedPanels, isPanelRendered } from './clawser-router.js';
 import { setStatus, addMsg, addErrorMsg, addToolCall, addInlineToolCall, updateInlineToolCall, addEvent, updateState, updateCostDisplay, replaySessionHistory, replayFromEvents, updateConvNameDisplay, persistActiveConversation, renderToolCalls, resetChatUI } from './clawser-ui-chat.js';
-import { refreshFiles, renderGoals, renderToolRegistry, renderSkills, applySecuritySettings, renderAutonomySection, renderIdentitySection, renderRoutingSection, renderAuthProfilesSection, renderSelfRepairSection, updateCacheStats, renderSandboxSection, renderHeartbeatSection, updateCostMeter, updateAutonomyBadge, updateDaemonBadge, refreshDashboard, renderMountList, renderOAuthSection, renderTerminalSessionBar, replayTerminalSession, renderToolManagementPanel, initAgentPicker, updateAgentLabel, renderAgentPanel, terminalAskUser } from './clawser-ui-panels.js';
+import { refreshFiles, renderGoals, renderToolRegistry, renderSkills, applySecuritySettings, renderAutonomySection, renderIdentitySection, renderRoutingSection, renderAuthProfilesSection, renderSelfRepairSection, updateCacheStats, renderLimitsSection, renderSandboxSection, renderHeartbeatSection, updateCostMeter, updateAutonomyBadge, updateDaemonBadge, refreshDashboard, renderMountList, renderOAuthSection, renderTerminalSessionBar, replayTerminalSession, renderToolManagementPanel, initAgentPicker, updateAgentLabel, renderAgentPanel, terminalAskUser } from './clawser-ui-panels.js';
 import { registerClawserCli } from './clawser-cli.js';
 import { AgentStorage } from './clawser-agent-storage.js';
 import { SwitchAgentTool, ConsultAgentTool } from './clawser-tools.js';
@@ -53,6 +53,48 @@ export async function createShellSession() {
   // Update terminal session manager's shell reference
   if (state.terminalSessions) {
     state.terminalSessions.setShell(state.shell);
+  }
+}
+
+// ── Lazy Panel Rendering (Gap 11.1) ──────────────────────────────
+/**
+ * Deferred panel render registry. Maps panel names to render callbacks.
+ * When a panel is first activated, its render callback fires once.
+ * Config panel is NOT deferred because its render functions apply runtime
+ * settings (autonomy levels, cache TTL, etc.) that affect agent behavior.
+ */
+const _deferredRenders = new Map();
+
+/**
+ * Register deferred render callbacks for panels that don't need
+ * eager DOM population. Called during workspace init/switch.
+ * @param {Object} renders - Map of panel name → render callback
+ */
+function registerLazyPanelRenders(renders) {
+  // Clear old listeners
+  for (const [panelName, { el, handler }] of _deferredRenders) {
+    if (el) el.removeEventListener('panel:firstrender', handler);
+  }
+  _deferredRenders.clear();
+
+  for (const [panelName, renderFn] of Object.entries(renders)) {
+    const panelDef = PANELS[panelName];
+    if (!panelDef) continue;
+    const el = $(panelDef.id);
+    if (!el) continue;
+
+    // If the panel was already rendered (e.g. chat), run immediately
+    if (isPanelRendered(panelName)) {
+      renderFn();
+      continue;
+    }
+
+    const handler = () => {
+      renderFn();
+      _deferredRenders.delete(panelName);
+    };
+    el.addEventListener('panel:firstrender', handler, { once: true });
+    _deferredRenders.set(panelName, { el, handler });
   }
 }
 
@@ -139,6 +181,9 @@ export async function switchWorkspace(newId, convId) {
   await rebuildProviderDropdown();
   await applyRestoredConfig(savedConfig);
 
+  // Apply saved cache & limits config for the new workspace (Gap 11.2/11.3)
+  renderLimitsSection();
+
   // Restore conversation state
   let wsRestored = false;
   const targetConvId = convId || savedConfig?.activeConversationId;
@@ -179,13 +224,18 @@ export async function switchWorkspace(newId, convId) {
   $('workspaceName').textContent = wsName;
   $('providerLabel').textContent = providerSelect.options[providerSelect.selectedIndex]?.textContent || providerSelect.value;
 
-  renderToolRegistry();
-  updateState();
-  renderGoals();
-  refreshFiles();
-
+  // Defer non-essential panel renders until first activation (Gap 11.1)
+  resetRenderedPanels();
   await state.skillRegistry.discover(newId);
-  renderSkills();
+  registerLazyPanelRenders({
+    tools:    () => renderToolRegistry(),
+    goals:    () => renderGoals(),
+    files:    () => { refreshFiles(); renderMountList(); },
+    skills:   () => renderSkills(),
+    dashboard: () => refreshDashboard(),
+  });
+
+  updateState();
 
   // Restart daemon and routine engine for new workspace
   state.daemonController.start().then(started => {
@@ -566,15 +616,7 @@ export async function initWorkspace(wsId, convId) {
     const providerSelect = $('providerSelect');
     $('providerLabel').textContent = providerSelect.options[providerSelect.selectedIndex]?.textContent || providerSelect.value;
 
-    renderToolRegistry();
-    renderToolManagementPanel();
-    renderAgentPanel();
-    initAgentPicker();
-    updateState();
-    renderGoals();
-    refreshFiles();
-
-    // Render new config sections (Batch 1)
+    // ── Eager renders: config sections (apply runtime settings) ──
     renderAutonomySection();
     renderIdentitySection();
     renderRoutingSection();
@@ -582,9 +624,10 @@ export async function initWorkspace(wsId, convId) {
     renderOAuthSection();
     renderSelfRepairSection();
     updateCacheStats();
+    renderLimitsSection();
     renderSandboxSection();
     renderHeartbeatSection();
-    renderMountList();
+    updateState();
 
     // Initialize heartbeat (Batch 7)
     state.heartbeatRunner.loadDefault();
@@ -608,7 +651,18 @@ export async function initWorkspace(wsId, convId) {
     state.routineEngine.start();
 
     await state.skillRegistry.discover(activeWsId);
-    renderSkills();
+
+    // ── Deferred renders: non-config panels (Gap 11.1) ──
+    // These panels keep empty DOM until the user first clicks on them.
+    registerLazyPanelRenders({
+      tools:    () => renderToolRegistry(),
+      files:    () => { refreshFiles(); renderMountList(); },
+      goals:    () => renderGoals(),
+      skills:   () => renderSkills(),
+      toolMgmt: () => renderToolManagementPanel(),
+      agents:   () => { renderAgentPanel(); initAgentPicker(); },
+      dashboard: () => refreshDashboard(),
+    });
 
     const toolCount = state.browserTools.names().length;
 
@@ -640,7 +694,8 @@ export async function initWorkspace(wsId, convId) {
       updateState();
       updateCostMeter();
       updateCacheStats();
-      refreshDashboard();
+      // Only refresh dashboard if it has been activated (Gap 11.1)
+      if (isPanelRendered('dashboard')) refreshDashboard();
       updateDaemonBadge(state.daemonController.phase);
       updateAutonomyBadge();
     }, 5000);
