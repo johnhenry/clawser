@@ -33,6 +33,8 @@ import { BrowserOpenTool, BrowserReadPageTool, BrowserClickTool, BrowserFillTool
 import { SandboxRunTool, SandboxStatusTool } from './clawser-sandbox.js';
 import { SandboxEvalTool } from './clawser-tools.js';
 import { registerAndboxCli } from './clawser-andbox-cli.js';
+import { registerWshCli } from './clawser-wsh-cli.js';
+import { registerWshTools } from './clawser-wsh-tools.js';
 import { HwListTool, HwConnectTool, HwSendTool, HwReadTool, HwDisconnectTool, HwInfoTool } from './clawser-hardware.js';
 import { RemoteStatusTool, RemotePairTool, RemoteRevokeTool } from './clawser-remote.js';
 import { BridgeStatusTool, BridgeListToolsTool, BridgeFetchTool } from './clawser-bridge.js';
@@ -53,6 +55,7 @@ export async function createShellSession() {
   await state.shell.source('/.clawserrc');
   registerClawserCli(state.shell.registry, () => state.agent, () => state.shell);
   registerAndboxCli(state.shell.registry, () => state.agent, () => state.shell);
+  registerWshCli(state.shell.registry, () => state.agent, () => state.shell);
   // Update terminal session manager's shell reference
   if (state.terminalSessions) {
     state.terminalSessions.setShell(state.shell);
@@ -390,6 +393,9 @@ export async function initWorkspace(wsId, convId) {
     state.browserTools.register(new SandboxRunTool(state.sandboxManager));
     state.browserTools.register(new SandboxStatusTool(state.sandboxManager));
     state.browserTools.register(new SandboxEvalTool(() => state.agent?.codex?._sandbox));
+
+    // wsh — Web Shell (9 tools)
+    registerWshTools(state.browserTools);
 
     // Hardware (6)
     state.browserTools.register(new HwListTool(state.peripheralManager));

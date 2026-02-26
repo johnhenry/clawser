@@ -151,14 +151,14 @@ Plus 36 tools from feature modules (tool builder, channels, delegate, git, brows
 
 **File**: `clawser-codex.js` (292 LOC)
 
-For providers that don't support native tool calling (Chrome AI, Perplexity), the Codex executes JavaScript code blocks from LLM responses in a vimble sandbox.
+For providers that don't support native tool calling (Chrome AI, Perplexity), the Codex executes JavaScript code blocks from LLM responses in a sandboxed environment.
 
 ```
 LLM Response → Extract code blocks → Adapt Pythonisms → Auto-await
-     → Execute in vimble → Capture results → Follow-up LLM call
+     → Execute in sandbox → Capture results → Follow-up LLM call
 ```
 
-The sandbox injects all browser tools as async functions (full name + camelCase alias), plus `fetch()` and `print()`.
+The Codex uses **andbox** (`web/packages/andbox/`) — a Worker-based sandbox with RPC capabilities, import maps, timeouts, and capability gating. Browser tools are exposed as host capabilities callable via `host.call()`, with `print()` and `fetch()` injected as local functions.
 
 ## Skills System
 
@@ -342,7 +342,9 @@ Clawser has no npm dependencies. All external code is loaded via CDN at runtime:
 
 | Dependency | Source | Purpose |
 |------------|--------|---------|
-| vimble | esm.sh | Sandboxed JS code execution |
+| andbox | `web/packages/andbox/` | Worker-based sandboxed JS execution (local package) |
+| wsh | `web/packages/wsh/` | Web Shell — remote command execution over WebTransport/WebSocket (local package) |
+| vimble | esm.sh | Legacy sandboxed JS code execution |
 | ai.matey | esm.sh | Universal LLM adapter (Tier 3 providers) |
 | html2canvas | CDN | Screenshot tool |
 | fflate | esm.sh | ZIP import/export for skills |

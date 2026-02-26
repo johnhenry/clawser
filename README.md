@@ -316,7 +316,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for a detailed breakdown.
 |--------|-----|---------|
 | `clawser-agent.js` | 2,447 | Agent core: EventLog, HookPipeline, AutonomyController, run/stream loop |
 | `clawser-providers.js` | 1,474 | LLM providers, SSE readers, cost tracking, response cache |
-| `clawser-codex.js` | 292 | Code execution sandbox via vimble (30s timeout) |
+| `clawser-codex.js` | 292 | Code execution sandbox via andbox/vimble (30s timeout) |
 | `clawser-agent-ref.js` | 216 | @agent sub-conversation dispatch with recursion guard |
 | `clawser-agent-storage.js` | 395 | Agent definition CRUD, 5 built-in agents, OPFS persistence |
 
@@ -371,7 +371,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for a detailed breakdown.
 | `clawser-intent.js` | Message classification and routing |
 | `clawser-identity.js` | Agent identity and system prompt compilation |
 | `clawser-safety.js` | Input sanitization, output scanning |
-| `clawser-sandbox.js` | Sandboxed execution environment |
+| `clawser-sandbox.js` | Sandboxed execution environment (uses andbox) |
 | `clawser-tool-builder.js` | Dynamic tool creation |
 | `clawser-conversations.js` | Conversation lifecycle management |
 | `clawser-daemon.js` | Daemon mode: SharedWorker, BroadcastChannel, tab coordination |
@@ -386,6 +386,13 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for a detailed breakdown.
 | `clawser-git.js` | Git behavior integration |
 | `clawser-hardware.js` | Hardware capability detection |
 | `clawser-remote.js` | Remote pairing sessions |
+
+### Internal Packages (`web/packages/`)
+| Package | Purpose |
+|---------|---------|
+| [`andbox`](web/packages/andbox/) | Worker-based sandboxed JS runtime — RPC capabilities, import maps, capability gating, timeouts |
+| [`wsh`](web/packages/wsh/) | Web Shell — browser-native remote command execution over WebTransport/WebSocket with Ed25519 auth, CBOR protocol, 33 message types |
+| [`ai-matey-middleware-andbox`](web/packages/ai-matey-middleware-andbox/) | ai.matey middleware for LLM code extraction → andbox execution |
 
 ## Tool Categories
 

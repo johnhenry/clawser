@@ -1,0 +1,24 @@
+{
+  "name": "wsh",
+  "version": "0.1.0",
+  "description": "Web Shell — browser-native remote command execution over WebTransport/WebSocket with Ed25519 auth",
+  "type": "module",
+  "main": "src/index.mjs",
+  "exports": {
+    ".": "./src/index.mjs"
+  },
+  "files": [
+    "src/"
+  ],
+  "keywords": [
+    "shell",
+    "webtransport",
+    "websocket",
+    "ssh",
+    "pty",
+    "remote",
+    "cbor",
+    "ed25519"
+  ],
+  "license": "MIT"
+}

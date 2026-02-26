@@ -1,0 +1,757 @@
+//! The main wsh client.
+//!
+//! `WshClient` manages the connection lifecycle: transport selection, handshake,
+//! authentication, session management, and keepalive.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
+
+use tokio::sync::{mpsc, Mutex, oneshot};
+use tokio::time;
+
+use wsh_core::codec::{cbor_decode, frame_encode};
+use wsh_core::error::{WshError, WshResult};
+use wsh_core::messages::*;
+
+use crate::auth;
+use crate::known_hosts::{HostStatus, KnownHosts};
+use crate::session::{ControlAction, SessionInfo, SessionOpts, WshSession};
+use crate::transport::{self, AnyTransport};
+
+/// Configuration for connecting to a wsh server.
+#[derive(Debug, Clone)]
+pub struct ConnectConfig {
+    /// Username for authentication.
+    pub username: String,
+    /// Name of the key to use from the keystore (for pubkey auth).
+    pub key_name: Option<String>,
+    /// Password (for password auth).
+    pub password: Option<String>,
+    /// Whether to verify the host key (TOFU).
+    pub verify_host: bool,
+    /// Ping interval in seconds (0 = disabled).
+    pub ping_interval_secs: u64,
+    /// Connection timeout in seconds.
+    pub timeout_secs: u64,
+}
+
+impl Default for ConnectConfig {
+    fn default() -> Self {
+        Self {
+            username: whoami(),
+            key_name: None,
+            password: None,
+            verify_host: true,
+            ping_interval_secs: 30,
+            timeout_secs: 10,
+        }
+    }
+}
+
+/// Get the current system username as a default.
+fn whoami() -> String {
+    std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .unwrap_or_else(|_| "unknown".to_string())
+}
+
+/// The main wsh client.
+pub struct WshClient {
+    /// The underlying transport session (enum dispatch, not dyn).
+    transport: Arc<Mutex<AnyTransport>>,
+    /// The authenticated session ID from the server.
+    session_id: Option<String>,
+    /// The session token for re-attachment.
+    token: Option<Vec<u8>>,
+    /// Active sessions, keyed by channel ID.
+    sessions: Arc<Mutex<HashMap<u32, Arc<WshSession>>>>,
+    /// Sender for outgoing control actions from sessions.
+    control_action_tx: mpsc::Sender<ControlAction>,
+    /// Handle for the control message dispatch task.
+    dispatch_handle: Option<tokio::task::JoinHandle<()>>,
+    /// Handle for the keepalive task.
+    keepalive_handle: Option<tokio::task::JoinHandle<()>>,
+    /// Sender for outgoing control messages (used by dispatch + keepalive).
+    outgoing_tx: mpsc::Sender<Vec<u8>>,
+    /// Channel for receiving specific response types (request-response pattern).
+    response_tx: Arc<Mutex<HashMap<u8, Vec<oneshot::Sender<Envelope>>>>>,
+    /// Whether the client is connected.
+    connected: Arc<Mutex<bool>>,
+}
+
+impl WshClient {
+    /// Connect to a wsh server, perform the handshake, and authenticate.
+    ///
+    /// Returns the server-assigned session ID on success.
+    pub async fn connect(url: &str, config: ConnectConfig) -> WshResult<Self> {
+        // Auto-select and connect transport
+        let transport = transport::auto_connect(url).await?;
+        let transport = Arc::new(Mutex::new(transport));
+
+        let (control_action_tx, control_action_rx) = mpsc::channel::<ControlAction>(256);
+        let (outgoing_tx, outgoing_rx) = mpsc::channel::<Vec<u8>>(256);
+        let response_tx: Arc<Mutex<HashMap<u8, Vec<oneshot::Sender<Envelope>>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let sessions: Arc<Mutex<HashMap<u32, Arc<WshSession>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let connected = Arc::new(Mutex::new(true));
+
+        let mut client = Self {
+            transport: transport.clone(),
+            session_id: None,
+            token: None,
+            sessions: sessions.clone(),
+            control_action_tx,
+            dispatch_handle: None,
+            keepalive_handle: None,
+            outgoing_tx: outgoing_tx.clone(),
+            response_tx: response_tx.clone(),
+            connected: connected.clone(),
+        };
+
+        // Perform handshake with timeout
+        let timeout = Duration::from_secs(config.timeout_secs);
+        let handshake_result = time::timeout(timeout, client.handshake(&config)).await;
+
+        match handshake_result {
+            Ok(Ok(session_id)) => {
+                client.session_id = Some(session_id);
+            }
+            Ok(Err(e)) => return Err(e),
+            Err(_) => return Err(WshError::Timeout),
+        }
+
+        // Spawn the control dispatch loop
+        let dispatch_handle = {
+            let transport = transport.clone();
+            let response_tx = response_tx.clone();
+            let sessions = sessions.clone();
+            let connected = connected.clone();
+            let outgoing_tx_clone = outgoing_tx.clone();
+
+            tokio::spawn(async move {
+                Self::dispatch_loop(
+                    transport,
+                    outgoing_rx,
+                    control_action_rx,
+                    response_tx,
+                    sessions,
+                    connected,
+                    outgoing_tx_clone,
+                )
+                .await;
+            })
+        };
+        client.dispatch_handle = Some(dispatch_handle);
+
+        // Spawn keepalive if configured
+        if config.ping_interval_secs > 0 {
+            let interval = Duration::from_secs(config.ping_interval_secs);
+            let outgoing = outgoing_tx.clone();
+            let connected = client.connected.clone();
+
+            let keepalive_handle = tokio::spawn(async move {
+                let mut ping_id: u64 = 0;
+                let mut ticker = time::interval(interval);
+                ticker.tick().await; // skip first immediate tick
+
+                loop {
+                    ticker.tick().await;
+
+                    let is_connected = {
+                        let c = connected.lock().await;
+                        *c
+                    };
+                    if !is_connected {
+                        break;
+                    }
+
+                    ping_id += 1;
+                    let envelope = Envelope {
+                        msg_type: MsgType::Ping,
+                        payload: Payload::PingPong(PingPongPayload { id: ping_id }),
+                    };
+
+                    match frame_encode(&envelope) {
+                        Ok(frame) => {
+                            if outgoing.send(frame).await.is_err() {
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("failed to encode ping: {}", e);
+                        }
+                    }
+                }
+
+                tracing::debug!("keepalive loop ended");
+            });
+            client.keepalive_handle = Some(keepalive_handle);
+        }
+
+        Ok(client)
+    }
+
+    /// The server-assigned session ID (available after successful connect).
+    pub fn session_id(&self) -> Option<&str> {
+        self.session_id.as_deref()
+    }
+
+    /// The session token (for re-attachment).
+    pub fn token(&self) -> Option<&[u8]> {
+        self.token.as_deref()
+    }
+
+    /// Whether the client is currently connected.
+    pub async fn is_connected(&self) -> bool {
+        *self.connected.lock().await
+    }
+
+    /// Send a control message and wait for a specific response type (public API).
+    ///
+    /// Used by modules like `mcp` and `file_transfer` that need request-response
+    /// patterns over the control channel.
+    pub async fn send_and_wait_public(
+        &self,
+        envelope: Envelope,
+        expected_type: MsgType,
+    ) -> WshResult<Envelope> {
+        self.send_and_wait(envelope, expected_type).await
+    }
+
+    /// Open a new session (pty, exec, etc.).
+    pub async fn open_session(&self, opts: SessionOpts) -> WshResult<Arc<WshSession>> {
+        // Build and send OPEN message
+        let envelope = Envelope {
+            msg_type: MsgType::Open,
+            payload: Payload::Open(OpenPayload {
+                kind: opts.kind.clone(),
+                command: opts.command.clone(),
+                cols: opts.cols,
+                rows: opts.rows,
+                env: opts.env.clone(),
+            }),
+        };
+
+        let response = self.send_and_wait(envelope, MsgType::OpenOk).await?;
+
+        // Parse OPEN_OK response
+        match response.payload {
+            Payload::OpenOk(ok) => {
+                // Open a data stream on the transport
+                let stream = {
+                    let mut t = self.transport.lock().await;
+                    t.open_stream().await?
+                };
+
+                let session = Arc::new(WshSession::new(
+                    ok.channel_id,
+                    opts.kind,
+                    stream.stream,
+                    self.control_action_tx.clone(),
+                ));
+
+                {
+                    let mut sessions = self.sessions.lock().await;
+                    sessions.insert(ok.channel_id, session.clone());
+                }
+
+                tracing::info!(
+                    "opened channel {} with stream IDs {:?}",
+                    ok.channel_id,
+                    ok.stream_ids
+                );
+                Ok(session)
+            }
+            Payload::OpenFail(fail) => Err(WshError::Channel(fail.reason)),
+            _ => Err(WshError::InvalidMessage(
+                "unexpected response to OPEN".into(),
+            )),
+        }
+    }
+
+    /// List active sessions.
+    pub async fn list_sessions(&self) -> Vec<SessionInfo> {
+        let sessions = self.sessions.lock().await;
+        let mut result = Vec::new();
+
+        for (channel_id, session) in sessions.iter() {
+            let state = session.state().await;
+            result.push(SessionInfo {
+                session_id: self
+                    .session_id
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string()),
+                channel_id: *channel_id,
+                kind: session.kind().clone(),
+                state,
+                name: None,
+            });
+        }
+
+        result
+    }
+
+    /// Attach to an existing session (read-only or control mode).
+    pub async fn attach_session(&self, session_id: &str, read_only: bool) -> WshResult<()> {
+        let token = self
+            .token
+            .as_ref()
+            .ok_or_else(|| WshError::AuthFailed("no session token available".into()))?;
+
+        let mode = if read_only {
+            "view".to_string()
+        } else {
+            "control".to_string()
+        };
+
+        let envelope = Envelope {
+            msg_type: MsgType::Attach,
+            payload: Payload::Attach(AttachPayload {
+                session_id: session_id.to_string(),
+                token: token.clone(),
+                mode,
+            }),
+        };
+
+        self.send_control_message(envelope).await
+    }
+
+    /// Disconnect from the server.
+    pub async fn disconnect(&self) -> WshResult<()> {
+        {
+            let mut connected = self.connected.lock().await;
+            *connected = false;
+        }
+
+        // Close all active sessions
+        {
+            let sessions = self.sessions.lock().await;
+            for (_, session) in sessions.iter() {
+                let _ = session.close().await;
+            }
+        }
+
+        // Close the transport
+        {
+            let mut transport = self.transport.lock().await;
+            transport.close().await?;
+        }
+
+        Ok(())
+    }
+
+    // ── Internal ─────────────────────────────────────────────────────
+
+    /// Perform the handshake: HELLO -> SERVER_HELLO -> CHALLENGE -> AUTH -> AUTH_OK.
+    async fn handshake(&mut self, config: &ConnectConfig) -> WshResult<String> {
+        // Determine auth method
+        let auth_method = if config.key_name.is_some() {
+            AuthMethod::Pubkey
+        } else {
+            AuthMethod::Password
+        };
+
+        // Send HELLO
+        let hello = Envelope {
+            msg_type: MsgType::Hello,
+            payload: Payload::Hello(HelloPayload {
+                version: PROTOCOL_VERSION.to_string(),
+                username: config.username.clone(),
+                features: vec!["mcp".to_string(), "file-transfer".to_string()],
+                auth_method: Some(auth_method.clone()),
+            }),
+        };
+        self.send_raw(&hello).await?;
+
+        // Receive SERVER_HELLO
+        let server_hello_data = self.recv_raw().await?;
+        let server_hello: Envelope = cbor_decode(&server_hello_data)?;
+
+        let (server_session_id, server_fingerprints) = match &server_hello.payload {
+            Payload::ServerHello(sh) => (sh.session_id.clone(), sh.fingerprints.clone()),
+            _ => {
+                return Err(WshError::InvalidMessage("expected SERVER_HELLO".into()))
+            }
+        };
+
+        // Verify host key (TOFU)
+        if config.verify_host {
+            if let Some(first_fp) = server_fingerprints.first() {
+                self.verify_host_key(&server_session_id, first_fp)?;
+            }
+        }
+
+        // Receive CHALLENGE
+        let challenge_data = self.recv_raw().await?;
+        let challenge: Envelope = cbor_decode(&challenge_data)?;
+
+        let nonce = match &challenge.payload {
+            Payload::Challenge(c) => c.nonce.clone(),
+            _ => return Err(WshError::InvalidMessage("expected CHALLENGE".into())),
+        };
+
+        // Authenticate
+        let auth_envelope = match auth_method {
+            AuthMethod::Pubkey => {
+                let key_name = config.key_name.as_deref().unwrap_or("default");
+
+                let keystore = crate::keystore::KeyStore::default_location()?;
+                let (signing_key, verifying_key) = keystore.load(key_name)?;
+
+                let signature =
+                    auth::sign_challenge(&signing_key, &server_session_id, &nonce);
+                let public_key = auth::public_key_bytes(&verifying_key);
+
+                Envelope {
+                    msg_type: MsgType::Auth,
+                    payload: Payload::Auth(AuthPayload {
+                        method: AuthMethod::Pubkey,
+                        signature: Some(signature),
+                        public_key: Some(public_key),
+                        password: None,
+                    }),
+                }
+            }
+            AuthMethod::Password => {
+                let password = config
+                    .password
+                    .clone()
+                    .ok_or_else(|| WshError::AuthFailed("no password provided".into()))?;
+
+                Envelope {
+                    msg_type: MsgType::Auth,
+                    payload: Payload::Auth(AuthPayload {
+                        method: AuthMethod::Password,
+                        signature: None,
+                        public_key: None,
+                        password: Some(password),
+                    }),
+                }
+            }
+        };
+
+        self.send_raw(&auth_envelope).await?;
+
+        // Receive AUTH_OK or AUTH_FAIL
+        let auth_response_data = self.recv_raw().await?;
+        let auth_response: Envelope = cbor_decode(&auth_response_data)?;
+
+        match auth_response.payload {
+            Payload::AuthOk(ok) => {
+                tracing::info!(
+                    "authenticated as '{}' -- session {}",
+                    config.username,
+                    ok.session_id
+                );
+                self.token = Some(ok.token);
+                Ok(ok.session_id)
+            }
+            Payload::AuthFail(fail) => Err(WshError::AuthFailed(fail.reason)),
+            _ => Err(WshError::InvalidMessage(
+                "expected AUTH_OK or AUTH_FAIL".into(),
+            )),
+        }
+    }
+
+    /// Verify the server's host key via TOFU.
+    fn verify_host_key(&self, host: &str, fingerprint: &str) -> WshResult<()> {
+        let known_hosts = KnownHosts::default_location()?;
+
+        match known_hosts.verify_host(host, fingerprint)? {
+            HostStatus::Known => {
+                tracing::debug!("host {} verified (known)", host);
+                Ok(())
+            }
+            HostStatus::Unknown => {
+                // TOFU: trust on first use
+                tracing::info!(
+                    "new host {} with fingerprint {}, adding to known_hosts",
+                    host,
+                    fingerprint
+                );
+                known_hosts.add_host(host, fingerprint)?;
+                Ok(())
+            }
+            HostStatus::Changed { expected } => Err(WshError::AuthFailed(format!(
+                "HOST KEY CHANGED for {}: expected {}, got {}. \
+                 This could indicate a man-in-the-middle attack.",
+                host, expected, fingerprint
+            ))),
+        }
+    }
+
+    /// Send a CBOR-encoded envelope over the transport control channel.
+    async fn send_raw(&self, envelope: &Envelope) -> WshResult<()> {
+        let encoded = frame_encode(envelope)?;
+        let mut transport = self.transport.lock().await;
+        transport.send_control(&encoded).await
+    }
+
+    /// Receive a raw CBOR payload from the transport control channel.
+    async fn recv_raw(&self) -> WshResult<Vec<u8>> {
+        let mut transport = self.transport.lock().await;
+        transport.recv_control().await
+    }
+
+    /// Send a control message (fire-and-forget).
+    async fn send_control_message(&self, envelope: Envelope) -> WshResult<()> {
+        let frame = frame_encode(&envelope)?;
+        self.outgoing_tx
+            .send(frame)
+            .await
+            .map_err(|_| WshError::Transport("outgoing channel closed".into()))
+    }
+
+    /// Send a control message and wait for a specific response type.
+    async fn send_and_wait(
+        &self,
+        envelope: Envelope,
+        expected_type: MsgType,
+    ) -> WshResult<Envelope> {
+        let (tx, rx) = oneshot::channel();
+
+        // Register the response listener
+        {
+            let mut responses = self.response_tx.lock().await;
+            responses
+                .entry(expected_type.into())
+                .or_insert_with(Vec::new)
+                .push(tx);
+        }
+
+        // Also register for the fail variant
+        let fail_type = match expected_type {
+            MsgType::OpenOk => Some(MsgType::OpenFail),
+            MsgType::AuthOk => Some(MsgType::AuthFail),
+            _ => None,
+        };
+
+        let fail_rx = if let Some(ft) = fail_type {
+            let (fail_tx, fail_rx) = oneshot::channel();
+            let mut responses = self.response_tx.lock().await;
+            responses
+                .entry(ft.into())
+                .or_insert_with(Vec::new)
+                .push(fail_tx);
+            Some(fail_rx)
+        } else {
+            None
+        };
+
+        // Send the message
+        self.send_control_message(envelope).await?;
+
+        // Wait for response
+        let timeout_duration = Duration::from_secs(30);
+
+        if let Some(fail_rx) = fail_rx {
+            tokio::select! {
+                result = rx => {
+                    result.map_err(|_| WshError::Transport("response channel dropped".into()))
+                }
+                fail_result = fail_rx => {
+                    fail_result.map_err(|_| WshError::Transport("response channel dropped".into()))
+                }
+                _ = time::sleep(timeout_duration) => {
+                    Err(WshError::Timeout)
+                }
+            }
+        } else {
+            tokio::select! {
+                result = rx => {
+                    result.map_err(|_| WshError::Transport("response channel dropped".into()))
+                }
+                _ = time::sleep(timeout_duration) => {
+                    Err(WshError::Timeout)
+                }
+            }
+        }
+    }
+
+    /// The control message dispatch loop.
+    ///
+    /// Reads incoming control messages, routes responses to waiting tasks,
+    /// handles session events (Exit, Close), and sends outgoing messages.
+    async fn dispatch_loop(
+        transport: Arc<Mutex<AnyTransport>>,
+        mut outgoing_rx: mpsc::Receiver<Vec<u8>>,
+        mut action_rx: mpsc::Receiver<ControlAction>,
+        response_tx: Arc<Mutex<HashMap<u8, Vec<oneshot::Sender<Envelope>>>>>,
+        sessions: Arc<Mutex<HashMap<u32, Arc<WshSession>>>>,
+        connected: Arc<Mutex<bool>>,
+        outgoing_tx: mpsc::Sender<Vec<u8>>,
+    ) {
+        loop {
+            let is_connected = { *connected.lock().await };
+            if !is_connected {
+                break;
+            }
+
+            tokio::select! {
+                // Handle outgoing control messages
+                Some(frame) = outgoing_rx.recv() => {
+                    let mut t = transport.lock().await;
+                    if let Err(e) = t.send_control(&frame).await {
+                        tracing::error!("failed to send control message: {}", e);
+                        let mut c = connected.lock().await;
+                        *c = false;
+                        break;
+                    }
+                }
+
+                // Handle control actions from sessions (resize, signal, close)
+                Some(action) = action_rx.recv() => {
+                    let envelope = match action {
+                        ControlAction::Resize { channel_id, cols, rows } => Envelope {
+                            msg_type: MsgType::Resize,
+                            payload: Payload::Resize(ResizePayload { channel_id, cols, rows }),
+                        },
+                        ControlAction::Signal { channel_id, signal } => Envelope {
+                            msg_type: MsgType::Signal,
+                            payload: Payload::Signal(SignalPayload { channel_id, signal }),
+                        },
+                        ControlAction::Close { channel_id } => Envelope {
+                            msg_type: MsgType::Close,
+                            payload: Payload::Close(ClosePayload { channel_id }),
+                        },
+                    };
+
+                    match frame_encode(&envelope) {
+                        Ok(frame) => {
+                            let mut t = transport.lock().await;
+                            if let Err(e) = t.send_control(&frame).await {
+                                tracing::error!("failed to send action: {}", e);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("failed to encode action: {}", e);
+                        }
+                    }
+                }
+
+                // Try to receive an incoming control message
+                result = async {
+                    let mut t = transport.lock().await;
+                    t.recv_control().await
+                } => {
+                    match result {
+                        Ok(data) => {
+                            match cbor_decode::<Envelope>(&data) {
+                                Ok(envelope) => {
+                                    Self::handle_incoming(
+                                        envelope,
+                                        &response_tx,
+                                        &sessions,
+                                        &outgoing_tx,
+                                    ).await;
+                                }
+                                Err(e) => {
+                                    tracing::warn!("failed to decode control message: {}", e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("control recv error: {}", e);
+                            let mut c = connected.lock().await;
+                            *c = false;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        tracing::debug!("dispatch loop ended");
+    }
+
+    /// Handle an incoming control message.
+    async fn handle_incoming(
+        envelope: Envelope,
+        response_tx: &Arc<Mutex<HashMap<u8, Vec<oneshot::Sender<Envelope>>>>>,
+        sessions: &Arc<Mutex<HashMap<u32, Arc<WshSession>>>>,
+        outgoing_tx: &mpsc::Sender<Vec<u8>>,
+    ) {
+        let msg_type_u8: u8 = envelope.msg_type.into();
+
+        match envelope.msg_type {
+            // Respond to server pings
+            MsgType::Ping => {
+                if let Payload::PingPong(pp) = &envelope.payload {
+                    let pong = Envelope {
+                        msg_type: MsgType::Pong,
+                        payload: Payload::PingPong(PingPongPayload { id: pp.id }),
+                    };
+                    if let Ok(frame) = frame_encode(&pong) {
+                        let _ = outgoing_tx.send(frame).await;
+                    }
+                }
+            }
+
+            // Ignore pong responses (keepalive ack)
+            MsgType::Pong => {
+                tracing::trace!("received pong");
+            }
+
+            // Session exit
+            MsgType::Exit => {
+                if let Payload::Exit(exit) = &envelope.payload {
+                    tracing::info!(
+                        "channel {} exited with code {}",
+                        exit.channel_id,
+                        exit.code
+                    );
+                    let sessions = sessions.lock().await;
+                    if let Some(session) = sessions.get(&exit.channel_id) {
+                        session.mark_closed().await;
+                    }
+                }
+            }
+
+            // Server error
+            MsgType::Error => {
+                if let Payload::Error(err) = &envelope.payload {
+                    tracing::error!("server error [{}]: {}", err.code, err.message);
+                }
+            }
+
+            // Shutdown notice
+            MsgType::Shutdown => {
+                if let Payload::Shutdown(sd) = &envelope.payload {
+                    tracing::warn!("server shutdown: {}", sd.reason);
+                }
+            }
+
+            // Route to waiting response handlers
+            _ => {
+                let mut responses = response_tx.lock().await;
+                if let Some(waiters) = responses.get_mut(&msg_type_u8) {
+                    if let Some(tx) = waiters.pop() {
+                        let _ = tx.send(envelope);
+                        if waiters.is_empty() {
+                            responses.remove(&msg_type_u8);
+                        }
+                        return;
+                    }
+                }
+
+                tracing::debug!(
+                    "unhandled control message: {:?}",
+                    MsgType::try_from(msg_type_u8)
+                );
+            }
+        }
+    }
+}
+
+impl Drop for WshClient {
+    fn drop(&mut self) {
+        if let Some(h) = self.dispatch_handle.take() {
+            h.abort();
+        }
+        if let Some(h) = self.keepalive_handle.take() {
+            h.abort();
+        }
+    }
+}

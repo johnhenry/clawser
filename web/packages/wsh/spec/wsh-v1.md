@@ -1,0 +1,456 @@
+# wsh Protocol Specification — wsh-v1
+
+> Auto-generated from `wsh-v1.yaml`. Do not edit.
+> Run: `node web/packages/wsh/spec/codegen.mjs`
+
+## Table of Contents
+
+1. [Overview](#overview)
+2. [Enums](#enums)
+3. [Message Types](#message-types)
+4. [Message Details](#message-details)
+5. [Nested Types](#nested-types)
+6. [Crypto Primitives](#crypto-primitives)
+7. [Transport Bindings](#transport-bindings)
+
+## Overview
+
+- **Protocol**: wsh
+- **Version**: `wsh-v1`
+- **Wire format**: CBOR
+- **Framing**: length prefixed be32
+- **Total message types**: 35 (including WS_DATA framing marker)
+
+## Enums
+
+### ChannelKind
+
+Type: `string`
+
+| Value |
+|-------|
+| `pty` |
+| `exec` |
+| `meta` |
+| `file` |
+
+### AuthMethod
+
+Type: `string`
+
+| Value |
+|-------|
+| `pubkey` |
+| `password` |
+
+## Message Types
+
+| Code | Name | Category |
+|------|------|----------|
+| `0x01` | Hello | handshake |
+| `0x02` | ServerHello | handshake |
+| `0x03` | Challenge | handshake |
+| `0x04` | AuthMethods | handshake |
+| `0x05` | Auth | handshake |
+| `0x06` | AuthOk | handshake |
+| `0x07` | AuthFail | handshake |
+| `0x10` | Open | channel |
+| `0x11` | OpenOk | channel |
+| `0x12` | OpenFail | channel |
+| `0x13` | Resize | channel |
+| `0x14` | Signal | channel |
+| `0x15` | Exit | channel |
+| `0x16` | Close | channel |
+| `0x20` | Error | transport |
+| `0x21` | Ping | transport |
+| `0x22` | Pong | transport |
+| `0x30` | Attach | session |
+| `0x31` | Resume | session |
+| `0x32` | Rename | session |
+| `0x33` | IdleWarning | session |
+| `0x34` | Shutdown | session |
+| `0x35` | Snapshot | session |
+| `0x36` | Presence | session |
+| `0x37` | ControlChanged | session |
+| `0x38` | Metrics | session |
+| `0x40` | McpDiscover | mcp |
+| `0x41` | McpTools | mcp |
+| `0x42` | McpCall | mcp |
+| `0x43` | McpResult | mcp |
+| `0x50` | ReverseRegister | reverse |
+| `0x51` | ReverseList | reverse |
+| `0x52` | ReversePeers | reverse |
+| `0x53` | ReverseConnect | reverse |
+| `0x60` | WsData | framing |
+
+## Message Details
+
+### Hello (`0x01`)
+
+Category: **handshake**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `version` | `string` | yes | — |
+| `username` | `string` | yes | — |
+| `features` | `string[]` | no | `[]` |
+| `auth_method` | `AuthMethod` | no | — |
+
+### ServerHello (`0x02`)
+
+Category: **handshake**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `session_id` | `string` | yes | — |
+| `features` | `string[]` | no | `[]` |
+| `fingerprints` | `string[]` | no | `[]` |
+
+### Challenge (`0x03`)
+
+Category: **handshake**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `nonce` | `bytes` | yes | — |
+
+### AuthMethods (`0x04`)
+
+Category: **handshake**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `methods` | `AuthMethod[]` | yes | — |
+
+### Auth (`0x05`)
+
+Category: **handshake**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `method` | `AuthMethod` | yes | — |
+| `signature` | `bytes` | no | — |
+| `public_key` | `bytes` | no | — |
+| `password` | `string` | no | — |
+
+### AuthOk (`0x06`)
+
+Category: **handshake**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `session_id` | `string` | yes | — |
+| `token` | `bytes` | yes | — |
+| `ttl` | `u64` | yes | — |
+
+### AuthFail (`0x07`)
+
+Category: **handshake**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `reason` | `string` | yes | — |
+
+### Open (`0x10`)
+
+Category: **channel**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `kind` | `ChannelKind` | yes | — |
+| `command` | `string` | no | — |
+| `cols` | `u16` | no | — |
+| `rows` | `u16` | no | — |
+| `env` | `map<string,string>` | no | — |
+
+### OpenOk (`0x11`)
+
+Category: **channel**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `channel_id` | `u32` | yes | — |
+| `stream_ids` | `u32[]` | no | `[]` |
+
+### OpenFail (`0x12`)
+
+Category: **channel**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `reason` | `string` | yes | — |
+
+### Resize (`0x13`)
+
+Category: **channel**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `channel_id` | `u32` | yes | — |
+| `cols` | `u16` | yes | — |
+| `rows` | `u16` | yes | — |
+
+### Signal (`0x14`)
+
+Category: **channel**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `channel_id` | `u32` | yes | — |
+| `signal` | `string` | yes | — |
+
+### Exit (`0x15`)
+
+Category: **channel**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `channel_id` | `u32` | yes | — |
+| `code` | `i32` | yes | — |
+
+### Close (`0x16`)
+
+Category: **channel**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `channel_id` | `u32` | yes | — |
+
+### Error (`0x20`)
+
+Category: **transport**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `code` | `u32` | yes | — |
+| `message` | `string` | yes | — |
+
+### Ping (`0x21`)
+
+Category: **transport**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `id` | `u64` | yes | — |
+
+### Pong (`0x22`)
+
+Category: **transport**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `id` | `u64` | yes | — |
+
+### Attach (`0x30`)
+
+Category: **session**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `session_id` | `string` | yes | — |
+| `token` | `bytes` | yes | — |
+| `mode` | `string` | no | `"control"` |
+
+### Resume (`0x31`)
+
+Category: **session**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `session_id` | `string` | yes | — |
+| `token` | `bytes` | yes | — |
+| `last_seq` | `u64` | yes | — |
+
+### Rename (`0x32`)
+
+Category: **session**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `session_id` | `string` | yes | — |
+| `name` | `string` | yes | — |
+
+### IdleWarning (`0x33`)
+
+Category: **session**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `expires_in` | `u64` | yes | — |
+
+### Shutdown (`0x34`)
+
+Category: **session**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `reason` | `string` | yes | — |
+| `retry_after` | `u64` | no | — |
+
+### Snapshot (`0x35`)
+
+Category: **session**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `label` | `string` | yes | — |
+
+### Presence (`0x36`)
+
+Category: **session**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `attachments` | `AttachmentInfo[]` | yes | — |
+
+### ControlChanged (`0x37`)
+
+Category: **session**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `new_controller` | `string` | yes | — |
+
+### Metrics (`0x38`)
+
+Category: **session**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `cpu` | `f64` | no | — |
+| `memory` | `u64` | no | — |
+| `sessions` | `u32` | no | — |
+| `rtt` | `u64` | no | — |
+
+### McpDiscover (`0x40`)
+
+Category: **mcp**
+
+*No fields.*
+
+### McpTools (`0x41`)
+
+Category: **mcp**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `tools` | `McpToolSpec[]` | yes | — |
+
+### McpCall (`0x42`)
+
+Category: **mcp**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `tool` | `string` | yes | — |
+| `arguments` | `json` | yes | — |
+
+### McpResult (`0x43`)
+
+Category: **mcp**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `result` | `json` | yes | — |
+
+### ReverseRegister (`0x50`)
+
+Category: **reverse**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `username` | `string` | yes | — |
+| `capabilities` | `string[]` | no | `[]` |
+| `public_key` | `bytes` | yes | — |
+
+### ReverseList (`0x51`)
+
+Category: **reverse**
+
+*No fields.*
+
+### ReversePeers (`0x52`)
+
+Category: **reverse**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `peers` | `PeerInfo[]` | yes | — |
+
+### ReverseConnect (`0x53`)
+
+Category: **reverse**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `target_fingerprint` | `string` | yes | — |
+| `username` | `string` | yes | — |
+
+### WsData (`0x60`)
+
+Category: **framing**
+
+> WebSocket multiplexing framing marker, not a CBOR message
+
+*No fields.*
+
+## Nested Types
+
+### AttachmentInfo
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `session_id` | `string` | yes | — |
+| `mode` | `string` | yes | — |
+| `username` | `string` | no | — |
+
+### PeerInfo
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `fingerprint_short` | `string` | yes | — |
+| `username` | `string` | yes | — |
+| `capabilities` | `string[]` | no | `[]` |
+| `last_seen` | `u64` | no | — |
+
+### McpToolSpec
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `name` | `string` | yes | — |
+| `description` | `string` | yes | — |
+| `parameters` | `json` | no | `{}` |
+
+## Crypto Primitives
+
+### Auth Transcript
+
+- **Algorithm**: SHA-256
+- **Formula**: `SHA-256(PROTOCOL_VERSION || " " || session_id || nonce)`
+- **Note**: channelBinding can be appended but defaults to empty
+
+### Fingerprint
+
+- **Algorithm**: SHA-256
+- **Input**: raw_ed25519_public_key_32_bytes
+- **Output**: hex_encoded_64_chars
+
+### Session Token
+
+- **Format**: `[8B expiry_be][32B HMAC-SHA256(secret, session_id || expiry)]`
+- **Total bytes**: 40
+
+### Key Type: Ed25519
+
+- **SSH wire format**: `[4B len]["ssh-ed25519"][4B len][32B raw_key]`
+
+## Transport Bindings
+
+### WebTransport
+
+QUIC streams as channels. 1 bidi = control. Per channel: 1 bidi + optional uni.
+
+### WebSocket
+
+- **Framing**: `[1B msg_type][4B stream_id][payload]`
+- **WS_DATA type**: `0x60`

@@ -12,7 +12,7 @@ Feature modules extend the core agent with specialized capabilities. Each module
 | Git Behavior | `clawser-git-behavior.js` | `git_status`, `git_diff`, `git_commit`, `git_log` | Git-aware operations via OPFS |
 | Git Memory | `clawser-git-memory.js` | `git_memory_store`, `git_memory_recall` | Version-controlled memory |
 | Automation | `clawser-automation.js` | `routine_create`, `routine_list`, `routine_run`, `routine_delete` | Scheduled and triggered routines |
-| Sandbox | `clawser-sandbox.js` | `sandbox_exec`, `sandbox_status` | WASM-isolated code execution |
+| Sandbox | `clawser-sandbox.js` | `sandbox_exec`, `sandbox_status` | Sandboxed code execution (uses andbox Worker sandbox) |
 | Peripherals | `clawser-peripherals.js` | `peripheral_list`, `peripheral_connect`, `peripheral_send` | Hardware device integration |
 | Pairing | `clawser-pairing.js` | `pair_request`, `pair_accept`, `pair_list` | Agent-to-agent pairing |
 | Bridge | `clawser-bridge.js` | `bridge_connect`, `bridge_send`, `bridge_status` | External system bridges |
@@ -20,6 +20,16 @@ Feature modules extend the core agent with specialized capabilities. Each module
 | Skill Registry | `clawser-skill-registry-client.js` | `skill_search`, `skill_install`, `skill_rate` | Community skill discovery |
 | Terminal Sessions | `clawser-terminal-sessions.js` | `session_create`, `session_switch`, `session_list` | Multiple terminal sessions |
 | Agent Storage | `clawser-agent-storage.js` | — | Agent definition persistence |
+
+## Internal Packages
+
+These are standalone packages in `web/packages/` with their own READMEs:
+
+| Package | Path | Description |
+|---------|------|-------------|
+| **andbox** | `web/packages/andbox/` | Worker-based sandboxed JS runtime with RPC capabilities, import maps, and capability gating |
+| **wsh** | `web/packages/wsh/` | Web Shell — browser-native remote command execution over WebTransport/WebSocket with Ed25519 auth |
+| **ai-matey-middleware-andbox** | `web/packages/ai-matey-middleware-andbox/` | ai.matey middleware for LLM code extraction → andbox execution |
 
 ## Module Lifecycle
 
