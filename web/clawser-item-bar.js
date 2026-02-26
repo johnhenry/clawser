@@ -93,8 +93,8 @@ export function createItemBar(config) {
   /** Filter text for dropdown search. */
   let searchFilter = '';
 
-  function renderDropdown() {
-    const items = config.listItems();
+  async function renderDropdown() {
+    const items = await Promise.resolve(config.listItems());
     const activeId = config.getActiveId();
     dropdown.innerHTML = '';
 

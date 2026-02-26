@@ -15,14 +15,14 @@ import { navigate } from './clawser-router.js';
 
 // ── Home view rendering ─────────────────────────────────────────
 /** Render the workspace card list on the home screen with rename/delete actions and click-to-open. */
-export function renderHomeWorkspaceList() {
+export async function renderHomeWorkspaceList() {
   const list = loadWorkspaces();
   const el = $('homeWsList');
   el.innerHTML = '';
   for (const ws of list) {
     const card = document.createElement('div');
     card.className = 'ws-card';
-    const convs = loadConversations(ws.id);
+    const convs = await loadConversations(ws.id);
     const lastUsed = ws.lastUsed ? new Date(ws.lastUsed).toLocaleDateString() : 'never';
     card.innerHTML = `
       <span class="ws-card-name">${esc(ws.name)}</span>
@@ -35,7 +35,7 @@ export function renderHomeWorkspaceList() {
     card.querySelector('.ws-rename').addEventListener('click', async (e) => {
       e.stopPropagation();
       const newName = await modal.prompt('Rename workspace:', ws.name);
-      if (newName?.trim()) { renameWorkspace(ws.id, newName.trim()); renderHomeWorkspaceList(); }
+      if (newName?.trim()) { renameWorkspace(ws.id, newName.trim()); await renderHomeWorkspaceList(); }
     });
     const delBtn = card.querySelector('.ws-delete');
     if (delBtn) {
@@ -43,7 +43,7 @@ export function renderHomeWorkspaceList() {
         e.stopPropagation();
         if (await modal.confirm(`Delete workspace "${ws.name}"?`, { danger: true })) {
           await deleteWorkspace(ws.id);
-          renderHomeWorkspaceList();
+          await renderHomeWorkspaceList();
         }
       });
     }

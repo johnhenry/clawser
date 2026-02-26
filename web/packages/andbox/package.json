@@ -1,0 +1,22 @@
+{
+  "name": "andbox",
+  "version": "0.1.0",
+  "description": "Sandboxed JavaScript runtime with Worker isolation, RPC capabilities, import maps, and timeouts",
+  "type": "module",
+  "main": "src/index.mjs",
+  "exports": {
+    ".": "./src/index.mjs"
+  },
+  "files": [
+    "src/"
+  ],
+  "keywords": [
+    "sandbox",
+    "worker",
+    "isolation",
+    "rpc",
+    "javascript",
+    "eval"
+  ],
+  "license": "MIT"
+}

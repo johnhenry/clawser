@@ -29,7 +29,7 @@ export async function handleRoute() {
     state.currentRoute = 'home';
     showView('viewHome');
     ensureDefaultWorkspace();
-    renderHomeWorkspaceList();
+    await renderHomeWorkspaceList();
     renderHomeAccountList();
     return;
   }

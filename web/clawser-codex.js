@@ -1,9 +1,9 @@
 /**
- * Clawser Codex — Code-based tool execution via vimble
+ * Clawser Codex — Code-based tool execution via andbox
  *
  * Instead of parsing structured tool calls, this module lets LLMs write
- * code that calls tool functions directly. The code runs in vimble's
- * isolated context with browser tools injected.
+ * code that calls tool functions directly. The code runs in andbox's
+ * isolated Worker sandbox with browser tools injected as capabilities.
  *
  * Handles multiple LLM output formats:
  *   - ```js or ```javascript blocks (standard markdown)
@@ -17,7 +17,7 @@
  *   - Python dict syntax {key: value} works in JS
  */
 
-import { run, InjectedConsole } from 'https://ga.jspm.io/npm:vimble@0.0.1/src/index.mjs';
+import { createSandbox } from './packages-andbox.js';
 
 let _codexSeq = 0;
 
@@ -93,12 +93,17 @@ function autoAwait(code) {
 }
 
 export class Codex {
-  static #EXEC_TIMEOUT_MS = 30_000;
+  // Long timeout: user approval dialogs can add arbitrary time to tool calls
+  static #EXEC_TIMEOUT_MS = 300_000;
 
   /** @type {import('./clawser-tools.js').BrowserToolRegistry} */
   #tools;
   /** @type {Function} */
   #onLog;
+  /** @type {import('./packages-andbox.js').createSandbox|null} */
+  #sandbox = null;
+  /** @type {boolean} */
+  #sandboxInitializing = false;
 
   constructor(browserTools, opts = {}) {
     this.#tools = browserTools;
@@ -106,40 +111,16 @@ export class Codex {
   }
 
   /**
-   * Build the execution context object injected into the vimble sandbox.
-   *
-   * The returned context provides the following to executing code:
-   *
-   * - **Tool injection**: Every registered browser tool is exposed as an async
-   *   function under its full name (e.g. `browser_fetch`, `browser_fs_read`).
-   *   Each function accepts a params object, calls `tools.execute(name, params)`,
-   *   throws on failure, and auto-parses JSON output (falling back to raw string).
-   *
-   * - **Short-alias naming convention**: Tools prefixed with `browser_` also get
-   *   a camelCase short alias (e.g. `browser_fs_read` becomes `fsRead`,
-   *   `browser_fetch` becomes `fetch`). Short aliases do not overwrite existing
-   *   context keys, so the native `fetch` injection takes precedence.
-   *
-   * - **Native fetch injection**: `globalThis.fetch` is bound and injected as
-   *   `ctx.fetch`, giving code blocks direct HTTP access outside the tool system.
-   *
-   * - **Async `print()` wrapper**: `print(...args)` resolves any Promise arguments
-   *   before logging. This lets models write `print(browser_fetch({url}))` without
-   *   explicit `await`. Resolved values are pretty-printed (objects as indented
-   *   JSON, primitives as strings) and logged to the block's `InjectedConsole`.
-   *
-   * @param {import('vimble').InjectedConsole} localConsole - Per-block console
-   *   instance that captures `print()` output.
-   * @returns {object} A plain object mapping function names to async functions,
-   *   suitable as the `context` argument to `vimble.run()`.
+   * Build capability functions from browser tools for the andbox sandbox.
+   * Each tool becomes a callable capability via host.call('tool_name', params).
    */
-  #buildContext(localConsole) {
-    const ctx = {};
+  #buildCapabilities() {
+    const caps = {};
     const tools = this.#tools;
 
-    // Inject each browser tool as an async function
+    // Expose each browser tool as a capability
     for (const name of tools.names()) {
-      ctx[name] = async (params = {}) => {
+      caps[name] = async (params = {}) => {
         const result = await tools.execute(name, params);
         if (!result.success) {
           return { _error: true, message: result.error || `${name} failed` };
@@ -149,20 +130,8 @@ export class Codex {
       };
     }
 
-    // Short aliases: browser_fetch → fetch, browser_fs_read → fsRead, etc.
-    for (const name of tools.names()) {
-      if (name.startsWith('browser_')) {
-        const short = name.slice(8).replace(/_([a-z])/g, (_, c) => c.toUpperCase());
-        if (!ctx[short]) ctx[short] = ctx[name];
-      }
-    }
-
-    // Inject native fetch
-    ctx.fetch = fetch.bind(globalThis);
-
-    // print() — async-aware: auto-awaits promises before logging.
-    // This handles `print(browser_fetch({url: "..."}))` without explicit await.
-    ctx.print = async (...args) => {
+    // print capability — async-aware: auto-awaits promises before returning output
+    caps._print = async (...args) => {
       const resolved = [];
       for (const arg of args) {
         if (arg && typeof arg === 'object' && typeof arg.then === 'function') {
@@ -171,45 +140,104 @@ export class Codex {
           resolved.push(arg);
         }
       }
-      // Pretty-print objects
       const formatted = resolved.map(v =>
         typeof v === 'object' && v !== null ? JSON.stringify(v, null, 2) : String(v)
       );
-      localConsole.log(...formatted);
+      return formatted.join(' ');
     };
 
-    return ctx;
+    // Native fetch as capability
+    caps._fetch = async (url, init) => {
+      const resp = await fetch(url, init);
+      return resp.text();
+    };
+
+    return caps;
+  }
+
+  /**
+   * Ensure the sandbox is created and ready.
+   */
+  async #ensureSandbox() {
+    if (this.#sandbox && !this.#sandbox.isDisposed()) return this.#sandbox;
+    if (this.#sandboxInitializing) {
+      // Wait for initialization
+      while (this.#sandboxInitializing) {
+        await new Promise(r => setTimeout(r, 10));
+      }
+      return this.#sandbox;
+    }
+
+    this.#sandboxInitializing = true;
+    try {
+      const caps = this.#buildCapabilities();
+      this.#sandbox = await createSandbox({
+        capabilities: caps,
+        defaultTimeoutMs: Codex.#EXEC_TIMEOUT_MS,
+      });
+      return this.#sandbox;
+    } finally {
+      this.#sandboxInitializing = false;
+    }
+  }
+
+  /**
+   * Build the wrapper code that injects tool functions and print() into the
+   * sandbox evaluation scope. Tools are called via host.call() RPC.
+   */
+  #wrapCode(code) {
+    const tools = this.#tools;
+    const lines = [];
+
+    // Inject each tool as a local async function that calls host.call()
+    for (const name of tools.names()) {
+      lines.push(`async function ${name}(params) { return await host.call('${name}', params || {}); }`);
+    }
+
+    // Short aliases: browser_fetch → fetch, browser_fs_read → fsRead, etc.
+    for (const name of tools.names()) {
+      if (name.startsWith('browser_')) {
+        const short = name.slice(8).replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+        // Don't shadow fetch with browser_fetch alias
+        if (short !== 'fetch') {
+          lines.push(`const ${short} = ${name};`);
+        }
+      }
+    }
+
+    // Inject print() that calls host._print capability
+    lines.push(`async function print(...args) {
+  const resolved = [];
+  for (const a of args) {
+    if (a && typeof a === 'object' && typeof a.then === 'function') resolved.push(await a);
+    else resolved.push(a);
+  }
+  const msg = resolved.map(v => typeof v === 'object' && v !== null ? JSON.stringify(v, null, 2) : String(v)).join(' ');
+  console.log(msg);
+  return msg;
+}`);
+
+    // Inject fetch via host._fetch capability
+    lines.push(`async function fetch(url, init) { return await host.call('_fetch', url, init); }`);
+
+    lines.push('');
+    lines.push(code);
+
+    return lines.join('\n');
   }
 
   /**
    * Execute an LLM response by extracting and running its code blocks.
    *
    * Processing pipeline for each code block:
-   * 1. **Code block extraction**: Uses `extractCodeBlocks()` to find all fenced
-   *    code blocks (` ```js `, ` ```tool_code `, ` ```python `, bare ` ``` `, etc.).
-   *    The conversational text outside code blocks is separated via `stripCodeBlocks()`.
-   * 2. **Python normalization**: Blocks tagged as `python`, `py`, or `tool_code` are
-   *    run through `adaptPythonisms()` which converts `True`/`False`/`None` to JS
-   *    equivalents and translates f-strings to template literals.
-   * 3. **autoAwait**: `autoAwait()` inserts missing `await` keywords before known
-   *    async calls (`print()`, `browser_*()`) so models that forget `await` still work.
-   * 4. **vimble execution**: Each adapted block is executed in an isolated vimble
-   *    sandbox via `run(code, context)`. The context is built by `#buildContext()` and
-   *    includes all browser tools as async functions, short aliases, native `fetch`,
-   *    and `print()`. Each block gets its own `InjectedConsole` for output capture.
-   * 5. **toolCalls collection**: Every executed block produces a synthetic tool call
-   *    entry with `name: '_codex_eval'`, the original code as arguments, and the
-   *    execution result (success/error + output). These are consumed by
-   *    `#executeAndSummarize()` for history injection.
-   *
-   * If no code blocks are found, returns immediately with the original text and
-   * empty `results`/`toolCalls` arrays.
+   * 1. Code block extraction via extractCodeBlocks()
+   * 2. Python normalization via adaptPythonisms()
+   * 3. autoAwait() inserts missing await keywords
+   * 4. andbox execution via sandbox.evaluate() with tools as host capabilities
+   * 5. Results collected as synthetic _codex_eval tool calls
    *
    * @param {string} llmResponse - Raw LLM output text that may contain fenced code blocks.
-   * @returns {Promise<{text: string, results: Array<{code: string, output: string, error?: string}>, toolCalls: Array<{id: string, name: string, arguments: string, _result: {success: boolean, output: string, error?: string}}>}>}
-   *   - `text`: Conversational content with code blocks stripped.
-   *   - `results`: Per-block execution outcomes (output or error).
-   *   - `toolCalls`: Synthetic tool call entries for history/event-log injection.
+   * @returns {Promise<{text: string, results: Array, toolCalls: Array}>}
    */
   async execute(llmResponse) {
     const blocks = extractCodeBlocks(llmResponse);
@@ -221,13 +249,9 @@ export class Codex {
       return { text: llmResponse, results, toolCalls };
     }
 
-    for (const { lang, code: rawCode } of blocks) {
-      const localConsole = new InjectedConsole();
-      const context = {
-        ...this.#buildContext(localConsole),
-        console: localConsole,
-      };
+    const sandbox = await this.#ensureSandbox();
 
+    for (const { lang, code: rawCode } of blocks) {
       // Adapt code for safe async execution
       let code = rawCode;
       if (lang === 'python' || lang === 'py' || lang === 'tool_code') {
@@ -235,14 +259,21 @@ export class Codex {
       }
       code = autoAwait(code);
 
+      // Wrap with tool injections
+      const wrappedCode = this.#wrapCode(code);
+
+      // Per-block console output collector
+      const consoleOutput = [];
+
       try {
         this.#onLog(2, `codex: executing ${lang || 'code'} block (${code.length} chars)`);
-        const timeout = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Code execution timed out after 30s')), Codex.#EXEC_TIMEOUT_MS)
-        );
-        const returnValue = await Promise.race([run(code, context), timeout]);
 
-        let output = localConsole.result;
+        const returnValue = await sandbox.evaluate(wrappedCode, {
+          timeoutMs: Codex.#EXEC_TIMEOUT_MS,
+          onConsole: (_level, ...args) => { consoleOutput.push(args.join(' ')); },
+        });
+
+        let output = consoleOutput.join('\n');
         if (!output && returnValue !== undefined) {
           output = typeof returnValue === 'string'
             ? returnValue
@@ -311,6 +342,19 @@ export class Codex {
 
     return lines.join('\n');
   }
+
+  /** Access the underlying andbox sandbox instance (for SandboxEvalTool). */
+  get _sandbox() { return this.#sandbox; }
+
+  /**
+   * Dispose the underlying sandbox.
+   */
+  async dispose() {
+    if (this.#sandbox && !this.#sandbox.isDisposed()) {
+      await this.#sandbox.dispose();
+    }
+    this.#sandbox = null;
+  }
 }
 
-export { extractCodeBlocks, stripCodeBlocks };
+export { extractCodeBlocks, stripCodeBlocks, adaptPythonisms, autoAwait };

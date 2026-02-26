@@ -1380,6 +1380,47 @@ export async function checkQuota() {
   }
 }
 
+/**
+ * Sandbox eval tool — runs arbitrary JS in an andbox sandbox.
+ * The sandbox instance is injected at registration time.
+ */
+export class SandboxEvalTool extends BrowserTool {
+  #getSandbox;
+  constructor(getSandbox) { super(); this.#getSandbox = getSandbox; }
+
+  get name() { return 'browser_sandbox_eval'; }
+  get description() {
+    return 'Evaluate JavaScript code in an isolated sandbox with host capabilities. Returns the result or error.';
+  }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        code: { type: 'string', description: 'JavaScript code to evaluate (top-level await supported)' },
+        timeout: { type: 'number', description: 'Timeout in ms (default: 30000)' },
+      },
+      required: ['code'],
+    };
+  }
+  get permission() { return 'approve'; }
+
+  async execute({ code, timeout }) {
+    const sandbox = this.#getSandbox();
+    if (!sandbox || sandbox.isDisposed()) {
+      return { success: false, output: '', error: 'No sandbox available' };
+    }
+    try {
+      const result = await sandbox.evaluate(code, { timeoutMs: timeout });
+      const output = result === undefined
+        ? '(no return value)'
+        : typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+      return { success: true, output };
+    } catch (e) {
+      return { success: false, output: '', error: e.message || String(e) };
+    }
+  }
+}
+
 export function createDefaultRegistry(workspaceFs) {
   const registry = new BrowserToolRegistry();
 

@@ -814,6 +814,9 @@ export class ClawserAgent {
     return provider?.supportsNativeTools ?? false;
   }
 
+  /** Access the Codex instance (for sandbox tool integration). */
+  get codex() { return this.#codex; }
+
   /**
    * Get the Codex tool prompt for non-native providers.
    * @returns {string|null}
@@ -948,7 +951,7 @@ export class ClawserAgent {
    * Pipeline steps:
    * 1. **Code extraction**: Passes `response.content` to `Codex.execute()`, which
    *    extracts fenced code blocks, normalizes Python-isms, auto-inserts `await`,
-   *    and runs each block in a vimble sandbox.
+   *    and runs each block in an andbox Worker sandbox.
    * 2. **History injection**: For each tool call produced by Codex execution, the
    *    method pushes an assistant message (with `tool_calls`) and corresponding
    *    tool-result messages into `#history`, and records matching events in the

@@ -336,11 +336,38 @@ export function terminalAppend(html) {
 /** Track terminal agent mode state */
 let _terminalAgentMode = false;
 
+/** Track terminal REPL mode state */
+let _terminalReplMode = false;
+let _terminalReplHandler = null;
+let _terminalReplPrompt = 'repl> ';
+
 /** Run a command in the terminal panel. */
 export async function terminalExec(cmd) {
   if (!cmd.trim()) return;
   terminalHistory.unshift(cmd);
   termHistoryIdx = -1;
+
+  // In REPL mode, forward input to the REPL handler
+  if (_terminalReplMode && _terminalReplHandler) {
+    terminalAppend(`<div class="terminal-cmd"><span class="repl-mode-prompt">${esc(_terminalReplPrompt)}</span>${esc(cmd)}</div>`);
+    state.terminalSessions?.recordCommand(cmd);
+    try {
+      const result = await _terminalReplHandler(cmd);
+      if (result.__exitReplMode) {
+        _terminalReplMode = false;
+        _terminalReplHandler = null;
+        const badge = $('terminalModeBadge');
+        if (badge) { badge.textContent = '[SHELL]'; badge.classList.remove('repl'); }
+      }
+      if (result.stdout) terminalAppend(`<div class="terminal-stdout">${esc(result.stdout)}</div>`);
+      if (result.stderr) terminalAppend(`<div class="terminal-stderr">${esc(result.stderr)}</div>`);
+      state.terminalSessions?.recordResult(result.stdout || '', result.stderr || '', result.exitCode ?? 0);
+    } catch (e) {
+      terminalAppend(`<div class="terminal-stderr">${esc(e.message)}</div>`);
+      state.terminalSessions?.recordResult('', e.message, 1);
+    }
+    return;
+  }
 
   // In agent mode, forward input to the agent instead of the shell
   if (_terminalAgentMode && !cmd.startsWith('clawser ') && cmd !== 'clawser exit') {
@@ -387,6 +414,13 @@ export async function terminalExec(cmd) {
         _terminalAgentMode = false;
         const badge = $('terminalModeBadge');
         if (badge) { badge.textContent = '[SHELL]'; badge.classList.remove('agent'); }
+      }
+      if (result.__enterReplMode) {
+        _terminalReplMode = true;
+        _terminalReplHandler = result.__replHandler;
+        _terminalReplPrompt = result.__replPrompt || 'repl> ';
+        const badge = $('terminalModeBadge');
+        if (badge) { badge.textContent = '[REPL]'; badge.classList.add('repl'); }
       }
       if (result.stdout) terminalAppend(`<div class="terminal-stdout">${esc(result.stdout)}</div>`);
       if (result.stderr) terminalAppend(`<div class="terminal-stderr">${esc(result.stderr)}</div>`);
@@ -559,7 +593,7 @@ export function renderTerminalSessionBar() {
       if (restored) replayTerminalSession(restored.events);
     },
     onRename: async (id, newName) => {
-      ts.rename(id, newName);
+      await ts.rename(id, newName);
     },
     onDelete: async (id) => {
       await ts.delete(id);

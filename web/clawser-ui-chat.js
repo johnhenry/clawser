@@ -1,7 +1,7 @@
 // clawser-ui-chat.js — Core messaging UI: chat, streaming, conversations, replay
 import { $, esc, state, emit, setSending, setConversation, resetConversationState } from './clawser-state.js';
 import { modal } from './clawser-modal.js';
-import { loadConversations, saveConversations, generateConvId } from './clawser-conversations.js';
+import { loadConversations, updateConversationMeta, generateConvId } from './clawser-conversations.js';
 import { loadAccounts } from './clawser-accounts.js';
 import { updateRouteHash } from './clawser-router.js';
 import { estimateCost, classifyError } from './clawser-providers.js';
@@ -262,12 +262,8 @@ export function finalizeStreamingMsg(el) {
 /** Save the active conversation's history and events to OPFS, preserving the created timestamp. */
 export async function persistActiveConversation() {
   if (!state.agent || !state.activeConversationId) return;
-  const wsId = state.agent.getWorkspace();
-  const list = loadConversations(wsId);
-  const existing = list.find(c => c.id === state.activeConversationId);
   await state.agent.persistConversation(state.activeConversationId, {
     name: state.activeConversationName || state.activeConversationId,
-    created: existing?.created || Date.now(),
   });
 }
 
@@ -277,17 +273,9 @@ export function updateConvNameDisplay() {
   if (convItemBar) convItemBar.refresh();
 }
 
-/** Rename the active conversation in both localStorage and OPFS. @param {string} name */
+/** Rename the active conversation. @param {string} name */
 export async function renameCurrentConversation(name) {
   if (!state.agent || !state.activeConversationId || !name) return;
-  const wsId = state.agent.getWorkspace();
-
-  const list = loadConversations(wsId);
-  const existing = list.find(c => c.id === state.activeConversationId);
-  if (existing) {
-    existing.name = name;
-    saveConversations(wsId, list);
-  }
 
   setConversation(state.activeConversationId, name);
   updateConvNameDisplay();
@@ -301,12 +289,8 @@ export async function renameCurrentConversation(name) {
 export async function newConversation() {
   if (!state.agent) return;
 
-  const wsId = state.agent.getWorkspace();
   if (state.activeConversationId) {
     await persistActiveConversation();
-    const list = loadConversations(wsId);
-    const c = list.find(x => x.id === state.activeConversationId);
-    if (c) { c.lastUsed = Date.now(); saveConversations(wsId, list); }
   }
 
   state.agent.reinit({});
@@ -356,12 +340,10 @@ export async function switchConversation(convId) {
   }
   emit('renderGoals');
 
-  const list = loadConversations(wsId);
-  const conv = list.find(c => c.id === convId);
-  setConversation(convId, conv?.name || convId);
+  setConversation(convId, convData?.name || convId);
   updateConvNameDisplay();
 
-  if (conv) { conv.lastUsed = Date.now(); saveConversations(wsId, list); }
+  await updateConversationMeta(wsId, convId, { lastUsed: Date.now() });
 
   updateState();
   setStatus('ready', 'ready');
@@ -376,13 +358,8 @@ export async function switchConversation(convId) {
 /** Delete a conversation from OPFS and localStorage, resetting UI if it was active. @param {string} convId */
 export async function deleteConversationEntry(convId) {
   if (!state.agent) return;
-  const wsId = state.agent.getWorkspace();
 
   await state.agent.deleteConversation(convId);
-
-  let list = loadConversations(wsId);
-  list = list.filter(c => c.id !== convId);
-  saveConversations(wsId, list);
 
   if (state.activeConversationId === convId) {
     setConversation(null, null);
@@ -412,17 +389,10 @@ export async function forkConversation() {
   const origName = state.activeConversationName || 'conversation';
   const forkName = `${origName} (fork)`;
 
-  const list = loadConversations(wsId);
-  const existing = list.find(c => c.id === state.activeConversationId);
   await state.agent.persistConversation(newId, {
     name: forkName,
     created: Date.now(),
   });
-
-  const messagesEl = $('messages');
-  const msgCount = messagesEl.querySelectorAll('.msg.user, .msg.agent').length;
-  list.push({ id: newId, name: forkName, created: Date.now(), lastUsed: Date.now(), messageCount: msgCount, preview: existing?.preview || '' });
-  saveConversations(wsId, list);
 
   setConversation(newId, forkName);
   updateConvNameDisplay();
@@ -476,14 +446,6 @@ export async function forkConversationFromEvent(eventId) {
     return;
   }
 
-  // Update conversation list in localStorage
-  const list = loadConversations(wsId);
-  const msgCount = sliced.filter(e => e.type === 'user_message' || e.type === 'agent_message').length;
-  const lastUserMsg = [...sliced].reverse().find(e => e.type === 'user_message');
-  const preview = lastUserMsg?.data?.content?.slice(0, 80) || '';
-  list.push({ id: newId, name: forkName, created: Date.now(), lastUsed: Date.now(), messageCount: msgCount, preview });
-  saveConversations(wsId, list);
-
   // Switch to the forked conversation
   await switchConversation(newId);
   addMsg('system', `Forked conversation as "${forkName}" (${userMsgCount} messages kept).`);
@@ -529,9 +491,9 @@ function initConvItemBar() {
     defaultName: 'New conversation',
     getActiveName: () => state.activeConversationName,
     getActiveId: () => state.activeConversationId,
-    listItems: () => {
+    listItems: async () => {
       if (!state.agent) return [];
-      return loadConversations(state.agent.getWorkspace());
+      return await loadConversations(state.agent.getWorkspace());
     },
     onNew: () => newConversation(),
     onSwitch: (id) => switchConversation(id),
@@ -982,21 +944,24 @@ export async function sendMessage() {
       const userMsgs = messagesEl.querySelectorAll('.msg.user');
       const preview = userMsgs.length > 0 ? userMsgs[userMsgs.length - 1].textContent.replace(/^You\n?/, '').slice(0, 80) : '';
 
-      let convList = loadConversations(wsId);
       if (!state.activeConversationId) {
         setConversation(generateConvId(), text.slice(0, 40) + (text.length > 40 ? '...' : ''));
-        convList.push({ id: state.activeConversationId, name: state.activeConversationName, created: Date.now(), lastUsed: Date.now(), messageCount: msgCount, preview });
-        saveConversations(wsId, convList);
+        await updateConversationMeta(wsId, state.activeConversationId, {
+          id: state.activeConversationId,
+          name: state.activeConversationName,
+          created: Date.now(),
+          lastUsed: Date.now(),
+          messageCount: msgCount,
+          preview,
+        });
         updateConvNameDisplay();
         updateRouteHash();
       } else {
-        const conv = convList.find(c => c.id === state.activeConversationId);
-        if (conv) {
-          conv.lastUsed = Date.now();
-          conv.messageCount = msgCount;
-          conv.preview = preview;
-          saveConversations(wsId, convList);
-        }
+        await updateConversationMeta(wsId, state.activeConversationId, {
+          lastUsed: Date.now(),
+          messageCount: msgCount,
+          preview,
+        });
       }
 
       await persistActiveConversation();

@@ -564,6 +564,17 @@ async function executeCommand(node, state, registry, opts) {
     return { stdout: '', stderr: '', exitCode: 0 };
   }
 
+  // Bare variable assignment: VAR=VALUE (no args, no command lookup)
+  const eqIdx = node.name.indexOf('=');
+  if (eqIdx > 0 && node.args.length === 0 && /^[A-Za-z_][A-Za-z0-9_]*$/.test(node.name.slice(0, eqIdx))) {
+    const varName = node.name.slice(0, eqIdx);
+    const varValue = node.name.slice(eqIdx + 1);
+    if (!(state.env instanceof Map)) state.env = new Map();
+    state.env.set(varName, expandVariables(varValue, state.env));
+    state.lastExitCode = 0;
+    return { stdout: '', stderr: '', exitCode: 0 };
+  }
+
   // Variable expansion: expand $VAR, ${VAR}, $? in command name and args
   const envObj = state.env instanceof Map ? state.env : new Map();
   envObj.set('?', String(state.lastExitCode));
@@ -597,6 +608,7 @@ async function executeCommand(node, state, registry, opts) {
     const exitCode = result.exitCode ?? 0;
     state.lastExitCode = exitCode;
     return {
+      ...result,
       stdout: result.stdout ?? '',
       stderr: result.stderr ?? '',
       exitCode,

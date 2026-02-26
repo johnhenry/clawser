@@ -1,0 +1,25 @@
+{
+  "name": "ai.matey.middleware.andbox",
+  "version": "0.1.0",
+  "description": "ai.matey middleware for code-based tool execution via andbox sandbox",
+  "type": "module",
+  "main": "src/index.mjs",
+  "exports": {
+    ".": "./src/index.mjs"
+  },
+  "files": [
+    "src/"
+  ],
+  "peerDependencies": {
+    "andbox": ">=0.1.0"
+  },
+  "keywords": [
+    "ai.matey",
+    "middleware",
+    "andbox",
+    "sandbox",
+    "tool-calling",
+    "code-execution"
+  ],
+  "license": "MIT"
+}

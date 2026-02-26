@@ -31,6 +31,8 @@ import { DelegateTool } from './clawser-delegate.js';
 import { GitStatusTool, GitDiffTool, GitLogTool, GitCommitTool, GitBranchTool, GitRecallTool } from './clawser-git.js';
 import { BrowserOpenTool, BrowserReadPageTool, BrowserClickTool, BrowserFillTool, BrowserWaitTool, BrowserEvaluateTool, BrowserListTabsTool, BrowserCloseTabTool } from './clawser-browser-auto.js';
 import { SandboxRunTool, SandboxStatusTool } from './clawser-sandbox.js';
+import { SandboxEvalTool } from './clawser-tools.js';
+import { registerAndboxCli } from './clawser-andbox-cli.js';
 import { HwListTool, HwConnectTool, HwSendTool, HwReadTool, HwDisconnectTool, HwInfoTool } from './clawser-hardware.js';
 import { RemoteStatusTool, RemotePairTool, RemoteRevokeTool } from './clawser-remote.js';
 import { BridgeStatusTool, BridgeListToolsTool, BridgeFetchTool } from './clawser-bridge.js';
@@ -50,6 +52,7 @@ export async function createShellSession() {
   state.shell = new ClawserShell({ workspaceFs: state.workspaceFs });
   await state.shell.source('/.clawserrc');
   registerClawserCli(state.shell.registry, () => state.agent, () => state.shell);
+  registerAndboxCli(state.shell.registry, () => state.agent, () => state.shell);
   // Update terminal session manager's shell reference
   if (state.terminalSessions) {
     state.terminalSessions.setShell(state.shell);
@@ -144,17 +147,10 @@ export async function switchWorkspace(newId, convId) {
   state.terminalSessions = new TerminalSessionManager({
     wsId: newId,
     shell: state.shell,
-    fs: state.shell.fs,
   });
-  const savedTermSessions = JSON.parse(localStorage.getItem(lsKey.termSessions(newId)) || '[]');
-  if (savedTermSessions.length > 0) {
-    try {
-      const restored = await state.terminalSessions.restore(savedTermSessions[0].id);
-      if (restored) replayTerminalSession(restored.events);
-    } catch { /* fresh session */ }
-  }
-  if (!state.terminalSessions.activeId) {
-    await state.terminalSessions.create('Terminal 1');
+  const switchInitResult = await state.terminalSessions.init();
+  if (switchInitResult.restored && switchInitResult.events) {
+    replayTerminalSession(switchInitResult.events);
   }
   renderTerminalSessionBar();
 
@@ -188,9 +184,11 @@ export async function switchWorkspace(newId, convId) {
   let wsRestored = false;
   const targetConvId = convId || savedConfig?.activeConversationId;
   if (targetConvId) {
-    const convName = convId
-      ? (loadConversations(newId).find(c => c.id === convId)?.name || null)
-      : (savedConfig?.activeConversationName || null);
+    let convName = savedConfig?.activeConversationName || null;
+    if (convId) {
+      const convList = await loadConversations(newId);
+      convName = convList.find(c => c.id === convId)?.name || null;
+    }
     setConversation(targetConvId, convName);
     updateConvNameDisplay();
 
@@ -388,9 +386,10 @@ export async function initWorkspace(wsId, convId) {
     state.browserTools.register(new BrowserListTabsTool(state.automationManager));
     state.browserTools.register(new BrowserCloseTabTool(state.automationManager));
 
-    // Sandbox (2)
+    // Sandbox (3)
     state.browserTools.register(new SandboxRunTool(state.sandboxManager));
     state.browserTools.register(new SandboxStatusTool(state.sandboxManager));
+    state.browserTools.register(new SandboxEvalTool(() => state.agent?.codex?._sandbox));
 
     // Hardware (6)
     state.browserTools.register(new HwListTool(state.peripheralManager));
@@ -533,19 +532,10 @@ export async function initWorkspace(wsId, convId) {
     state.terminalSessions = new TerminalSessionManager({
       wsId: activeWsId,
       shell: state.shell,
-      fs: state.shell.fs,
     });
-    // Create or restore a default terminal session
-    const savedTermSession = JSON.parse(localStorage.getItem(lsKey.termSessions(activeWsId)) || '[]');
-    if (savedTermSession.length > 0) {
-      const lastActive = savedTermSession[0];
-      try {
-        const restored = await state.terminalSessions.restore(lastActive.id);
-        if (restored) replayTerminalSession(restored.events);
-      } catch { /* fresh session */ }
-    }
-    if (!state.terminalSessions.activeId) {
-      await state.terminalSessions.create('Terminal 1');
+    const initResult = await state.terminalSessions.init();
+    if (initResult.restored && initResult.events) {
+      replayTerminalSession(initResult.events);
     }
     renderTerminalSessionBar();
 
@@ -583,9 +573,11 @@ export async function initWorkspace(wsId, convId) {
     let restored = false;
     const targetConvId = convId || savedConfig?.activeConversationId;
     if (targetConvId) {
-      const convName = convId
-        ? (loadConversations(activeWsId).find(c => c.id === convId)?.name || null)
-        : (savedConfig?.activeConversationName || null);
+      let convName = savedConfig?.activeConversationName || null;
+      if (convId) {
+        const convList = await loadConversations(activeWsId);
+        convName = convList.find(c => c.id === convId)?.name || null;
+      }
       setConversation(targetConvId, convName);
       updateConvNameDisplay();
 

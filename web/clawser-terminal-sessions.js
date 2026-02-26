@@ -5,19 +5,16 @@
  * interactions, state snapshots) and persists both the event stream and a
  * fast-restore state snapshot to OPFS.
  *
- * Storage layout:
- *   OPFS (workspace-scoped):
- *     /.terminal-sessions/{termId}/events.jsonl
- *     /.terminal-sessions/{termId}/state.json
- *   localStorage:
- *     clawser_terminal_sessions_{wsId} — JSON array of session metadata
+ * Storage layout (OPFS, workspace-scoped — same pattern as conversations):
+ *   clawser_workspaces/{wsId}/.terminal-sessions/{termId}/meta.json
+ *   clawser_workspaces/{wsId}/.terminal-sessions/{termId}/events.jsonl
+ *   clawser_workspaces/{wsId}/.terminal-sessions/{termId}/state.json
  *
- * Session metadata shape:
+ * Session metadata shape (meta.json):
  *   { id, name, created, lastUsed, commandCount, preview, version: 1, workspaceId }
  */
 
 import { ShellState } from './clawser-shell.js';
-import { checkQuota } from './clawser-tools.js';
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -34,14 +31,35 @@ const STDERR_CAP = 5_000;
 
 /**
  * Truncate a string to a maximum length, appending an indicator if truncated.
- * @param {string} str
- * @param {number} max
- * @returns {string}
  */
 function cap(str, max) {
   if (typeof str !== 'string') return '';
   if (str.length <= max) return str;
   return str.slice(0, max) + '\n... (truncated)';
+}
+
+/**
+ * Atomic write to OPFS: uses createWritable() swap file so the original is
+ * only replaced on close(), matching the conversation persistence pattern.
+ */
+async function atomicWrite(dirHandle, filename, content) {
+  const fh = await dirHandle.getFileHandle(filename, { create: true });
+  const w = await fh.createWritable();
+  await w.write(content);
+  await w.close();
+}
+
+/**
+ * Read text from an OPFS file handle. Returns null if not found.
+ */
+async function readText(dirHandle, filename) {
+  try {
+    const fh = await dirHandle.getFileHandle(filename);
+    const file = await fh.getFile();
+    return await file.text();
+  } catch (_) {
+    return null;
+  }
 }
 
 // ── TerminalSessionManager ──────────────────────────────────────
@@ -57,8 +75,6 @@ export class TerminalSessionManager {
   #events;
   /** @type {Object} */
   #shell;
-  /** @type {Object} */
-  #fs;
   /** @type {boolean} */
   #dirty;
 
@@ -66,23 +82,66 @@ export class TerminalSessionManager {
    * @param {Object} opts
    * @param {string} opts.wsId — workspace ID
    * @param {Object} opts.shell — current ClawserShell instance
-   * @param {Object} opts.fs — WorkspaceFs instance (readFile, writeFile, listDir, mkdir, delete, stat)
    */
-  constructor({ wsId, shell, fs }) {
+  constructor({ wsId, shell }) {
     this.#wsId = wsId;
     this.#shell = shell;
-    this.#fs = fs;
     this.#activeSessionId = null;
     this.#events = [];
     this.#dirty = false;
-    this.#sessions = this.#loadIndex();
+    this.#sessions = [];
+  }
+
+  // ── OPFS directory helpers (mirrors agent's #getWorkspaceDir pattern) ──
+
+  async #root() {
+    return navigator.storage.getDirectory();
+  }
+
+  async #wsDir(create = false) {
+    const root = await this.#root();
+    const base = await root.getDirectoryHandle('clawser_workspaces', { create });
+    return base.getDirectoryHandle(this.#wsId, { create });
+  }
+
+  async #sessionsDir(create = false) {
+    const ws = await this.#wsDir(create);
+    return ws.getDirectoryHandle('.terminal-sessions', { create });
+  }
+
+  async #sessionDir(termId, create = false) {
+    const sessions = await this.#sessionsDir(create);
+    return sessions.getDirectoryHandle(termId, { create });
   }
 
   // ── Lifecycle ───────────────────────────────────────────────
 
   /**
+   * Initialize: scan OPFS for existing sessions, restore the most recent.
+   * @returns {Promise<{restored: boolean, events?: Array<Object>}>}
+   */
+  async init() {
+    this.#sessions = await this.#scanSessions();
+
+    if (this.#sessions.length > 0) {
+      const sorted = [...this.#sessions].sort((a, b) => (b.lastUsed || 0) - (a.lastUsed || 0));
+      const last = sorted[0];
+      try {
+        const restored = await this.restore(last.id);
+        this.#activeSessionId = last.id;
+        this.#dirty = false;
+        return { restored: true, events: restored.events };
+      } catch (_) {
+        // Restore failed — fall through
+      }
+    }
+
+    await this.create('Terminal 1');
+    return { restored: false };
+  }
+
+  /**
    * Update the shell reference (needed when shell is recreated).
-   * @param {Object} shell
    */
   setShell(shell) {
     this.#shell = shell;
@@ -92,13 +151,8 @@ export class TerminalSessionManager {
 
   /**
    * Create a new terminal session.
-   * Persists the current session if one is active, resets shell state,
-   * clears events, and adds the new session to the index.
-   * @param {string} [name] — optional name; auto-generated if omitted
-   * @returns {Promise<Object>} session metadata
    */
   async create(name) {
-    // Persist current session if active
     if (this.#activeSessionId) {
       await this.persist();
     }
@@ -116,9 +170,9 @@ export class TerminalSessionManager {
       workspaceId: this.#wsId,
     };
 
-    // Reset shell to a fresh state
+    // Reset shell to fresh state
     const freshState = new ShellState();
-    if (this.#shell && this.#shell.state) {
+    if (this.#shell?.state) {
       Object.assign(this.#shell.state, {
         cwd: freshState.cwd,
         env: freshState.env,
@@ -129,181 +183,121 @@ export class TerminalSessionManager {
       });
     }
 
-    // Clear events and set active
     this.#events = [];
     this.#activeSessionId = id;
     this.#dirty = false;
-
-    // Add to index and save
     this.#sessions.push(meta);
-    this.#saveIndex();
+
+    // Write meta.json to OPFS
+    const dir = await this.#sessionDir(id, true);
+    await atomicWrite(dir, 'meta.json', JSON.stringify(meta));
 
     return { ...meta };
   }
 
   /**
    * Switch to an existing session by ID.
-   * Persists the current session, restores target session state and events.
-   * @param {string} sessionId
-   * @returns {Promise<Object>} restored session metadata
    */
   async switchTo(sessionId) {
     const meta = this.#sessions.find(s => s.id === sessionId);
-    if (!meta) {
-      throw new Error(`Terminal session not found: ${sessionId}`);
-    }
+    if (!meta) throw new Error(`Terminal session not found: ${sessionId}`);
 
-    // Persist current session if active
     if (this.#activeSessionId) {
       await this.persist();
     }
 
-    // Restore target session
     const restored = await this.restore(sessionId);
-
     this.#activeSessionId = sessionId;
     this.#dirty = false;
 
-    // Update lastUsed
     meta.lastUsed = Date.now();
-    this.#saveIndex();
+    const dir = await this.#sessionDir(sessionId);
+    await atomicWrite(dir, 'meta.json', JSON.stringify(meta));
 
     return { ...meta };
   }
 
   /**
-   * Persist current session's events and state snapshot to OPFS.
-   * Updates the localStorage index with current metadata.
+   * Persist current session's events and state to OPFS.
    */
   async persist() {
     if (!this.#activeSessionId) return;
 
     const termId = this.#activeSessionId;
-    const dirPath = `/.terminal-sessions/${termId}`;
 
-    // Ensure directory exists
     try {
-      await this.#fs.mkdir(dirPath);
-    } catch (_) {
-      // Directory may already exist
-    }
+      const dir = await this.#sessionDir(termId, true);
 
-    // Check storage quota before writing
-    const quota = await checkQuota();
-    if (quota.critical) {
-      console.warn(`[TerminalSessions] Storage quota critically low (${quota.percent.toFixed(1)}%) — skipping persist`);
-      return;
-    }
+      // Update meta
+      const meta = this.#sessions.find(s => s.id === termId);
+      if (meta) {
+        meta.lastUsed = Date.now();
+        await atomicWrite(dir, 'meta.json', JSON.stringify(meta));
+      }
 
-    // Write events as JSONL
-    const eventsContent = this.#events.map(e => JSON.stringify(e)).join('\n');
-    try {
-      await this.#fs.writeFile(`${dirPath}/events.jsonl`, eventsContent);
-    } catch (err) {
-      console.warn('[TerminalSessions] Failed to write events.jsonl:', err);
-    }
+      // Write events as JSONL
+      const eventsContent = this.#events.map(e => JSON.stringify(e)).join('\n');
+      await atomicWrite(dir, 'events.jsonl', eventsContent);
 
-    // Write state snapshot
-    const stateSnapshot = this.#serializeShellState();
-    try {
-      await this.#fs.writeFile(`${dirPath}/state.json`, JSON.stringify(stateSnapshot));
-    } catch (err) {
-      console.warn('[TerminalSessions] Failed to write state.json:', err);
-    }
+      // Write shell state snapshot
+      const stateSnapshot = this.#serializeShellState();
+      await atomicWrite(dir, 'state.json', JSON.stringify(stateSnapshot));
 
-    // Update index metadata
-    const meta = this.#sessions.find(s => s.id === termId);
-    if (meta) {
-      meta.lastUsed = Date.now();
+      this.#dirty = false;
+    } catch (e) {
+      console.warn('[TerminalSessions] persist failed:', e);
     }
-    this.#saveIndex();
-    this.#dirty = false;
   }
 
   /**
-   * Restore a session from OPFS. Reads state.json for fast shell state restore,
-   * reads events.jsonl, rebuilds history from recorded commands.
-   * @param {string} sessionId
-   * @returns {Promise<{id: string, events: Array<Object>}>}
+   * Restore a session from OPFS.
    */
   async restore(sessionId) {
-    const dirPath = `/.terminal-sessions/${sessionId}`;
+    const dir = await this.#sessionDir(sessionId);
 
-    // Restore shell state from snapshot
-    try {
-      const stateRaw = await this.#fs.readFile(`${dirPath}/state.json`);
-      const stateObj = JSON.parse(stateRaw);
-      this.#applyShellState(stateObj);
-    } catch (_) {
-      // No state snapshot — reset to defaults
-      const freshState = new ShellState();
-      if (this.#shell && this.#shell.state) {
-        Object.assign(this.#shell.state, {
-          cwd: freshState.cwd,
-          env: freshState.env,
-          aliases: freshState.aliases,
-          history: freshState.history,
-          lastExitCode: freshState.lastExitCode,
-          pipefail: freshState.pipefail,
-        });
-      }
+    // Restore shell state
+    const stateRaw = await readText(dir, 'state.json');
+    if (stateRaw) {
+      try {
+        this.#applyShellState(JSON.parse(stateRaw));
+      } catch (_) { /* bad JSON */ }
+    } else {
+      this.#resetShellState();
     }
 
-    // Restore events from JSONL
+    // Restore events
     let events = [];
-    try {
-      const eventsRaw = await this.#fs.readFile(`${dirPath}/events.jsonl`);
-      if (eventsRaw && eventsRaw.trim()) {
-        events = eventsRaw.trim().split('\n').map(line => {
-          try {
-            return JSON.parse(line);
-          } catch (_) {
-            return null;
-          }
-        }).filter(Boolean);
-      }
-    } catch (_) {
-      // No events file — start with empty
+    const eventsRaw = await readText(dir, 'events.jsonl');
+    if (eventsRaw && eventsRaw.trim()) {
+      events = eventsRaw.trim().split('\n').map(line => {
+        try { return JSON.parse(line); } catch (_) { return null; }
+      }).filter(Boolean);
     }
 
     this.#events = events;
 
     // Rebuild shell history from command events
-    if (this.#shell && this.#shell.state) {
-      const commands = events
+    if (this.#shell?.state) {
+      this.#shell.state.history = events
         .filter(e => e.type === 'shell_command')
         .map(e => e.data?.command)
         .filter(Boolean);
-      this.#shell.state.history = commands;
     }
 
     return { id: sessionId, events };
   }
 
   /**
-   * Delete a session. Removes OPFS files and index entry.
-   * If the deleted session is active, resets to no active session.
-   * @param {string} sessionId
+   * Delete a session.
    */
   async delete(sessionId) {
-    const dirPath = `/.terminal-sessions/${sessionId}`;
-
-    // Remove OPFS files
     try {
-      await this.#fs.delete(`${dirPath}/events.jsonl`);
+      const sessions = await this.#sessionsDir();
+      await sessions.removeEntry(sessionId, { recursive: true });
     } catch (_) { /* may not exist */ }
-    try {
-      await this.#fs.delete(`${dirPath}/state.json`);
-    } catch (_) { /* may not exist */ }
-    try {
-      await this.#fs.delete(dirPath);
-    } catch (_) { /* directory removal may fail if not empty or not supported */ }
 
-    // Remove from index
     this.#sessions = this.#sessions.filter(s => s.id !== sessionId);
-    this.#saveIndex();
 
-    // Reset if it was the active session
     if (this.#activeSessionId === sessionId) {
       this.#activeSessionId = null;
       this.#events = [];
@@ -313,92 +307,63 @@ export class TerminalSessionManager {
 
   /**
    * Rename a session.
-   * @param {string} sessionId
-   * @param {string} newName
    */
-  rename(sessionId, newName) {
+  async rename(sessionId, newName) {
     const meta = this.#sessions.find(s => s.id === sessionId);
-    if (!meta) {
-      throw new Error(`Terminal session not found: ${sessionId}`);
-    }
+    if (!meta) throw new Error(`Terminal session not found: ${sessionId}`);
     meta.name = newName;
-    this.#saveIndex();
+    const dir = await this.#sessionDir(sessionId);
+    await atomicWrite(dir, 'meta.json', JSON.stringify(meta));
   }
 
   /**
-   * Fork the current session into a new one with copied events and state.
-   * @param {string} [newName] — name for the fork; auto-generated if omitted
-   * @returns {Promise<Object>} new session metadata
+   * Fork the current session.
    */
   async fork(newName) {
-    if (!this.#activeSessionId) {
-      throw new Error('No active session to fork');
-    }
+    if (!this.#activeSessionId) throw new Error('No active session to fork');
 
-    // Persist current state first
     await this.persist();
 
-    const originalId = this.#activeSessionId;
     const originalEvents = [...this.#events];
-    const originalStateSerialized = this.#serializeShellState();
+    const originalState = this.#serializeShellState();
 
-    // Create new session (this will persist current and reset)
-    const meta = await this.create(newName || `Fork of ${this.activeName || originalId}`);
+    const meta = await this.create(newName || `Fork of ${this.activeName || this.#activeSessionId}`);
 
-    // Copy events from original
     this.#events = originalEvents;
+    this.#applyShellState(originalState);
 
-    // Restore state from original
-    this.#applyShellState(originalStateSerialized);
-
-    // Update metadata
     const newMeta = this.#sessions.find(s => s.id === meta.id);
     if (newMeta) {
       newMeta.commandCount = originalEvents.filter(e => e.type === 'shell_command').length;
     }
 
     this.#dirty = true;
-
-    // Persist the forked copy
     await this.persist();
 
     return { ...meta, commandCount: newMeta?.commandCount || 0 };
   }
 
   /**
-   * Fork the current session from a specific event index.
-   * Creates a new session containing only events [0..eventIndex], including
-   * the matching result event if the target is a shell_command.
-   * Restores shell state from the most recent state_snapshot at or before that point.
-   * @param {number} eventIndex - Index into the events array to fork from
-   * @param {string} [newName] - Name for the fork; auto-generated if omitted
-   * @returns {Promise<Object>} new session metadata
+   * Fork from a specific event index.
    */
   async forkFromEvent(eventIndex, newName) {
-    if (!this.#activeSessionId) {
-      throw new Error('No active session to fork');
-    }
+    if (!this.#activeSessionId) throw new Error('No active session to fork');
     if (eventIndex < 0 || eventIndex >= this.#events.length) {
       throw new Error(`Event index out of range: ${eventIndex}`);
     }
 
-    // Persist current state first
     await this.persist();
 
-    // Determine the end index: if target is a shell_command, include its shell_result
     let endIndex = eventIndex;
     const targetEvent = this.#events[eventIndex];
     if (targetEvent.type === 'shell_command' && eventIndex + 1 < this.#events.length) {
-      const next = this.#events[eventIndex + 1];
-      if (next.type === 'shell_result') {
+      if (this.#events[eventIndex + 1].type === 'shell_result') {
         endIndex = eventIndex + 1;
       }
     }
 
-    // Slice events up to endIndex (inclusive)
     const slicedEvents = this.#events.slice(0, endIndex + 1);
 
-    // Find the most recent state_snapshot at or before endIndex
     let snapshot = null;
     for (let i = endIndex; i >= 0; i--) {
       if (slicedEvents[i]?.type === 'state_snapshot') {
@@ -408,27 +373,21 @@ export class TerminalSessionManager {
     }
 
     const originalName = this.activeName || this.#activeSessionId;
-
-    // Create new session (this persists current and resets)
     const meta = await this.create(
       newName || `${originalName} (fork@cmd ${slicedEvents.filter(e => e.type === 'shell_command').length})`
     );
 
-    // Set the sliced events
     this.#events = slicedEvents;
 
-    // Restore shell state from snapshot, or reconstruct from command history
     if (snapshot) {
       this.#applyShellState(snapshot);
     } else if (this.#shell?.state) {
-      // Reconstruct history from command events
       this.#shell.state.history = slicedEvents
         .filter(e => e.type === 'shell_command')
         .map(e => e.data?.command)
         .filter(Boolean);
     }
 
-    // Update metadata
     const newMeta = this.#sessions.find(s => s.id === meta.id);
     if (newMeta) {
       newMeta.commandCount = slicedEvents.filter(e => e.type === 'shell_command').length;
@@ -442,17 +401,12 @@ export class TerminalSessionManager {
 
   // ── Event Recording ─────────────────────────────────────────
 
-  /**
-   * Record a user-issued shell command.
-   * @param {string} command
-   */
   recordCommand(command) {
     const cwd = this.#shell?.state?.cwd || '/';
     const event = this.#makeEvent('shell_command', { command, cwd }, 'user');
     this.#events.push(event);
     this.#dirty = true;
 
-    // Update metadata
     const meta = this.#sessions.find(s => s.id === this.#activeSessionId);
     if (meta) {
       meta.commandCount = (meta.commandCount || 0) + 1;
@@ -460,12 +414,6 @@ export class TerminalSessionManager {
     }
   }
 
-  /**
-   * Record the result of a shell command.
-   * @param {string} stdout
-   * @param {string} stderr
-   * @param {number} exitCode
-   */
   recordResult(stdout, stderr, exitCode) {
     const event = this.#makeEvent('shell_result', {
       stdout: cap(stdout, STDOUT_CAP),
@@ -475,129 +423,65 @@ export class TerminalSessionManager {
     this.#events.push(event);
     this.#dirty = true;
 
-    // Update preview in metadata — use first line of stdout or stderr
     const meta = this.#sessions.find(s => s.id === this.#activeSessionId);
     if (meta) {
       const previewSource = stdout || stderr || '';
-      const firstLine = previewSource.split('\n')[0] || '';
-      meta.preview = firstLine.slice(0, 80);
+      meta.preview = (previewSource.split('\n')[0] || '').slice(0, 80);
     }
+
+    // Auto-persist after each result so sessions survive page refresh
+    this.persist().catch(() => {});
   }
 
-  /**
-   * Record an agent prompt sent to the LLM.
-   * @param {string} content
-   */
   recordAgentPrompt(content) {
-    const event = this.#makeEvent('agent_prompt', { content }, 'user');
-    this.#events.push(event);
+    this.#events.push(this.#makeEvent('agent_prompt', { content }, 'user'));
     this.#dirty = true;
   }
 
-  /**
-   * Record an agent response from the LLM.
-   * @param {string} content
-   */
   recordAgentResponse(content) {
-    const event = this.#makeEvent('agent_response', { content }, 'system');
-    this.#events.push(event);
+    this.#events.push(this.#makeEvent('agent_response', { content }, 'system'));
     this.#dirty = true;
   }
 
-  /**
-   * Record a snapshot of the current shell state.
-   */
   recordStateSnapshot() {
-    const state = this.#shell?.state;
-    if (!state) return;
-    const data = {
-      cwd: state.cwd,
-      env: Object.fromEntries(state.env),
-      aliases: Object.fromEntries(state.aliases),
-      lastExitCode: state.lastExitCode,
-    };
-    const event = this.#makeEvent('state_snapshot', data, 'system');
-    this.#events.push(event);
+    const s = this.#shell?.state;
+    if (!s) return;
+    this.#events.push(this.#makeEvent('state_snapshot', {
+      cwd: s.cwd,
+      env: Object.fromEntries(s.env),
+      aliases: Object.fromEntries(s.aliases),
+      lastExitCode: s.lastExitCode,
+    }, 'system'));
     this.#dirty = true;
   }
 
   // ── Queries ─────────────────────────────────────────────────
 
-  /**
-   * List all sessions for this workspace.
-   * @returns {Array<Object>} copy of sessions metadata array
-   */
-  list() {
-    return this.#sessions.map(s => ({ ...s }));
-  }
-
-  /**
-   * Get the active session ID.
-   * @returns {string|null}
-   */
-  get activeId() {
-    return this.#activeSessionId;
-  }
-
-  /**
-   * Get the name of the active session.
-   * @returns {string|null}
-   */
+  list() { return this.#sessions.map(s => ({ ...s })); }
+  get activeId() { return this.#activeSessionId; }
   get activeName() {
     if (!this.#activeSessionId) return null;
-    const meta = this.#sessions.find(s => s.id === this.#activeSessionId);
-    return meta?.name || null;
+    return this.#sessions.find(s => s.id === this.#activeSessionId)?.name || null;
   }
-
-  /**
-   * Get the events for the current session.
-   * @returns {Array<Object>}
-   */
-  get events() {
-    return this.#events;
-  }
-
-  /**
-   * Whether the current session has unsaved changes.
-   * @returns {boolean}
-   */
-  get dirty() {
-    return this.#dirty;
-  }
+  get events() { return this.#events; }
+  get dirty() { return this.#dirty; }
 
   // ── Export ───────────────────────────────────────────────────
 
-  /**
-   * Export recorded commands as a shell script.
-   * @returns {string}
-   */
   exportAsScript() {
     const commands = this.#events
       .filter(e => e.type === 'shell_command')
       .map(e => e.data?.command)
       .filter(Boolean);
-
-    const lines = ['#!/bin/sh', ''];
-    for (const cmd of commands) {
-      lines.push(cmd);
-    }
-    lines.push('');
-    return lines.join('\n');
+    return ['#!/bin/sh', '', ...commands, ''].join('\n');
   }
 
-  /**
-   * Export events in the specified format.
-   * @param {'text'|'json'|'jsonl'} format
-   * @returns {string}
-   */
   exportAsLog(format) {
     switch (format) {
       case 'json':
         return JSON.stringify(this.#events, null, 2);
-
       case 'jsonl':
         return this.#events.map(e => JSON.stringify(e)).join('\n');
-
       case 'text':
       default:
         return this.#events.map(e => {
@@ -625,10 +509,6 @@ export class TerminalSessionManager {
     }
   }
 
-  /**
-   * Export events as a markdown document with code blocks.
-   * @returns {string}
-   */
   exportAsMarkdown() {
     const meta = this.#sessions.find(s => s.id === this.#activeSessionId);
     const title = meta?.name || this.#activeSessionId || 'Terminal Session';
@@ -644,52 +524,23 @@ export class TerminalSessionManager {
     for (const event of this.#events) {
       switch (event.type) {
         case 'shell_command':
-          lines.push('```sh');
-          lines.push(`$ ${event.data?.command || ''}`);
-          lines.push('```');
-          lines.push('');
+          lines.push('```sh', `$ ${event.data?.command || ''}`, '```', '');
           break;
-
         case 'shell_result':
-          if (event.data?.stdout) {
-            lines.push('```');
-            lines.push(event.data.stdout);
-            lines.push('```');
-            lines.push('');
-          }
-          if (event.data?.stderr) {
-            lines.push('**stderr:**');
-            lines.push('```');
-            lines.push(event.data.stderr);
-            lines.push('```');
-            lines.push('');
-          }
+          if (event.data?.stdout) lines.push('```', event.data.stdout, '```', '');
+          if (event.data?.stderr) lines.push('**stderr:**', '```', event.data.stderr, '```', '');
           if (event.data?.exitCode !== undefined && event.data.exitCode !== 0) {
-            lines.push(`> Exit code: ${event.data.exitCode}`);
-            lines.push('');
+            lines.push(`> Exit code: ${event.data.exitCode}`, '');
           }
           break;
-
         case 'agent_prompt':
-          lines.push('**Agent Prompt:**');
-          lines.push('');
-          lines.push(event.data?.content || '');
-          lines.push('');
+          lines.push('**Agent Prompt:**', '', event.data?.content || '', '');
           break;
-
         case 'agent_response':
-          lines.push('**Agent Response:**');
-          lines.push('');
-          lines.push(event.data?.content || '');
-          lines.push('');
+          lines.push('**Agent Response:**', '', event.data?.content || '', '');
           break;
-
         case 'state_snapshot':
-          lines.push(`> State snapshot: cwd=\`${event.data?.cwd || '/'}\``);
-          lines.push('');
-          break;
-
-        default:
+          lines.push(`> State snapshot: cwd=\`${event.data?.cwd || '/'}\``, '');
           break;
       }
     }
@@ -700,108 +551,73 @@ export class TerminalSessionManager {
   // ── Private ─────────────────────────────────────────────────
 
   /**
-   * Load the session index from localStorage.
-   * @returns {Array<Object>}
+   * Scan OPFS for existing session directories. Each session has a meta.json.
+   * This replaces the old index file — the directory listing IS the index.
    */
-  #loadIndex() {
+  async #scanSessions() {
+    const sessions = [];
     try {
-      const raw = localStorage.getItem(`clawser_terminal_sessions_${this.#wsId}`);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
+      const dir = await this.#sessionsDir();
+      for await (const [name, handle] of dir) {
+        if (handle.kind !== 'directory') continue;
+        const metaText = await readText(handle, 'meta.json');
+        if (metaText) {
+          try {
+            const meta = JSON.parse(metaText);
+            if (meta.id) sessions.push(meta);
+          } catch (_) { /* bad JSON */ }
+        }
+      }
     } catch (_) {
-      return [];
+      // .terminal-sessions dir doesn't exist yet
     }
+    return sessions;
   }
 
-  /**
-   * Save the session index to localStorage.
-   */
-  #saveIndex() {
-    try {
-      localStorage.setItem(
-        `clawser_terminal_sessions_${this.#wsId}`,
-        JSON.stringify(this.#sessions),
-      );
-    } catch (err) {
-      console.warn('[TerminalSessions] Failed to save index:', err);
-    }
-  }
-
-  /**
-   * Auto-generate a session name like "Terminal 1", "Terminal 2", etc.
-   * @returns {string}
-   */
   #autoName() {
     const existing = this.#sessions
       .map(s => s.name)
       .filter(n => /^Terminal \d+$/.test(n))
       .map(n => parseInt(n.replace('Terminal ', ''), 10))
       .filter(n => !isNaN(n));
-
-    const next = existing.length > 0 ? Math.max(...existing) + 1 : 1;
-    return `Terminal ${next}`;
+    return `Terminal ${existing.length > 0 ? Math.max(...existing) + 1 : 1}`;
   }
 
-  /**
-   * Create an event object with a timestamp.
-   * @param {string} type
-   * @param {Object} data
-   * @param {string} source — 'user' | 'system'
-   * @returns {Object}
-   */
   #makeEvent(type, data, source) {
-    return {
-      type,
-      data,
-      source,
-      timestamp: Date.now(),
-    };
+    return { type, data, source, timestamp: Date.now() };
   }
 
-  /**
-   * Serialize the current shell state into a plain object.
-   * @returns {Object}
-   */
   #serializeShellState() {
-    const state = this.#shell?.state;
-    if (!state) {
-      return {
-        cwd: '/',
-        env: {},
-        aliases: {},
-        history: [],
-        lastExitCode: 0,
-        pipefail: true,
-      };
-    }
+    const s = this.#shell?.state;
+    if (!s) return { cwd: '/', env: {}, aliases: {}, history: [], lastExitCode: 0, pipefail: true };
     return {
-      cwd: state.cwd,
-      env: state.env instanceof Map ? Object.fromEntries(state.env) : (state.env || {}),
-      aliases: state.aliases instanceof Map ? Object.fromEntries(state.aliases) : (state.aliases || {}),
-      history: Array.isArray(state.history) ? [...state.history] : [],
-      lastExitCode: state.lastExitCode ?? 0,
-      pipefail: state.pipefail ?? true,
+      cwd: s.cwd,
+      env: s.env instanceof Map ? Object.fromEntries(s.env) : (s.env || {}),
+      aliases: s.aliases instanceof Map ? Object.fromEntries(s.aliases) : (s.aliases || {}),
+      history: Array.isArray(s.history) ? [...s.history] : [],
+      lastExitCode: s.lastExitCode ?? 0,
+      pipefail: s.pipefail ?? true,
     };
   }
 
-  /**
-   * Apply a serialized state object back onto the shell's state.
-   * @param {Object} stateObj
-   */
   #applyShellState(stateObj) {
     if (!this.#shell?.state || !stateObj) return;
-
     const s = this.#shell.state;
     s.cwd = stateObj.cwd || '/';
-    s.env = stateObj.env instanceof Map
-      ? stateObj.env
-      : new Map(Object.entries(stateObj.env || {}));
-    s.aliases = stateObj.aliases instanceof Map
-      ? stateObj.aliases
-      : new Map(Object.entries(stateObj.aliases || {}));
+    s.env = stateObj.env instanceof Map ? stateObj.env : new Map(Object.entries(stateObj.env || {}));
+    s.aliases = stateObj.aliases instanceof Map ? stateObj.aliases : new Map(Object.entries(stateObj.aliases || {}));
     s.history = Array.isArray(stateObj.history) ? [...stateObj.history] : [];
     s.lastExitCode = stateObj.lastExitCode ?? 0;
     s.pipefail = stateObj.pipefail ?? true;
+  }
+
+  #resetShellState() {
+    const freshState = new ShellState();
+    if (this.#shell?.state) {
+      Object.assign(this.#shell.state, {
+        cwd: freshState.cwd, env: freshState.env, aliases: freshState.aliases,
+        history: freshState.history, lastExitCode: freshState.lastExitCode, pipefail: freshState.pipefail,
+      });
+    }
   }
 }
