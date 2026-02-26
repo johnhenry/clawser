@@ -10,73 +10,18 @@ Clawser is a pure JavaScript agent platform that runs entirely in the browser. I
 <tr>
 <td width="50%">
 
-**Chat Interface** — Conversation with sidebar navigation, status badges, and message input
-![Chat](docs/screenshots/01-chat.png)
+**Home Screen** — Workspace cards and account management
+![Home](docs/screenshots/13-home-screen.png)
 
 </td>
 <td width="50%">
 
-**Virtual Terminal** — 59 built-in commands with grouped help output
-![Terminal](docs/screenshots/02-terminal.png)
-
-</td>
-</tr>
-<tr>
-<td>
-
-**Tool Management (Browser Tools)** — 101 tools with permission badges and category grouping
-![Browser Tools](docs/screenshots/03-tools-browser.png)
-
-</td>
-<td>
-
-**Tool Management (Shell Commands)** — Browsable interface for all CLI commands and builtins
-![Shell Commands](docs/screenshots/04-tools-shell.png)
-
-</td>
-</tr>
-<tr>
-<td>
-
-**Configuration** — Provider selection, system prompt, agent state, and advanced settings
-![Config](docs/screenshots/09-config.png)
-
-</td>
-<td>
-
-**Command Palette** — Quick access to any tool via `Cmd/Ctrl+K`
-![Command Palette](docs/screenshots/12-cmd-palette.png)
-
-</td>
-</tr>
-<tr>
-<td>
-
-**Agent Definitions** — Multiple named agents with custom prompts and tool restrictions
-![Agents](docs/screenshots/11-agents.png)
-
-</td>
-<td>
-
-**Dashboard** — Real-time metrics for requests, tokens, errors, and latency
-![Dashboard](docs/screenshots/10-dashboard.png)
+**Chat Interface** — Conversation with sidebar navigation and status badges
+![Chat](docs/screenshots/01-chat.png)
 
 </td>
 </tr>
 </table>
-
-<details>
-<summary>More panels: Files, Memory, Goals, Skills</summary>
-
-| Files (OPFS) | Memory |
-|:---:|:---:|
-| ![Files](docs/screenshots/05-files.png) | ![Memory](docs/screenshots/06-memory.png) |
-
-| Goals | Skills |
-|:---:|:---:|
-| ![Goals](docs/screenshots/07-goals.png) | ![Skills](docs/screenshots/08-skills.png) |
-
-</details>
 
 ## Features
 
@@ -92,6 +37,8 @@ Clawser is a pure JavaScript agent platform that runs entirely in the browser. I
 - **Cost Tracking** — Per-model pricing table with `estimateCost()`, session cost meter, and per-conversation cost display
 - **Error Classification** — 9 error categories with retryability flags for intelligent error handling
 
+![Configuration — Provider selection, system prompt, and agent state](docs/screenshots/09-config.png)
+
 ### Agent Intelligence
 
 - **Memory System** — Persistent semantic memory with sync TF-IDF and async BM25+vector recall, automatic deduplication, hygiene, and configurable categories (core, learned, user, context)
@@ -100,12 +47,29 @@ Clawser is a pure JavaScript agent platform that runs entirely in the browser. I
 - **Self-Repair** — Stuck detection and automatic recovery when the agent enters error loops
 - **Heartbeat** — Periodic health checks to monitor agent liveness
 
+<table>
+<tr>
+<td width="50%">
+
+![Memory with entries](docs/screenshots/17-memory-with-entries.png)
+
+</td>
+<td width="50%">
+
+![Goals with progress tracking](docs/screenshots/18-goals-with-entries.png)
+
+</td>
+</tr>
+</table>
+
 ### Autonomy & Safety
 
 - **Autonomy Controls** — Three levels (readonly, supervised, full) with configurable per-hour rate limits and per-day cost limits
 - **Hook Pipeline** — 6 lifecycle interception points (pre-send, post-send, pre-tool, post-tool, pre-response, post-response)
 - **Safety / Sanitization** — Input sanitization and output scanning to detect and prevent unsafe content
 - **Permission System** — Per-tool permissions (auto, approve, denied) persisted per-workspace in localStorage
+
+![Autonomy & Costs configuration](docs/screenshots/23-config-autonomy.png)
 
 ### Tools (~100)
 
@@ -133,6 +97,23 @@ Clawser is a pure JavaScript agent platform that runs entirely in the browser. I
 - **Routines** — Event-driven automation with cron, event, and webhook triggers
 - **Browser Automation** — Page observation, element resolution, automated interaction
 
+<table>
+<tr>
+<td width="50%">
+
+**Browser Tools** — 101 tools with permission badges and category grouping
+![Browser Tools](docs/screenshots/25-tool-detail-expanded.png)
+
+</td>
+<td width="50%">
+
+**Shell Commands** — Browsable interface for all CLI commands and builtins
+![Shell Commands](docs/screenshots/26-shell-cmd-expanded.png)
+
+</td>
+</tr>
+</table>
+
 ### Agent System
 
 - **Configurable Agents** — Multiple named agent definitions with custom system prompts, provider overrides, and tool restrictions. 5 built-in starter agents
@@ -141,6 +122,8 @@ Clawser is a pure JavaScript agent platform that runs entirely in the browser. I
 - **Agent Import/Export** — Share agent configurations across workspaces
 - **Identity System** — Agent identity compilation combining base prompt, memories, goals, skill metadata, and active skill bodies
 
+![Agent definitions with custom prompts and tool restrictions](docs/screenshots/28-agents-form.png)
+
 ### Skills
 
 - **Agent Skills Standard** — Implements the [Agent Skills open standard](https://agentskills.io). Skills are portable packages with YAML metadata, markdown instructions, and executable scripts
@@ -148,6 +131,8 @@ Clawser is a pure JavaScript agent platform that runs entirely in the browser. I
 - **Remote Registry** — Search, browse, and install skills from remote registries
 - **Skill Validation** — Scans scripts for dangerous patterns (eval, Function, import, document.cookie, etc.) before activation with user warnings
 - **Slash Command Invocation** — `/skill-name args` or `activate_skill` tool for model auto-activation
+
+![Skills panel — install, enable, and manage skill packages](docs/screenshots/08-skills.png)
 
 ### Workspaces
 
@@ -162,6 +147,23 @@ Clawser is a pure JavaScript agent platform that runs entirely in the browser. I
 - **Auto-Migration** — Transparent migration from v1 to v2 conversation format
 - **Conversation Locking** — Prevents switching conversations while a message is being processed
 
+<table>
+<tr>
+<td width="50%">
+
+**Conversation Dropdown** — Switch, rename, fork, and export conversations
+![Conversation bar](docs/screenshots/16-conv-item-bar.png)
+
+</td>
+<td width="50%">
+
+**Events Panel** — Chronological log of tool calls, memory ops, and goal updates
+![Events](docs/screenshots/15-events-panel.png)
+
+</td>
+</tr>
+</table>
+
 ### Virtual Shell
 
 - **AST-Based Parser** — Full tokenizer and parser supporting pipes (`|`), logical operators (`&&`, `||`), redirects (`>`, `>>`, `2>`, `2>&1`), and quoting
@@ -170,6 +172,8 @@ Clawser is a pure JavaScript agent platform that runs entirely in the browser. I
 - **Glob Expansion** — `*`, `?`, `[abc]` with POSIX fallback behavior
 - **OPFS File Operations** — Full POSIX-like file system backed by browser OPFS
 - **Shell Sessions** — Per-conversation shell state with persistent environment
+
+![Virtual terminal — pipes, redirects, and 59 built-in commands](docs/screenshots/20-terminal-pipe.png)
 
 ### Terminal Sessions
 
@@ -184,6 +188,8 @@ Clawser is a pure JavaScript agent platform that runs entirely in the browser. I
 - **One-Shot Mode** — Send a single prompt and get a response
 - **Session Management** — Persistent CLI sessions with history
 
+![clawser status — provider, model, costs, and agent state at a glance](docs/screenshots/21-terminal-clawser-status.png)
+
 ### Daemon Mode & Multi-Tab
 
 - **Shared Worker Coordination** — Single agent brain across multiple browser tabs via BroadcastChannel
@@ -196,6 +202,8 @@ Clawser is a pure JavaScript agent platform that runs entirely in the browser. I
 - **Bridge Interface** — Abstract bridge pattern supporting local server bridge (`localhost:9377`) and browser extension bridge
 - **MCP Client** — Connect to external Model Context Protocol servers via Streamable HTTP transport with JSON-RPC, tool discovery, and 30-second configurable timeout
 - **Local Filesystem Mounting** — Mount local folders via File System Access API at `/mnt/` prefix with read-only mode support
+
+![MCP server configuration](docs/screenshots/24-config-mcp.png)
 
 ### Provider Features
 
@@ -217,11 +225,30 @@ Clawser is a pure JavaScript agent platform that runs entirely in the browser. I
 - **Print Styles** — Clean chat printing with hidden chrome
 - **Type Scale** — CSS variable-based typography (xs through xl)
 
+<table>
+<tr>
+<td width="50%">
+
+**Command Palette** — Quick access to any tool via `Cmd/Ctrl+K`
+![Command Palette](docs/screenshots/27-cmd-palette-params.png)
+
+</td>
+<td width="50%">
+
+**Files (OPFS)** — Persistent file system in the browser
+![Files](docs/screenshots/19-files-with-content.png)
+
+</td>
+</tr>
+</table>
+
 ### Metrics & Observability
 
 - **Performance Metrics** — Percentile calculations, ring buffers for time-series tracking
 - **Hardware Detection** — Browser capability and hardware feature detection
 - **Remote Pairing** — Remote collaboration sessions for paired agent interaction
+
+![Dashboard — real-time metrics for requests, tokens, errors, and latency](docs/screenshots/10-dashboard.png)
 
 ### Build & Deploy
 
@@ -447,6 +474,23 @@ Open `web/bench.html` for micro-benchmarks (Codex extraction, EventLog, provider
 **Rust reference crates:**
 The `crates/` directory contains the original Rust/WASM core, kept as architectural reference. It is not used at runtime.
 
+## Tutorials
+
+Step-by-step guides to get productive with Clawser — see the [full tutorial index](docs/tutorials/README.md).
+
+| Tutorial | Time | Description |
+|----------|------|-------------|
+| [Getting Started](docs/tutorials/01-getting-started.md) | 10 min | First run, workspace setup, provider accounts |
+| [Chat & Conversations](docs/tutorials/02-chat-and-conversations.md) | 8 min | Messaging, tool calls, forking, exporting |
+| [Memory & Goals](docs/tutorials/03-memory-and-goals.md) | 8 min | Teaching the agent, tracking goals |
+| [Files & Web](docs/tutorials/04-files-and-web.md) | 8 min | OPFS files, web fetch, screenshots, DOM tools |
+| [Terminal & CLI](docs/tutorials/05-terminal-and-cli.md) | 10 min | Virtual shell, pipes, clawser CLI, sessions |
+| [Skills](docs/tutorials/06-skills.md) | 8 min | Installing, using, and creating skills |
+| [Tool Management](docs/tutorials/07-tool-management.md) | 8 min | Permissions, autonomy, command palette |
+| [Agents & Delegation](docs/tutorials/08-agents-and-delegation.md) | 10 min | Agent definitions, @agent refs, sub-agents |
+| [MCP & Extensions](docs/tutorials/09-mcp-and-extensions.md) | 8 min | MCP servers, bridge, local folder mounting |
+| [Routines & Automation](docs/tutorials/10-routines-and-automation.md) | 10 min | Cron, event, webhook triggers and guardrails |
+
 ## Documentation
 
 | Document | Description |
@@ -465,6 +509,7 @@ The `crates/` directory contains the original Rust/WASM core, kept as architectu
 | [docs/CONFIG.md](docs/CONFIG.md) | Configuration panel options and storage keys |
 | [docs/FEATURES.md](docs/FEATURES.md) | Advanced features guide (routines, delegation, vault, etc.) |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Static server, Docker, and production setup |
+| [docs/tutorials/](docs/tutorials/README.md) | 10 step-by-step tutorials with screenshots |
 
 ## `.reference/` Directory
 
