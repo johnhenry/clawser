@@ -4,6 +4,80 @@ Browser-native AI agent workspace with tools, memory, and goals.
 
 Clawser is a pure JavaScript agent platform that runs entirely in the browser. It provides a complete agent runtime with persistent memory, goal tracking, scheduled tasks, ~100 tools, and support for 38+ LLM backends — all without a server.
 
+## Screenshots
+
+<table>
+<tr>
+<td width="50%">
+
+**Chat Interface** — Conversation with sidebar navigation, status badges, and message input
+![Chat](docs/screenshots/01-chat.png)
+
+</td>
+<td width="50%">
+
+**Virtual Terminal** — 59 built-in commands with grouped help output
+![Terminal](docs/screenshots/02-terminal.png)
+
+</td>
+</tr>
+<tr>
+<td>
+
+**Tool Management (Browser Tools)** — 101 tools with permission badges and category grouping
+![Browser Tools](docs/screenshots/03-tools-browser.png)
+
+</td>
+<td>
+
+**Tool Management (Shell Commands)** — Browsable interface for all CLI commands and builtins
+![Shell Commands](docs/screenshots/04-tools-shell.png)
+
+</td>
+</tr>
+<tr>
+<td>
+
+**Configuration** — Provider selection, system prompt, agent state, and advanced settings
+![Config](docs/screenshots/09-config.png)
+
+</td>
+<td>
+
+**Command Palette** — Quick access to any tool via `Cmd/Ctrl+K`
+![Command Palette](docs/screenshots/12-cmd-palette.png)
+
+</td>
+</tr>
+<tr>
+<td>
+
+**Agent Definitions** — Multiple named agents with custom prompts and tool restrictions
+![Agents](docs/screenshots/11-agents.png)
+
+</td>
+<td>
+
+**Dashboard** — Real-time metrics for requests, tokens, errors, and latency
+![Dashboard](docs/screenshots/10-dashboard.png)
+
+</td>
+</tr>
+</table>
+
+<details>
+<summary>More panels: Files, Memory, Goals, Skills</summary>
+
+| Files (OPFS) | Memory |
+|:---:|:---:|
+| ![Files](docs/screenshots/05-files.png) | ![Memory](docs/screenshots/06-memory.png) |
+
+| Goals | Skills |
+|:---:|:---:|
+| ![Goals](docs/screenshots/07-goals.png) | ![Skills](docs/screenshots/08-skills.png) |
+
+</details>
+
 ## Features
 
 ### Core Agent
