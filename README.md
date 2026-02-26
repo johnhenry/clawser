@@ -2,6 +2,8 @@
 
 Browser-native AI agent workspace with tools, memory, and goals.
 
+**Live demo:** https://johnhenry.github.io/clawser/
+
 Clawser is a pure JavaScript agent platform that runs entirely in the browser. It provides a complete agent runtime with persistent memory, goal tracking, scheduled tasks, ~100 tools, and support for 38+ LLM backends — all without a server.
 
 ## Screenshots
