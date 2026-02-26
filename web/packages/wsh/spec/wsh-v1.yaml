@@ -507,6 +507,9 @@ messages:
         channel_id:
           type: u32
           required: true
+        gateway_id:
+          type: u32
+          required: false
 
     InboundReject:
       code: 0x78
@@ -592,6 +595,20 @@ messages:
       fields:
         listener_id:
           type: u32
+          required: true
+
+    GatewayData:
+      code: 0x7e
+      description: >
+        Bidirectional data relay for an active gateway connection. Sent by
+        either side to forward payload bytes through a proxied TCP/UDP
+        channel identified by gateway_id.
+      fields:
+        gateway_id:
+          type: u32
+          required: true
+        data:
+          type: bytes
           required: true
 
 nested_types:

@@ -71,6 +71,7 @@ export const MSG = Object.freeze({
   LISTEN_OK:         0x7b,
   LISTEN_FAIL:       0x7c,
   LISTEN_CLOSE:      0x7d,
+  GATEWAY_DATA:      0x7e,
 });
 
 // Reverse lookup: number → name
@@ -417,11 +418,10 @@ export function inboundOpen({ listenerId, channelId, peerAddr, peerPort } = {}) 
   };
 }
 
-export function inboundAccept({ channelId } = {}) {
-  return {
-    type: MSG.INBOUND_ACCEPT,
-    channel_id: channelId,
-  };
+export function inboundAccept({ channelId, gatewayId } = {}) {
+  const msg = { type: MSG.INBOUND_ACCEPT, channel_id: channelId };
+  if (gatewayId !== undefined) msg.gateway_id = gatewayId;
+  return msg;
 }
 
 export function inboundReject({ channelId, reason } = {}) {
@@ -465,6 +465,14 @@ export function listenClose({ listenerId } = {}) {
   return {
     type: MSG.LISTEN_CLOSE,
     listener_id: listenerId,
+  };
+}
+
+export function gatewayData({ gatewayId, data } = {}) {
+  return {
+    type: MSG.GATEWAY_DATA,
+    gateway_id: gatewayId,
+    data,
   };
 }
 

@@ -10,7 +10,7 @@ import {
   reverseRegister, reverseList, reversePeers, reverseConnect,
   openTcp, openUdp, resolveDns, gatewayOk, gatewayFail, gatewayClose,
   inboundOpen, inboundAccept, inboundReject, dnsResult,
-  listenRequest, listenOk, listenFail, listenClose,
+  listenRequest, listenOk, listenFail, listenClose, gatewayData,
   msgName, isValidMessage,
   AUTH_METHOD, CHANNEL_KIND,
 } from '../src/messages.mjs';
@@ -272,6 +272,14 @@ describe('message constructors', () => {
     const msg = inboundAccept({ channelId: 5 });
     assert.equal(msg.type, MSG.INBOUND_ACCEPT);
     assert.equal(msg.channel_id, 5);
+    assert.equal(msg.gateway_id, undefined);
+  });
+
+  it('inboundAccept with gateway_id', () => {
+    const msg = inboundAccept({ channelId: 5, gatewayId: 42 });
+    assert.equal(msg.type, MSG.INBOUND_ACCEPT);
+    assert.equal(msg.channel_id, 5);
+    assert.equal(msg.gateway_id, 42);
   });
 
   it('inboundReject', () => {
@@ -331,6 +339,14 @@ describe('message constructors', () => {
     assert.equal(msg.type, MSG.LISTEN_CLOSE);
     assert.equal(msg.listener_id, 1);
   });
+
+  it('gatewayData', () => {
+    const payload = new Uint8Array([0x48, 0x65, 0x6c, 0x6c, 0x6f]); // "Hello"
+    const msg = gatewayData({ gatewayId: 7, data: payload });
+    assert.equal(msg.type, MSG.GATEWAY_DATA);
+    assert.equal(msg.gateway_id, 7);
+    assert.equal(msg.data, payload);
+  });
 });
 
 describe('CHANNEL_KIND extensions', () => {
@@ -352,7 +368,7 @@ describe('CHANNEL_KIND extensions', () => {
 });
 
 describe('gateway MSG constants', () => {
-  it('gateway codes are in 0x70-0x7d range', () => {
+  it('gateway codes are in 0x70-0x7e range', () => {
     assert.equal(MSG.OPEN_TCP, 0x70);
     assert.equal(MSG.OPEN_UDP, 0x71);
     assert.equal(MSG.RESOLVE_DNS, 0x72);
@@ -367,11 +383,13 @@ describe('gateway MSG constants', () => {
     assert.equal(MSG.LISTEN_OK, 0x7b);
     assert.equal(MSG.LISTEN_FAIL, 0x7c);
     assert.equal(MSG.LISTEN_CLOSE, 0x7d);
+    assert.equal(MSG.GATEWAY_DATA, 0x7e);
   });
 
   it('gateway messages validate correctly', () => {
     assert.ok(isValidMessage(openTcp({ gatewayId: 1, host: 'x', port: 80 })));
     assert.ok(isValidMessage(gatewayOk({ gatewayId: 1 })));
     assert.ok(isValidMessage(listenClose({ listenerId: 1 })));
+    assert.ok(isValidMessage(gatewayData({ gatewayId: 1, data: new Uint8Array(0) })));
   });
 });

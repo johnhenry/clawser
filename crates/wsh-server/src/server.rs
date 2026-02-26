@@ -7,6 +7,7 @@ use crate::config::ServerConfig;
 use crate::gateway::forwarder::GatewayForwarder;
 use crate::gateway::listener::ReverseListenerManager;
 use crate::gateway::policy::{GatewayPolicy, GatewayPolicyEnforcer};
+use crate::gateway::GatewayEvent;
 use crate::handshake;
 use crate::mcp::{McpBridge, McpProxy};
 use crate::relay::{PeerRegistry, RelayBroker};
@@ -421,6 +422,8 @@ impl WshServer {
     ) -> WshResult<()> {
         // Channel for inbound reverse-tunnel events
         let (inbound_tx, mut inbound_rx) = mpsc::channel(64);
+        // Channel for TCP relay data events (TCP→client)
+        let (data_tx, mut data_rx) = mpsc::channel::<GatewayEvent>(256);
 
         loop {
             tokio::select! {
@@ -433,12 +436,28 @@ impl WshServer {
                         .map_err(|e| WshError::Transport(format!("QUIC write: {e}")))?;
                 }
 
+                // TCP relay data event (TCP→client)
+                Some(event) = data_rx.recv() => {
+                    let msg = match event {
+                        GatewayEvent::Data { gateway_id, data } => {
+                            build_gateway_data(gateway_id, data)
+                        }
+                        GatewayEvent::Closed { gateway_id } => {
+                            build_gateway_close_msg(gateway_id)
+                        }
+                    };
+                    let frame = frame_encode(&msg)?;
+                    send.write_all(&frame)
+                        .await
+                        .map_err(|e| WshError::Transport(format!("QUIC write: {e}")))?;
+                }
+
                 // Message from client
                 frame_result = read_quic_frame(recv) => {
                     match frame_result {
                         Ok(data) => {
                             let envelope: Envelope = cbor_decode(&data)?;
-                            if let Some(response) = self.dispatch_message(envelope, inbound_tx.clone()).await? {
+                            if let Some(response) = self.dispatch_message(envelope, inbound_tx.clone(), data_tx.clone()).await? {
                                 let frame = frame_encode(&response)?;
                                 send.write_all(&frame)
                                     .await
@@ -471,6 +490,7 @@ impl WshServer {
         conn: &mut websocket::WebSocketConnection,
     ) -> WshResult<()> {
         let (inbound_tx, mut inbound_rx) = mpsc::channel(64);
+        let (data_tx, mut data_rx) = mpsc::channel::<GatewayEvent>(256);
 
         loop {
             tokio::select! {
@@ -480,11 +500,24 @@ impl WshServer {
                     websocket::ws_send_binary(&mut conn.ws_stream, &frame).await?;
                 }
 
+                Some(event) = data_rx.recv() => {
+                    let msg = match event {
+                        GatewayEvent::Data { gateway_id, data } => {
+                            build_gateway_data(gateway_id, data)
+                        }
+                        GatewayEvent::Closed { gateway_id } => {
+                            build_gateway_close_msg(gateway_id)
+                        }
+                    };
+                    let frame = frame_encode(&msg)?;
+                    websocket::ws_send_binary(&mut conn.ws_stream, &frame).await?;
+                }
+
                 ws_result = websocket::ws_recv_binary(&mut conn.ws_stream) => {
                     match ws_result {
                         Ok(Some(data)) => {
                             let envelope: Envelope = cbor_decode(&data)?;
-                            if let Some(response) = self.dispatch_message(envelope, inbound_tx.clone()).await? {
+                            if let Some(response) = self.dispatch_message(envelope, inbound_tx.clone(), data_tx.clone()).await? {
                                 let frame = frame_encode(&response)?;
                                 websocket::ws_send_binary(&mut conn.ws_stream, &frame).await?;
                             }
@@ -528,6 +561,7 @@ impl WshServer {
         &self,
         envelope: Envelope,
         inbound_tx: mpsc::Sender<crate::gateway::listener::InboundEvent>,
+        data_tx: mpsc::Sender<GatewayEvent>,
     ) -> WshResult<Option<Envelope>> {
         match (&envelope.msg_type, &envelope.payload) {
             // ── Gateway messages ────────────────────────────────────
@@ -544,7 +578,7 @@ impl WshServer {
                 }
                 let resp = self
                     .gateway_forwarder
-                    .handle_open_tcp(p.gateway_id, &p.host, p.port)
+                    .handle_open_tcp(p.gateway_id, &p.host, p.port, data_tx)
                     .await;
                 Ok(Some(resp))
             }
@@ -582,6 +616,12 @@ impl WshServer {
                     .await;
                 Ok(Some(resp))
             }
+            (MsgType::GatewayData, Payload::GatewayData(p)) => {
+                self.gateway_forwarder
+                    .handle_gateway_data(p.gateway_id, p.data.clone())
+                    .await;
+                Ok(None)
+            }
             (MsgType::GatewayClose, Payload::GatewayClose(p)) => {
                 self.gateway_forwarder.close(p.gateway_id).await;
                 Ok(None)
@@ -606,6 +646,21 @@ impl WshServer {
                 let resp = self.reverse_listener.close_listener(p.listener_id).await;
                 Ok(resp)
             }
+            (MsgType::InboundAccept, Payload::InboundAccept(p)) => {
+                if let Some(gateway_id) = p.gateway_id {
+                    self.reverse_listener
+                        .handle_inbound_accept(
+                            p.channel_id,
+                            gateway_id,
+                            data_tx,
+                            &self.gateway_forwarder,
+                        )
+                        .await;
+                } else {
+                    debug!(channel_id = p.channel_id, "InboundAccept without gateway_id, ignoring");
+                }
+                Ok(None)
+            }
 
             // ── Keepalive ───────────────────────────────────────────
             (MsgType::Ping, Payload::PingPong(p)) => {
@@ -623,6 +678,25 @@ impl WshServer {
                 Ok(None)
             }
         }
+    }
+}
+
+/// Build a [`MsgType::GatewayData`] envelope to forward TCP data to the client.
+fn build_gateway_data(gateway_id: u32, data: Vec<u8>) -> Envelope {
+    Envelope {
+        msg_type: MsgType::GatewayData,
+        payload: Payload::GatewayData(GatewayDataPayload { gateway_id, data }),
+    }
+}
+
+/// Build a [`MsgType::GatewayClose`] envelope to notify the client of connection close.
+fn build_gateway_close_msg(gateway_id: u32) -> Envelope {
+    Envelope {
+        msg_type: MsgType::GatewayClose,
+        payload: Payload::GatewayClose(GatewayClosePayload {
+            gateway_id,
+            reason: None,
+        }),
     }
 }
 

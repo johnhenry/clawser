@@ -19,7 +19,7 @@
 - **Version**: `wsh-v1`
 - **Wire format**: CBOR
 - **Framing**: length prefixed be32
-- **Total message types**: 49 (including WS_DATA framing marker)
+- **Total message types**: 50 (including WS_DATA framing marker)
 
 ## Enums
 
@@ -98,6 +98,7 @@ Type: `string`
 | `0x7b` | ListenOk | gateway |
 | `0x7c` | ListenFail | gateway |
 | `0x7d` | ListenClose | gateway |
+| `0x7e` | GatewayData | gateway |
 
 ## Message Details
 
@@ -502,6 +503,7 @@ Category: **gateway**
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `channel_id` | `u32` | yes | — |
+| `gateway_id` | `u32` | no | — |
 
 ### InboundReject (`0x78`)
 
@@ -569,6 +571,17 @@ Category: **gateway**
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `listener_id` | `u32` | yes | — |
+
+### GatewayData (`0x7e`)
+
+Category: **gateway**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `gateway_id` | `u32` | yes | — |
+| `data` | `bytes` | yes | — |
 
 ## Nested Types
 

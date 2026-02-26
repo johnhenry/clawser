@@ -190,6 +190,34 @@ export class GatewayBackend extends Backend {
   }
 
   /**
+   * Start a data pump that reads from a relay socket and sends GatewayData
+   * messages to the server. Runs until the relay socket closes.
+   *
+   * @param {number} gatewayId - The gateway_id for this connection.
+   * @param {import('./stream-socket.mjs').StreamSocket} relaySocket - The relay side of the socket pair.
+   * @private
+   */
+  #startDataPump(gatewayId, relaySocket) {
+    (async () => {
+      try {
+        while (true) {
+          const chunk = await relaySocket.read();
+          if (chunk === null) break; // socket closed
+          await this.#wshClient.sendControl({
+            type: 0x7e, gateway_id: gatewayId, data: chunk,
+          });
+        }
+      } catch (_) {
+        // Transport closed or errored — stop pumping
+      }
+      // Socket closed locally, tell server
+      await this.#wshClient.sendControl({
+        type: 0x75, gateway_id: gatewayId,
+      }).catch(() => {});
+    })();
+  }
+
+  /**
    * Handle an inbound gateway control message from the wsh server.
    *
    * Dispatches by message type code:
@@ -197,6 +225,7 @@ export class GatewayBackend extends Backend {
    * - **0x74 GATEWAY_FAIL** — Rejects a pending connection or DNS request.
    * - **0x75 GATEWAY_CLOSE** — Closes an active relayed socket.
    * - **0x76 INBOUND_OPEN** — Auto-accepts an incoming connection on an active listener.
+   * - **0x7e GATEWAY_DATA** — Pushes received data into the matching relay socket.
    * - **0x79 DNS_RESULT** — Resolves a pending DNS request with addresses.
    * - **0x7b LISTEN_OK** — Resolves a pending listen with the bound listener.
    * - **0x7c LISTEN_FAIL** — Rejects a pending listen request.
@@ -217,6 +246,8 @@ export class GatewayBackend extends Backend {
           const [userSocket, relaySocket] = StreamSocket.createPair();
           this.#activeSockets.set(msg.gateway_id, relaySocket);
           pending.resolve(userSocket);
+          // Start pumping data from relay socket to server
+          this.#startDataPump(msg.gateway_id, relaySocket);
         }
         break;
       }
@@ -246,13 +277,26 @@ export class GatewayBackend extends Backend {
         if (listener && !listener.closed) {
           // Auto-accept: create socket pair, enqueue server socket, send accept
           const [userSocket, relaySocket] = StreamSocket.createPair();
-          this.#activeSockets.set(msg.channel_id, relaySocket);
+          const gatewayId = this.#nextGatewayId();
+          this.#activeSockets.set(gatewayId, relaySocket);
           listener._enqueue(userSocket);
-          // Send InboundAccept
-          this.#wshClient.sendControl({ type: 0x77, channel_id: msg.channel_id }).catch(() => {});
+          // Send InboundAccept with gateway_id for data routing
+          this.#wshClient.sendControl({
+            type: 0x77, channel_id: msg.channel_id, gateway_id: gatewayId,
+          }).catch(() => {});
+          // Start pumping data from relay socket to server
+          this.#startDataPump(gatewayId, relaySocket);
         } else {
           // Reject if no listener
           this.#wshClient.sendControl({ type: 0x78, channel_id: msg.channel_id, reason: 'no listener' }).catch(() => {});
+        }
+        break;
+      }
+
+      case 0x7e: { // GATEWAY_DATA
+        const socket = this.#activeSockets.get(msg.gateway_id);
+        if (socket) {
+          socket.write(msg.data).catch(() => {});
         }
         break;
       }

@@ -237,4 +237,130 @@ describe('GatewayBackend', () => {
 
     await backend.close();
   });
+
+  // ── Data relay tests ────────────────────────────────────────────────
+
+  it('outbound: write to userSocket → GatewayData (0x7e) sent', async () => {
+    const client = new MockWshClient({ connected: true });
+    const backend = new GatewayBackend({ wshClient: client });
+
+    const connectPromise = backend.connect('example.com', 80);
+    await tick();
+    const openMsg = client.lastSent;
+
+    // Inject GatewayOk to complete connection
+    client.inject({ type: 0x73, gateway_id: openMsg.gateway_id });
+    const socket = await connectPromise;
+
+    // Write data to user socket
+    const payload = new Uint8Array([0x48, 0x45, 0x4c, 0x4c, 0x4f]); // "HELLO"
+    await socket.write(payload);
+    await tick();
+
+    // Verify GatewayData was sent to server
+    const dataMsgs = client.findSent(0x7e);
+    assert.equal(dataMsgs.length, 1);
+    assert.equal(dataMsgs[0].gateway_id, openMsg.gateway_id);
+    assert.deepEqual(dataMsgs[0].data, payload);
+
+    await socket.close();
+    await backend.close();
+  });
+
+  it('inbound: inject GatewayData (0x7e) → data arrives on userSocket.read()', async () => {
+    const client = new MockWshClient({ connected: true });
+    const backend = new GatewayBackend({ wshClient: client });
+
+    const connectPromise = backend.connect('example.com', 80);
+    await tick();
+    const openMsg = client.lastSent;
+
+    client.inject({ type: 0x73, gateway_id: openMsg.gateway_id });
+    const socket = await connectPromise;
+
+    // Inject data from server
+    const payload = new Uint8Array([0x48, 0x54, 0x54, 0x50]); // "HTTP"
+    client.inject({ type: 0x7e, gateway_id: openMsg.gateway_id, data: payload });
+
+    const received = await socket.read();
+    assert.deepEqual(received, payload);
+
+    await socket.close();
+    await backend.close();
+  });
+
+  it('remote close → GatewayClose sent → userSocket.read() returns null', async () => {
+    const client = new MockWshClient({ connected: true });
+    const backend = new GatewayBackend({ wshClient: client });
+
+    const connectPromise = backend.connect('example.com', 80);
+    await tick();
+    const openMsg = client.lastSent;
+
+    client.inject({ type: 0x73, gateway_id: openMsg.gateway_id });
+    const socket = await connectPromise;
+
+    // Start a read that will block until data or close
+    const readPromise = socket.read();
+
+    // Server sends GatewayClose
+    client.inject({ type: 0x75, gateway_id: openMsg.gateway_id });
+
+    // The read should resolve with null (EOF)
+    const result = await readPromise;
+    assert.equal(result, null);
+
+    await backend.close();
+  });
+
+  it('inbound connection: data relay works bidirectionally', async () => {
+    const client = new MockWshClient({ connected: true });
+    const backend = new GatewayBackend({ wshClient: client });
+
+    // Set up listener
+    const listenPromise = backend.listen(9090);
+    await tick();
+    const listenMsg = client.lastSent;
+    client.inject({ type: 0x7b, listener_id: listenMsg.listener_id, actual_port: 9090 });
+    const listener = await listenPromise;
+
+    // Simulate inbound connection
+    client.inject({
+      type: 0x76,
+      listener_id: listenMsg.listener_id,
+      channel_id: 42,
+      peer_addr: '10.0.0.1',
+      peer_port: 54321,
+    });
+
+    const socket = await listener.accept();
+
+    // Verify InboundAccept includes gateway_id
+    const acceptMsgs = client.findSent(0x77);
+    assert.equal(acceptMsgs.length, 1);
+    assert.equal(acceptMsgs[0].channel_id, 42);
+    assert.ok(acceptMsgs[0].gateway_id != null, 'gateway_id should be set');
+
+    const gatewayId = acceptMsgs[0].gateway_id;
+
+    // Inject data from remote peer via server
+    const inPayload = new Uint8Array([1, 2, 3]);
+    client.inject({ type: 0x7e, gateway_id: gatewayId, data: inPayload });
+    const received = await socket.read();
+    assert.deepEqual(received, inPayload);
+
+    // Write data from user to remote peer
+    const outPayload = new Uint8Array([4, 5, 6]);
+    await socket.write(outPayload);
+    await tick();
+
+    const dataMsgs = client.findSent(0x7e);
+    assert.equal(dataMsgs.length, 1);
+    assert.equal(dataMsgs[0].gateway_id, gatewayId);
+    assert.deepEqual(dataMsgs[0].data, outPayload);
+
+    await socket.close();
+    listener.close();
+    await backend.close();
+  });
 });

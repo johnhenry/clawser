@@ -7,10 +7,12 @@
 //! Each listener runs in its own spawned accept-loop task that can be
 //! cancelled via [`ReverseListenerManager::close_listener`].
 
+use super::forwarder::GatewayForwarder;
 use super::policy::GatewayPolicyEnforcer;
+use super::GatewayEvent;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, info, warn};
 use wsh_core::messages::*;
@@ -24,6 +26,8 @@ pub struct ReverseListenerManager {
     policy: Arc<GatewayPolicyEnforcer>,
     /// Active listeners: `listener_id` to [`ListenerEntry`].
     listeners: Mutex<HashMap<u32, ListenerEntry>>,
+    /// Pending inbound TCP connections awaiting `InboundAccept`: `channel_id` to `TcpStream`.
+    pending_connections: Arc<Mutex<HashMap<u32, TcpStream>>>,
 }
 
 /// Bookkeeping for a single active reverse tunnel listener.
@@ -50,6 +54,7 @@ impl ReverseListenerManager {
         Self {
             policy,
             listeners: Mutex::new(HashMap::new()),
+            pending_connections: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -105,9 +110,10 @@ impl ReverseListenerManager {
 
                 // Spawn accept loop — guard lives until loop ends
                 let listener_id_copy = listener_id;
+                let pending = self.pending_connections.clone();
                 tokio::spawn(async move {
                     let _guard = guard; // keep alive for connection counting
-                    Self::accept_loop(tcp_listener, cancel_rx, listener_id_copy, inbound_tx).await;
+                    Self::accept_loop(tcp_listener, cancel_rx, listener_id_copy, inbound_tx, pending).await;
                     debug!(listener_id = listener_id_copy, "accept loop ended");
                 });
 
@@ -139,12 +145,56 @@ impl ReverseListenerManager {
         }
     }
 
+    /// Handle an `InboundAccept` from the client: take the pending TcpStream,
+    /// spawn a bidirectional relay, and register the write channel.
+    ///
+    /// # Arguments
+    ///
+    /// * `channel_id` - The channel_id from the original `InboundOpen`.
+    /// * `gateway_id` - Client-assigned gateway ID for data routing.
+    /// * `data_tx` - Channel for sending TCP→client data events.
+    /// * `forwarder` - The gateway forwarder, used to register write channels.
+    pub async fn handle_inbound_accept(
+        &self,
+        channel_id: u32,
+        gateway_id: u32,
+        data_tx: mpsc::Sender<GatewayEvent>,
+        forwarder: &GatewayForwarder,
+    ) {
+        let stream = self.pending_connections.lock().await.remove(&channel_id);
+        match stream {
+            Some(tcp_stream) => {
+                let guard = self.policy.acquire();
+
+                // Create cancel channel
+                let (cancel_tx, cancel_rx) = mpsc::channel::<()>(1);
+
+                // Create write channel (client→TCP)
+                let (write_tx, write_rx) = mpsc::channel::<Vec<u8>>(64);
+                forwarder.register_write_channel(gateway_id, write_tx).await;
+
+                info!(channel_id, gateway_id, "inbound connection relay started");
+
+                tokio::spawn(async move {
+                    let _guard = guard;
+                    let _cancel_tx = cancel_tx; // keep alive; drop ends relay
+                    GatewayForwarder::tcp_relay(tcp_stream, cancel_rx, write_rx, data_tx, gateway_id).await;
+                    debug!(gateway_id, "inbound relay ended");
+                });
+            }
+            None => {
+                warn!(channel_id, "no pending connection for InboundAccept");
+            }
+        }
+    }
+
     /// Accept loop for a reverse tunnel listener.
     async fn accept_loop(
         listener: TcpListener,
         mut cancel_rx: mpsc::Receiver<()>,
         listener_id: u32,
         inbound_tx: mpsc::Sender<InboundEvent>,
+        pending: Arc<Mutex<HashMap<u32, TcpStream>>>,
     ) {
         let mut next_channel_id: u32 = 1;
 
@@ -156,7 +206,7 @@ impl ReverseListenerManager {
                 }
                 result = listener.accept() => {
                     match result {
-                        Ok((_stream, peer_addr)) => {
+                        Ok((stream, peer_addr)) => {
                             let channel_id = next_channel_id;
                             next_channel_id += 1;
 
@@ -166,6 +216,9 @@ impl ReverseListenerManager {
                                 peer = %peer_addr,
                                 "inbound connection accepted"
                             );
+
+                            // Store TcpStream pending InboundAccept from client
+                            pending.lock().await.insert(channel_id, stream);
 
                             let event = InboundEvent {
                                 listener_id,

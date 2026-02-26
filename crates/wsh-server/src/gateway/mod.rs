@@ -50,3 +50,15 @@ pub use forwarder::GatewayForwarder;
 pub use listener::ReverseListenerManager;
 pub use policy::GatewayPolicy;
 pub use resolver::DnsResolver;
+
+/// Event sent from a TCP relay task back to the session loop.
+///
+/// The session loop converts these into outbound control messages
+/// (`GatewayData` or `GatewayClose`) and sends them to the client.
+#[derive(Debug)]
+pub enum GatewayEvent {
+    /// Data received from a remote TCP peer, to be forwarded to the client.
+    Data { gateway_id: u32, data: Vec<u8> },
+    /// Remote TCP peer closed the connection.
+    Closed { gateway_id: u32 },
+}

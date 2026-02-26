@@ -63,6 +63,7 @@ pub enum MsgType {
     ListenOk = 0x7b,
     ListenFail = 0x7c,
     ListenClose = 0x7d,
+    GatewayData = 0x7e,
 }
 
 impl From<MsgType> for u8 {
@@ -123,6 +124,7 @@ impl TryFrom<u8> for MsgType {
             0x7b => Ok(Self::ListenOk),
             0x7c => Ok(Self::ListenFail),
             0x7d => Ok(Self::ListenClose),
+            0x7e => Ok(Self::GatewayData),
             _ => Err(format!("unknown message type: 0x{v:02x}")),
         }
     }
@@ -214,6 +216,7 @@ pub enum Payload {
     ListenOk(ListenOkPayload),
     ListenFail(ListenFailPayload),
     ListenClose(ListenClosePayload),
+    GatewayData(GatewayDataPayload),
     Empty(EmptyPayload),
 }
 
@@ -500,6 +503,8 @@ pub struct InboundOpenPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InboundAcceptPayload {
     pub channel_id: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway_id: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -540,6 +545,13 @@ pub struct ListenFailPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListenClosePayload {
     pub listener_id: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayDataPayload {
+    pub gateway_id: u32,
+    #[serde(with = "serde_bytes")]
+    pub data: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
