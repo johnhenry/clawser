@@ -17,6 +17,9 @@ export {
   presence, controlChanged, metrics,
   mcpDiscover, mcpTools, mcpCall, mcpResult,
   reverseRegister, reverseList, reversePeers, reverseConnect,
+  openTcp, openUdp, resolveDns, gatewayOk, gatewayFail, gatewayClose,
+  inboundOpen, inboundAccept, inboundReject, dnsResult,
+  listenRequest, listenOk, listenFail, listenClose,
   msgName, isValidMessage,
 } from './messages.mjs';
 

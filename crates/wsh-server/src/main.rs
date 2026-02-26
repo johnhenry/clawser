@@ -5,6 +5,7 @@
 
 mod auth;
 mod config;
+mod gateway;
 mod handshake;
 mod mcp;
 mod relay;

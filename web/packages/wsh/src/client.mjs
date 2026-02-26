@@ -85,6 +85,26 @@ export class WshClient {
    */
   onReverseConnect = null;
 
+  /**
+   * Called when a gateway-subsystem control message arrives (opcodes 0x70-0x7f).
+   *
+   * The gateway subsystem proxies TCP/UDP connections and DNS lookups through
+   * the server.  This callback receives every gateway message that is not
+   * consumed by an active waiter (e.g. a pending GatewayOk/GatewayFail for
+   * an in-flight request).
+   *
+   * Typical use: wire this to the netway GatewayBackend so it can route
+   * GatewayOk, GatewayFail, GatewayClose, DnsResult, InboundOpen, ListenOk,
+   * and ListenFail messages to the correct virtual sockets and listeners.
+   *
+   * @type {function(object): void|null}
+   * @param {object} msg - Decoded control message with at least:
+   *   - `type` {number}  — message opcode (0x70-0x7f)
+   *   - `gateway_id` or `listener_id` {number} — correlator
+   *   - Plus message-specific fields (see wsh-v1.yaml gateway section)
+   */
+  onGatewayMessage = null;
+
   // ── Public properties ───────────────────────────────────────────────
 
   /** Current client state. */
@@ -875,6 +895,16 @@ export class WshClient {
           }
         }
       }
+    }
+
+    // Route gateway messages (0x70–0x7f) to the gateway handler.
+    if (type >= 0x70 && type <= 0x7f) {
+      try {
+        this.onGatewayMessage?.(msg);
+      } catch (err) {
+        console.error('[wsh:client] onGatewayMessage handler error:', err);
+      }
+      return;
     }
 
     // Dispatch channel-specific messages to sessions.

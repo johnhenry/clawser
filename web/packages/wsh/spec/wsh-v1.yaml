@@ -11,7 +11,14 @@ protocol:
 enums:
   ChannelKind:
     type: string
-    values: [pty, exec, meta, file]
+    values: [pty, exec, meta, file, tcp, udp]
+    value_descriptions:
+      pty: "Interactive pseudo-terminal session with resize support"
+      exec: "One-shot command execution without a PTY"
+      meta: "Control metadata channel (session management)"
+      file: "File transfer channel (upload or download)"
+      tcp: "Gateway-proxied TCP stream to an external host:port"
+      udp: "Gateway-proxied UDP datagram socket to an external host:port"
   AuthMethod:
     type: string
     values: [pubkey, password]
@@ -359,6 +366,233 @@ messages:
       code: 0x60
       fields: {}
       description: "WebSocket multiplexing framing marker, not a CBOR message"
+
+  # ── Gateway subsystem ────────────────────────────────────────────────
+  # The gateway subsystem allows clients to tunnel TCP/UDP connections and
+  # DNS lookups through the server, which acts as a network proxy.  Clients
+  # open outbound connections or listeners, and the server relays data
+  # between the client's wsh channels and the external network.  All
+  # gateway messages share the 0x70-0x7f opcode range and use a
+  # client-assigned gateway_id or listener_id to correlate requests with
+  # responses.
+  gateway:
+    OpenTcp:
+      code: 0x70
+      description: >
+        Sent by the client to request a TCP connection through the gateway.
+        The server resolves the host, opens a TCP socket, and replies with
+        GatewayOk on success or GatewayFail on error.
+      fields:
+        gateway_id:
+          type: u32
+          required: true
+        host:
+          type: string
+          required: true
+        port:
+          type: u16
+          required: true
+
+    OpenUdp:
+      code: 0x71
+      description: >
+        Sent by the client to request a UDP socket through the gateway.
+        The server binds a local UDP socket for relaying datagrams to the
+        specified host:port and replies with GatewayOk or GatewayFail.
+      fields:
+        gateway_id:
+          type: u32
+          required: true
+        host:
+          type: string
+          required: true
+        port:
+          type: u16
+          required: true
+
+    ResolveDns:
+      code: 0x72
+      description: >
+        Sent by the client to perform a DNS lookup through the gateway.
+        The server resolves the given hostname and replies with DnsResult
+        containing the resolved addresses, or GatewayFail on error.
+      fields:
+        gateway_id:
+          type: u32
+          required: true
+        name:
+          type: string
+          required: true
+        record_type:
+          type: string
+          default: '"A"'
+
+    GatewayOk:
+      code: 0x73
+      description: >
+        Sent by the server to confirm that an OpenTcp, OpenUdp, or
+        ListenRequest succeeded.  The gateway_id echoes the client's
+        original request.  For TCP/UDP, resolved_addr contains the
+        IP address the server connected to.
+      fields:
+        gateway_id:
+          type: u32
+          required: true
+        resolved_addr:
+          type: string
+          required: false
+
+    GatewayFail:
+      code: 0x74
+      description: >
+        Sent by the server when a gateway request (OpenTcp, OpenUdp,
+        ResolveDns, or ListenRequest) fails.  The gateway_id echoes
+        the client's original request so it can match the failure.
+      fields:
+        gateway_id:
+          type: u32
+          required: true
+        code:
+          type: u32
+          required: true
+          description: >
+            Machine-readable failure reason.  Known values:
+            1=CONNECTION_REFUSED, 2=HOST_UNREACHABLE, 3=DNS_FAILED,
+            4=POLICY_DENIED, 5=GATEWAY_DISABLED.
+        message:
+          type: string
+          required: true
+
+    GatewayClose:
+      code: 0x75
+      description: >
+        Sent by either side to close an open gateway channel.  The client
+        sends it to tear down a proxied connection; the server sends it
+        when the remote peer disconnects or the connection is reset.
+      fields:
+        gateway_id:
+          type: u32
+          required: true
+        reason:
+          type: string
+          required: false
+
+    InboundOpen:
+      code: 0x76
+      description: >
+        Sent by the server when a new inbound connection arrives on an
+        active listener.  The client must reply with InboundAccept to
+        accept the connection or InboundReject to refuse it.
+      fields:
+        listener_id:
+          type: u32
+          required: true
+        channel_id:
+          type: u32
+          required: true
+        peer_addr:
+          type: string
+          required: true
+        peer_port:
+          type: u16
+          required: true
+
+    InboundAccept:
+      code: 0x77
+      description: >
+        Sent by the client in response to InboundOpen to accept the
+        inbound connection.  After this, data flows over the channel
+        identified by channel_id.
+      fields:
+        channel_id:
+          type: u32
+          required: true
+
+    InboundReject:
+      code: 0x78
+      description: >
+        Sent by the client in response to InboundOpen to refuse the
+        inbound connection.  The server closes the remote socket and
+        releases the channel_id.
+      fields:
+        channel_id:
+          type: u32
+          required: true
+        reason:
+          type: string
+          required: false
+
+    DnsResult:
+      code: 0x79
+      description: >
+        Sent by the server in response to ResolveDns with the resolved
+        addresses.  Contains one or more IP address strings and an
+        optional TTL from the DNS response.
+      fields:
+        gateway_id:
+          type: u32
+          required: true
+        addresses:
+          type: "string[]"
+          required: true
+        ttl:
+          type: u32
+          required: false
+
+    ListenRequest:
+      code: 0x7a
+      description: >
+        Sent by the client to ask the server to open a listening socket
+        on the given port and bind address.  The server replies with
+        ListenOk (including the actual bound port) or ListenFail.
+      fields:
+        listener_id:
+          type: u32
+          required: true
+        port:
+          type: u16
+          required: true
+        bind_addr:
+          type: string
+          default: '"0.0.0.0"'
+
+    ListenOk:
+      code: 0x7b
+      description: >
+        Sent by the server to confirm that a ListenRequest succeeded.
+        The actual_port may differ from the requested port when the
+        client requested port 0 (ephemeral port assignment).
+      fields:
+        listener_id:
+          type: u32
+          required: true
+        actual_port:
+          type: u16
+          required: true
+
+    ListenFail:
+      code: 0x7c
+      description: >
+        Sent by the server when a ListenRequest fails, for example
+        because the port is already in use or policy denies the bind.
+      fields:
+        listener_id:
+          type: u32
+          required: true
+        reason:
+          type: string
+          required: true
+
+    ListenClose:
+      code: 0x7d
+      description: >
+        Sent by the client to stop listening on a previously opened
+        listener.  The server closes the bound socket and releases
+        the listener_id.
+      fields:
+        listener_id:
+          type: u32
+          required: true
 
 nested_types:
   AttachmentInfo:

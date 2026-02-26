@@ -4,6 +4,9 @@
 //! and MCP bridge. Coordinates the lifecycle of all incoming connections.
 
 use crate::config::ServerConfig;
+use crate::gateway::forwarder::GatewayForwarder;
+use crate::gateway::listener::ReverseListenerManager;
+use crate::gateway::policy::{GatewayPolicy, GatewayPolicyEnforcer};
 use crate::handshake;
 use crate::mcp::{McpBridge, McpProxy};
 use crate::relay::{PeerRegistry, RelayBroker};
@@ -12,8 +15,8 @@ use crate::transport::{websocket, webtransport};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use tracing::{info, warn};
+use tokio::sync::{mpsc, RwLock};
+use tracing::{debug, info, warn};
 use wsh_core::keys::{load_authorized_keys, AuthorizedKey};
 use wsh_core::messages::*;
 use wsh_core::{cbor_decode, frame_encode, WshError, WshResult};
@@ -38,6 +41,12 @@ pub struct WshServer {
     mcp_proxy: Arc<RwLock<McpProxy>>,
     /// Directory for session recordings.
     recording_dir: Option<PathBuf>,
+    /// Gateway forwarder (TCP/UDP/DNS).
+    gateway_forwarder: Arc<GatewayForwarder>,
+    /// Reverse listener manager.
+    reverse_listener: Arc<ReverseListenerManager>,
+    /// Whether gateway is enabled.
+    gateway_enabled: bool,
 }
 
 impl WshServer {
@@ -82,6 +91,17 @@ impl WshServer {
             }
         }
 
+        // Gateway
+        let gateway_policy = GatewayPolicy {
+            allowed_destinations: config.gateway_allowed_destinations.clone(),
+            max_connections: config.gateway_max_connections,
+            enable_reverse_tunnels: config.gateway_enable_reverse_tunnels,
+        };
+        let policy_enforcer = Arc::new(GatewayPolicyEnforcer::new(gateway_policy));
+        let gateway_forwarder = Arc::new(GatewayForwarder::new(policy_enforcer.clone()));
+        let reverse_listener = Arc::new(ReverseListenerManager::new(policy_enforcer));
+        let gateway_enabled = config.gateway_enabled;
+
         Ok(Self {
             config,
             secret,
@@ -92,6 +112,9 @@ impl WshServer {
             mcp_bridge,
             mcp_proxy,
             recording_dir,
+            gateway_forwarder,
+            reverse_listener,
+            gateway_enabled,
         })
     }
 
@@ -249,7 +272,8 @@ impl WshServer {
                     "WebTransport auth OK"
                 );
 
-                // TODO: enter session message loop (OPEN, RESIZE, DATA, etc.)
+                // Session message loop
+                self.session_loop_quic(&mut send, &mut recv).await?;
             }
             Err(e) => {
                 let fail = handshake::build_auth_fail(&e.to_string());
@@ -343,7 +367,8 @@ impl WshServer {
                     "WebSocket auth OK"
                 );
 
-                // TODO: enter session message loop (OPEN, RESIZE, DATA, etc.)
+                // Session message loop
+                self.session_loop_ws(&mut conn).await?;
             }
             Err(e) => {
                 let fail = handshake::build_auth_fail(&e.to_string());
@@ -374,6 +399,247 @@ impl WshServer {
     /// Access the relay broker.
     pub fn relay_broker(&self) -> &RelayBroker {
         &self.relay_broker
+    }
+
+    // ── Session message loops ──────────────────────────────────────────
+
+    /// Post-auth message loop over QUIC (WebTransport).
+    ///
+    /// Reads framed messages from the QUIC receive stream, dispatches each
+    /// through [`dispatch_message`](Self::dispatch_message), and writes any
+    /// response back. Also listens for inbound reverse-tunnel events and
+    /// pushes `InboundOpen` messages to the client.
+    ///
+    /// # Arguments
+    ///
+    /// * `send` - The QUIC send stream for writing response frames.
+    /// * `recv` - The QUIC receive stream for reading client messages.
+    async fn session_loop_quic(
+        &self,
+        send: &mut quinn::SendStream,
+        recv: &mut quinn::RecvStream,
+    ) -> WshResult<()> {
+        // Channel for inbound reverse-tunnel events
+        let (inbound_tx, mut inbound_rx) = mpsc::channel(64);
+
+        loop {
+            tokio::select! {
+                // Inbound reverse-tunnel connection notification
+                Some(event) = inbound_rx.recv() => {
+                    let msg = build_inbound_open(&event);
+                    let frame = frame_encode(&msg)?;
+                    send.write_all(&frame)
+                        .await
+                        .map_err(|e| WshError::Transport(format!("QUIC write: {e}")))?;
+                }
+
+                // Message from client
+                frame_result = read_quic_frame(recv) => {
+                    match frame_result {
+                        Ok(data) => {
+                            let envelope: Envelope = cbor_decode(&data)?;
+                            if let Some(response) = self.dispatch_message(envelope, inbound_tx.clone()).await? {
+                                let frame = frame_encode(&response)?;
+                                send.write_all(&frame)
+                                    .await
+                                    .map_err(|e| WshError::Transport(format!("QUIC write: {e}")))?;
+                            }
+                        }
+                        Err(e) => {
+                            debug!(error = %e, "QUIC session ended");
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Post-auth message loop over WebSocket.
+    ///
+    /// Functionally identical to [`session_loop_quic`](Self::session_loop_quic)
+    /// but reads/writes through the WebSocket transport layer instead of QUIC
+    /// streams.
+    ///
+    /// # Arguments
+    ///
+    /// * `conn` - The WebSocket connection (wraps a `tokio_tungstenite` stream).
+    async fn session_loop_ws(
+        &self,
+        conn: &mut websocket::WebSocketConnection,
+    ) -> WshResult<()> {
+        let (inbound_tx, mut inbound_rx) = mpsc::channel(64);
+
+        loop {
+            tokio::select! {
+                Some(event) = inbound_rx.recv() => {
+                    let msg = build_inbound_open(&event);
+                    let frame = frame_encode(&msg)?;
+                    websocket::ws_send_binary(&mut conn.ws_stream, &frame).await?;
+                }
+
+                ws_result = websocket::ws_recv_binary(&mut conn.ws_stream) => {
+                    match ws_result {
+                        Ok(Some(data)) => {
+                            let envelope: Envelope = cbor_decode(&data)?;
+                            if let Some(response) = self.dispatch_message(envelope, inbound_tx.clone()).await? {
+                                let frame = frame_encode(&response)?;
+                                websocket::ws_send_binary(&mut conn.ws_stream, &frame).await?;
+                            }
+                        }
+                        Ok(None) => {
+                            debug!("WebSocket session ended (peer closed)");
+                            break;
+                        }
+                        Err(e) => {
+                            debug!(error = %e, "WebSocket session ended");
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Dispatch a single decoded message to the appropriate handler.
+    ///
+    /// Routes the envelope by `msg_type` to the gateway forwarder, reverse
+    /// listener manager, or keepalive responder. Returns an optional response
+    /// envelope to send back to the client, or `None` for fire-and-forget
+    /// messages (e.g. `GatewayClose`, `Pong`-less close, unhandled types).
+    ///
+    /// # Arguments
+    ///
+    /// * `envelope` - The decoded client message.
+    /// * `inbound_tx` - Channel sender passed to `handle_listen_request` so
+    ///   that the accept loop can notify this session of inbound connections.
+    ///
+    /// # Gateway-Disabled Error
+    ///
+    /// When `self.gateway_enabled` is `false`, all gateway message types
+    /// (`OpenTcp`, `OpenUdp`, `ResolveDns`, `ListenRequest`) are immediately
+    /// rejected with a `GatewayFail` or `ListenFail` envelope carrying
+    /// **error code 5** (`GATEWAY_DISABLED`).
+    async fn dispatch_message(
+        &self,
+        envelope: Envelope,
+        inbound_tx: mpsc::Sender<crate::gateway::listener::InboundEvent>,
+    ) -> WshResult<Option<Envelope>> {
+        match (&envelope.msg_type, &envelope.payload) {
+            // ── Gateway messages ────────────────────────────────────
+            (MsgType::OpenTcp, Payload::OpenTcp(p)) => {
+                if !self.gateway_enabled {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::GatewayFail,
+                        payload: Payload::GatewayFail(GatewayFailPayload {
+                            gateway_id: p.gateway_id,
+                            code: 5,
+                            message: "gateway disabled".to_string(),
+                        }),
+                    }));
+                }
+                let resp = self
+                    .gateway_forwarder
+                    .handle_open_tcp(p.gateway_id, &p.host, p.port)
+                    .await;
+                Ok(Some(resp))
+            }
+            (MsgType::OpenUdp, Payload::OpenUdp(p)) => {
+                if !self.gateway_enabled {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::GatewayFail,
+                        payload: Payload::GatewayFail(GatewayFailPayload {
+                            gateway_id: p.gateway_id,
+                            code: 5,
+                            message: "gateway disabled".to_string(),
+                        }),
+                    }));
+                }
+                let resp = self
+                    .gateway_forwarder
+                    .handle_open_udp(p.gateway_id, &p.host, p.port)
+                    .await;
+                Ok(Some(resp))
+            }
+            (MsgType::ResolveDns, Payload::ResolveDns(p)) => {
+                if !self.gateway_enabled {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::GatewayFail,
+                        payload: Payload::GatewayFail(GatewayFailPayload {
+                            gateway_id: p.gateway_id,
+                            code: 5,
+                            message: "gateway disabled".to_string(),
+                        }),
+                    }));
+                }
+                let resp = self
+                    .gateway_forwarder
+                    .handle_resolve_dns(p.gateway_id, &p.name, &p.record_type)
+                    .await;
+                Ok(Some(resp))
+            }
+            (MsgType::GatewayClose, Payload::GatewayClose(p)) => {
+                self.gateway_forwarder.close(p.gateway_id).await;
+                Ok(None)
+            }
+            (MsgType::ListenRequest, Payload::ListenRequest(p)) => {
+                if !self.gateway_enabled {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::ListenFail,
+                        payload: Payload::ListenFail(ListenFailPayload {
+                            listener_id: p.listener_id,
+                            reason: "gateway disabled".to_string(),
+                        }),
+                    }));
+                }
+                let resp = self
+                    .reverse_listener
+                    .handle_listen_request(p.listener_id, p.port, &p.bind_addr, inbound_tx)
+                    .await;
+                Ok(Some(resp))
+            }
+            (MsgType::ListenClose, Payload::ListenClose(p)) => {
+                let resp = self.reverse_listener.close_listener(p.listener_id).await;
+                Ok(resp)
+            }
+
+            // ── Keepalive ───────────────────────────────────────────
+            (MsgType::Ping, Payload::PingPong(p)) => {
+                Ok(Some(Envelope {
+                    msg_type: MsgType::Pong,
+                    payload: Payload::PingPong(PingPongPayload {
+                        id: p.id,
+                    }),
+                }))
+            }
+
+            // ── Unhandled ───────────────────────────────────────────
+            (msg_type, _) => {
+                debug!(?msg_type, "unhandled message type in session loop");
+                Ok(None)
+            }
+        }
+    }
+}
+
+/// Build an [`MsgType::InboundOpen`] envelope from a reverse tunnel
+/// [`InboundEvent`](crate::gateway::listener::InboundEvent).
+///
+/// Sent to the client to notify it that a new inbound TCP connection was
+/// accepted on one of its reverse tunnel listeners.
+fn build_inbound_open(event: &crate::gateway::listener::InboundEvent) -> Envelope {
+    Envelope {
+        msg_type: MsgType::InboundOpen,
+        payload: Payload::InboundOpen(InboundOpenPayload {
+            listener_id: event.listener_id,
+            channel_id: event.channel_id,
+            peer_addr: event.peer_addr.clone(),
+            peer_port: event.peer_port,
+        }),
     }
 }
 

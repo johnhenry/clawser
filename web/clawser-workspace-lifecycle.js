@@ -35,6 +35,7 @@ import { SandboxEvalTool } from './clawser-tools.js';
 import { registerAndboxCli } from './clawser-andbox-cli.js';
 import { registerWshCli } from './clawser-wsh-cli.js';
 import { registerWshTools } from './clawser-wsh-tools.js';
+import { registerNetwayTools } from './clawser-netway-tools.js';
 import { HwListTool, HwConnectTool, HwSendTool, HwReadTool, HwDisconnectTool, HwInfoTool } from './clawser-hardware.js';
 import { RemoteStatusTool, RemotePairTool, RemoteRevokeTool } from './clawser-remote.js';
 import { BridgeStatusTool, BridgeListToolsTool, BridgeFetchTool } from './clawser-bridge.js';
@@ -396,6 +397,9 @@ export async function initWorkspace(wsId, convId) {
 
     // wsh — Web Shell (9 tools)
     registerWshTools(state.browserTools);
+
+    // netway — Virtual Networking (8 tools)
+    registerNetwayTools(state.browserTools);
 
     // Hardware (6)
     state.browserTools.register(new HwListTool(state.peripheralManager));

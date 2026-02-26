@@ -19,7 +19,7 @@
 - **Version**: `wsh-v1`
 - **Wire format**: CBOR
 - **Framing**: length prefixed be32
-- **Total message types**: 35 (including WS_DATA framing marker)
+- **Total message types**: 49 (including WS_DATA framing marker)
 
 ## Enums
 
@@ -33,6 +33,8 @@ Type: `string`
 | `exec` |
 | `meta` |
 | `file` |
+| `tcp` |
+| `udp` |
 
 ### AuthMethod
 
@@ -82,6 +84,20 @@ Type: `string`
 | `0x52` | ReversePeers | reverse |
 | `0x53` | ReverseConnect | reverse |
 | `0x60` | WsData | framing |
+| `0x70` | OpenTcp | gateway |
+| `0x71` | OpenUdp | gateway |
+| `0x72` | ResolveDns | gateway |
+| `0x73` | GatewayOk | gateway |
+| `0x74` | GatewayFail | gateway |
+| `0x75` | GatewayClose | gateway |
+| `0x76` | InboundOpen | gateway |
+| `0x77` | InboundAccept | gateway |
+| `0x78` | InboundReject | gateway |
+| `0x79` | DnsResult | gateway |
+| `0x7a` | ListenRequest | gateway |
+| `0x7b` | ListenOk | gateway |
+| `0x7c` | ListenFail | gateway |
+| `0x7d` | ListenClose | gateway |
 
 ## Message Details
 
@@ -393,6 +409,166 @@ Category: **framing**
 > WebSocket multiplexing framing marker, not a CBOR message
 
 *No fields.*
+
+### OpenTcp (`0x70`)
+
+Category: **gateway**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `gateway_id` | `u32` | yes | — |
+| `host` | `string` | yes | — |
+| `port` | `u16` | yes | — |
+
+### OpenUdp (`0x71`)
+
+Category: **gateway**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `gateway_id` | `u32` | yes | — |
+| `host` | `string` | yes | — |
+| `port` | `u16` | yes | — |
+
+### ResolveDns (`0x72`)
+
+Category: **gateway**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `gateway_id` | `u32` | yes | — |
+| `name` | `string` | yes | — |
+| `record_type` | `string` | no | `"A"` |
+
+### GatewayOk (`0x73`)
+
+Category: **gateway**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `gateway_id` | `u32` | yes | — |
+| `resolved_addr` | `string` | no | — |
+
+### GatewayFail (`0x74`)
+
+Category: **gateway**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `gateway_id` | `u32` | yes | — |
+| `code` | `u32` | yes | — |
+| `message` | `string` | yes | — |
+
+### GatewayClose (`0x75`)
+
+Category: **gateway**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `gateway_id` | `u32` | yes | — |
+| `reason` | `string` | no | — |
+
+### InboundOpen (`0x76`)
+
+Category: **gateway**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `listener_id` | `u32` | yes | — |
+| `channel_id` | `u32` | yes | — |
+| `peer_addr` | `string` | yes | — |
+| `peer_port` | `u16` | yes | — |
+
+### InboundAccept (`0x77`)
+
+Category: **gateway**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `channel_id` | `u32` | yes | — |
+
+### InboundReject (`0x78`)
+
+Category: **gateway**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `channel_id` | `u32` | yes | — |
+| `reason` | `string` | no | — |
+
+### DnsResult (`0x79`)
+
+Category: **gateway**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `gateway_id` | `u32` | yes | — |
+| `addresses` | `string[]` | yes | — |
+| `ttl` | `u32` | no | — |
+
+### ListenRequest (`0x7a`)
+
+Category: **gateway**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `listener_id` | `u32` | yes | — |
+| `port` | `u16` | yes | — |
+| `bind_addr` | `string` | no | `"0.0.0.0"` |
+
+### ListenOk (`0x7b`)
+
+Category: **gateway**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `listener_id` | `u32` | yes | — |
+| `actual_port` | `u16` | yes | — |
+
+### ListenFail (`0x7c`)
+
+Category: **gateway**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `listener_id` | `u32` | yes | — |
+| `reason` | `string` | yes | — |
+
+### ListenClose (`0x7d`)
+
+Category: **gateway**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `listener_id` | `u32` | yes | — |
 
 ## Nested Types
 

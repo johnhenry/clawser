@@ -12,6 +12,8 @@ pub struct ConfigFile {
     pub server: ServerSection,
     #[serde(default)]
     pub auth: AuthSection,
+    #[serde(default)]
+    pub gateway: GatewaySection,
 }
 
 /// `[server]` section of the config TOML.
@@ -62,6 +64,71 @@ impl Default for AuthSection {
     }
 }
 
+/// `[gateway]` section of the config TOML.
+///
+/// Controls the gateway subsystem that handles TCP/UDP forwarding, DNS
+/// resolution, and reverse tunnel listeners.
+///
+/// # TOML Example
+///
+/// ```toml
+/// [gateway]
+/// enabled = true
+/// allowed_destinations = ["example.com", "10.0.0.0/8:443", "*"]
+/// max_connections = 100
+/// enable_reverse_tunnels = true
+/// ```
+#[derive(Debug, Clone, Deserialize)]
+pub struct GatewaySection {
+    /// Master switch for the gateway subsystem.
+    ///
+    /// When `false`, all gateway message types (`OpenTcp`, `OpenUdp`,
+    /// `ResolveDns`, `ListenRequest`) are rejected with error code 5
+    /// (`GATEWAY_DISABLED`).
+    ///
+    /// Default: `true`.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Destination allowlist for outbound connections.
+    ///
+    /// Supports exact hostnames (`"example.com"`), exact host:port pairs
+    /// (`"example.com:443"`), or a wildcard (`"*"`) to allow all.
+    /// An empty list blocks all outbound connections.
+    ///
+    /// Default: `["*"]` (allow all).
+    #[serde(default = "default_gateway_destinations")]
+    pub allowed_destinations: Vec<String>,
+    /// Maximum number of concurrent gateway connections (TCP + UDP +
+    /// reverse tunnel listeners combined).
+    ///
+    /// Default: `100`.
+    #[serde(default = "default_gateway_max_connections")]
+    pub max_connections: usize,
+    /// Whether clients may open reverse tunnel listeners via `ListenRequest`.
+    ///
+    /// Default: `true`.
+    #[serde(default = "default_true")]
+    pub enable_reverse_tunnels: bool,
+}
+
+impl Default for GatewaySection {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            allowed_destinations: default_gateway_destinations(),
+            max_connections: default_gateway_max_connections(),
+            enable_reverse_tunnels: true,
+        }
+    }
+}
+
+fn default_gateway_destinations() -> Vec<String> {
+    vec!["*".to_string()]
+}
+fn default_gateway_max_connections() -> usize {
+    100
+}
+
 fn default_port() -> u16 {
     4422
 }
@@ -85,21 +152,62 @@ fn default_true() -> bool {
 }
 
 /// Resolved server configuration (all paths expanded, CLI overrides applied).
+///
+/// Produced by [`ServerConfig::load`], which merges TOML file values with
+/// command-line overrides and expands `~` in file paths.
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
+    /// Port for the QUIC (WebTransport) listener.
     pub port: u16,
+    /// Path to the TLS certificate PEM file (tilde-expanded).
     pub cert_path: PathBuf,
+    /// Path to the TLS private key PEM file (tilde-expanded).
     pub key_path: PathBuf,
+    /// Maximum number of concurrent authenticated sessions.
     pub max_sessions: usize,
+    /// Session token lifetime in seconds.
     pub session_ttl: u64,
+    /// Idle timeout in seconds before a session is reaped.
     pub idle_timeout: u64,
+    /// Whether the relay (peer-to-peer forwarding) subsystem is enabled.
     pub enable_relay: bool,
+    /// Whether public-key authentication is accepted.
     pub allow_pubkey: bool,
+    /// Whether password authentication is accepted.
     pub allow_password: bool,
+    /// Whether the gateway subsystem (TCP/UDP/DNS/listeners) is enabled.
+    /// Corresponds to `[gateway] enabled` in the TOML config.
+    pub gateway_enabled: bool,
+    /// Gateway destination allowlist. See [`GatewaySection::allowed_destinations`].
+    pub gateway_allowed_destinations: Vec<String>,
+    /// Maximum concurrent gateway connections. See [`GatewaySection::max_connections`].
+    pub gateway_max_connections: usize,
+    /// Whether reverse tunnel listeners are allowed. See [`GatewaySection::enable_reverse_tunnels`].
+    pub gateway_enable_reverse_tunnels: bool,
 }
 
 impl ServerConfig {
-    /// Load config from TOML file, then apply CLI overrides.
+    /// Load configuration from a TOML file, then apply CLI overrides.
+    ///
+    /// If `config_path` points to a file that does not exist, defaults are
+    /// used silently. CLI arguments, when `Some`, take precedence over the
+    /// file values.
+    ///
+    /// # Arguments
+    ///
+    /// * `config_path` - Optional path to the TOML config file (tilde is expanded).
+    /// * `cli_port` - Override for the QUIC listener port.
+    /// * `cli_cert` - Override for the TLS certificate path.
+    /// * `cli_key` - Override for the TLS key path.
+    /// * `cli_max_sessions` - Override for the maximum session count.
+    /// * `cli_session_ttl` - Override for the session TTL (seconds).
+    /// * `cli_idle_timeout` - Override for the idle timeout (seconds).
+    /// * `cli_enable_relay` - Whether the relay subsystem is enabled (CLI flag; no TOML equivalent).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the config file exists but cannot be read or
+    /// contains invalid TOML.
     pub fn load(
         config_path: Option<&Path>,
         cli_port: Option<u16>,
@@ -124,12 +232,14 @@ impl ServerConfig {
                 ConfigFile {
                     server: ServerSection::default(),
                     auth: AuthSection::default(),
+                    gateway: GatewaySection::default(),
                 }
             }
         } else {
             ConfigFile {
                 server: ServerSection::default(),
                 auth: AuthSection::default(),
+                gateway: GatewaySection::default(),
             }
         };
 
@@ -155,6 +265,10 @@ impl ServerConfig {
             enable_relay: cli_enable_relay,
             allow_pubkey: file_config.auth.allow_pubkey,
             allow_password: file_config.auth.allow_password,
+            gateway_enabled: file_config.gateway.enabled,
+            gateway_allowed_destinations: file_config.gateway.allowed_destinations,
+            gateway_max_connections: file_config.gateway.max_connections,
+            gateway_enable_reverse_tunnels: file_config.gateway.enable_reverse_tunnels,
         })
     }
 }

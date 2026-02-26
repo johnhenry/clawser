@@ -48,6 +48,21 @@ pub enum MsgType {
     ReverseList = 0x51,
     ReversePeers = 0x52,
     ReverseConnect = 0x53,
+
+    OpenTcp = 0x70,
+    OpenUdp = 0x71,
+    ResolveDns = 0x72,
+    GatewayOk = 0x73,
+    GatewayFail = 0x74,
+    GatewayClose = 0x75,
+    InboundOpen = 0x76,
+    InboundAccept = 0x77,
+    InboundReject = 0x78,
+    DnsResult = 0x79,
+    ListenRequest = 0x7a,
+    ListenOk = 0x7b,
+    ListenFail = 0x7c,
+    ListenClose = 0x7d,
 }
 
 impl From<MsgType> for u8 {
@@ -94,6 +109,20 @@ impl TryFrom<u8> for MsgType {
             0x51 => Ok(Self::ReverseList),
             0x52 => Ok(Self::ReversePeers),
             0x53 => Ok(Self::ReverseConnect),
+            0x70 => Ok(Self::OpenTcp),
+            0x71 => Ok(Self::OpenUdp),
+            0x72 => Ok(Self::ResolveDns),
+            0x73 => Ok(Self::GatewayOk),
+            0x74 => Ok(Self::GatewayFail),
+            0x75 => Ok(Self::GatewayClose),
+            0x76 => Ok(Self::InboundOpen),
+            0x77 => Ok(Self::InboundAccept),
+            0x78 => Ok(Self::InboundReject),
+            0x79 => Ok(Self::DnsResult),
+            0x7a => Ok(Self::ListenRequest),
+            0x7b => Ok(Self::ListenOk),
+            0x7c => Ok(Self::ListenFail),
+            0x7d => Ok(Self::ListenClose),
             _ => Err(format!("unknown message type: 0x{v:02x}")),
         }
     }
@@ -107,6 +136,8 @@ pub enum ChannelKind {
     Exec,
     Meta,
     File,
+    Tcp,
+    Udp,
 }
 
 /// AuthMethod enum.
@@ -169,6 +200,20 @@ pub enum Payload {
     ReverseList(ReverseListPayload),
     ReversePeers(ReversePeersPayload),
     ReverseConnect(ReverseConnectPayload),
+    OpenTcp(OpenTcpPayload),
+    OpenUdp(OpenUdpPayload),
+    ResolveDns(ResolveDnsPayload),
+    GatewayOk(GatewayOkPayload),
+    GatewayFail(GatewayFailPayload),
+    GatewayClose(GatewayClosePayload),
+    InboundOpen(InboundOpenPayload),
+    InboundAccept(InboundAcceptPayload),
+    InboundReject(InboundRejectPayload),
+    DnsResult(DnsResultPayload),
+    ListenRequest(ListenRequestPayload),
+    ListenOk(ListenOkPayload),
+    ListenFail(ListenFailPayload),
+    ListenClose(ListenClosePayload),
     Empty(EmptyPayload),
 }
 
@@ -399,6 +444,102 @@ pub struct ReversePeersPayload {
 pub struct ReverseConnectPayload {
     pub target_fingerprint: String,
     pub username: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenTcpPayload {
+    pub gateway_id: u32,
+    pub host: String,
+    pub port: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenUdpPayload {
+    pub gateway_id: u32,
+    pub host: String,
+    pub port: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolveDnsPayload {
+    pub gateway_id: u32,
+    pub name: String,
+    #[serde(default)]
+    pub record_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayOkPayload {
+    pub gateway_id: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_addr: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayFailPayload {
+    pub gateway_id: u32,
+    pub code: u32,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayClosePayload {
+    pub gateway_id: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InboundOpenPayload {
+    pub listener_id: u32,
+    pub channel_id: u32,
+    pub peer_addr: String,
+    pub peer_port: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InboundAcceptPayload {
+    pub channel_id: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InboundRejectPayload {
+    pub channel_id: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DnsResultPayload {
+    pub gateway_id: u32,
+    pub addresses: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttl: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListenRequestPayload {
+    pub listener_id: u32,
+    pub port: u16,
+    #[serde(default)]
+    pub bind_addr: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListenOkPayload {
+    pub listener_id: u32,
+    pub actual_port: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListenFailPayload {
+    pub listener_id: u32,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListenClosePayload {
+    pub listener_id: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

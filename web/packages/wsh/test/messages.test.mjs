@@ -8,6 +8,9 @@ import {
   presence, controlChanged, metrics,
   mcpDiscover, mcpTools, mcpCall, mcpResult,
   reverseRegister, reverseList, reversePeers, reverseConnect,
+  openTcp, openUdp, resolveDns, gatewayOk, gatewayFail, gatewayClose,
+  inboundOpen, inboundAccept, inboundReject, dnsResult,
+  listenRequest, listenOk, listenFail, listenClose,
   msgName, isValidMessage,
   AUTH_METHOD, CHANNEL_KIND,
 } from '../src/messages.mjs';
@@ -190,5 +193,185 @@ describe('message constructors', () => {
     const msg = metrics({ cpu: 0.5, memory: 1024, sessions: 3, rtt: 50 });
     assert.equal(msg.type, MSG.METRICS);
     assert.equal(msg.cpu, 0.5);
+  });
+
+  // ── Gateway messages ─────────────────────────────────────────────
+
+  it('openTcp', () => {
+    const msg = openTcp({ gatewayId: 1, host: 'example.com', port: 80 });
+    assert.equal(msg.type, MSG.OPEN_TCP);
+    assert.equal(msg.gateway_id, 1);
+    assert.equal(msg.host, 'example.com');
+    assert.equal(msg.port, 80);
+  });
+
+  it('openUdp', () => {
+    const msg = openUdp({ gatewayId: 2, host: '10.0.0.1', port: 53 });
+    assert.equal(msg.type, MSG.OPEN_UDP);
+    assert.equal(msg.gateway_id, 2);
+    assert.equal(msg.host, '10.0.0.1');
+    assert.equal(msg.port, 53);
+  });
+
+  it('resolveDns', () => {
+    const msg = resolveDns({ gatewayId: 3, name: 'example.com' });
+    assert.equal(msg.type, MSG.RESOLVE_DNS);
+    assert.equal(msg.gateway_id, 3);
+    assert.equal(msg.name, 'example.com');
+    assert.equal(msg.record_type, 'A');
+  });
+
+  it('resolveDns with custom record type', () => {
+    const msg = resolveDns({ gatewayId: 4, name: 'example.com', recordType: 'AAAA' });
+    assert.equal(msg.record_type, 'AAAA');
+  });
+
+  it('gatewayOk', () => {
+    const msg = gatewayOk({ gatewayId: 1, resolvedAddr: '93.184.216.34' });
+    assert.equal(msg.type, MSG.GATEWAY_OK);
+    assert.equal(msg.gateway_id, 1);
+    assert.equal(msg.resolved_addr, '93.184.216.34');
+  });
+
+  it('gatewayOk without resolved addr', () => {
+    const msg = gatewayOk({ gatewayId: 1 });
+    assert.equal(msg.type, MSG.GATEWAY_OK);
+    assert.equal(msg.resolved_addr, undefined);
+  });
+
+  it('gatewayFail', () => {
+    const msg = gatewayFail({ gatewayId: 1, code: 111, message: 'Connection refused' });
+    assert.equal(msg.type, MSG.GATEWAY_FAIL);
+    assert.equal(msg.gateway_id, 1);
+    assert.equal(msg.code, 111);
+    assert.equal(msg.message, 'Connection refused');
+  });
+
+  it('gatewayClose', () => {
+    const msg = gatewayClose({ gatewayId: 1, reason: 'peer reset' });
+    assert.equal(msg.type, MSG.GATEWAY_CLOSE);
+    assert.equal(msg.gateway_id, 1);
+    assert.equal(msg.reason, 'peer reset');
+  });
+
+  it('gatewayClose without reason', () => {
+    const msg = gatewayClose({ gatewayId: 1 });
+    assert.equal(msg.reason, undefined);
+  });
+
+  it('inboundOpen', () => {
+    const msg = inboundOpen({ listenerId: 1, channelId: 5, peerAddr: '10.0.0.2', peerPort: 54321 });
+    assert.equal(msg.type, MSG.INBOUND_OPEN);
+    assert.equal(msg.listener_id, 1);
+    assert.equal(msg.channel_id, 5);
+    assert.equal(msg.peer_addr, '10.0.0.2');
+    assert.equal(msg.peer_port, 54321);
+  });
+
+  it('inboundAccept', () => {
+    const msg = inboundAccept({ channelId: 5 });
+    assert.equal(msg.type, MSG.INBOUND_ACCEPT);
+    assert.equal(msg.channel_id, 5);
+  });
+
+  it('inboundReject', () => {
+    const msg = inboundReject({ channelId: 5, reason: 'policy denied' });
+    assert.equal(msg.type, MSG.INBOUND_REJECT);
+    assert.equal(msg.channel_id, 5);
+    assert.equal(msg.reason, 'policy denied');
+  });
+
+  it('inboundReject without reason', () => {
+    const msg = inboundReject({ channelId: 5 });
+    assert.equal(msg.reason, undefined);
+  });
+
+  it('dnsResult', () => {
+    const msg = dnsResult({ gatewayId: 3, addresses: ['93.184.216.34', '2606:2800:220:1::'], ttl: 300 });
+    assert.equal(msg.type, MSG.DNS_RESULT);
+    assert.equal(msg.gateway_id, 3);
+    assert.deepEqual(msg.addresses, ['93.184.216.34', '2606:2800:220:1::']);
+    assert.equal(msg.ttl, 300);
+  });
+
+  it('dnsResult without ttl', () => {
+    const msg = dnsResult({ gatewayId: 3, addresses: ['127.0.0.1'] });
+    assert.equal(msg.ttl, undefined);
+  });
+
+  it('listenRequest', () => {
+    const msg = listenRequest({ listenerId: 1, port: 8080 });
+    assert.equal(msg.type, MSG.LISTEN_REQUEST);
+    assert.equal(msg.listener_id, 1);
+    assert.equal(msg.port, 8080);
+    assert.equal(msg.bind_addr, '0.0.0.0');
+  });
+
+  it('listenRequest with custom bind addr', () => {
+    const msg = listenRequest({ listenerId: 1, port: 8080, bindAddr: '127.0.0.1' });
+    assert.equal(msg.bind_addr, '127.0.0.1');
+  });
+
+  it('listenOk', () => {
+    const msg = listenOk({ listenerId: 1, actualPort: 8080 });
+    assert.equal(msg.type, MSG.LISTEN_OK);
+    assert.equal(msg.listener_id, 1);
+    assert.equal(msg.actual_port, 8080);
+  });
+
+  it('listenFail', () => {
+    const msg = listenFail({ listenerId: 1, reason: 'address in use' });
+    assert.equal(msg.type, MSG.LISTEN_FAIL);
+    assert.equal(msg.listener_id, 1);
+    assert.equal(msg.reason, 'address in use');
+  });
+
+  it('listenClose', () => {
+    const msg = listenClose({ listenerId: 1 });
+    assert.equal(msg.type, MSG.LISTEN_CLOSE);
+    assert.equal(msg.listener_id, 1);
+  });
+});
+
+describe('CHANNEL_KIND extensions', () => {
+  it('has tcp and udp kinds', () => {
+    assert.equal(CHANNEL_KIND.TCP, 'tcp');
+    assert.equal(CHANNEL_KIND.UDP, 'udp');
+  });
+
+  it('still has original kinds', () => {
+    assert.equal(CHANNEL_KIND.PTY, 'pty');
+    assert.equal(CHANNEL_KIND.EXEC, 'exec');
+    assert.equal(CHANNEL_KIND.META, 'meta');
+    assert.equal(CHANNEL_KIND.FILE, 'file');
+  });
+
+  it('has exactly 6 kinds', () => {
+    assert.equal(Object.keys(CHANNEL_KIND).length, 6);
+  });
+});
+
+describe('gateway MSG constants', () => {
+  it('gateway codes are in 0x70-0x7d range', () => {
+    assert.equal(MSG.OPEN_TCP, 0x70);
+    assert.equal(MSG.OPEN_UDP, 0x71);
+    assert.equal(MSG.RESOLVE_DNS, 0x72);
+    assert.equal(MSG.GATEWAY_OK, 0x73);
+    assert.equal(MSG.GATEWAY_FAIL, 0x74);
+    assert.equal(MSG.GATEWAY_CLOSE, 0x75);
+    assert.equal(MSG.INBOUND_OPEN, 0x76);
+    assert.equal(MSG.INBOUND_ACCEPT, 0x77);
+    assert.equal(MSG.INBOUND_REJECT, 0x78);
+    assert.equal(MSG.DNS_RESULT, 0x79);
+    assert.equal(MSG.LISTEN_REQUEST, 0x7a);
+    assert.equal(MSG.LISTEN_OK, 0x7b);
+    assert.equal(MSG.LISTEN_FAIL, 0x7c);
+    assert.equal(MSG.LISTEN_CLOSE, 0x7d);
+  });
+
+  it('gateway messages validate correctly', () => {
+    assert.ok(isValidMessage(openTcp({ gatewayId: 1, host: 'x', port: 80 })));
+    assert.ok(isValidMessage(gatewayOk({ gatewayId: 1 })));
+    assert.ok(isValidMessage(listenClose({ listenerId: 1 })));
   });
 });

@@ -55,6 +55,22 @@ export const MSG = Object.freeze({
 
   // Framing
   WS_DATA:           0x60,
+
+  // Gateway
+  OPEN_TCP:          0x70,
+  OPEN_UDP:          0x71,
+  RESOLVE_DNS:       0x72,
+  GATEWAY_OK:        0x73,
+  GATEWAY_FAIL:      0x74,
+  GATEWAY_CLOSE:     0x75,
+  INBOUND_OPEN:      0x76,
+  INBOUND_ACCEPT:    0x77,
+  INBOUND_REJECT:    0x78,
+  DNS_RESULT:        0x79,
+  LISTEN_REQUEST:    0x7a,
+  LISTEN_OK:         0x7b,
+  LISTEN_FAIL:       0x7c,
+  LISTEN_CLOSE:      0x7d,
 });
 
 // Reverse lookup: number → name
@@ -69,6 +85,8 @@ export const CHANNEL_KIND = Object.freeze({
   EXEC:  'exec',
   META:  'meta',
   FILE:  'file',
+  TCP:   'tcp',
+  UDP:   'udp',
 });
 
 // ── Auth methods ──────────────────────────────────────────────────────
@@ -338,6 +356,115 @@ export function reverseConnect({ targetFingerprint, username } = {}) {
     type: MSG.REVERSE_CONNECT,
     target_fingerprint: targetFingerprint,
     username,
+  };
+}
+
+export function openTcp({ gatewayId, host, port } = {}) {
+  return {
+    type: MSG.OPEN_TCP,
+    gateway_id: gatewayId,
+    host,
+    port,
+  };
+}
+
+export function openUdp({ gatewayId, host, port } = {}) {
+  return {
+    type: MSG.OPEN_UDP,
+    gateway_id: gatewayId,
+    host,
+    port,
+  };
+}
+
+export function resolveDns({ gatewayId, name, recordType = "A" } = {}) {
+  return {
+    type: MSG.RESOLVE_DNS,
+    gateway_id: gatewayId,
+    name,
+    record_type: recordType,
+  };
+}
+
+export function gatewayOk({ gatewayId, resolvedAddr } = {}) {
+  const msg = { type: MSG.GATEWAY_OK, gateway_id: gatewayId };
+  if (resolvedAddr !== undefined) msg.resolved_addr = resolvedAddr;
+  return msg;
+}
+
+export function gatewayFail({ gatewayId, code, message } = {}) {
+  return {
+    type: MSG.GATEWAY_FAIL,
+    gateway_id: gatewayId,
+    code,
+    message,
+  };
+}
+
+export function gatewayClose({ gatewayId, reason } = {}) {
+  const msg = { type: MSG.GATEWAY_CLOSE, gateway_id: gatewayId };
+  if (reason !== undefined) msg.reason = reason;
+  return msg;
+}
+
+export function inboundOpen({ listenerId, channelId, peerAddr, peerPort } = {}) {
+  return {
+    type: MSG.INBOUND_OPEN,
+    listener_id: listenerId,
+    channel_id: channelId,
+    peer_addr: peerAddr,
+    peer_port: peerPort,
+  };
+}
+
+export function inboundAccept({ channelId } = {}) {
+  return {
+    type: MSG.INBOUND_ACCEPT,
+    channel_id: channelId,
+  };
+}
+
+export function inboundReject({ channelId, reason } = {}) {
+  const msg = { type: MSG.INBOUND_REJECT, channel_id: channelId };
+  if (reason !== undefined) msg.reason = reason;
+  return msg;
+}
+
+export function dnsResult({ gatewayId, addresses, ttl } = {}) {
+  const msg = { type: MSG.DNS_RESULT, gateway_id: gatewayId, addresses };
+  if (ttl !== undefined) msg.ttl = ttl;
+  return msg;
+}
+
+export function listenRequest({ listenerId, port, bindAddr = "0.0.0.0" } = {}) {
+  return {
+    type: MSG.LISTEN_REQUEST,
+    listener_id: listenerId,
+    port,
+    bind_addr: bindAddr,
+  };
+}
+
+export function listenOk({ listenerId, actualPort } = {}) {
+  return {
+    type: MSG.LISTEN_OK,
+    listener_id: listenerId,
+    actual_port: actualPort,
+  };
+}
+
+export function listenFail({ listenerId, reason } = {}) {
+  return {
+    type: MSG.LISTEN_FAIL,
+    listener_id: listenerId,
+    reason,
+  };
+}
+
+export function listenClose({ listenerId } = {}) {
+  return {
+    type: MSG.LISTEN_CLOSE,
+    listener_id: listenerId,
   };
 }
 

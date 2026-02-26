@@ -1,0 +1,22 @@
+{
+  "name": "netway",
+  "version": "0.1.0",
+  "description": "Virtual networking layer with BSD-socket-like abstractions for browser environments",
+  "type": "module",
+  "main": "src/index.mjs",
+  "exports": {
+    ".": "./src/index.mjs"
+  },
+  "files": [
+    "src/"
+  ],
+  "keywords": [
+    "networking",
+    "virtual",
+    "sockets",
+    "loopback",
+    "gateway",
+    "browser"
+  ],
+  "license": "MIT"
+}
