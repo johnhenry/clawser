@@ -19,7 +19,7 @@
 - **Version**: `wsh-v1`
 - **Wire format**: CBOR
 - **Framing**: length prefixed be32
-- **Total message types**: 74 (including WS_DATA framing marker)
+- **Total message types**: 76 (including WS_DATA framing marker)
 
 ## Enums
 
@@ -124,6 +124,8 @@ Type: `string`
 | `0x8f` | EncryptedFrame | e2e |
 | `0x90` | EchoAck | echo |
 | `0x91` | EchoState | echo |
+| `0x92` | TermSync | termsync |
+| `0x93` | TermDiff | termsync |
 
 ## Message Details
 
@@ -887,6 +889,31 @@ Category: **echo**
 | `cursor_x` | `u16` | yes | — |
 | `cursor_y` | `u16` | yes | — |
 | `pending` | `u32` | yes | — |
+
+### TermSync (`0x92`)
+
+Category: **termsync**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `channel_id` | `u32` | yes | — |
+| `frame_seq` | `u64` | yes | — |
+| `state_hash` | `bytes` | yes | — |
+
+### TermDiff (`0x93`)
+
+Category: **termsync**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `channel_id` | `u32` | yes | — |
+| `frame_seq` | `u64` | yes | — |
+| `base_seq` | `u64` | yes | — |
+| `patch` | `bytes` | yes | — |
 
 ## Nested Types
 

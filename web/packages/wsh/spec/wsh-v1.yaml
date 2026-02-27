@@ -1027,6 +1027,49 @@ messages:
           required: true
           description: "Number of unacknowledged input bytes on server"
 
+  # ── Terminal diff sync ───────────────────────────────────────────────
+  # True mosh replacement — instead of streaming raw bytes, the server
+  # maintains a virtual terminal framebuffer and sends diffs.  The
+  # client applies patches to its local copy.
+  termsync:
+    TermSync:
+      code: 0x92
+      description: >
+        Full terminal state synchronization point.  The server sends
+        a state_hash so the client can verify consistency.  If the
+        client's hash differs, it requests a full resync.
+      fields:
+        channel_id:
+          type: u32
+          required: true
+        frame_seq:
+          type: u64
+          required: true
+        state_hash:
+          type: bytes
+          required: true
+          description: "SHA-256 of the current framebuffer state"
+
+    TermDiff:
+      code: 0x93
+      description: >
+        Incremental screen diff.  Contains a binary patch that transforms
+        the framebuffer from base_seq state to frame_seq state.
+      fields:
+        channel_id:
+          type: u32
+          required: true
+        frame_seq:
+          type: u64
+          required: true
+        base_seq:
+          type: u64
+          required: true
+        patch:
+          type: bytes
+          required: true
+          description: "Binary diff patch (run-length encoded cell changes)"
+
 nested_types:
   AttachmentInfo:
     fields:

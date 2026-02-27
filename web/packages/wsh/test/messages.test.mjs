@@ -19,6 +19,7 @@ import {
   copilotAttach, copilotSuggest, copilotDetach,
   keyExchange, encryptedFrame,
   echoAck, echoState,
+  termSync, termDiff,
   msgName, isValidMessage,
   AUTH_METHOD, CHANNEL_KIND,
 } from '../src/messages.mjs';
@@ -684,6 +685,37 @@ describe('predictive local echo (mosh-style)', () => {
   it('echo messages validate correctly', () => {
     assert.ok(isValidMessage(echoAck({ channelId: 1, echoSeq: 0 })));
     assert.ok(isValidMessage(echoState({ channelId: 1, echoSeq: 0, cursorX: 0, cursorY: 0, pending: 0 })));
+  });
+});
+
+describe('terminal diff-based sync', () => {
+  it('termSync', () => {
+    const hash = new Uint8Array(32);
+    const msg = termSync({ channelId: 1, frameSeq: 100, stateHash: hash });
+    assert.equal(msg.type, MSG.TERM_SYNC);
+    assert.equal(msg.channel_id, 1);
+    assert.equal(msg.frame_seq, 100);
+    assert.equal(msg.state_hash, hash);
+  });
+
+  it('termDiff', () => {
+    const patch = new Uint8Array([0x01, 0x02, 0x03]);
+    const msg = termDiff({ channelId: 1, frameSeq: 100, baseSeq: 95, patch });
+    assert.equal(msg.type, MSG.TERM_DIFF);
+    assert.equal(msg.channel_id, 1);
+    assert.equal(msg.frame_seq, 100);
+    assert.equal(msg.base_seq, 95);
+    assert.equal(msg.patch, patch);
+  });
+
+  it('term sync codes', () => {
+    assert.equal(MSG.TERM_SYNC, 0x92);
+    assert.equal(MSG.TERM_DIFF, 0x93);
+  });
+
+  it('term sync messages validate correctly', () => {
+    assert.ok(isValidMessage(termSync({ channelId: 1, frameSeq: 0, stateHash: new Uint8Array(0) })));
+    assert.ok(isValidMessage(termDiff({ channelId: 1, frameSeq: 0, baseSeq: 0, patch: new Uint8Array(0) })));
   });
 });
 

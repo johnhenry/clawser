@@ -284,7 +284,7 @@ Priority: Complete the wsh protocol implementation — browser-native remote she
 - [x] AI co-pilot attachment mode (read-only AI observer)
 - [x] E2E encrypted session mode
 - [x] Predictive local echo (mosh-style)
-- [ ] Terminal diff-based sync (true mosh replacement)
+- [x] Terminal diff-based sync (true mosh replacement)
 - [ ] Horizontal scaling (stateless tokens, shared secret)
 - [ ] Shared sessions across principals
 - [ ] Structured file channel (SFTP replacement)

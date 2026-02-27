@@ -1592,6 +1592,19 @@ impl WshServer {
                 Ok(None) // server-to-client only
             }
 
+            // ── Terminal diff sync ──────────────────────────────────
+            (MsgType::TermSync, Payload::TermSync(p)) => {
+                debug!(channel_id = p.channel_id, frame_seq = p.frame_seq, "term sync");
+                // Server-to-client: full state hash checkpoint
+                Ok(None)
+            }
+
+            (MsgType::TermDiff, Payload::TermDiff(p)) => {
+                debug!(channel_id = p.channel_id, frame_seq = p.frame_seq, base_seq = p.base_seq, patch_len = p.patch.len(), "term diff");
+                // Server-to-client: incremental screen patch
+                Ok(None)
+            }
+
             // ── Unhandled ───────────────────────────────────────────
             (msg_type, _) => {
                 debug!(?msg_type, "unhandled message type in session loop");

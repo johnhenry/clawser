@@ -96,6 +96,9 @@ pub enum MsgType {
 
     EchoAck = 0x90,
     EchoState = 0x91,
+
+    TermSync = 0x92,
+    TermDiff = 0x93,
 }
 
 impl From<MsgType> for u8 {
@@ -181,6 +184,8 @@ impl TryFrom<u8> for MsgType {
             0x8f => Ok(Self::EncryptedFrame),
             0x90 => Ok(Self::EchoAck),
             0x91 => Ok(Self::EchoState),
+            0x92 => Ok(Self::TermSync),
+            0x93 => Ok(Self::TermDiff),
             _ => Err(format!("unknown message type: 0x{v:02x}")),
         }
     }
@@ -298,6 +303,8 @@ pub enum Payload {
     EncryptedFrame(EncryptedFramePayload),
     EchoAck(EchoAckPayload),
     EchoState(EchoStatePayload),
+    TermSync(TermSyncPayload),
+    TermDiff(TermDiffPayload),
     Empty(EmptyPayload),
 }
 
@@ -816,6 +823,23 @@ pub struct EchoStatePayload {
     pub cursor_x: u16,
     pub cursor_y: u16,
     pub pending: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TermSyncPayload {
+    pub channel_id: u32,
+    pub frame_seq: u64,
+    #[serde(with = "serde_bytes")]
+    pub state_hash: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TermDiffPayload {
+    pub channel_id: u32,
+    pub frame_seq: u64,
+    pub base_seq: u64,
+    #[serde(with = "serde_bytes")]
+    pub patch: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

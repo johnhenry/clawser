@@ -112,6 +112,10 @@ export const MSG = Object.freeze({
   // Echo
   ECHO_ACK:          0x90,
   ECHO_STATE:        0x91,
+
+  // Termsync
+  TERM_SYNC:         0x92,
+  TERM_DIFF:         0x93,
 });
 
 // Reverse lookup: number → name
@@ -688,6 +692,25 @@ export function echoState({ channelId, echoSeq, cursorX, cursorY, pending } = {}
     cursor_x: cursorX,
     cursor_y: cursorY,
     pending,
+  };
+}
+
+export function termSync({ channelId, frameSeq, stateHash } = {}) {
+  return {
+    type: MSG.TERM_SYNC,
+    channel_id: channelId,
+    frame_seq: frameSeq,
+    state_hash: stateHash,
+  };
+}
+
+export function termDiff({ channelId, frameSeq, baseSeq, patch } = {}) {
+  return {
+    type: MSG.TERM_DIFF,
+    channel_id: channelId,
+    frame_seq: frameSeq,
+    base_seq: baseSeq,
+    patch,
   };
 }
 
