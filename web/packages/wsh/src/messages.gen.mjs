@@ -104,6 +104,10 @@ export const MSG = Object.freeze({
   COPILOT_ATTACH:    0x8b,
   COPILOT_SUGGEST:   0x8c,
   COPILOT_DETACH:    0x8d,
+
+  // E2e
+  KEY_EXCHANGE:      0x8e,
+  ENCRYPTED_FRAME:   0x8f,
 });
 
 // Reverse lookup: number → name
@@ -644,6 +648,24 @@ export function copilotDetach({ sessionId, reason } = {}) {
   const msg = { type: MSG.COPILOT_DETACH, session_id: sessionId };
   if (reason !== undefined) msg.reason = reason;
   return msg;
+}
+
+export function keyExchange({ algorithm, publicKey, sessionId } = {}) {
+  return {
+    type: MSG.KEY_EXCHANGE,
+    algorithm,
+    public_key: publicKey,
+    session_id: sessionId,
+  };
+}
+
+export function encryptedFrame({ nonce, ciphertext, sessionId } = {}) {
+  return {
+    type: MSG.ENCRYPTED_FRAME,
+    nonce,
+    ciphertext,
+    session_id: sessionId,
+  };
 }
 
 // ── Utility ───────────────────────────────────────────────────────────

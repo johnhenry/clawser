@@ -90,6 +90,9 @@ pub enum MsgType {
     CopilotAttach = 0x8b,
     CopilotSuggest = 0x8c,
     CopilotDetach = 0x8d,
+
+    KeyExchange = 0x8e,
+    EncryptedFrame = 0x8f,
 }
 
 impl From<MsgType> for u8 {
@@ -171,6 +174,8 @@ impl TryFrom<u8> for MsgType {
             0x8b => Ok(Self::CopilotAttach),
             0x8c => Ok(Self::CopilotSuggest),
             0x8d => Ok(Self::CopilotDetach),
+            0x8e => Ok(Self::KeyExchange),
+            0x8f => Ok(Self::EncryptedFrame),
             _ => Err(format!("unknown message type: 0x{v:02x}")),
         }
     }
@@ -284,6 +289,8 @@ pub enum Payload {
     CopilotAttach(CopilotAttachPayload),
     CopilotSuggest(CopilotSuggestPayload),
     CopilotDetach(CopilotDetachPayload),
+    KeyExchange(KeyExchangePayload),
+    EncryptedFrame(EncryptedFramePayload),
     Empty(EmptyPayload),
 }
 
@@ -770,6 +777,23 @@ pub struct CopilotDetachPayload {
     pub session_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyExchangePayload {
+    pub algorithm: String,
+    #[serde(with = "serde_bytes")]
+    pub public_key: Vec<u8>,
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EncryptedFramePayload {
+    #[serde(with = "serde_bytes")]
+    pub nonce: Vec<u8>,
+    #[serde(with = "serde_bytes")]
+    pub ciphertext: Vec<u8>,
+    pub session_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

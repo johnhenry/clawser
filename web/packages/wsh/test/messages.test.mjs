@@ -17,6 +17,7 @@ import {
   rateControl, rateWarning,
   sessionLink, sessionUnlink,
   copilotAttach, copilotSuggest, copilotDetach,
+  keyExchange, encryptedFrame,
   msgName, isValidMessage,
   AUTH_METHOD, CHANNEL_KIND,
 } from '../src/messages.mjs';
@@ -617,6 +618,37 @@ describe('AI co-pilot attachment mode', () => {
     assert.ok(isValidMessage(copilotAttach({ sessionId: 's1', model: 'm' })));
     assert.ok(isValidMessage(copilotSuggest({ sessionId: 's1', suggestion: 's' })));
     assert.ok(isValidMessage(copilotDetach({ sessionId: 's1' })));
+  });
+});
+
+describe('E2E encrypted session mode', () => {
+  it('keyExchange', () => {
+    const pk = new Uint8Array(32);
+    const msg = keyExchange({ algorithm: 'x25519', publicKey: pk, sessionId: 's1' });
+    assert.equal(msg.type, MSG.KEY_EXCHANGE);
+    assert.equal(msg.algorithm, 'x25519');
+    assert.equal(msg.public_key, pk);
+    assert.equal(msg.session_id, 's1');
+  });
+
+  it('encryptedFrame', () => {
+    const nonce = new Uint8Array(12);
+    const ciphertext = new Uint8Array([0xde, 0xad]);
+    const msg = encryptedFrame({ nonce, ciphertext, sessionId: 's1' });
+    assert.equal(msg.type, MSG.ENCRYPTED_FRAME);
+    assert.equal(msg.nonce, nonce);
+    assert.equal(msg.ciphertext, ciphertext);
+    assert.equal(msg.session_id, 's1');
+  });
+
+  it('E2E codes', () => {
+    assert.equal(MSG.KEY_EXCHANGE, 0x8e);
+    assert.equal(MSG.ENCRYPTED_FRAME, 0x8f);
+  });
+
+  it('E2E messages validate correctly', () => {
+    assert.ok(isValidMessage(keyExchange({ algorithm: 'x25519', publicKey: new Uint8Array(32), sessionId: 's1' })));
+    assert.ok(isValidMessage(encryptedFrame({ nonce: new Uint8Array(12), ciphertext: new Uint8Array(0), sessionId: 's1' })));
   });
 });
 

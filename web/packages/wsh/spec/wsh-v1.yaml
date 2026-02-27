@@ -944,6 +944,47 @@ messages:
           type: string
           required: false
 
+  # ── E2E encryption ──────────────────────────────────────────────────
+  # Inner encryption layer for end-to-end confidentiality.  After key
+  # exchange, all session data is wrapped in EncryptedFrame messages
+  # so the server cannot read session content.
+  e2e:
+    KeyExchange:
+      code: 0x8e
+      description: >
+        X25519 key exchange for establishing a shared secret.
+        Both sides send their ephemeral public key; the shared
+        secret is derived via ECDH.
+      fields:
+        algorithm:
+          type: string
+          required: true
+          description: '"x25519" or "kyber768" (post-quantum)'
+        public_key:
+          type: bytes
+          required: true
+        session_id:
+          type: string
+          required: true
+
+    EncryptedFrame:
+      code: 0x8f
+      description: >
+        An encrypted payload.  After key exchange, all session
+        data is sent inside EncryptedFrame messages using
+        ChaCha20-Poly1305 AEAD.
+      fields:
+        nonce:
+          type: bytes
+          required: true
+          description: "12-byte AEAD nonce"
+        ciphertext:
+          type: bytes
+          required: true
+        session_id:
+          type: string
+          required: true
+
 nested_types:
   AttachmentInfo:
     fields:

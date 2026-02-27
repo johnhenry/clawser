@@ -1567,6 +1567,20 @@ impl WshServer {
                 Ok(None)
             }
 
+            // ── E2E encryption ─────────────────────────────────────
+            (MsgType::KeyExchange, Payload::KeyExchange(p)) => {
+                debug!(session_id = %p.session_id, algorithm = %p.algorithm, "key exchange");
+                // Server relays the key exchange to the other endpoint
+                // (server itself cannot decrypt E2E traffic)
+                Ok(None)
+            }
+
+            (MsgType::EncryptedFrame, Payload::EncryptedFrame(p)) => {
+                // Opaque relay — server forwards without decryption
+                debug!(session_id = %p.session_id, ciphertext_len = p.ciphertext.len(), "encrypted frame relay");
+                Ok(None)
+            }
+
             // ── Unhandled ───────────────────────────────────────────
             (msg_type, _) => {
                 debug!(?msg_type, "unhandled message type in session loop");

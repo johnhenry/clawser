@@ -19,7 +19,7 @@
 - **Version**: `wsh-v1`
 - **Wire format**: CBOR
 - **Framing**: length prefixed be32
-- **Total message types**: 70 (including WS_DATA framing marker)
+- **Total message types**: 72 (including WS_DATA framing marker)
 
 ## Enums
 
@@ -120,6 +120,8 @@ Type: `string`
 | `0x8b` | CopilotAttach | copilot |
 | `0x8c` | CopilotSuggest | copilot |
 | `0x8d` | CopilotDetach | copilot |
+| `0x8e` | KeyExchange | e2e |
+| `0x8f` | EncryptedFrame | e2e |
 
 ## Message Details
 
@@ -834,6 +836,30 @@ Category: **copilot**
 |-------|------|----------|---------|
 | `session_id` | `string` | yes | — |
 | `reason` | `string` | no | — |
+
+### KeyExchange (`0x8e`)
+
+Category: **e2e**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `algorithm` | `string` | yes | — |
+| `public_key` | `bytes` | yes | — |
+| `session_id` | `string` | yes | — |
+
+### EncryptedFrame (`0x8f`)
+
+Category: **e2e**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `nonce` | `bytes` | yes | — |
+| `ciphertext` | `bytes` | yes | — |
+| `session_id` | `string` | yes | — |
 
 ## Nested Types
 
