@@ -27,6 +27,10 @@ messages:
   handshake:
     Hello:
       code: 0x01
+      description: >
+        First message sent by the client to initiate a connection.
+        Contains the protocol version, username, requested features,
+        and preferred authentication method.
       fields:
         version:
           type: string
@@ -43,6 +47,9 @@ messages:
 
     ServerHello:
       code: 0x02
+      description: >
+        Server response to Hello.  Assigns a session_id, advertises
+        server features, and lists authorized key fingerprints.
       fields:
         session_id:
           type: string
@@ -56,6 +63,9 @@ messages:
 
     Challenge:
       code: 0x03
+      description: >
+        Sent by the server with a random nonce for the client to sign
+        with its private key (pubkey auth) or as part of password auth.
       fields:
         nonce:
           type: bytes
@@ -63,6 +73,9 @@ messages:
 
     AuthMethods:
       code: 0x04
+      description: >
+        Sent by the server to advertise which authentication methods
+        are available (pubkey, password, or both).
       fields:
         methods:
           type: "AuthMethod[]"
@@ -70,6 +83,9 @@ messages:
 
     Auth:
       code: 0x05
+      description: >
+        Client authentication response.  Contains the method and
+        either a signature+public_key (pubkey) or password (password).
       fields:
         method:
           type: AuthMethod
@@ -86,6 +102,9 @@ messages:
 
     AuthOk:
       code: 0x06
+      description: >
+        Sent by the server on successful authentication.  Contains
+        the session_id, a signed session token, and the token TTL.
       fields:
         session_id:
           type: string
@@ -99,6 +118,8 @@ messages:
 
     AuthFail:
       code: 0x07
+      description: >
+        Sent by the server when authentication fails.
       fields:
         reason:
           type: string
@@ -107,6 +128,9 @@ messages:
   channel:
     Open:
       code: 0x10
+      description: >
+        Request to open a new channel (PTY, exec, meta, or file).
+        The server replies with OpenOk or OpenFail.
       fields:
         kind:
           type: ChannelKind
@@ -126,6 +150,9 @@ messages:
 
     OpenOk:
       code: 0x11
+      description: >
+        Sent by the server to confirm a channel was opened successfully.
+        Contains the assigned channel_id and any associated stream_ids.
       fields:
         channel_id:
           type: u32
@@ -136,6 +163,8 @@ messages:
 
     OpenFail:
       code: 0x12
+      description: >
+        Sent by the server when a channel open request fails.
       fields:
         reason:
           type: string
@@ -143,6 +172,8 @@ messages:
 
     Resize:
       code: 0x13
+      description: >
+        Sent by the client to resize a PTY channel's terminal dimensions.
       fields:
         channel_id:
           type: u32
@@ -156,6 +187,9 @@ messages:
 
     Signal:
       code: 0x14
+      description: >
+        Sent by the client to deliver a signal to the process group
+        associated with a channel (e.g. SIGINT, SIGTERM).
       fields:
         channel_id:
           type: u32
@@ -166,6 +200,9 @@ messages:
 
     Exit:
       code: 0x15
+      description: >
+        Sent by the server when the process in a channel exits.
+        Contains the exit code of the terminated process.
       fields:
         channel_id:
           type: u32
@@ -176,6 +213,8 @@ messages:
 
     Close:
       code: 0x16
+      description: >
+        Sent by either side to close a channel and release its resources.
       fields:
         channel_id:
           type: u32
@@ -184,6 +223,9 @@ messages:
   transport:
     Error:
       code: 0x20
+      description: >
+        Generic error message sent by either side.  Contains a numeric
+        code and human-readable message.
       fields:
         code:
           type: u32
@@ -194,6 +236,8 @@ messages:
 
     Ping:
       code: 0x21
+      description: >
+        Keepalive ping.  The peer must reply with Pong using the same id.
       fields:
         id:
           type: u64
@@ -201,6 +245,8 @@ messages:
 
     Pong:
       code: 0x22
+      description: >
+        Keepalive pong.  Echoes the id from the corresponding Ping.
       fields:
         id:
           type: u64
@@ -209,6 +255,9 @@ messages:
   session:
     Attach:
       code: 0x30
+      description: >
+        Attach to an existing session.  Requires a valid session token.
+        The server replays the ring buffer and broadcasts Presence.
       fields:
         session_id:
           type: string
@@ -226,6 +275,9 @@ messages:
 
     Resume:
       code: 0x31
+      description: >
+        Resume a session from a specific sequence number.  Like Attach
+        but replays only output after last_seq for efficient reconnection.
       fields:
         session_id:
           type: string
@@ -239,6 +291,9 @@ messages:
 
     Rename:
       code: 0x32
+      description: >
+        Rename a session.  Sent by the client to assign a human-readable
+        name to the session.
       fields:
         session_id:
           type: string
@@ -249,6 +304,9 @@ messages:
 
     IdleWarning:
       code: 0x33
+      description: >
+        Sent by the server when a session is approaching its idle
+        timeout.  The expires_in field indicates seconds remaining.
       fields:
         expires_in:
           type: u64
@@ -256,6 +314,9 @@ messages:
 
     Shutdown:
       code: 0x34
+      description: >
+        Sent by the server on graceful shutdown (SIGTERM).  Clients
+        should save state and optionally retry after retry_after seconds.
       fields:
         reason:
           type: string
@@ -266,6 +327,8 @@ messages:
 
     Snapshot:
       code: 0x35
+      description: >
+        Mark a named position in the session recording for time-travel.
       fields:
         label:
           type: string
@@ -273,6 +336,9 @@ messages:
 
     Presence:
       code: 0x36
+      description: >
+        Broadcast to all attached clients when attachments change.
+        Lists all currently attached sessions with their access modes.
       fields:
         attachments:
           type: "AttachmentInfo[]"
@@ -280,6 +346,8 @@ messages:
 
     ControlChanged:
       code: 0x37
+      description: >
+        Broadcast when the controlling client of a session changes.
       fields:
         new_controller:
           type: string
@@ -287,6 +355,9 @@ messages:
 
     Metrics:
       code: 0x38
+      description: >
+        Server metrics snapshot (CPU, memory, session count, RTT).
+        Sent in response to MetricsRequest.
       fields:
         cpu:
           type: f64
@@ -396,10 +467,16 @@ messages:
   mcp:
     McpDiscover:
       code: 0x40
+      description: >
+        Request the list of available MCP tools from the server.
+        The server replies with McpTools.
       fields: {}
 
     McpTools:
       code: 0x41
+      description: >
+        Server response to McpDiscover.  Lists all available MCP tools
+        with their names, descriptions, and parameter schemas.
       fields:
         tools:
           type: "McpToolSpec[]"
@@ -407,6 +484,9 @@ messages:
 
     McpCall:
       code: 0x42
+      description: >
+        Invoke an MCP tool by name with JSON arguments.
+        The server replies with McpResult.
       fields:
         tool:
           type: string
@@ -417,6 +497,9 @@ messages:
 
     McpResult:
       code: 0x43
+      description: >
+        Result of an MCP tool invocation.  Contains the tool's
+        JSON response.
       fields:
         result:
           type: json
@@ -425,6 +508,10 @@ messages:
   reverse:
     ReverseRegister:
       code: 0x50
+      description: >
+        Register as a reverse peer so other clients can connect to
+        this client through the server.  Includes the public key for
+        fingerprint derivation and advertised capabilities.
       fields:
         username:
           type: string
@@ -438,10 +525,16 @@ messages:
 
     ReverseList:
       code: 0x51
+      description: >
+        Request the list of registered reverse peers.
+        The server replies with ReversePeers.
       fields: {}
 
     ReversePeers:
       code: 0x52
+      description: >
+        Server response to ReverseList.  Contains information about
+        all currently registered reverse peers.
       fields:
         peers:
           type: "PeerInfo[]"
@@ -449,6 +542,9 @@ messages:
 
     ReverseConnect:
       code: 0x53
+      description: >
+        Connect to a registered reverse peer by fingerprint.
+        The server forwards the request to the target peer.
       fields:
         target_fingerprint:
           type: string
@@ -526,10 +622,10 @@ messages:
     GatewayOk:
       code: 0x73
       description: >
-        Sent by the server to confirm that an OpenTcp, OpenUdp, or
-        ListenRequest succeeded.  The gateway_id echoes the client's
-        original request.  For TCP/UDP, resolved_addr contains the
-        IP address the server connected to.
+        Sent by the server to confirm that an OpenTcp or OpenUdp
+        request succeeded.  The gateway_id echoes the client's
+        original request.  resolved_addr contains the IP address
+        the server connected to.
       fields:
         gateway_id:
           type: u32
@@ -542,8 +638,9 @@ messages:
       code: 0x74
       description: >
         Sent by the server when a gateway request (OpenTcp, OpenUdp,
-        ResolveDns, or ListenRequest) fails.  The gateway_id echoes
-        the client's original request so it can match the failure.
+        or ResolveDns) fails.  The gateway_id echoes the client's
+        original request so it can match the failure.  ListenRequest
+        failures use ListenFail instead.
       fields:
         gateway_id:
           type: u32
@@ -716,8 +813,9 @@ messages:
       code: 0x80
       description: >
         Sent by the session owner to create an ephemeral guest token.
-        The server generates a short-lived token and returns it in the
-        same message (echo-back) so the owner can share it.
+        The server generates a short-lived token, stores it, and returns
+        a GuestInvite reply with the token in the session_id field so
+        the owner can share it with guests.
       fields:
         session_id:
           type: string

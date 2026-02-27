@@ -6,6 +6,7 @@ import {
   open, openOk, openFail, resize, signal, exit, close, error, ping, pong,
   attach, resume, rename, idleWarning, shutdown, snapshot,
   presence, controlChanged, metrics,
+  clipboard, recordingExport, commandJournal, metricsRequest, suspendSession, restartPty,
   mcpDiscover, mcpTools, mcpCall, mcpResult,
   reverseRegister, reverseList, reversePeers, reverseConnect,
   openTcp, openUdp, resolveDns, gatewayOk, gatewayFail, gatewayClose,
@@ -929,6 +930,337 @@ describe('ghostty-web terminal frontend integration', () => {
 
   it('terminal config validates correctly', () => {
     assert.ok(isValidMessage(terminalConfig({ channelId: 1, frontend: 'ghostty-web' })));
+  });
+});
+
+// ── Tests for previously untested constructors ──────────────────────
+
+describe('authMethods', () => {
+  it('constructs with methods list', () => {
+    const msg = authMethods({ methods: [AUTH_METHOD.PUBKEY, AUTH_METHOD.PASSWORD] });
+    assert.equal(msg.type, MSG.AUTH_METHODS);
+    assert.deepEqual(msg.methods, ['pubkey', 'password']);
+  });
+
+  it('validates correctly', () => {
+    assert.ok(isValidMessage(authMethods({ methods: ['pubkey'] })));
+  });
+});
+
+describe('openFail', () => {
+  it('constructs with reason', () => {
+    const msg = openFail({ reason: 'permission denied' });
+    assert.equal(msg.type, MSG.OPEN_FAIL);
+    assert.equal(msg.reason, 'permission denied');
+  });
+
+  it('validates correctly', () => {
+    assert.ok(isValidMessage(openFail({ reason: 'test' })));
+  });
+});
+
+describe('error', () => {
+  it('constructs with code and message', () => {
+    const msg = error({ code: 42, message: 'something broke' });
+    assert.equal(msg.type, MSG.ERROR);
+    assert.equal(msg.code, 42);
+    assert.equal(msg.message, 'something broke');
+  });
+
+  it('validates correctly', () => {
+    assert.ok(isValidMessage(error({ code: 1, message: 'x' })));
+  });
+});
+
+describe('resume', () => {
+  it('constructs with session, token, and last_seq', () => {
+    const token = new Uint8Array(40);
+    const msg = resume({ sessionId: 's1', token, lastSeq: 100 });
+    assert.equal(msg.type, MSG.RESUME);
+    assert.equal(msg.session_id, 's1');
+    assert.equal(msg.token, token);
+    assert.equal(msg.last_seq, 100);
+  });
+
+  it('validates correctly', () => {
+    assert.ok(isValidMessage(resume({ sessionId: 's1', token: new Uint8Array(40), lastSeq: 0 })));
+  });
+});
+
+describe('rename', () => {
+  it('constructs with session and name', () => {
+    const msg = rename({ sessionId: 's1', name: 'my-session' });
+    assert.equal(msg.type, MSG.RENAME);
+    assert.equal(msg.session_id, 's1');
+    assert.equal(msg.name, 'my-session');
+  });
+
+  it('validates correctly', () => {
+    assert.ok(isValidMessage(rename({ sessionId: 's1', name: 'test' })));
+  });
+});
+
+describe('idleWarning', () => {
+  it('constructs with expires_in', () => {
+    const msg = idleWarning({ expiresIn: 300 });
+    assert.equal(msg.type, MSG.IDLE_WARNING);
+    assert.equal(msg.expires_in, 300);
+  });
+
+  it('validates correctly', () => {
+    assert.ok(isValidMessage(idleWarning({ expiresIn: 60 })));
+  });
+});
+
+describe('shutdown', () => {
+  it('constructs with reason', () => {
+    const msg = shutdown({ reason: 'server maintenance' });
+    assert.equal(msg.type, MSG.SHUTDOWN);
+    assert.equal(msg.reason, 'server maintenance');
+    assert.equal(msg.retry_after, undefined);
+  });
+
+  it('constructs with retry_after', () => {
+    const msg = shutdown({ reason: 'restart', retryAfter: 30 });
+    assert.equal(msg.retry_after, 30);
+  });
+
+  it('validates correctly', () => {
+    assert.ok(isValidMessage(shutdown({ reason: 'test' })));
+  });
+});
+
+describe('snapshot', () => {
+  it('constructs with label', () => {
+    const msg = snapshot({ label: 'before-deploy' });
+    assert.equal(msg.type, MSG.SNAPSHOT);
+    assert.equal(msg.label, 'before-deploy');
+  });
+
+  it('validates correctly', () => {
+    assert.ok(isValidMessage(snapshot({ label: 'test' })));
+  });
+});
+
+describe('presence', () => {
+  it('constructs with attachments', () => {
+    const msg = presence({ attachments: [{ sessionId: 's1', mode: 'control', username: 'alice' }] });
+    assert.equal(msg.type, MSG.PRESENCE);
+    assert.equal(msg.attachments.length, 1);
+  });
+
+  it('validates correctly', () => {
+    assert.ok(isValidMessage(presence({ attachments: [] })));
+  });
+});
+
+describe('controlChanged', () => {
+  it('constructs with new controller', () => {
+    const msg = controlChanged({ newController: 'alice' });
+    assert.equal(msg.type, MSG.CONTROL_CHANGED);
+    assert.equal(msg.new_controller, 'alice');
+  });
+
+  it('validates correctly', () => {
+    assert.ok(isValidMessage(controlChanged({ newController: 'x' })));
+  });
+});
+
+describe('clipboard', () => {
+  it('constructs with direction and data', () => {
+    const msg = clipboard({ direction: 'server_to_client', data: 'aGVsbG8=' });
+    assert.equal(msg.type, MSG.CLIPBOARD);
+    assert.equal(msg.direction, 'server_to_client');
+    assert.equal(msg.data, 'aGVsbG8=');
+  });
+
+  it('clipboard code', () => {
+    assert.equal(MSG.CLIPBOARD, 0x39);
+  });
+
+  it('validates correctly', () => {
+    assert.ok(isValidMessage(clipboard({ direction: 'server_to_client', data: 'x' })));
+  });
+});
+
+describe('recordingExport', () => {
+  it('constructs with session and format', () => {
+    const msg = recordingExport({ sessionId: 's1', format: 'asciicast' });
+    assert.equal(msg.type, MSG.RECORDING_EXPORT);
+    assert.equal(msg.session_id, 's1');
+    assert.equal(msg.format, 'asciicast');
+    assert.equal(msg.data, undefined);
+  });
+
+  it('constructs with default format', () => {
+    const msg = recordingExport({ sessionId: 's1' });
+    assert.equal(msg.format, 'jsonl');
+  });
+
+  it('constructs with data', () => {
+    const msg = recordingExport({ sessionId: 's1', data: '{"type":"output"}' });
+    assert.equal(msg.data, '{"type":"output"}');
+  });
+
+  it('recording export code', () => {
+    assert.equal(MSG.RECORDING_EXPORT, 0x3a);
+  });
+
+  it('validates correctly', () => {
+    assert.ok(isValidMessage(recordingExport({ sessionId: 's1' })));
+  });
+});
+
+describe('commandJournal', () => {
+  it('constructs with all fields', () => {
+    const msg = commandJournal({
+      sessionId: 's1', command: 'ls -la', exitCode: 0,
+      durationMs: 150, cwd: '/home/user', timestamp: 1234567890,
+    });
+    assert.equal(msg.type, MSG.COMMAND_JOURNAL);
+    assert.equal(msg.session_id, 's1');
+    assert.equal(msg.command, 'ls -la');
+    assert.equal(msg.exit_code, 0);
+    assert.equal(msg.duration_ms, 150);
+    assert.equal(msg.cwd, '/home/user');
+    assert.equal(msg.timestamp, 1234567890);
+  });
+
+  it('constructs with optional fields absent', () => {
+    const msg = commandJournal({ sessionId: 's1', command: 'pwd', timestamp: 1 });
+    assert.equal(msg.exit_code, undefined);
+    assert.equal(msg.duration_ms, undefined);
+    assert.equal(msg.cwd, undefined);
+  });
+
+  it('command journal code', () => {
+    assert.equal(MSG.COMMAND_JOURNAL, 0x3b);
+  });
+
+  it('validates correctly', () => {
+    assert.ok(isValidMessage(commandJournal({ sessionId: 's1', command: 'x', timestamp: 1 })));
+  });
+});
+
+describe('metricsRequest', () => {
+  it('constructs with no fields', () => {
+    const msg = metricsRequest();
+    assert.equal(msg.type, MSG.METRICS_REQUEST);
+  });
+
+  it('metrics request code', () => {
+    assert.equal(MSG.METRICS_REQUEST, 0x3c);
+  });
+
+  it('validates correctly', () => {
+    assert.ok(isValidMessage(metricsRequest()));
+  });
+});
+
+describe('suspendSession', () => {
+  it('constructs with session and action', () => {
+    const msg = suspendSession({ sessionId: 's1', action: 'suspend' });
+    assert.equal(msg.type, MSG.SUSPEND_SESSION);
+    assert.equal(msg.session_id, 's1');
+    assert.equal(msg.action, 'suspend');
+  });
+
+  it('suspend session code', () => {
+    assert.equal(MSG.SUSPEND_SESSION, 0x3d);
+  });
+
+  it('validates correctly', () => {
+    assert.ok(isValidMessage(suspendSession({ sessionId: 's1', action: 'resume' })));
+  });
+});
+
+describe('restartPty', () => {
+  it('constructs with session', () => {
+    const msg = restartPty({ sessionId: 's1' });
+    assert.equal(msg.type, MSG.RESTART_PTY);
+    assert.equal(msg.session_id, 's1');
+    assert.equal(msg.command, undefined);
+  });
+
+  it('constructs with command', () => {
+    const msg = restartPty({ sessionId: 's1', command: '/bin/zsh' });
+    assert.equal(msg.command, '/bin/zsh');
+  });
+
+  it('restart PTY code', () => {
+    assert.equal(MSG.RESTART_PTY, 0x3e);
+  });
+
+  it('validates correctly', () => {
+    assert.ok(isValidMessage(restartPty({ sessionId: 's1' })));
+  });
+});
+
+describe('mcpCall', () => {
+  it('constructs with tool and arguments', () => {
+    const msg = mcpCall({ tool: 'git.status', arguments: { path: '.' } });
+    assert.equal(msg.type, MSG.MCP_CALL);
+    assert.equal(msg.tool, 'git.status');
+    assert.deepEqual(msg.arguments, { path: '.' });
+  });
+
+  it('validates correctly', () => {
+    assert.ok(isValidMessage(mcpCall({ tool: 'test', arguments: {} })));
+  });
+});
+
+describe('mcpResult', () => {
+  it('constructs with result', () => {
+    const msg = mcpResult({ result: { output: 'clean' } });
+    assert.equal(msg.type, MSG.MCP_RESULT);
+    assert.deepEqual(msg.result, { output: 'clean' });
+  });
+
+  it('validates correctly', () => {
+    assert.ok(isValidMessage(mcpResult({ result: {} })));
+  });
+});
+
+describe('reverseList', () => {
+  it('constructs with no fields', () => {
+    const msg = reverseList();
+    assert.equal(msg.type, MSG.REVERSE_LIST);
+  });
+
+  it('validates correctly', () => {
+    assert.ok(isValidMessage(reverseList()));
+  });
+});
+
+describe('reversePeers', () => {
+  it('constructs with peers', () => {
+    const msg = reversePeers({
+      peers: [{
+        fingerprintShort: 'a1b2c3d4',
+        username: 'alice',
+        capabilities: ['shell'],
+        lastSeen: 60,
+      }],
+    });
+    assert.equal(msg.type, MSG.REVERSE_PEERS);
+    assert.equal(msg.peers.length, 1);
+  });
+
+  it('validates correctly', () => {
+    assert.ok(isValidMessage(reversePeers({ peers: [] })));
+  });
+});
+
+describe('reverseConnect', () => {
+  it('constructs with target and username', () => {
+    const msg = reverseConnect({ targetFingerprint: 'a1b2c3d4e5f6', username: 'bob' });
+    assert.equal(msg.type, MSG.REVERSE_CONNECT);
+    assert.equal(msg.target_fingerprint, 'a1b2c3d4e5f6');
+    assert.equal(msg.username, 'bob');
+  });
+
+  it('validates correctly', () => {
+    assert.ok(isValidMessage(reverseConnect({ targetFingerprint: 'x', username: 'y' })));
   });
 });
 

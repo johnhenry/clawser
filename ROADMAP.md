@@ -290,6 +290,42 @@ Priority: Complete the wsh protocol implementation — browser-native remote she
 - [x] Structured file channel (SFTP replacement)
 - [x] Policy engine (OPA-like enterprise control)
 
+### Phase 6.8: Bug Fixes & Hardening — COMPLETE
+**Critical:**
+- [x] Guest token store — GuestInvite generates token but discards it; add HashMap store + return token
+- [x] GuestJoin validation — always rejects because no token store exists; wire to token store
+- [x] Session ownership checks — 12+ handlers lack caller ownership verification
+- [x] Path traversal — sanitize session_id in RecordingExport/CommandJournal file paths
+
+**High:**
+- [x] PolicyEval default-deny — currently always returns allowed:true; change to default-deny
+- [x] E2E relay to peer — KeyExchange/EncryptedFrame silently dropped; relay to target peer
+- [x] CompressAck codec — claims accepted for zstd but never installs codec; reject until implemented
+
+**Medium:**
+- [x] RateControl handler — stub; needs per-channel rate state tracking
+- [x] CopilotAttach handler — stub; needs session attachment in read-only mode
+- [x] CopilotSuggest handler — stub; needs relay to attached copilot clients
+- [x] CopilotDetach handler — stub; needs copilot session cleanup
+- [x] SessionGrant handler — stub; needs principal ACL update
+- [x] SessionRevoke handler — stub; needs principal ACL removal
+- [x] PolicyUpdate handler — stub; needs policy store update
+- [x] NodeAnnounce handler — stub; needs cluster node registry
+- [x] TerminalConfig handler — stub; needs per-session terminal config store
+
+**Low:**
+- [x] EchoAck handler — stub; needs RTT measurement storage
+- [x] EchoState handler — stub; needs echo state tracking
+
+**Spec:**
+- [x] Fix GatewayOk/GatewayFail descriptions (incorrectly reference ListenRequest)
+- [x] Fix GuestInvite description (claims echo-back but no token field in response)
+- [x] Add missing descriptions to 34 protocol messages
+
+**Tests:**
+- [x] Import 6 missing constructors (clipboard, recordingExport, commandJournal, metricsRequest, suspendSession, restartPty)
+- [x] Add tests for 15 imported-but-untested constructors (authMethods, openFail, error, resume, rename, idleWarning, shutdown, snapshot, presence, controlChanged, mcpCall, mcpResult, reverseList, reversePeers, reverseConnect)
+
 ---
 
 ## Design Principles

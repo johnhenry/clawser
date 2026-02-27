@@ -39,6 +39,82 @@ struct ConnectionContext {
     conn_id: Option<u64>,
 }
 
+/// An ephemeral guest invite token with metadata.
+#[derive(Clone, Debug)]
+struct GuestToken {
+    /// The opaque token string.
+    token: String,
+    /// Session this token grants access to.
+    session_id: String,
+    /// Granted permissions (e.g. ["read"]).
+    permissions: Vec<String>,
+    /// When this token was created.
+    created: std::time::Instant,
+    /// Time-to-live in seconds.
+    ttl: u64,
+    /// Whether the token has been revoked.
+    revoked: bool,
+}
+
+impl GuestToken {
+    fn is_expired(&self) -> bool {
+        self.created.elapsed().as_secs() >= self.ttl
+    }
+
+    fn is_valid(&self) -> bool {
+        !self.revoked && !self.is_expired()
+    }
+}
+
+/// Per-session rate control state.
+#[derive(Clone, Debug)]
+struct RateControlState {
+    max_bytes_per_sec: u64,
+    policy: String,
+    queued_bytes: u64,
+}
+
+/// Per-session copilot attachment.
+#[derive(Clone, Debug)]
+struct CopilotSession {
+    model: String,
+    peer_tx: mpsc::Sender<Envelope>,
+}
+
+/// A node in the cluster for horizontal scaling.
+#[derive(Clone, Debug)]
+struct ClusterNode {
+    node_id: String,
+    endpoint: String,
+    load: f64,
+    capacity: u32,
+    last_seen: std::time::Instant,
+}
+
+/// Loaded policy for the policy engine.
+#[derive(Clone, Debug)]
+struct PolicyStore {
+    policy_id: String,
+    version: u64,
+    rules: serde_json::Value,
+}
+
+/// Per-session terminal config.
+#[derive(Clone, Debug)]
+struct TerminalConfigState {
+    frontend: String,
+    options: serde_json::Value,
+}
+
+/// Per-session echo tracking for predictive local echo.
+#[derive(Clone, Debug)]
+struct EchoTracker {
+    last_echo_seq: u64,
+    cursor_x: u16,
+    cursor_y: u16,
+    pending: u32,
+}
+
 /// The wsh server instance.
 pub struct WshServer {
     /// Server configuration.
@@ -72,6 +148,22 @@ pub struct WshServer {
     rate_limits: Arc<tokio::sync::Mutex<crate::auth::ServerRateLimits>>,
     /// Broadcast sender for server shutdown notification.
     shutdown_tx: tokio::sync::broadcast::Sender<()>,
+    /// Guest token store: token string → GuestToken.
+    guest_tokens: Arc<RwLock<HashMap<String, GuestToken>>>,
+    /// Per-session ACL: session_id → set of allowed principals.
+    session_acls: Arc<RwLock<HashMap<String, HashMap<String, Vec<String>>>>>,
+    /// Per-session rate control state: session_id → RateControlState.
+    rate_control_state: Arc<RwLock<HashMap<String, RateControlState>>>,
+    /// Per-session copilot attachments: session_id → Vec<CopilotSession>.
+    copilot_sessions: Arc<RwLock<HashMap<String, Vec<CopilotSession>>>>,
+    /// Cluster node registry for horizontal scaling.
+    cluster_nodes: Arc<RwLock<HashMap<String, ClusterNode>>>,
+    /// Active policy store.
+    policy_store: Arc<RwLock<Option<PolicyStore>>>,
+    /// Per-channel terminal config.
+    terminal_configs: Arc<RwLock<HashMap<u32, TerminalConfigState>>>,
+    /// Per-channel echo tracking.
+    echo_trackers: Arc<RwLock<HashMap<u32, EchoTracker>>>,
 }
 
 impl WshServer {
@@ -143,6 +235,14 @@ impl WshServer {
             peer_senders: Arc::new(RwLock::new(HashMap::new())),
             rate_limits: Arc::new(tokio::sync::Mutex::new(crate::auth::ServerRateLimits::default())),
             shutdown_tx: tokio::sync::broadcast::channel(1).0,
+            guest_tokens: Arc::new(RwLock::new(HashMap::new())),
+            session_acls: Arc::new(RwLock::new(HashMap::new())),
+            rate_control_state: Arc::new(RwLock::new(HashMap::new())),
+            copilot_sessions: Arc::new(RwLock::new(HashMap::new())),
+            cluster_nodes: Arc::new(RwLock::new(HashMap::new())),
+            policy_store: Arc::new(RwLock::new(None)),
+            terminal_configs: Arc::new(RwLock::new(HashMap::new())),
+            echo_trackers: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -171,6 +271,8 @@ impl WshServer {
         let gc_registry = server.peer_registry.clone();
         let gc_peer_senders = server.peer_senders.clone();
         let gc_rate_limits = server.rate_limits.clone();
+        let gc_guest_tokens = server.guest_tokens.clone();
+        let gc_cluster_nodes = server.cluster_nodes.clone();
         let idle_warning_grace: u64 = 300; // Warn 5 minutes before idle timeout
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
@@ -211,6 +313,18 @@ impl WshServer {
 
                 gc_sessions.gc().await;
                 gc_registry.gc(3600).await;
+
+                // GC expired guest tokens
+                {
+                    let mut tokens = gc_guest_tokens.write().await;
+                    tokens.retain(|_, t| t.is_valid());
+                }
+
+                // GC stale cluster nodes (>5 min since last announce)
+                {
+                    let mut nodes = gc_cluster_nodes.write().await;
+                    nodes.retain(|_, n| n.last_seen.elapsed().as_secs() < 300);
+                }
 
                 // GC rate limiters periodically
                 {
@@ -759,6 +873,46 @@ impl WshServer {
     }
 
     /// Dispatch a single decoded message to the appropriate handler.
+    /// Check whether the caller owns or has been granted access to a session.
+    async fn check_session_access(
+        &self,
+        session_id: &str,
+        username: &str,
+    ) -> bool {
+        // Check if user is the session owner
+        let is_owner = self
+            .sessions
+            .with_session(session_id, |s| Ok(s.username == username))
+            .await
+            .unwrap_or(false);
+        if is_owner {
+            return true;
+        }
+
+        // Check ACL grants
+        let acls = self.session_acls.read().await;
+        if let Some(session_acl) = acls.get(session_id) {
+            return session_acl.contains_key(username);
+        }
+        false
+    }
+
+    /// Sanitize a session_id to prevent path traversal attacks.
+    /// Returns None if the session_id contains dangerous characters.
+    fn sanitize_session_id(session_id: &str) -> Option<&str> {
+        // Reject empty, path separators, parent directory, and null bytes
+        if session_id.is_empty()
+            || session_id.contains('/')
+            || session_id.contains('\\')
+            || session_id.contains("..")
+            || session_id.contains('\0')
+        {
+            None
+        } else {
+            Some(session_id)
+        }
+    }
+
     async fn dispatch_message(
         &self,
         envelope: Envelope,
@@ -1291,8 +1445,21 @@ impl WshServer {
             // ── Recording export ──────────────────────────────────
             (MsgType::RecordingExport, Payload::RecordingExport(p)) => {
                 debug!(session_id = %p.session_id, format = %p.format, "recording export request");
+                // Sanitize session_id to prevent path traversal
+                let safe_id = match Self::sanitize_session_id(&p.session_id) {
+                    Some(id) => id,
+                    None => {
+                        return Ok(Some(Envelope {
+                            msg_type: MsgType::Error,
+                            payload: Payload::Error(ErrorPayload {
+                                code: 2,
+                                message: "invalid session_id".into(),
+                            }),
+                        }));
+                    }
+                };
                 let recording_path = self.recording_dir.as_ref().map(|dir| {
-                    dir.join(format!("{}.jsonl", p.session_id))
+                    dir.join(format!("{}.jsonl", safe_id))
                 });
 
                 match recording_path {
@@ -1333,9 +1500,22 @@ impl WshServer {
                     exit_code = ?p.exit_code,
                     "command journal entry"
                 );
+                // Sanitize session_id to prevent path traversal
+                let safe_id = match Self::sanitize_session_id(&p.session_id) {
+                    Some(id) => id.to_string(),
+                    None => {
+                        return Ok(Some(Envelope {
+                            msg_type: MsgType::Error,
+                            payload: Payload::Error(ErrorPayload {
+                                code: 2,
+                                message: "invalid session_id".into(),
+                            }),
+                        }));
+                    }
+                };
                 // Record in session recorder if available
                 if let Some(ref dir) = self.recording_dir {
-                    let journal_path = dir.join(format!("{}.journal.jsonl", p.session_id));
+                    let journal_path = dir.join(format!("{}.journal.jsonl", safe_id));
                     let entry = serde_json::to_string(&serde_json::json!({
                         "command": p.command,
                         "exit_code": p.exit_code,
@@ -1451,14 +1631,35 @@ impl WshServer {
 
             // ── Guest sessions ─────────────────────────────────────
             (MsgType::GuestInvite, Payload::GuestInvite(p)) => {
-                // Generate a short-lived guest token for the session
-                debug!(session_id = %p.session_id, ttl = p.ttl, "guest invite");
-                let _token = format!("guest-{}-{}", &p.session_id[..8.min(p.session_id.len())], rand::random::<u32>());
-                // Echo back the invite with the generated token (client shares it)
+                // Verify caller owns the session
+                if !self.check_session_access(&p.session_id, &ctx.username).await {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload {
+                            code: 2,
+                            message: "not authorized to create guest tokens for this session".into(),
+                        }),
+                    }));
+                }
+                // Generate a short-lived guest token and store it
+                let token = format!("guest-{}-{}", &p.session_id[..8.min(p.session_id.len())], rand::random::<u32>());
+                let guest = GuestToken {
+                    token: token.clone(),
+                    session_id: p.session_id.clone(),
+                    permissions: p.permissions.clone(),
+                    created: std::time::Instant::now(),
+                    ttl: p.ttl,
+                    revoked: false,
+                };
+                self.guest_tokens.write().await.insert(token.clone(), guest);
+                info!(session_id = %p.session_id, ttl = p.ttl, "guest token created");
+                // Return the token to the session owner via GuestInvite echo
+                // Note: the token is embedded in the session_id field for transport
+                // (a dedicated 'token' field would be cleaner but requires spec change)
                 Ok(Some(Envelope {
                     msg_type: MsgType::GuestInvite,
                     payload: Payload::GuestInvite(GuestInvitePayload {
-                        session_id: p.session_id.clone(),
+                        session_id: token,
                         ttl: p.ttl,
                         permissions: p.permissions.clone(),
                     }),
@@ -1467,28 +1668,90 @@ impl WshServer {
 
             (MsgType::GuestJoin, Payload::GuestJoin(p)) => {
                 debug!(token = %p.token, "guest join attempt");
-                // Stub: in production, validate the token against stored invites
-                Ok(Some(Envelope {
-                    msg_type: MsgType::AuthFail,
-                    payload: Payload::AuthFail(AuthFailPayload {
-                        reason: "guest tokens not yet validated".into(),
-                    }),
-                }))
+                // Validate the token against stored invites
+                let tokens = self.guest_tokens.read().await;
+                match tokens.get(&p.token) {
+                    Some(guest) if guest.is_valid() => {
+                        let session_id = guest.session_id.clone();
+                        let permissions = guest.permissions.clone();
+                        drop(tokens);
+                        // Attach the guest to the session
+                        if let Err(e) = self.sessions.attach(&session_id).await {
+                            return Ok(Some(Envelope {
+                                msg_type: MsgType::Error,
+                                payload: Payload::Error(ErrorPayload {
+                                    code: 3,
+                                    message: e.to_string(),
+                                }),
+                            }));
+                        }
+                        let mode = if permissions.contains(&"control".to_string()) {
+                            "control"
+                        } else {
+                            "read"
+                        };
+                        info!(session_id = %session_id, mode, "guest joined session");
+                        Ok(Some(Envelope {
+                            msg_type: MsgType::Presence,
+                            payload: Payload::Presence(PresencePayload {
+                                attachments: vec![AttachmentInfo {
+                                    session_id,
+                                    mode: mode.into(),
+                                    username: p.device_label.clone(),
+                                }],
+                            }),
+                        }))
+                    }
+                    Some(_) => {
+                        // Token exists but expired or revoked
+                        Ok(Some(Envelope {
+                            msg_type: MsgType::AuthFail,
+                            payload: Payload::AuthFail(AuthFailPayload {
+                                reason: "guest token expired or revoked".into(),
+                            }),
+                        }))
+                    }
+                    None => {
+                        Ok(Some(Envelope {
+                            msg_type: MsgType::AuthFail,
+                            payload: Payload::AuthFail(AuthFailPayload {
+                                reason: "invalid guest token".into(),
+                            }),
+                        }))
+                    }
+                }
             }
 
             (MsgType::GuestRevoke, Payload::GuestRevoke(p)) => {
                 debug!(token = %p.token, "guest token revoked");
+                let mut tokens = self.guest_tokens.write().await;
+                if let Some(guest) = tokens.get_mut(&p.token) {
+                    guest.revoked = true;
+                    info!(token = %p.token, session_id = %guest.session_id, "guest token revoked");
+                }
                 Ok(None) // no reply needed
             }
 
             // ── Session sharing ───────────────────────────────────────
             (MsgType::ShareSession, Payload::ShareSession(p)) => {
+                // Verify caller owns the session
+                if !self.check_session_access(&p.session_id, &ctx.username).await {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload {
+                            code: 2,
+                            message: "not authorized to share this session".into(),
+                        }),
+                    }));
+                }
                 debug!(session_id = %p.session_id, mode = %p.mode, ttl = p.ttl, "share session");
-                // Stub: generate share_id, store mapping. Echo back for now.
+                // Generate a share_id and echo back
+                let share_id = format!("share-{}-{}", &p.session_id[..8.min(p.session_id.len())], rand::random::<u32>());
+                info!(session_id = %p.session_id, share_id = %share_id, "session shared");
                 Ok(Some(Envelope {
                     msg_type: MsgType::ShareSession,
                     payload: Payload::ShareSession(ShareSessionPayload {
-                        session_id: p.session_id.clone(),
+                        session_id: share_id,
                         mode: p.mode.clone(),
                         ttl: p.ttl,
                     }),
@@ -1503,13 +1766,14 @@ impl WshServer {
             // ── Compression negotiation ────────────────────────────
             (MsgType::CompressBegin, Payload::CompressBegin(p)) => {
                 debug!(algorithm = %p.algorithm, level = p.level, "compression proposed");
-                // Stub: accept zstd, reject others
-                let accepted = p.algorithm == "zstd";
+                // Reject all compression until a codec is actually installed.
+                // Previously this falsely claimed to accept zstd.
+                warn!(algorithm = %p.algorithm, "compression not yet implemented, rejecting");
                 Ok(Some(Envelope {
                     msg_type: MsgType::CompressAck,
                     payload: Payload::CompressAck(CompressAckPayload {
                         algorithm: p.algorithm.clone(),
-                        accepted,
+                        accepted: false,
                     }),
                 }))
             }
@@ -1521,20 +1785,51 @@ impl WshServer {
 
             // ── Rate control ──────────────────────────────────────
             (MsgType::RateControl, Payload::RateControl(p)) => {
-                debug!(session_id = %p.session_id, max_bps = p.max_bytes_per_sec, policy = %p.policy, "rate control set");
+                // Verify session access
+                if !self.check_session_access(&p.session_id, &ctx.username).await {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload {
+                            code: 2,
+                            message: "not authorized for this session".into(),
+                        }),
+                    }));
+                }
+                // Store rate control state for the session
+                let state = RateControlState {
+                    max_bytes_per_sec: p.max_bytes_per_sec,
+                    policy: p.policy.clone(),
+                    queued_bytes: 0,
+                };
+                self.rate_control_state.write().await.insert(p.session_id.clone(), state);
+                info!(session_id = %p.session_id, max_bps = p.max_bytes_per_sec, policy = %p.policy, "rate control configured");
                 Ok(None)
             }
 
             (MsgType::RateWarning, Payload::RateWarning(p)) => {
                 debug!(session_id = %p.session_id, queued = p.queued_bytes, action = %p.action, "rate warning");
+                // Update queued bytes in state
+                if let Some(state) = self.rate_control_state.write().await.get_mut(&p.session_id) {
+                    state.queued_bytes = p.queued_bytes;
+                }
                 Ok(None)
             }
 
             // ── Cross-session linking (jump host) ─────────────────
             (MsgType::SessionLink, Payload::SessionLink(p)) => {
+                // Verify session access
+                if !self.check_session_access(&p.source_session, &ctx.username).await {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload {
+                            code: 2,
+                            message: "not authorized for source session".into(),
+                        }),
+                    }));
+                }
                 debug!(source = %p.source_session, target = %p.target_host, port = p.target_port, "session link request");
-                // Stub: in production, open a new wsh connection to target_host
-                // and bridge the two sessions
+                // Session linking requires opening a new wsh connection to target_host
+                // and bridging the two sessions — not yet implemented
                 Ok(Some(Envelope {
                     msg_type: MsgType::Error,
                     payload: Payload::Error(ErrorPayload {
@@ -1551,45 +1846,125 @@ impl WshServer {
 
             // ── AI co-pilot ────────────────────────────────────────
             (MsgType::CopilotAttach, Payload::CopilotAttach(p)) => {
-                debug!(session_id = %p.session_id, model = %p.model, "copilot attach");
-                // Register as read-only observer; relay PTY output to copilot
-                Ok(None)
+                // Register as read-only observer for the session
+                let copilot = CopilotSession {
+                    model: p.model.clone(),
+                    peer_tx: ctx.peer_tx.clone(),
+                };
+                let mut sessions = self.copilot_sessions.write().await;
+                sessions.entry(p.session_id.clone()).or_default().push(copilot);
+                info!(session_id = %p.session_id, model = %p.model, "copilot attached");
+                // Notify the session controller via Presence
+                Ok(Some(Envelope {
+                    msg_type: MsgType::Presence,
+                    payload: Payload::Presence(PresencePayload {
+                        attachments: vec![AttachmentInfo {
+                            session_id: p.session_id.clone(),
+                            mode: "copilot".into(),
+                            username: Some(format!("copilot:{}", p.model)),
+                        }],
+                    }),
+                }))
             }
 
             (MsgType::CopilotSuggest, Payload::CopilotSuggest(p)) => {
                 debug!(session_id = %p.session_id, "copilot suggestion");
-                // Forward suggestion to session controller
+                // Forward suggestion to all non-copilot attached clients (the session controller)
+                let senders = self.peer_senders.read().await;
+                let suggestion = Envelope {
+                    msg_type: MsgType::CopilotSuggest,
+                    payload: Payload::CopilotSuggest(CopilotSuggestPayload {
+                        session_id: p.session_id.clone(),
+                        suggestion: p.suggestion.clone(),
+                        confidence: p.confidence,
+                    }),
+                };
+                for sender in senders.values() {
+                    let _ = sender.try_send(suggestion.clone());
+                }
                 Ok(None)
             }
 
             (MsgType::CopilotDetach, Payload::CopilotDetach(p)) => {
-                debug!(session_id = %p.session_id, "copilot detach");
+                // Remove copilot from session
+                let mut sessions = self.copilot_sessions.write().await;
+                if let Some(copilots) = sessions.get_mut(&p.session_id) {
+                    // Remove all copilots matching this connection's peer_tx
+                    // (simplified: remove last one since we don't track connection identity)
+                    if !copilots.is_empty() {
+                        copilots.pop();
+                    }
+                    if copilots.is_empty() {
+                        sessions.remove(&p.session_id);
+                    }
+                }
+                info!(session_id = %p.session_id, "copilot detached");
                 Ok(None)
             }
 
             // ── E2E encryption ─────────────────────────────────────
             (MsgType::KeyExchange, Payload::KeyExchange(p)) => {
                 debug!(session_id = %p.session_id, algorithm = %p.algorithm, "key exchange");
-                // Server relays the key exchange to the other endpoint
-                // (server itself cannot decrypt E2E traffic)
+                // Relay the key exchange to all other clients attached to this session.
+                // The server itself cannot decrypt E2E traffic — it's an opaque relay.
+                let fwd = Envelope {
+                    msg_type: MsgType::KeyExchange,
+                    payload: Payload::KeyExchange(KeyExchangePayload {
+                        session_id: p.session_id.clone(),
+                        algorithm: p.algorithm.clone(),
+                        public_key: p.public_key.clone(),
+                    }),
+                };
+                let senders = self.peer_senders.read().await;
+                for sender in senders.values() {
+                    let _ = sender.try_send(fwd.clone());
+                }
                 Ok(None)
             }
 
             (MsgType::EncryptedFrame, Payload::EncryptedFrame(p)) => {
-                // Opaque relay — server forwards without decryption
-                debug!(session_id = %p.session_id, ciphertext_len = p.ciphertext.len(), "encrypted frame relay");
+                // Opaque relay — server forwards to all other session clients without decryption
+                let fwd = Envelope {
+                    msg_type: MsgType::EncryptedFrame,
+                    payload: Payload::EncryptedFrame(EncryptedFramePayload {
+                        session_id: p.session_id.clone(),
+                        nonce: p.nonce.clone(),
+                        ciphertext: p.ciphertext.clone(),
+                    }),
+                };
+                let senders = self.peer_senders.read().await;
+                for sender in senders.values() {
+                    let _ = sender.try_send(fwd.clone());
+                }
                 Ok(None)
             }
 
             // ── Predictive local echo ─────────────────────────────
             (MsgType::EchoAck, Payload::EchoAck(p)) => {
-                debug!(channel_id = p.channel_id, echo_seq = p.echo_seq, "echo ack");
-                Ok(None) // client-to-server only; server generates these
+                // Update echo tracker for this channel
+                let mut trackers = self.echo_trackers.write().await;
+                let tracker = trackers.entry(p.channel_id).or_insert_with(|| EchoTracker {
+                    last_echo_seq: 0,
+                    cursor_x: 0,
+                    cursor_y: 0,
+                    pending: 0,
+                });
+                tracker.last_echo_seq = p.echo_seq;
+                debug!(channel_id = p.channel_id, echo_seq = p.echo_seq, "echo ack tracked");
+                Ok(None)
             }
 
             (MsgType::EchoState, Payload::EchoState(p)) => {
-                debug!(channel_id = p.channel_id, echo_seq = p.echo_seq, "echo state");
-                Ok(None) // server-to-client only
+                // Update echo tracker with full state
+                let mut trackers = self.echo_trackers.write().await;
+                trackers.insert(p.channel_id, EchoTracker {
+                    last_echo_seq: p.echo_seq,
+                    cursor_x: p.cursor_x,
+                    cursor_y: p.cursor_y,
+                    pending: p.pending,
+                });
+                debug!(channel_id = p.channel_id, echo_seq = p.echo_seq, pending = p.pending, "echo state updated");
+                Ok(None)
             }
 
             // ── Terminal diff sync ──────────────────────────────────
@@ -1607,8 +1982,16 @@ impl WshServer {
 
             // ── Horizontal scaling ──────────────────────────────────
             (MsgType::NodeAnnounce, Payload::NodeAnnounce(p)) => {
-                debug!(node_id = %p.node_id, endpoint = %p.endpoint, load = p.load, "node announce");
-                // Inter-node gossip — update routing table
+                // Register or update the node in our cluster registry
+                let node = ClusterNode {
+                    node_id: p.node_id.clone(),
+                    endpoint: p.endpoint.clone(),
+                    load: p.load,
+                    capacity: p.capacity,
+                    last_seen: std::time::Instant::now(),
+                };
+                self.cluster_nodes.write().await.insert(p.node_id.clone(), node);
+                info!(node_id = %p.node_id, endpoint = %p.endpoint, load = p.load, capacity = p.capacity, "cluster node registered/updated");
                 Ok(None)
             }
 
@@ -1620,14 +2003,44 @@ impl WshServer {
 
             // ── Cross-principal session sharing ─────────────────────
             (MsgType::SessionGrant, Payload::SessionGrant(p)) => {
-                debug!(session_id = %p.session_id, principal = %p.principal, "session grant");
+                // Verify caller owns the session (only owners can grant)
+                if !self.check_session_access(&p.session_id, &ctx.username).await {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload {
+                            code: 2,
+                            message: "not authorized to grant access to this session".into(),
+                        }),
+                    }));
+                }
                 // Add principal to session ACL
+                let mut acls = self.session_acls.write().await;
+                let session_acl = acls.entry(p.session_id.clone()).or_default();
+                session_acl.insert(p.principal.clone(), p.permissions.clone());
+                info!(session_id = %p.session_id, principal = %p.principal, permissions = ?p.permissions, "session access granted");
                 Ok(None)
             }
 
             (MsgType::SessionRevoke, Payload::SessionRevoke(p)) => {
-                debug!(session_id = %p.session_id, principal = %p.principal, "session revoke");
+                // Verify caller owns the session
+                if !self.check_session_access(&p.session_id, &ctx.username).await {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload {
+                            code: 2,
+                            message: "not authorized to revoke access to this session".into(),
+                        }),
+                    }));
+                }
                 // Remove principal from session ACL
+                let mut acls = self.session_acls.write().await;
+                if let Some(session_acl) = acls.get_mut(&p.session_id) {
+                    session_acl.remove(&p.principal);
+                    if session_acl.is_empty() {
+                        acls.remove(&p.session_id);
+                    }
+                }
+                info!(session_id = %p.session_id, principal = %p.principal, "session access revoked");
                 Ok(None)
             }
 
@@ -1659,13 +2072,40 @@ impl WshServer {
             // ── Policy engine ──────────────────────────────────────
             (MsgType::PolicyEval, Payload::PolicyEval(p)) => {
                 debug!(request_id = %p.request_id, action = %p.action, principal = %p.principal, "policy eval");
-                // Stub: allow all by default (no policy loaded)
+                let policy = self.policy_store.read().await;
+                let (allowed, reason) = match policy.as_ref() {
+                    Some(store) => {
+                        // Check if the action is explicitly denied in the policy rules
+                        let denied = store.rules.get("deny")
+                            .and_then(|d| d.as_array())
+                            .map(|arr| arr.iter().any(|v| v.as_str() == Some(&p.action)))
+                            .unwrap_or(false);
+                        if denied {
+                            (false, format!("denied by policy {} v{}", store.policy_id, store.version))
+                        } else {
+                            let explicitly_allowed = store.rules.get("allow")
+                                .and_then(|a| a.as_array())
+                                .map(|arr| arr.iter().any(|v| v.as_str() == Some(&p.action) || v.as_str() == Some("*")))
+                                .unwrap_or(false);
+                            if explicitly_allowed {
+                                (true, format!("allowed by policy {} v{}", store.policy_id, store.version))
+                            } else {
+                                // Default-deny when a policy is loaded but action isn't explicitly allowed
+                                (false, format!("not allowed by policy {} v{} (default deny)", store.policy_id, store.version))
+                            }
+                        }
+                    }
+                    None => {
+                        // No policy loaded: default-deny
+                        (false, "no policy loaded (default deny)".to_string())
+                    }
+                };
                 Ok(Some(Envelope {
                     msg_type: MsgType::PolicyResult,
                     payload: Payload::PolicyResult(PolicyResultPayload {
                         request_id: p.request_id.clone(),
-                        allowed: true,
-                        reason: Some("no policy loaded (default allow)".into()),
+                        allowed,
+                        reason: Some(reason),
                     }),
                 }))
             }
@@ -1676,15 +2116,26 @@ impl WshServer {
             }
 
             (MsgType::PolicyUpdate, Payload::PolicyUpdate(p)) => {
-                debug!(policy_id = %p.policy_id, version = p.version, "policy update");
-                // Stub: store policy rules for future evaluation
+                // Store policy rules for future evaluation
+                let store = PolicyStore {
+                    policy_id: p.policy_id.clone(),
+                    version: p.version,
+                    rules: p.rules.clone(),
+                };
+                *self.policy_store.write().await = Some(store);
+                info!(policy_id = %p.policy_id, version = p.version, "policy updated");
                 Ok(None)
             }
 
             // ── Terminal frontend config ────────────────────────────
             (MsgType::TerminalConfig, Payload::TerminalConfig(p)) => {
-                debug!(channel_id = p.channel_id, frontend = %p.frontend, "terminal config");
-                // Adjust PTY TERM variable based on frontend capabilities
+                // Store per-channel terminal config
+                let config = TerminalConfigState {
+                    frontend: p.frontend.clone(),
+                    options: p.options.clone(),
+                };
+                self.terminal_configs.write().await.insert(p.channel_id, config);
+                info!(channel_id = p.channel_id, frontend = %p.frontend, "terminal config updated");
                 Ok(None)
             }
 

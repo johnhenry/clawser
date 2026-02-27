@@ -144,6 +144,8 @@ Type: `string`
 
 Category: **handshake**
 
+> >
+
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `version` | `string` | yes | — |
@@ -155,6 +157,8 @@ Category: **handshake**
 
 Category: **handshake**
 
+> >
+
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `session_id` | `string` | yes | — |
@@ -165,6 +169,8 @@ Category: **handshake**
 
 Category: **handshake**
 
+> >
+
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `nonce` | `bytes` | yes | — |
@@ -173,6 +179,8 @@ Category: **handshake**
 
 Category: **handshake**
 
+> >
+
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `methods` | `AuthMethod[]` | yes | — |
@@ -180,6 +188,8 @@ Category: **handshake**
 ### Auth (`0x05`)
 
 Category: **handshake**
+
+> >
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
@@ -192,6 +202,8 @@ Category: **handshake**
 
 Category: **handshake**
 
+> >
+
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `session_id` | `string` | yes | — |
@@ -202,6 +214,8 @@ Category: **handshake**
 
 Category: **handshake**
 
+> >
+
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `reason` | `string` | yes | — |
@@ -209,6 +223,8 @@ Category: **handshake**
 ### Open (`0x10`)
 
 Category: **channel**
+
+> >
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
@@ -222,6 +238,8 @@ Category: **channel**
 
 Category: **channel**
 
+> >
+
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `channel_id` | `u32` | yes | — |
@@ -231,6 +249,8 @@ Category: **channel**
 
 Category: **channel**
 
+> >
+
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `reason` | `string` | yes | — |
@@ -238,6 +258,8 @@ Category: **channel**
 ### Resize (`0x13`)
 
 Category: **channel**
+
+> >
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
@@ -249,6 +271,8 @@ Category: **channel**
 
 Category: **channel**
 
+> >
+
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `channel_id` | `u32` | yes | — |
@@ -257,6 +281,8 @@ Category: **channel**
 ### Exit (`0x15`)
 
 Category: **channel**
+
+> >
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
@@ -267,6 +293,8 @@ Category: **channel**
 
 Category: **channel**
 
+> >
+
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `channel_id` | `u32` | yes | — |
@@ -274,6 +302,8 @@ Category: **channel**
 ### Error (`0x20`)
 
 Category: **transport**
+
+> >
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
@@ -284,6 +314,8 @@ Category: **transport**
 
 Category: **transport**
 
+> >
+
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `id` | `u64` | yes | — |
@@ -292,6 +324,8 @@ Category: **transport**
 
 Category: **transport**
 
+> >
+
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `id` | `u64` | yes | — |
@@ -299,6 +333,8 @@ Category: **transport**
 ### Attach (`0x30`)
 
 Category: **session**
+
+> >
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
@@ -311,6 +347,8 @@ Category: **session**
 
 Category: **session**
 
+> >
+
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `session_id` | `string` | yes | — |
@@ -321,6 +359,8 @@ Category: **session**
 
 Category: **session**
 
+> >
+
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `session_id` | `string` | yes | — |
@@ -330,6 +370,8 @@ Category: **session**
 
 Category: **session**
 
+> >
+
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `expires_in` | `u64` | yes | — |
@@ -337,6 +379,8 @@ Category: **session**
 ### Shutdown (`0x34`)
 
 Category: **session**
+
+> >
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
@@ -347,6 +391,8 @@ Category: **session**
 
 Category: **session**
 
+> >
+
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `label` | `string` | yes | — |
@@ -354,6 +400,8 @@ Category: **session**
 ### Presence (`0x36`)
 
 Category: **session**
+
+> >
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
@@ -363,6 +411,8 @@ Category: **session**
 
 Category: **session**
 
+> >
+
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `new_controller` | `string` | yes | — |
@@ -370,6 +420,8 @@ Category: **session**
 ### Metrics (`0x38`)
 
 Category: **session**
+
+> >
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
@@ -450,11 +502,15 @@ Category: **session**
 
 Category: **mcp**
 
+> >
+
 *No fields.*
 
 ### McpTools (`0x41`)
 
 Category: **mcp**
+
+> >
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
@@ -463,6 +519,8 @@ Category: **mcp**
 ### McpCall (`0x42`)
 
 Category: **mcp**
+
+> >
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
@@ -473,6 +531,8 @@ Category: **mcp**
 
 Category: **mcp**
 
+> >
+
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `result` | `json` | yes | — |
@@ -480,6 +540,8 @@ Category: **mcp**
 ### ReverseRegister (`0x50`)
 
 Category: **reverse**
+
+> >
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
@@ -491,11 +553,15 @@ Category: **reverse**
 
 Category: **reverse**
 
+> >
+
 *No fields.*
 
 ### ReversePeers (`0x52`)
 
 Category: **reverse**
+
+> >
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
@@ -504,6 +570,8 @@ Category: **reverse**
 ### ReverseConnect (`0x53`)
 
 Category: **reverse**
+
+> >
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
