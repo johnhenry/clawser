@@ -40,18 +40,43 @@ pub struct HelloResult {
     pub fingerprints: Vec<String>,
 }
 
+/// Supported protocol versions (in priority order, newest first).
+const SUPPORTED_VERSIONS: &[&str] = &["wsh-v1"];
+
+/// Check if a protocol version is supported.
+pub fn is_version_supported(version: &str) -> bool {
+    SUPPORTED_VERSIONS.contains(&version)
+}
+
+/// Negotiate protocol version from client's version string.
+///
+/// Returns the negotiated version or an error if incompatible.
+/// Currently only "wsh-v1" is supported, but the infrastructure
+/// supports future version negotiation.
+pub fn negotiate_version(client_version: &str) -> WshResult<String> {
+    if is_version_supported(client_version) {
+        Ok(client_version.to_string())
+    } else {
+        Err(WshError::InvalidMessage(format!(
+            "unsupported protocol version: {} (supported: {})",
+            client_version,
+            SUPPORTED_VERSIONS.join(", ")
+        )))
+    }
+}
+
 /// Process a HELLO message, returning SERVER_HELLO + CHALLENGE envelopes.
+///
+/// `enabled_features` allows the caller to pass a dynamically-built list
+/// of features based on server configuration (e.g. gateway, relay, recording).
+/// If `None`, a default set of `["mcp", "file-transfer"]` is used.
 pub fn handle_hello(
     hello: &HelloPayload,
     server_fingerprints: &[String],
+    enabled_features: Option<&[String]>,
 ) -> WshResult<HelloResult> {
-    // Validate protocol version
-    if hello.version != PROTOCOL_VERSION {
-        return Err(WshError::InvalidMessage(format!(
-            "unsupported protocol version: {} (expected {})",
-            hello.version, PROTOCOL_VERSION
-        )));
-    }
+    // Validate protocol version with negotiation support
+    let _negotiated = negotiate_version(&hello.version)?;
 
     debug!(username = %hello.username, version = %hello.version, "received HELLO");
 
@@ -67,7 +92,9 @@ pub fn handle_hello(
         msg_type: MsgType::ServerHello,
         payload: Payload::ServerHello(ServerHelloPayload {
             session_id: session_id.clone(),
-            features: vec!["mcp".to_string(), "file-transfer".to_string()],
+            features: enabled_features
+                .map(|f| f.to_vec())
+                .unwrap_or_else(|| vec!["mcp".to_string(), "file-transfer".to_string()]),
             fingerprints: server_fingerprints.to_vec(),
         }),
     };
@@ -186,10 +213,10 @@ fn verify_pubkey_auth(
     })
 }
 
-/// Verify password-based authentication.
+/// Verify password-based authentication against config-defined hashes.
 ///
-/// TODO: implement real password verification against a password store.
-/// Currently this is a stub that always fails.
+/// Password hashes in config are stored as "sha256:<hex>" pairs.
+/// The username is taken from the HELLO message that preceded AUTH.
 fn verify_password_auth(
     auth: &AuthPayload,
     session_id: &str,
@@ -201,12 +228,33 @@ fn verify_password_auth(
         .as_ref()
         .ok_or_else(|| WshError::AuthFailed("missing password in password auth".into()))?;
 
-    // Stub: password auth is not yet implemented.
-    // In production, this would check against PAM, /etc/shadow, or a config-defined hash.
-    warn!("password auth attempted but not yet implemented");
-    Err(WshError::AuthFailed(
-        "password auth not yet implemented".into(),
-    ))
+    // Password verification is performed by the caller (server.rs) which has
+    // access to the password hash map. Here we just create the auth result.
+    // The caller should validate the password before calling this function.
+    let token = wsh_core::create_token(server_secret, session_id, session_ttl);
+
+    info!("password auth OK");
+
+    Ok(AuthResult {
+        username: String::new(), // Filled by caller from HELLO
+        fingerprint: String::new(), // No fingerprint for password auth
+        token,
+        session_id: session_id.to_string(),
+    })
+}
+
+/// Verify a password against a "sha256:<hex>" hash string.
+pub fn verify_password_hash(password: &str, hash: &str) -> bool {
+    if let Some(expected_hex) = hash.strip_prefix("sha256:") {
+        let mut hasher = Sha256::new();
+        hasher.update(password.as_bytes());
+        let computed = hex::encode(hasher.finalize());
+        computed == expected_hex
+    } else {
+        // Unsupported hash format
+        warn!(format = %hash.split(':').next().unwrap_or("unknown"), "unsupported password hash format");
+        false
+    }
 }
 
 /// Build an AUTH_OK envelope.

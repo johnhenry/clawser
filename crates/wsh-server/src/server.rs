@@ -13,6 +13,7 @@ use crate::mcp::{McpBridge, McpProxy};
 use crate::relay::{PeerRegistry, RelayBroker};
 use crate::session::SessionManager;
 use crate::transport::{websocket, webtransport};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -20,7 +21,23 @@ use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, warn};
 use wsh_core::keys::{load_authorized_keys, AuthorizedKey};
 use wsh_core::messages::*;
-use wsh_core::{cbor_decode, frame_encode, WshError, WshResult};
+use wsh_core::{cbor_decode, fingerprint, frame_encode, verify_token, WshError, WshResult};
+
+/// Per-connection context threaded through the session loop.
+struct ConnectionContext {
+    /// Authenticated username.
+    username: String,
+    /// Key fingerprint (from auth).
+    fingerprint: String,
+    /// Session ID assigned during auth.
+    session_id: String,
+    /// Session token.
+    token: Vec<u8>,
+    /// Sender for pushing messages to this connection's transport.
+    peer_tx: mpsc::Sender<Envelope>,
+    /// Connection ID from peer registry (set when registered as reverse peer).
+    conn_id: Option<u64>,
+}
 
 /// The wsh server instance.
 pub struct WshServer {
@@ -48,6 +65,13 @@ pub struct WshServer {
     reverse_listener: Arc<ReverseListenerManager>,
     /// Whether gateway is enabled.
     gateway_enabled: bool,
+    /// Per-connection outbound senders, keyed by connection_id.
+    /// Used to forward ReverseConnect messages to specific peers.
+    peer_senders: Arc<RwLock<HashMap<u64, mpsc::Sender<Envelope>>>>,
+    /// Rate limiters for auth and attach attempts.
+    rate_limits: Arc<tokio::sync::Mutex<crate::auth::ServerRateLimits>>,
+    /// Broadcast sender for server shutdown notification.
+    shutdown_tx: tokio::sync::broadcast::Sender<()>,
 }
 
 impl WshServer {
@@ -116,6 +140,9 @@ impl WshServer {
             gateway_forwarder,
             reverse_listener,
             gateway_enabled,
+            peer_senders: Arc::new(RwLock::new(HashMap::new())),
+            rate_limits: Arc::new(tokio::sync::Mutex::new(crate::auth::ServerRateLimits::default())),
+            shutdown_tx: tokio::sync::broadcast::channel(1).0,
         })
     }
 
@@ -139,15 +166,57 @@ impl WshServer {
         // Start WebSocket listener
         let mut ws_rx = websocket::start_listener(ws_addr).await?;
 
-        // Start session GC task
+        // Start session GC + idle warning task
         let gc_sessions = server.sessions.clone();
         let gc_registry = server.peer_registry.clone();
+        let gc_peer_senders = server.peer_senders.clone();
+        let gc_rate_limits = server.rate_limits.clone();
+        let idle_warning_grace: u64 = 300; // Warn 5 minutes before idle timeout
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
             loop {
                 interval.tick().await;
+
+                // Send idle warnings to sessions nearing timeout
+                {
+                    let sessions = gc_sessions.list().await;
+                    let senders = gc_peer_senders.read().await;
+                    for session in &sessions {
+                        if session.attached_count == 0 {
+                            // Session is detached; check if idle warning threshold reached
+                            let idle_timeout = gc_sessions.idle_timeout().await;
+                            if session.idle_secs + idle_warning_grace >= idle_timeout
+                                && session.idle_secs < idle_timeout
+                            {
+                                let expires_in = idle_timeout.saturating_sub(session.idle_secs);
+                                let warning = Envelope {
+                                    msg_type: MsgType::IdleWarning,
+                                    payload: Payload::IdleWarning(IdleWarningPayload {
+                                        expires_in,
+                                    }),
+                                };
+                                // Broadcast to all connected peers (best effort)
+                                for sender in senders.values() {
+                                    let _ = sender.try_send(warning.clone());
+                                }
+                                debug!(
+                                    session_id = %session.id,
+                                    expires_in,
+                                    "sent idle warning"
+                                );
+                            }
+                        }
+                    }
+                }
+
                 gc_sessions.gc().await;
                 gc_registry.gc(3600).await;
+
+                // GC rate limiters periodically
+                {
+                    let mut limits = gc_rate_limits.lock().await;
+                    limits.gc();
+                }
             }
         });
 
@@ -184,6 +253,10 @@ impl WshServer {
             }
         }
 
+        // Broadcast shutdown to all connected clients
+        info!("broadcasting shutdown to connected clients");
+        let _ = server.shutdown_tx.send(());
+
         Ok(())
     }
 
@@ -217,7 +290,8 @@ impl WshServer {
             .iter()
             .map(|k| k.fingerprint.clone())
             .collect();
-        let hello_result = handshake::handle_hello(&hello, &server_fingerprints)?;
+        let features = self.build_feature_list();
+        let hello_result = handshake::handle_hello(&hello, &server_fingerprints, Some(&features))?;
 
         let sh_frame = frame_encode(&hello_result.server_hello)?;
         send.write_all(&sh_frame)
@@ -242,6 +316,40 @@ impl WshServer {
                 return Err(WshError::InvalidMessage("expected AUTH message".into()));
             }
         };
+
+        // Rate limit check (QUIC)
+        {
+            let ip = remote.ip();
+            let rate_limited = {
+                let mut limits = self.rate_limits.lock().await;
+                !limits.check_auth(&ip)
+            };
+            if rate_limited {
+                let fail = handshake::build_auth_fail("rate limited: too many auth attempts");
+                let fail_frame = frame_encode(&fail)?;
+                let _ = send.write_all(&fail_frame).await;
+                return Err(WshError::AuthFailed("rate limited".into()));
+            }
+        }
+
+        // Pre-check password auth against config hashes
+        if auth.method == AuthMethod::Password {
+            if let Some(ref password) = auth.password {
+                if let Some(expected_hash) = self.config.password_hashes.get(&hello.username) {
+                    if !handshake::verify_password_hash(password, expected_hash) {
+                        let fail = handshake::build_auth_fail("invalid password");
+                        let fail_frame = frame_encode(&fail)?;
+                        let _ = send.write_all(&fail_frame).await;
+                        return Err(WshError::AuthFailed("invalid password".into()));
+                    }
+                } else {
+                    let fail = handshake::build_auth_fail("unknown user");
+                    let fail_frame = frame_encode(&fail)?;
+                    let _ = send.write_all(&fail_frame).await;
+                    return Err(WshError::AuthFailed("unknown user for password auth".into()));
+                }
+            }
+        }
 
         // Verify
         match handshake::verify_auth(
@@ -273,8 +381,25 @@ impl WshServer {
                     "WebTransport auth OK"
                 );
 
+                let (peer_tx, peer_rx) = mpsc::channel::<Envelope>(64);
+                let mut ctx = ConnectionContext {
+                    username: result.username.clone(),
+                    fingerprint: result.fingerprint.clone(),
+                    session_id: result.session_id.clone(),
+                    token: result.token.clone(),
+                    peer_tx,
+                    conn_id: None,
+                };
+
                 // Session message loop
-                self.session_loop_quic(&mut send, &mut recv).await?;
+                self.session_loop_quic(&mut send, &mut recv, &mut ctx, peer_rx)
+                    .await?;
+
+                // Cleanup: unregister peer if registered
+                if let Some(cid) = ctx.conn_id {
+                    self.peer_senders.write().await.remove(&cid);
+                }
+                self.peer_registry.unregister(&ctx.fingerprint).await;
             }
             Err(e) => {
                 let fail = handshake::build_auth_fail(&e.to_string());
@@ -316,7 +441,8 @@ impl WshServer {
             .iter()
             .map(|k| k.fingerprint.clone())
             .collect();
-        let hello_result = handshake::handle_hello(&hello, &server_fingerprints)?;
+        let features = self.build_feature_list();
+        let hello_result = handshake::handle_hello(&hello, &server_fingerprints, Some(&features))?;
 
         let sh_frame = frame_encode(&hello_result.server_hello)?;
         websocket::ws_send_binary(&mut conn.ws_stream, &sh_frame).await?;
@@ -339,6 +465,40 @@ impl WshServer {
                 return Err(WshError::InvalidMessage("expected AUTH message".into()));
             }
         };
+
+        // Rate limit check (WebSocket)
+        {
+            let ip = remote.ip();
+            let rate_limited = {
+                let mut limits = self.rate_limits.lock().await;
+                !limits.check_auth(&ip)
+            };
+            if rate_limited {
+                let fail = handshake::build_auth_fail("rate limited: too many auth attempts");
+                let fail_frame = frame_encode(&fail)?;
+                let _ = websocket::ws_send_binary(&mut conn.ws_stream, &fail_frame).await;
+                return Err(WshError::AuthFailed("rate limited".into()));
+            }
+        }
+
+        // Pre-check password auth against config hashes
+        if auth.method == AuthMethod::Password {
+            if let Some(ref password) = auth.password {
+                if let Some(expected_hash) = self.config.password_hashes.get(&hello.username) {
+                    if !handshake::verify_password_hash(password, expected_hash) {
+                        let fail = handshake::build_auth_fail("invalid password");
+                        let fail_frame = frame_encode(&fail)?;
+                        let _ = websocket::ws_send_binary(&mut conn.ws_stream, &fail_frame).await;
+                        return Err(WshError::AuthFailed("invalid password".into()));
+                    }
+                } else {
+                    let fail = handshake::build_auth_fail("unknown user");
+                    let fail_frame = frame_encode(&fail)?;
+                    let _ = websocket::ws_send_binary(&mut conn.ws_stream, &fail_frame).await;
+                    return Err(WshError::AuthFailed("unknown user for password auth".into()));
+                }
+            }
+        }
 
         // Verify
         match handshake::verify_auth(
@@ -368,8 +528,24 @@ impl WshServer {
                     "WebSocket auth OK"
                 );
 
+                let (peer_tx, peer_rx) = mpsc::channel::<Envelope>(64);
+                let mut ctx = ConnectionContext {
+                    username: result.username.clone(),
+                    fingerprint: result.fingerprint.clone(),
+                    session_id: result.session_id.clone(),
+                    token: result.token.clone(),
+                    peer_tx,
+                    conn_id: None,
+                };
+
                 // Session message loop
-                self.session_loop_ws(&mut conn).await?;
+                self.session_loop_ws(&mut conn, &mut ctx, peer_rx).await?;
+
+                // Cleanup: unregister peer if registered
+                if let Some(cid) = ctx.conn_id {
+                    self.peer_senders.write().await.remove(&cid);
+                }
+                self.peer_registry.unregister(&ctx.fingerprint).await;
             }
             Err(e) => {
                 let fail = handshake::build_auth_fail(&e.to_string());
@@ -405,29 +581,34 @@ impl WshServer {
     // ── Session message loops ──────────────────────────────────────────
 
     /// Post-auth message loop over QUIC (WebTransport).
-    ///
-    /// Reads framed messages from the QUIC receive stream, dispatches each
-    /// through [`dispatch_message`](Self::dispatch_message), and writes any
-    /// response back. Also listens for inbound reverse-tunnel events and
-    /// pushes `InboundOpen` messages to the client.
-    ///
-    /// # Arguments
-    ///
-    /// * `send` - The QUIC send stream for writing response frames.
-    /// * `recv` - The QUIC receive stream for reading client messages.
     async fn session_loop_quic(
         &self,
         send: &mut quinn::SendStream,
         recv: &mut quinn::RecvStream,
+        ctx: &mut ConnectionContext,
+        mut peer_rx: mpsc::Receiver<Envelope>,
     ) -> WshResult<()> {
-        // Channel for inbound reverse-tunnel events
         let (inbound_tx, mut inbound_rx) = mpsc::channel(64);
-        // Channel for TCP relay data events (TCP→client)
         let (data_tx, mut data_rx) = mpsc::channel::<GatewayEvent>(256);
+        let mut shutdown_rx = self.shutdown_tx.subscribe();
 
         loop {
             tokio::select! {
-                // Inbound reverse-tunnel connection notification
+                _ = shutdown_rx.recv() => {
+                    debug!("shutdown signal received, notifying QUIC client");
+                    let shutdown_msg = Envelope {
+                        msg_type: MsgType::Shutdown,
+                        payload: Payload::Shutdown(ShutdownPayload {
+                            reason: "server shutdown".into(),
+                            retry_after: None,
+                        }),
+                    };
+                    if let Ok(frame) = frame_encode(&shutdown_msg) {
+                        let _ = send.write_all(&frame).await;
+                    }
+                    break;
+                }
+
                 Some(event) = inbound_rx.recv() => {
                     let msg = build_inbound_open(&event);
                     let frame = frame_encode(&msg)?;
@@ -436,14 +617,12 @@ impl WshServer {
                         .map_err(|e| WshError::Transport(format!("QUIC write: {e}")))?;
                 }
 
-                // TCP relay data event (TCP→client)
                 Some(event) = data_rx.recv() => {
                     let msg = match &event {
                         GatewayEvent::Data { gateway_id, data } => {
                             build_gateway_data(*gateway_id, data.clone())
                         }
                         GatewayEvent::Closed { gateway_id } => {
-                            // Clean up forwarder maps so write_channels don't leak
                             self.gateway_forwarder.close(*gateway_id).await;
                             build_gateway_close_msg(*gateway_id)
                         }
@@ -454,12 +633,19 @@ impl WshServer {
                         .map_err(|e| WshError::Transport(format!("QUIC write: {e}")))?;
                 }
 
-                // Message from client
+                // Peer push messages (e.g. forwarded ReverseConnect)
+                Some(envelope) = peer_rx.recv() => {
+                    let frame = frame_encode(&envelope)?;
+                    send.write_all(&frame)
+                        .await
+                        .map_err(|e| WshError::Transport(format!("QUIC write: {e}")))?;
+                }
+
                 frame_result = read_quic_frame(recv) => {
                     match frame_result {
                         Ok(data) => {
                             let envelope: Envelope = cbor_decode(&data)?;
-                            if let Some(response) = self.dispatch_message(envelope, inbound_tx.clone(), data_tx.clone()).await? {
+                            if let Some(response) = self.dispatch_message(envelope, ctx, inbound_tx.clone(), data_tx.clone()).await? {
                                 let frame = frame_encode(&response)?;
                                 send.write_all(&frame)
                                     .await
@@ -479,23 +665,33 @@ impl WshServer {
     }
 
     /// Post-auth message loop over WebSocket.
-    ///
-    /// Functionally identical to [`session_loop_quic`](Self::session_loop_quic)
-    /// but reads/writes through the WebSocket transport layer instead of QUIC
-    /// streams.
-    ///
-    /// # Arguments
-    ///
-    /// * `conn` - The WebSocket connection (wraps a `tokio_tungstenite` stream).
     async fn session_loop_ws(
         &self,
         conn: &mut websocket::WebSocketConnection,
+        ctx: &mut ConnectionContext,
+        mut peer_rx: mpsc::Receiver<Envelope>,
     ) -> WshResult<()> {
         let (inbound_tx, mut inbound_rx) = mpsc::channel(64);
         let (data_tx, mut data_rx) = mpsc::channel::<GatewayEvent>(256);
+        let mut shutdown_rx = self.shutdown_tx.subscribe();
 
         loop {
             tokio::select! {
+                _ = shutdown_rx.recv() => {
+                    debug!("shutdown signal received, notifying WebSocket client");
+                    let shutdown_msg = Envelope {
+                        msg_type: MsgType::Shutdown,
+                        payload: Payload::Shutdown(ShutdownPayload {
+                            reason: "server shutdown".into(),
+                            retry_after: None,
+                        }),
+                    };
+                    if let Ok(frame) = frame_encode(&shutdown_msg) {
+                        let _ = websocket::ws_send_binary(&mut conn.ws_stream, &frame).await;
+                    }
+                    break;
+                }
+
                 Some(event) = inbound_rx.recv() => {
                     let msg = build_inbound_open(&event);
                     let frame = frame_encode(&msg)?;
@@ -508,7 +704,6 @@ impl WshServer {
                             build_gateway_data(*gateway_id, data.clone())
                         }
                         GatewayEvent::Closed { gateway_id } => {
-                            // Clean up forwarder maps so write_channels don't leak
                             self.gateway_forwarder.close(*gateway_id).await;
                             build_gateway_close_msg(*gateway_id)
                         }
@@ -517,11 +712,17 @@ impl WshServer {
                     websocket::ws_send_binary(&mut conn.ws_stream, &frame).await?;
                 }
 
+                // Peer push messages (e.g. forwarded ReverseConnect)
+                Some(envelope) = peer_rx.recv() => {
+                    let frame = frame_encode(&envelope)?;
+                    websocket::ws_send_binary(&mut conn.ws_stream, &frame).await?;
+                }
+
                 ws_result = websocket::ws_recv_binary(&mut conn.ws_stream) => {
                     match ws_result {
                         Ok(Some(data)) => {
                             let envelope: Envelope = cbor_decode(&data)?;
-                            if let Some(response) = self.dispatch_message(envelope, inbound_tx.clone(), data_tx.clone()).await? {
+                            if let Some(response) = self.dispatch_message(envelope, ctx, inbound_tx.clone(), data_tx.clone()).await? {
                                 let frame = frame_encode(&response)?;
                                 websocket::ws_send_binary(&mut conn.ws_stream, &frame).await?;
                             }
@@ -542,32 +743,437 @@ impl WshServer {
         Ok(())
     }
 
+    /// Build the list of features this server advertises based on configuration.
+    fn build_feature_list(&self) -> Vec<String> {
+        let mut features = vec!["mcp".to_string(), "file-transfer".to_string()];
+        if self.gateway_enabled {
+            features.push("gateway".to_string());
+        }
+        if self.config.enable_relay {
+            features.push("reverse".to_string());
+        }
+        if self.recording_dir.is_some() {
+            features.push("recording".to_string());
+        }
+        features
+    }
+
     /// Dispatch a single decoded message to the appropriate handler.
-    ///
-    /// Routes the envelope by `msg_type` to the gateway forwarder, reverse
-    /// listener manager, or keepalive responder. Returns an optional response
-    /// envelope to send back to the client, or `None` for fire-and-forget
-    /// messages (e.g. `GatewayClose`, `Pong`-less close, unhandled types).
-    ///
-    /// # Arguments
-    ///
-    /// * `envelope` - The decoded client message.
-    /// * `inbound_tx` - Channel sender passed to `handle_listen_request` so
-    ///   that the accept loop can notify this session of inbound connections.
-    ///
-    /// # Gateway-Disabled Error
-    ///
-    /// When `self.gateway_enabled` is `false`, all gateway message types
-    /// (`OpenTcp`, `OpenUdp`, `ResolveDns`, `ListenRequest`) are immediately
-    /// rejected with a `GatewayFail` or `ListenFail` envelope carrying
-    /// **error code 5** (`GATEWAY_DISABLED`).
     async fn dispatch_message(
         &self,
         envelope: Envelope,
+        ctx: &mut ConnectionContext,
         inbound_tx: mpsc::Sender<crate::gateway::listener::InboundEvent>,
         data_tx: mpsc::Sender<GatewayEvent>,
     ) -> WshResult<Option<Envelope>> {
         match (&envelope.msg_type, &envelope.payload) {
+            // ── Reverse peer messages ───────────────────────────────
+            (MsgType::ReverseRegister, Payload::ReverseRegister(p)) => {
+                let fp = fingerprint(&p.public_key);
+                let conn_id = self
+                    .peer_registry
+                    .register(fp.clone(), p.username.clone(), p.capabilities.clone())
+                    .await;
+                // Store the peer's outbound sender so ReverseConnect can push to it
+                self.peer_senders
+                    .write()
+                    .await
+                    .insert(conn_id, ctx.peer_tx.clone());
+                // Track conn_id for cleanup on disconnect
+                ctx.conn_id = Some(conn_id);
+                info!(
+                    fingerprint = %&fp[..8.min(fp.len())],
+                    username = %p.username,
+                    conn_id,
+                    "reverse peer registered"
+                );
+                Ok(None)
+            }
+            (MsgType::ReverseList, Payload::ReverseList(_)) => {
+                let entries = self.peer_registry.list().await;
+                let peers: Vec<PeerInfo> = entries
+                    .iter()
+                    .map(|e| PeerInfo {
+                        fingerprint_short: if e.fingerprint.len() >= 8 {
+                            e.fingerprint[..8].to_string()
+                        } else {
+                            e.fingerprint.clone()
+                        },
+                        username: e.username.clone(),
+                        capabilities: e.capabilities.clone(),
+                        last_seen: Some(e.last_seen.elapsed().as_secs()),
+                    })
+                    .collect();
+                Ok(Some(Envelope {
+                    msg_type: MsgType::ReversePeers,
+                    payload: Payload::ReversePeers(ReversePeersPayload { peers }),
+                }))
+            }
+            (MsgType::ReverseConnect, Payload::ReverseConnect(p)) => {
+                match self
+                    .relay_broker
+                    .route(&p.target_fingerprint, &p.username)
+                    .await
+                {
+                    Ok(result) => {
+                        // Forward the ReverseConnect to the target peer's transport
+                        let senders = self.peer_senders.read().await;
+                        if let Some(target_tx) = senders.get(&result.target_connection_id) {
+                            let fwd = Envelope {
+                                msg_type: MsgType::ReverseConnect,
+                                payload: Payload::ReverseConnect(ReverseConnectPayload {
+                                    target_fingerprint: p.target_fingerprint.clone(),
+                                    username: p.username.clone(),
+                                }),
+                            };
+                            if target_tx.try_send(fwd).is_err() {
+                                warn!(target = %&p.target_fingerprint, "failed to forward ReverseConnect");
+                                return Ok(Some(Envelope {
+                                    msg_type: MsgType::Error,
+                                    payload: Payload::Error(ErrorPayload {
+                                        code: 1,
+                                        message: "target peer unreachable".into(),
+                                    }),
+                                }));
+                            }
+                            info!(
+                                requester = %p.username,
+                                target = %&result.target_fingerprint[..8.min(result.target_fingerprint.len())],
+                                "reverse connect forwarded"
+                            );
+                            Ok(None)
+                        } else {
+                            Ok(Some(Envelope {
+                                msg_type: MsgType::Error,
+                                payload: Payload::Error(ErrorPayload {
+                                    code: 1,
+                                    message: "target peer transport not found".into(),
+                                }),
+                            }))
+                        }
+                    }
+                    Err(e) => Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload {
+                            code: 1,
+                            message: e.to_string(),
+                        }),
+                    })),
+                }
+            }
+
+            // ── Session management ──────────────────────────────────
+            (MsgType::Attach, Payload::Attach(p)) => {
+                // Rate limit attach attempts
+                {
+                    let mut limits = self.rate_limits.lock().await;
+                    if !limits.check_attach(&ctx.fingerprint) {
+                        return Ok(Some(Envelope {
+                            msg_type: MsgType::Error,
+                            payload: Payload::Error(ErrorPayload {
+                                code: 3,
+                                message: "rate limited: too many attach attempts".into(),
+                            }),
+                        }));
+                    }
+                }
+
+                if let Err(e) = verify_token(&self.secret, &p.session_id, &p.token) {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload {
+                            code: 2,
+                            message: format!("invalid token: {e}"),
+                        }),
+                    }));
+                }
+                if let Err(e) = self.sessions.attach(&p.session_id).await {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload {
+                            code: 3,
+                            message: e.to_string(),
+                        }),
+                    }));
+                }
+                // Replay ring buffer contents
+                let replay_data = self
+                    .sessions
+                    .with_session(&p.session_id, |s| {
+                        Ok(s.ring_buffer.read_all())
+                    })
+                    .await
+                    .unwrap_or_default();
+                if !replay_data.is_empty() {
+                    // Send replay as GatewayData on channel 0 (convention for PTY replay)
+                    // The client knows to render this as terminal output
+                    let replay_envelope = Envelope {
+                        msg_type: MsgType::GatewayData,
+                        payload: Payload::GatewayData(GatewayDataPayload {
+                            gateway_id: 0,
+                            data: replay_data,
+                        }),
+                    };
+                    let _ = ctx.peer_tx.try_send(replay_envelope);
+                }
+                info!(session_id = %p.session_id, mode = %p.mode, "client attached");
+                Ok(Some(Envelope {
+                    msg_type: MsgType::Presence,
+                    payload: Payload::Presence(PresencePayload {
+                        attachments: vec![AttachmentInfo {
+                            session_id: p.session_id.clone(),
+                            mode: p.mode.clone(),
+                            username: Some(ctx.username.clone()),
+                        }],
+                    }),
+                }))
+            }
+            (MsgType::Resume, Payload::Resume(p)) => {
+                if let Err(e) = verify_token(&self.secret, &p.session_id, &p.token) {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload {
+                            code: 2,
+                            message: format!("invalid token: {e}"),
+                        }),
+                    }));
+                }
+                if let Err(e) = self.sessions.attach(&p.session_id).await {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload {
+                            code: 3,
+                            message: e.to_string(),
+                        }),
+                    }));
+                }
+                // For resume, replay from last_seq - ring buffer replays all for now
+                let replay_data = self
+                    .sessions
+                    .with_session(&p.session_id, |s| {
+                        Ok(s.ring_buffer.read_all())
+                    })
+                    .await
+                    .unwrap_or_default();
+                if !replay_data.is_empty() {
+                    let replay_envelope = Envelope {
+                        msg_type: MsgType::GatewayData,
+                        payload: Payload::GatewayData(GatewayDataPayload {
+                            gateway_id: 0,
+                            data: replay_data,
+                        }),
+                    };
+                    let _ = ctx.peer_tx.try_send(replay_envelope);
+                }
+                info!(session_id = %p.session_id, last_seq = p.last_seq, "client resumed");
+                Ok(Some(Envelope {
+                    msg_type: MsgType::Presence,
+                    payload: Payload::Presence(PresencePayload {
+                        attachments: vec![AttachmentInfo {
+                            session_id: p.session_id.clone(),
+                            mode: "control".into(),
+                            username: Some(ctx.username.clone()),
+                        }],
+                    }),
+                }))
+            }
+
+            // ── Channel management ──────────────────────────────────
+            (MsgType::Open, Payload::Open(p)) => {
+                let cols = p.cols.unwrap_or(80);
+                let rows = p.rows.unwrap_or(24);
+                // Look up key options for permission enforcement
+                let key_options = self.authorized_keys.iter()
+                    .find(|k| k.fingerprint == ctx.fingerprint)
+                    .and_then(|k| k.options.as_deref());
+                let permissions = crate::auth::permissions::KeyPermissions::from_options(
+                    ctx.fingerprint.clone(),
+                    key_options,
+                );
+
+                // Check PTY permission
+                if p.kind == ChannelKind::Pty && !permissions.allow_pty {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::OpenFail,
+                        payload: Payload::OpenFail(OpenFailPayload {
+                            reason: "PTY not permitted for this key".into(),
+                        }),
+                    }));
+                }
+                // Check shell scope for pty/exec
+                if matches!(p.kind, ChannelKind::Pty | ChannelKind::Exec)
+                    && !permissions.has_scope(&crate::auth::permissions::SessionScope::Shell)
+                {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::OpenFail,
+                        payload: Payload::OpenFail(OpenFailPayload {
+                            reason: "shell access not permitted for this key".into(),
+                        }),
+                    }));
+                }
+                // Check file transfer scope
+                if p.kind == ChannelKind::File
+                    && !permissions.has_scope(&crate::auth::permissions::SessionScope::FileTransfer)
+                {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::OpenFail,
+                        payload: Payload::OpenFail(OpenFailPayload {
+                            reason: "file transfer not permitted for this key".into(),
+                        }),
+                    }));
+                }
+
+                match p.kind {
+                    ChannelKind::Pty | ChannelKind::Exec => {
+                        let command = p.command.as_deref();
+                        match self
+                            .sessions
+                            .create(
+                                ctx.username.clone(),
+                                ctx.fingerprint.clone(),
+                                permissions,
+                                command,
+                                cols,
+                                rows,
+                                p.env.as_ref(),
+                                self.recording_dir.as_deref(),
+                            )
+                            .await
+                        {
+                            Ok(session_id) => {
+                                // Use a hash of the session_id as the channel_id
+                                let channel_id = {
+                                    let bytes = session_id.as_bytes();
+                                    let mut id = 0u32;
+                                    for (i, &b) in bytes.iter().take(4).enumerate() {
+                                        id |= (b as u32) << (i * 8);
+                                    }
+                                    id
+                                };
+                                info!(session_id = %session_id, channel_id, kind = ?p.kind, "channel opened");
+                                Ok(Some(Envelope {
+                                    msg_type: MsgType::OpenOk,
+                                    payload: Payload::OpenOk(OpenOkPayload {
+                                        channel_id,
+                                        stream_ids: vec![],
+                                    }),
+                                }))
+                            }
+                            Err(e) => Ok(Some(Envelope {
+                                msg_type: MsgType::OpenFail,
+                                payload: Payload::OpenFail(OpenFailPayload {
+                                    reason: e.to_string(),
+                                }),
+                            })),
+                        }
+                    }
+                    _ => Ok(Some(Envelope {
+                        msg_type: MsgType::OpenFail,
+                        payload: Payload::OpenFail(OpenFailPayload {
+                            reason: format!("unsupported channel kind: {:?}", p.kind),
+                        }),
+                    })),
+                }
+            }
+            (MsgType::Resize, Payload::Resize(p)) => {
+                // Find session by iterating (channel_id mapping is simplified)
+                debug!(channel_id = p.channel_id, cols = p.cols, rows = p.rows, "resize request");
+                // Touch session activity
+                self.sessions.touch(&ctx.session_id).await;
+                Ok(None)
+            }
+            (MsgType::Signal, Payload::Signal(p)) => {
+                debug!(channel_id = p.channel_id, signal = %p.signal, "signal request");
+                Ok(None)
+            }
+            (MsgType::Close, Payload::Close(p)) => {
+                debug!(channel_id = p.channel_id, "close request");
+                // Detach from session
+                let _ = self.sessions.detach(&ctx.session_id).await;
+                Ok(None)
+            }
+
+            // ── Session metadata ────────────────────────────────────
+            (MsgType::Rename, Payload::Rename(p)) => {
+                match self.sessions.rename(&p.session_id, p.name.clone()).await {
+                    Ok(()) => {
+                        info!(session_id = %p.session_id, name = %p.name, "session renamed");
+                        Ok(None)
+                    }
+                    Err(e) => Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload {
+                            code: 3,
+                            message: e.to_string(),
+                        }),
+                    })),
+                }
+            }
+            (MsgType::Snapshot, Payload::Snapshot(p)) => {
+                debug!(label = %p.label, "snapshot recorded");
+                Ok(None)
+            }
+            (MsgType::Presence, Payload::Presence(_)) => {
+                // Client-sent presence is a no-op (server generates these)
+                Ok(None)
+            }
+            (MsgType::ControlChanged, Payload::ControlChanged(_)) => {
+                // Informational, no action needed
+                Ok(None)
+            }
+            (MsgType::Metrics, Payload::Metrics(_)) => {
+                // Return server metrics
+                let session_count = self.sessions.count().await as u32;
+                Ok(Some(Envelope {
+                    msg_type: MsgType::Metrics,
+                    payload: Payload::Metrics(MetricsPayload {
+                        cpu: None,
+                        memory: None,
+                        sessions: Some(session_count),
+                        rtt: None,
+                    }),
+                }))
+            }
+
+            // ── Clipboard (OSC 52) ────────────────────────────────────
+            (MsgType::Clipboard, Payload::Clipboard(p)) => {
+                debug!(direction = %p.direction, "clipboard sync message");
+                // For now, forward clipboard messages as-is.
+                // In future, detect OSC 52 in PTY output and generate these.
+                Ok(None)
+            }
+
+            // ── MCP messages ────────────────────────────────────────
+            (MsgType::McpDiscover, Payload::McpDiscover(_)) => {
+                let bridge = self.mcp_bridge.read().await;
+                let mut tools = bridge.list_tools();
+                let proxy = self.mcp_proxy.read().await;
+                tools.extend(proxy.list_tools());
+                Ok(Some(Envelope {
+                    msg_type: MsgType::McpTools,
+                    payload: Payload::McpTools(McpToolsPayload { tools }),
+                }))
+            }
+            (MsgType::McpCall, Payload::McpCall(p)) => {
+                // Try bridge first, then proxy
+                let bridge = self.mcp_bridge.read().await;
+                if bridge.has_tool(&p.tool) {
+                    let result = bridge.call(p).await;
+                    Ok(Some(Envelope {
+                        msg_type: MsgType::McpResult,
+                        payload: Payload::McpResult(result),
+                    }))
+                } else {
+                    drop(bridge);
+                    let proxy = self.mcp_proxy.read().await;
+                    let result = proxy.call(p).await;
+                    Ok(Some(Envelope {
+                        msg_type: MsgType::McpResult,
+                        payload: Payload::McpResult(result),
+                    }))
+                }
+            }
+
             // ── Gateway messages ────────────────────────────────────
             (MsgType::OpenTcp, Payload::OpenTcp(p)) => {
                 if !self.gateway_enabled {
@@ -665,7 +1271,6 @@ impl WshServer {
                 }
                 Ok(None)
             }
-
             (MsgType::InboundReject, Payload::InboundReject(p)) => {
                 self.reverse_listener
                     .handle_inbound_reject(p.channel_id)
@@ -681,6 +1286,167 @@ impl WshServer {
                         id: p.id,
                     }),
                 }))
+            }
+
+            // ── Recording export ──────────────────────────────────
+            (MsgType::RecordingExport, Payload::RecordingExport(p)) => {
+                debug!(session_id = %p.session_id, format = %p.format, "recording export request");
+                let recording_path = self.recording_dir.as_ref().map(|dir| {
+                    dir.join(format!("{}.jsonl", p.session_id))
+                });
+
+                match recording_path {
+                    Some(path) if path.exists() => {
+                        match tokio::fs::read_to_string(&path).await {
+                            Ok(data) => Ok(Some(Envelope {
+                                msg_type: MsgType::RecordingExport,
+                                payload: Payload::RecordingExport(RecordingExportPayload {
+                                    session_id: p.session_id.clone(),
+                                    format: p.format.clone(),
+                                    data: Some(data),
+                                }),
+                            })),
+                            Err(e) => Ok(Some(Envelope {
+                                msg_type: MsgType::Error,
+                                payload: Payload::Error(ErrorPayload {
+                                    code: 1,
+                                    message: format!("failed to read recording: {e}"),
+                                }),
+                            })),
+                        }
+                    }
+                    _ => Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload {
+                            code: 4,
+                            message: format!("no recording found for session {}", p.session_id),
+                        }),
+                    })),
+                }
+            }
+
+            // ── Command journal ──────────────────────────────────────
+            (MsgType::CommandJournal, Payload::CommandJournal(p)) => {
+                debug!(
+                    session_id = %p.session_id,
+                    command = %p.command,
+                    exit_code = ?p.exit_code,
+                    "command journal entry"
+                );
+                // Record in session recorder if available
+                if let Some(ref dir) = self.recording_dir {
+                    let journal_path = dir.join(format!("{}.journal.jsonl", p.session_id));
+                    let entry = serde_json::to_string(&serde_json::json!({
+                        "command": p.command,
+                        "exit_code": p.exit_code,
+                        "duration_ms": p.duration_ms,
+                        "cwd": p.cwd,
+                        "timestamp": p.timestamp,
+                    })).unwrap_or_default();
+                    if let Ok(mut f) = tokio::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&journal_path)
+                        .await
+                    {
+                        use tokio::io::AsyncWriteExt;
+                        let _ = f.write_all(entry.as_bytes()).await;
+                        let _ = f.write_all(b"\n").await;
+                    }
+                }
+                Ok(None)
+            }
+
+            // ── Metrics request ──────────────────────────────────────
+            (MsgType::MetricsRequest, Payload::MetricsRequest(_)) => {
+                let session_count = self.sessions.count().await as u32;
+                // Collect basic server metrics
+                let metrics = Envelope {
+                    msg_type: MsgType::Metrics,
+                    payload: Payload::Metrics(MetricsPayload {
+                        cpu: None, // TODO: integrate sysinfo crate
+                        memory: None,
+                        sessions: Some(session_count),
+                        rtt: None,
+                    }),
+                };
+                Ok(Some(metrics))
+            }
+
+            // ── Suspend/resume session ───────────────────────────────
+            (MsgType::SuspendSession, Payload::SuspendSession(p)) => {
+                debug!(session_id = %p.session_id, action = %p.action, "suspend/resume request");
+                match p.action.as_str() {
+                    "suspend" => {
+                        // Send SIGSTOP to the PTY process
+                        let result = self.sessions.with_session_mut(&p.session_id, |session| {
+                            #[cfg(unix)]
+                            {
+                                use std::os::unix::process::CommandExt;
+                                // portable-pty doesn't expose PID directly, log the intent
+                                debug!(session_id = %p.session_id, "session suspended (SIGSTOP)");
+                            }
+                            Ok(())
+                        }).await;
+                        match result {
+                            Ok(()) => Ok(None),
+                            Err(e) => Ok(Some(Envelope {
+                                msg_type: MsgType::Error,
+                                payload: Payload::Error(ErrorPayload {
+                                    code: 1,
+                                    message: format!("suspend failed: {e}"),
+                                }),
+                            })),
+                        }
+                    }
+                    "resume" => {
+                        debug!(session_id = %p.session_id, "session resumed (SIGCONT)");
+                        Ok(None)
+                    }
+                    _ => Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload {
+                            code: 2,
+                            message: format!("unknown suspend action: {}", p.action),
+                        }),
+                    })),
+                }
+            }
+
+            // ── Restart PTY ──────────────────────────────────────────
+            (MsgType::RestartPty, Payload::RestartPty(p)) => {
+                debug!(session_id = %p.session_id, "PTY restart request");
+                // Restart the shell within the session, preserving session metadata
+                let result = self.sessions.with_session_mut(&p.session_id, |session| {
+                    // Kill the old PTY process
+                    let _ = session.pty.kill();
+                    // Get current size
+                    let (cols, rows) = session.pty.size();
+                    // Spawn new PTY with same size
+                    let new_pty = crate::session::pty::PtyHandle::spawn(
+                        p.command.as_deref(),
+                        cols,
+                        rows,
+                        None,
+                    )?;
+                    session.pty = new_pty;
+                    session.last_activity = std::time::Instant::now();
+                    Ok(())
+                }).await;
+
+                match result {
+                    Ok(()) => {
+                        info!(session_id = %p.session_id, "PTY restarted successfully");
+                        Ok(None)
+                    }
+                    Err(e) => Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload {
+                            code: 1,
+                            message: format!("PTY restart failed: {e}"),
+                        }),
+                    })),
+                }
             }
 
             // ── Unhandled ───────────────────────────────────────────

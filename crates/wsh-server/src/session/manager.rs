@@ -281,6 +281,11 @@ impl SessionManager {
     pub async fn count(&self) -> usize {
         self.sessions.read().await.len()
     }
+
+    /// Get the default idle timeout in seconds.
+    pub async fn idle_timeout(&self) -> u64 {
+        self.default_idle_timeout
+    }
 }
 
 /// Generate a random session ID (hex-encoded, 16 bytes = 32 hex chars).

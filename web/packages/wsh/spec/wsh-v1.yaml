@@ -11,7 +11,7 @@ protocol:
 enums:
   ChannelKind:
     type: string
-    values: [pty, exec, meta, file, tcp, udp]
+    values: [pty, exec, meta, file, tcp, udp, job]
     value_descriptions:
       pty: "Interactive pseudo-terminal session with resize support"
       exec: "One-shot command execution without a PTY"
@@ -219,6 +219,10 @@ messages:
         mode:
           type: string
           default: '"control"'
+        device_label:
+          type: string
+          required: false
+          description: "Human-readable device/platform label (e.g. 'Chrome/macOS', 'wsh-cli/Linux')"
 
     Resume:
       code: 0x31
@@ -296,6 +300,98 @@ messages:
         rtt:
           type: u64
           required: false
+
+    Clipboard:
+      code: 0x39
+      description: >
+        Clipboard sync message for OSC 52 support.  The server detects
+        OSC 52 escape sequences in PTY output, extracts the base64
+        payload, and sends this message to the client.  The client may
+        also send this message to set the server-side clipboard.
+      fields:
+        direction:
+          type: string
+          required: true
+          description: '"server_to_client" or "client_to_server"'
+        data:
+          type: string
+          required: true
+          description: "Base64-encoded clipboard content"
+
+    RecordingExport:
+      code: 0x3a
+      description: >
+        Request or deliver a session recording export.  When sent by client,
+        requests the recording.  When sent by server, delivers the JSONL data.
+      fields:
+        session_id:
+          type: string
+          required: true
+        format:
+          type: string
+          default: '"jsonl"'
+          description: '"jsonl" or "asciicast"'
+        data:
+          type: string
+          required: false
+          description: "Recording content (only in server response)"
+
+    CommandJournal:
+      code: 0x3b
+      description: >
+        Structured shell command history entry with metadata.
+      fields:
+        session_id:
+          type: string
+          required: true
+        command:
+          type: string
+          required: true
+        exit_code:
+          type: i32
+          required: false
+        duration_ms:
+          type: u64
+          required: false
+        cwd:
+          type: string
+          required: false
+        timestamp:
+          type: u64
+          required: true
+
+    MetricsRequest:
+      code: 0x3c
+      description: >
+        Client request for server metrics.
+      fields: {}
+
+    SuspendSession:
+      code: 0x3d
+      description: >
+        Suspend or resume a session's PTY process (SIGSTOP/SIGCONT).
+      fields:
+        session_id:
+          type: string
+          required: true
+        action:
+          type: string
+          required: true
+          description: '"suspend" or "resume"'
+
+    RestartPty:
+      code: 0x3e
+      description: >
+        Restart the PTY shell without killing the session.
+        Preserves session metadata and ring buffer.
+      fields:
+        session_id:
+          type: string
+          required: true
+        command:
+          type: string
+          required: false
+          description: "New command to run (default: user shell)"
 
   mcp:
     McpDiscover:

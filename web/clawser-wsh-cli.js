@@ -262,8 +262,62 @@ export function registerWshCli(registry, getAgent, getShell) {
       return { stdout: '', stderr: 'One of source/destination must be remote (user@host:path)\n', exitCode: 1 };
     }
 
-    // TODO: Implement file transfer using WshFileTransfer
-    return { stdout: '', stderr: 'scp: not yet implemented in browser shell\n', exitCode: 1 };
+    try {
+      if (isRemoteSrc) {
+        // Download: user@host:remote_path → local_path
+        const [userHost, remotePath] = src.split(':');
+        const parsed = parseUserHost(userHost, parseInt(flags.port) || 4422);
+        if (!parsed) return { stdout: '', stderr: 'Invalid remote host.\n', exitCode: 1 };
+
+        let client = connections.get(parsed.host);
+        if (!client || client.state !== 'authenticated') {
+          const ks = await ensureKeyStore();
+          const keyPair = await ks.getKeyPair(flags.identity || 'default');
+          if (!keyPair) return { stdout: '', stderr: 'Key not found.\n', exitCode: 1 };
+          const url = buildUrl(parsed.host, parsed.port, flags.transport || 'auto');
+          client = new WshClient();
+          await client.connect(url, { username: parsed.user || 'browser', keyPair });
+          connections.set(parsed.host, client);
+        }
+
+        const data = await client.download(remotePath);
+        // Store in OPFS
+        const root = await navigator.storage.getDirectory();
+        const file = await root.getFileHandle(dst, { create: true });
+        const writable = await file.createWritable();
+        await writable.write(data);
+        await writable.close();
+
+        return { stdout: `Downloaded ${remotePath} → ${dst} (${data.byteLength} bytes)\n`, stderr: '', exitCode: 0 };
+      } else {
+        // Upload: local_path → user@host:remote_path
+        const [userHost, remotePath] = dst.split(':');
+        const parsed = parseUserHost(userHost, parseInt(flags.port) || 4422);
+        if (!parsed) return { stdout: '', stderr: 'Invalid remote host.\n', exitCode: 1 };
+
+        let client = connections.get(parsed.host);
+        if (!client || client.state !== 'authenticated') {
+          const ks = await ensureKeyStore();
+          const keyPair = await ks.getKeyPair(flags.identity || 'default');
+          if (!keyPair) return { stdout: '', stderr: 'Key not found.\n', exitCode: 1 };
+          const url = buildUrl(parsed.host, parsed.port, flags.transport || 'auto');
+          client = new WshClient();
+          await client.connect(url, { username: parsed.user || 'browser', keyPair });
+          connections.set(parsed.host, client);
+        }
+
+        // Read from OPFS
+        const root = await navigator.storage.getDirectory();
+        const file = await root.getFileHandle(src);
+        const blob = await (await file.getFile()).arrayBuffer();
+        const data = new Uint8Array(blob);
+
+        await client.upload(data, remotePath);
+        return { stdout: `Uploaded ${src} → ${remotePath} (${data.byteLength} bytes)\n`, stderr: '', exitCode: 0 };
+      }
+    } catch (err) {
+      return { stdout: '', stderr: `scp failed: ${err.message}\n`, exitCode: 1 };
+    }
   }
 
   // ── Subcommand: tools ──────────────────────────────────────────
@@ -297,6 +351,195 @@ export function registerWshCli(registry, getAgent, getShell) {
     }
   }
 
+  // ── Subcommand: reverse ──────────────────────────────────────
+
+  async function cmdReverse(positional, flags) {
+    const relay = positional[0];
+    if (!relay) {
+      return { stdout: '', stderr: 'Usage: wsh reverse <relay> [--expose-shell]\n', exitCode: 1 };
+    }
+
+    const parsed = parseUserHost(relay, parseInt(flags.port) || 4422);
+    if (!parsed) {
+      return { stdout: '', stderr: 'Invalid relay host.\n', exitCode: 1 };
+    }
+
+    const keyName = flags.identity || 'default';
+    const transport = flags.transport || 'auto';
+
+    try {
+      const ks = await ensureKeyStore();
+      const keyPair = await ks.getKeyPair(keyName);
+      if (!keyPair) {
+        return { stdout: '', stderr: `Key "${keyName}" not found. Run: wsh keygen\n`, exitCode: 1 };
+      }
+
+      const url = buildUrl(parsed.host, parsed.port, transport);
+      const client = new WshClient();
+
+      // Parse --expose-* flags; default to all if none specified
+      const hasExpose = flags['expose-shell'] || flags['expose-tools'] || flags['expose-fs'];
+      const expose = {
+        shell: hasExpose ? !!flags['expose-shell'] : true,
+        tools: hasExpose ? !!flags['expose-tools'] : true,
+        fs: hasExpose ? !!flags['expose-fs'] : true,
+      };
+
+      const sessionId = await client.connectReverse(url, {
+        username: parsed.user || 'browser',
+        keyPair,
+        expose,
+      });
+
+      // Wire incoming handler
+      if (typeof globalThis.__wshIncomingHandler === 'function') {
+        client.onReverseConnect = globalThis.__wshIncomingHandler;
+      }
+
+      connections.set(parsed.host, client);
+
+      const rawPub = await exportPublicKeyRaw(keyPair.publicKey);
+      const fp = fingerprint(rawPub);
+      const shortFp = shortFingerprint(fp, [], 8);
+
+      const exposing = Object.entries(expose).filter(([,v]) => v).map(([k]) => k).join(', ');
+      return {
+        stdout: `Registered as reverse peer ${shortFp} on ${parsed.host}:${parsed.port}\n` +
+                `Session: ${sessionId}\nExposing: ${exposing}\n` +
+                `Waiting for incoming connections...\n`,
+        stderr: '', exitCode: 0,
+      };
+    } catch (err) {
+      return { stdout: '', stderr: `Reverse registration failed: ${err.message}\n`, exitCode: 1 };
+    }
+  }
+
+  // ── Subcommand: peers ───────────────────────────────────────────
+
+  async function cmdPeers(positional, flags) {
+    const relay = positional[0];
+    if (!relay) {
+      return { stdout: '', stderr: 'Usage: wsh peers <relay>\n', exitCode: 1 };
+    }
+
+    const parsed = parseUserHost(relay, parseInt(flags.port) || 4422);
+    if (!parsed) {
+      return { stdout: '', stderr: 'Invalid relay host.\n', exitCode: 1 };
+    }
+
+    const keyName = flags.identity || 'default';
+    const transport = flags.transport || 'auto';
+
+    try {
+      // Reuse existing connection or create a new one
+      let client = connections.get(parsed.host);
+      if (!client || client.state !== 'authenticated') {
+        const ks = await ensureKeyStore();
+        const keyPair = await ks.getKeyPair(keyName);
+        if (!keyPair) {
+          return { stdout: '', stderr: `Key "${keyName}" not found.\n`, exitCode: 1 };
+        }
+
+        const url = buildUrl(parsed.host, parsed.port, transport);
+        client = new WshClient();
+        await client.connect(url, {
+          username: parsed.user || 'browser',
+          keyPair,
+        });
+        connections.set(parsed.host, client);
+      }
+
+      // Send ReverseList and wait for ReversePeers
+      const peers = await client.listPeers();
+
+      const lines = ['FINGERPRINT    USERNAME         CAPABILITIES         LAST SEEN'];
+      if (peers.length === 0) {
+        lines.push('(no peers online)');
+      } else {
+        for (const p of peers) {
+          const caps = (p.capabilities || []).join(', ');
+          const lastSeen = p.last_seen != null ? `${p.last_seen}s ago` : '—';
+          lines.push(
+            `${(p.fingerprint_short || '').padEnd(15)}` +
+            `${(p.username || '').padEnd(17)}` +
+            `${caps.padEnd(21)}` +
+            `${lastSeen}`
+          );
+        }
+      }
+      lines.push(`\n${peers.length} peer(s).`);
+
+      return { stdout: lines.join('\n') + '\n', stderr: '', exitCode: 0 };
+    } catch (err) {
+      return { stdout: '', stderr: `Failed to list peers: ${err.message}\n`, exitCode: 1 };
+    }
+  }
+
+  // ── Subcommand: attach ──────────────────────────────────────────
+
+  async function cmdAttach(positional, flags) {
+    const sessionId = positional[0];
+    if (!sessionId) {
+      return { stdout: '', stderr: 'Usage: wsh attach <session_id>\n', exitCode: 1 };
+    }
+
+    const host = positional[1] || [...connections.keys()].pop();
+    if (!host) {
+      return { stdout: '', stderr: 'No active connection.\n', exitCode: 1 };
+    }
+
+    const client = connections.get(host);
+    if (!client || client.state !== 'authenticated') {
+      return { stdout: '', stderr: `Not connected to ${host}\n`, exitCode: 1 };
+    }
+
+    try {
+      await client.attachSession(sessionId, { readOnly: false });
+      return { stdout: `Attached to session ${sessionId}\n`, stderr: '', exitCode: 0 };
+    } catch (err) {
+      return { stdout: '', stderr: `Attach failed: ${err.message}\n`, exitCode: 1 };
+    }
+  }
+
+  // ── Subcommand: connect peer (fingerprint) ─────────────────────
+
+  async function cmdConnectPeer(fingerprint, relay, flags) {
+    if (!relay) {
+      return { stdout: '', stderr: 'Usage: wsh connect <fingerprint> <relay>\n', exitCode: 1 };
+    }
+
+    const parsed = parseUserHost(relay, parseInt(flags.port) || 4422);
+    if (!parsed) {
+      return { stdout: '', stderr: 'Invalid relay host.\n', exitCode: 1 };
+    }
+
+    const keyName = flags.identity || 'default';
+    const transport = flags.transport || 'auto';
+
+    try {
+      let client = connections.get(parsed.host);
+      if (!client || client.state !== 'authenticated') {
+        const ks = await ensureKeyStore();
+        const keyPair = await ks.getKeyPair(keyName);
+        if (!keyPair) {
+          return { stdout: '', stderr: `Key "${keyName}" not found.\n`, exitCode: 1 };
+        }
+        const url = buildUrl(parsed.host, parsed.port, transport);
+        client = new WshClient();
+        await client.connect(url, { username: parsed.user || 'browser', keyPair });
+        connections.set(parsed.host, client);
+      }
+
+      await client.reverseConnectTo(fingerprint);
+      return {
+        stdout: `Reverse-connecting to peer ${fingerprint}...\n`,
+        stderr: '', exitCode: 0,
+      };
+    } catch (err) {
+      return { stdout: '', stderr: `Connect failed: ${err.message}\n`, exitCode: 1 };
+    }
+  }
+
   // ── Main command handler ───────────────────────────────────────
 
   registry.register('wsh', async ({ args }) => {
@@ -314,13 +557,19 @@ export function registerWshCli(registry, getAgent, getShell) {
         return cmdKeygen(positional.slice(1));
       case 'keys':
         return cmdKeys();
-      case 'connect':
+      case 'connect': {
+        // If the argument looks like a hex fingerprint (no @), do reverse connect
+        const target = positional[1];
+        if (target && /^[0-9a-f]{8,}$/i.test(target) && !target.includes('@')) {
+          return cmdConnectPeer(target, positional[2], flags);
+        }
         return cmdConnect(positional.slice(1), flags);
+      }
       case 'list':
       case 'sessions':
         return cmdList();
       case 'attach':
-        return { stdout: '', stderr: 'attach: use interactive PTY mode\n', exitCode: 1 };
+        return cmdAttach(positional.slice(1), flags);
       case 'detach':
         return { stdout: '', stderr: 'detach: use Ctrl+D or close session\n', exitCode: 1 };
       case 'copy-id':
@@ -330,9 +579,9 @@ export function registerWshCli(registry, getAgent, getShell) {
       case 'tools':
         return cmdTools(positional.slice(1));
       case 'reverse':
-        return { stdout: '', stderr: 'reverse: not yet implemented in browser shell\n', exitCode: 1 };
+        return cmdReverse(positional.slice(1), flags);
       case 'peers':
-        return { stdout: '', stderr: 'peers: not yet implemented in browser shell\n', exitCode: 1 };
+        return cmdPeers(positional.slice(1), flags);
       default:
         break;
     }

@@ -59,9 +59,119 @@ impl KeyPermissions {
 
     /// Parse permissions from an authorized_keys options string.
     ///
-    /// TODO: implement full options parsing (command="...", no-pty, etc.)
-    pub fn from_options(fingerprint: String, _options: Option<&str>) -> Self {
-        // Stub: return full access for now
-        Self::full_access(fingerprint)
+    /// Supports SSH-style key options:
+    /// - `command="cmd"` → forced command, only exec allowed
+    /// - `no-pty` → disallow PTY allocation
+    /// - `restrict` → deny all, must combine with `permit-*`
+    /// - `restrict,permit-pty` → only PTY allowed
+    /// - `no-agent-forwarding`, `no-port-forwarding` → ignored (no-op)
+    pub fn from_options(fingerprint: String, options: Option<&str>) -> Self {
+        let options_str = match options {
+            Some(s) if !s.is_empty() => s,
+            _ => return Self::full_access(fingerprint),
+        };
+
+        let mut allow_pty = true;
+        let mut forced_command: Option<String> = None;
+        let mut restricted = false;
+        let mut permit_pty = false;
+        let mut permit_exec = false;
+        let mut permit_mcp = false;
+        let mut permit_file = false;
+        let mut permit_relay = false;
+
+        // Parse comma-separated options, handling quoted values
+        for opt in split_options(options_str) {
+            let opt = opt.trim();
+            if opt.is_empty() {
+                continue;
+            }
+
+            if let Some(cmd) = opt.strip_prefix("command=") {
+                // Extract quoted command
+                let cmd = cmd.trim_matches('"').trim_matches('\'');
+                forced_command = Some(cmd.to_string());
+            } else if opt == "no-pty" {
+                allow_pty = false;
+            } else if opt == "restrict" {
+                restricted = true;
+            } else if opt == "permit-pty" {
+                permit_pty = true;
+            } else if opt == "permit-exec" {
+                permit_exec = true;
+            } else if opt == "permit-mcp" {
+                permit_mcp = true;
+            } else if opt == "permit-file-transfer" {
+                permit_file = true;
+            } else if opt == "permit-relay" {
+                permit_relay = true;
+            }
+            // Ignore unknown options (no-agent-forwarding, etc.)
+        }
+
+        if restricted {
+            // Start with nothing, add back permitted scopes
+            let mut scopes = Vec::new();
+            if permit_pty {
+                allow_pty = true;
+                scopes.push(SessionScope::Shell);
+            }
+            if permit_exec {
+                scopes.push(SessionScope::Shell);
+            }
+            if permit_mcp {
+                scopes.push(SessionScope::Mcp);
+            }
+            if permit_file {
+                scopes.push(SessionScope::FileTransfer);
+            }
+            if permit_relay {
+                scopes.push(SessionScope::Relay);
+            }
+            scopes.dedup();
+
+            Self {
+                fingerprint,
+                scopes,
+                allow_pty: permit_pty,
+                forced_command,
+                max_sessions: None,
+            }
+        } else {
+            // Non-restricted: start with full access, remove denied scopes
+            let mut perms = Self::full_access(fingerprint);
+            perms.allow_pty = allow_pty;
+            perms.forced_command = forced_command;
+            perms
+        }
     }
+}
+
+/// Split options string by commas, respecting quoted values.
+fn split_options(s: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut quote_char = '"';
+
+    for ch in s.chars() {
+        if in_quotes {
+            current.push(ch);
+            if ch == quote_char {
+                in_quotes = false;
+            }
+        } else if ch == '"' || ch == '\'' {
+            in_quotes = true;
+            quote_char = ch;
+            current.push(ch);
+        } else if ch == ',' {
+            parts.push(std::mem::take(&mut current));
+        } else {
+            current.push(ch);
+        }
+    }
+    if !current.is_empty() {
+        parts.push(current);
+    }
+    parts
 }

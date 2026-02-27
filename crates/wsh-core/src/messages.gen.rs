@@ -38,6 +38,12 @@ pub enum MsgType {
     Presence = 0x36,
     ControlChanged = 0x37,
     Metrics = 0x38,
+    Clipboard = 0x39,
+    RecordingExport = 0x3a,
+    CommandJournal = 0x3b,
+    MetricsRequest = 0x3c,
+    SuspendSession = 0x3d,
+    RestartPty = 0x3e,
 
     McpDiscover = 0x40,
     McpTools = 0x41,
@@ -102,6 +108,12 @@ impl TryFrom<u8> for MsgType {
             0x36 => Ok(Self::Presence),
             0x37 => Ok(Self::ControlChanged),
             0x38 => Ok(Self::Metrics),
+            0x39 => Ok(Self::Clipboard),
+            0x3a => Ok(Self::RecordingExport),
+            0x3b => Ok(Self::CommandJournal),
+            0x3c => Ok(Self::MetricsRequest),
+            0x3d => Ok(Self::SuspendSession),
+            0x3e => Ok(Self::RestartPty),
             0x40 => Ok(Self::McpDiscover),
             0x41 => Ok(Self::McpTools),
             0x42 => Ok(Self::McpCall),
@@ -140,6 +152,7 @@ pub enum ChannelKind {
     File,
     Tcp,
     Udp,
+    Job,
 }
 
 /// AuthMethod enum.
@@ -194,6 +207,12 @@ pub enum Payload {
     Presence(PresencePayload),
     ControlChanged(ControlChangedPayload),
     Metrics(MetricsPayload),
+    Clipboard(ClipboardPayload),
+    RecordingExport(RecordingExportPayload),
+    CommandJournal(CommandJournalPayload),
+    MetricsRequest(MetricsRequestPayload),
+    SuspendSession(SuspendSessionPayload),
+    RestartPty(RestartPtyPayload),
     McpDiscover(McpDiscoverPayload),
     McpTools(McpToolsPayload),
     McpCall(McpCallPayload),
@@ -346,6 +365,8 @@ pub struct AttachPayload {
     pub token: Vec<u8>,
     #[serde(default = "default_attach_mode")]
     pub mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_label: Option<String>,
 }
 
 fn default_attach_mode() -> String {
@@ -403,6 +424,51 @@ pub struct MetricsPayload {
     pub sessions: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rtt: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClipboardPayload {
+    pub direction: String,
+    pub data: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecordingExportPayload {
+    pub session_id: String,
+    #[serde(default)]
+    pub format: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandJournalPayload {
+    pub session_id: String,
+    pub command: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    pub timestamp: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetricsRequestPayload {
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SuspendSessionPayload {
+    pub session_id: String,
+    pub action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RestartPtyPayload {
+    pub session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

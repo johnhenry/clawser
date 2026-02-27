@@ -105,6 +105,14 @@ enum Command {
         relay_host: String,
     },
 
+    /// Reverse connect to a browser peer via relay
+    ReverseConnect {
+        /// Target peer fingerprint (hex prefix)
+        fingerprint: String,
+        /// Relay host to connect through
+        relay_host: String,
+    },
+
     /// List MCP tools available on a remote host
     Tools {
         /// Target host (optional, uses config default)
@@ -174,6 +182,9 @@ async fn main() {
         }
         Some(Command::Peers { relay_host }) => {
             commands::relay::run_peers(&relay_host, port, &identity, transport.as_deref()).await
+        }
+        Some(Command::ReverseConnect { fingerprint, relay_host }) => {
+            commands::relay::run_connect(&fingerprint, &relay_host, port, &identity, transport.as_deref()).await
         }
         Some(Command::Tools { host }) => {
             commands::tools::run(host.as_deref(), port, &identity, transport.as_deref()).await

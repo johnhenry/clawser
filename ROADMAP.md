@@ -183,6 +183,115 @@ Priority: Integrations, API, and community.
 
 ---
 
+## Phase 6: Remote Execution (wsh)
+
+Priority: Complete the wsh protocol implementation — browser-native remote shell, reverse relay, session management, and MCP bridging.
+
+### Phase 6.0: Protocol & Transport — COMPLETE
+- [x] CBOR control channel with BE32 framing
+- [x] Ed25519 pubkey auth (authorized_keys)
+- [x] WebTransport + WebSocket fallback
+- [x] 50+ message types (codegen from YAML spec)
+- [x] Ping/pong keepalive
+- [x] JS client library (connect, auth, sessions, file transfer, MCP)
+- [x] Rust CLI (connect, keygen, copy-id, scp, sessions, attach)
+- [x] Browser wsh tools (9 tools)
+- [x] Pairing system (6-digit codes, tokens)
+
+### Phase 6.1: Gateway & Networking — COMPLETE
+- [x] TCP proxy (outbound)
+- [x] UDP proxy (outbound)
+- [x] DNS resolution
+- [x] Bidirectional data relay (GatewayData 0x7e)
+- [x] Reverse TCP listeners (server-side bind)
+- [x] Gateway policy enforcement (allowlist, limits)
+- [x] Netway virtual networking (StreamSocket, DatagramSocket, Listener)
+- [x] InboundReject handler (TcpStream leak fix)
+- [x] UDP idle timeout (60s)
+- [x] Operation timeouts (30s default)
+- [x] write_channels leak fix on relay end
+- [x] Data pump error handling (close socket on transport error)
+
+### Phase 6.2: "wsh into Browser" Relay
+- [x] Server dispatch: ReverseRegister (0x50)
+- [x] Server dispatch: ReverseList (0x51) → ReversePeers (0x52)
+- [x] Server dispatch: ReverseConnect (0x53) with transport bridging
+- [x] Server: peer_transports map + cleanup on disconnect
+- [x] Browser: auto ReverseRegister on wsh connect
+- [x] Browser: onReverseConnect callback wiring in WshClient
+- [x] Browser: incoming session handler (clawser-wsh-incoming.js)
+- [x] Browser CLI: `wsh reverse` implementation (replace stub)
+- [x] Browser CLI: `wsh peers` implementation (replace stub)
+- [x] Rust CLI: wire `run_reverse()` (connect + register + hold)
+- [x] Rust CLI: wire `run_peers()` (connect + list + display)
+- [x] Rust CLI: `wsh connect <fingerprint>` reverse connect mode
+
+### Phase 6.3: Session Management (Server)
+- [x] Server dispatch: Attach (0x30) — token validation + ring buffer replay
+- [x] Server dispatch: Resume (0x31) — token + last_seq replay
+- [x] Server dispatch: Open (0x10) — PTY/exec/meta channel creation
+- [x] Server dispatch: Resize (0x13) — PTY resize
+- [x] Server dispatch: Signal (0x14) — send to process group
+- [x] Server dispatch: Close (0x16) — channel teardown + session GC
+- [x] Session metadata: Rename (0x32)
+- [x] Session metadata: Snapshot (0x35) — mark position in recording
+- [x] Session metadata: Presence (0x36) — broadcast to attached clients
+- [x] Session metadata: ControlChanged (0x37)
+- [x] Session metadata: Metrics (0x38)
+- [x] Session metadata: IdleWarning (0x33) — server idle timer
+- [x] Session metadata: Shutdown (0x34) — on server SIGTERM
+
+### Phase 6.4: MCP Dispatch
+- [x] Server dispatch: McpDiscover (0x40) → McpTools (0x41)
+- [x] Server dispatch: McpCall (0x42) → McpResult (0x43)
+- [x] MCP HTTP proxy: discovery against remote servers
+- [x] MCP HTTP proxy: forwarding calls to remote servers
+
+### Phase 6.5: Protocol Improvements
+- [x] Dynamic capability negotiation (replace hardcoded features)
+- [x] Clipboard sync (OSC 52): add Clipboard message to spec + codegen
+- [x] Clipboard sync: server-side OSC 52 detection in PTY output
+- [x] Clipboard sync: client-side navigator.clipboard.writeText
+- [x] Per-key permission enforcement (parse authorized_keys options)
+- [x] Permission checks in dispatch (pty, exec, mcp, file-transfer, relay)
+- [x] Auth rate limiting (5/min per IP)
+- [x] Attach rate limiting (10/min per principal)
+- [x] Password auth implementation (PAM or config hash)
+- [x] Protocol version negotiation (version/min_version/max_version)
+
+### Phase 6.6: Client Enhancements
+- [x] URL read-only attach (#/wsh/session/<id>?token=X&mode=read)
+- [x] Browser CLI: `wsh sessions` (list active)
+- [x] Browser CLI: `wsh attach <session_id>` (reattach)
+- [x] Browser CLI: `wsh scp <src> <dst>` (file transfer)
+- [x] Browser CLI: `wsh connect <fingerprint>` (reverse connect)
+
+### Phase 6.7: Protocol Extensions & Future
+- [x] Session recording export (download JSONL/asciicast)
+- [x] Session snapshots (time-travel markers)
+- [x] Command journal (structured shell history with exit codes)
+- [x] Device labels on attach (browser/cli/platform metadata)
+- [x] Background jobs channel (kind: "job")
+- [x] Server metrics channel (CPU/memory/sessions)
+- [x] Idle suspend (SIGSTOP/SIGCONT instead of kill)
+- [x] Graceful PTY restart (restart shell without killing session)
+- [ ] ghostty-web terminal frontend integration
+- [ ] Ephemeral guest sessions (short-lived share links)
+- [ ] Multi-attach read-only URL sharing
+- [ ] Stream compression negotiation (zstd)
+- [ ] Per-attachment rate control (slow consumer policy)
+- [ ] Cross-session linking (jump host support)
+- [ ] AI co-pilot attachment mode (read-only AI observer)
+- [ ] E2E encrypted session mode
+- [ ] Predictive local echo (mosh-style)
+- [ ] Terminal diff-based sync (true mosh replacement)
+- [ ] Horizontal scaling (stateless tokens, shared secret)
+- [ ] Shared sessions across principals
+- [ ] Structured file channel (SFTP replacement)
+- [ ] Policy engine (OPA-like enterprise control)
+
+---
+
 ## Design Principles
 
 These principles guide development decisions:

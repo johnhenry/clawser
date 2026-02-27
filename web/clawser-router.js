@@ -46,9 +46,26 @@ export function resetRenderedPanels() {
 // Initialize with chat as rendered
 renderedPanels.add('chat');
 
-/** Parse location.hash into a route descriptor. @returns {{route: string, wsId?: string, convId?: string, panel?: string}} */
+/** Parse location.hash into a route descriptor. @returns {{route: string, wsId?: string, convId?: string, panel?: string, wshSession?: object}} */
 export function parseHash() {
   const hash = location.hash.replace(/^#\/?/, '');
+
+  // wsh session attach URL: #/wsh/session/<id>?token=X&mode=read
+  if (hash.startsWith('wsh/session/')) {
+    const rest = hash.slice('wsh/session/'.length);
+    const [sessionPart, queryPart] = rest.split('?');
+    const params = new URLSearchParams(queryPart || '');
+    return {
+      route: 'wsh-session',
+      wshSession: {
+        sessionId: sessionPart,
+        token: params.get('token') || '',
+        mode: params.get('mode') || 'control',
+        host: params.get('host') || '',
+      },
+    };
+  }
+
   if (hash.startsWith('workspace/')) {
     const rest = hash.slice('workspace/'.length);
     const parts = rest.split('/');

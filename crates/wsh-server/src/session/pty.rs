@@ -191,3 +191,27 @@ impl PtyHandle {
         (self.cols, self.rows)
     }
 }
+
+/// Detect OSC 52 clipboard escape sequences in PTY output.
+///
+/// OSC 52 format: `\x1b]52;c;<base64-data>\x07` or `\x1b]52;c;<base64-data>\x1b\\`
+/// Returns the base64-encoded clipboard data if found.
+pub fn detect_osc52(data: &[u8]) -> Option<String> {
+    // Look for ESC ] 52 ; c ; ... (ST)
+    // ST can be BEL (0x07) or ESC \ (0x1b 0x5c)
+    let prefix = b"\x1b]52;c;";
+    let start = data.windows(prefix.len()).position(|w| w == prefix)?;
+    let payload_start = start + prefix.len();
+
+    // Find the string terminator
+    let remaining = &data[payload_start..];
+
+    // Look for BEL or ESC backslash
+    let end = remaining.iter().position(|&b| b == 0x07)
+        .or_else(|| {
+            remaining.windows(2).position(|w| w == b"\x1b\\")
+        })?;
+
+    let payload = &remaining[..end];
+    String::from_utf8(payload.to_vec()).ok()
+}

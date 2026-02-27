@@ -37,7 +37,7 @@ async function getClient(host) {
 export class WshConnectTool extends BrowserTool {
   get name() { return 'wsh_connect'; }
   get description() {
-    return 'Connect to a remote wsh server. Establishes an authenticated session.';
+    return 'Connect to a remote wsh server. Establishes an authenticated session. Use expose option to register as a reverse peer.';
   }
   get parameters() {
     return {
@@ -46,13 +46,14 @@ export class WshConnectTool extends BrowserTool {
         host: { type: 'string', description: 'Server URL (e.g., wss://host:4422 or https://host:4422)' },
         user: { type: 'string', description: 'Username for authentication' },
         key_name: { type: 'string', description: 'Name of the Ed25519 key to use (default: "default")' },
+        expose: { type: 'object', description: 'Expose capabilities for reverse connections: { shell: true, tools: true, fs: true }' },
       },
       required: ['host', 'user'],
     };
   }
   get permission() { return 'approve'; }
 
-  async execute({ host, user, key_name = 'default' }) {
+  async execute({ host, user, key_name = 'default', expose }) {
     try {
       if (connections.has(host) && connections.get(host).state === 'authenticated') {
         return { success: true, output: `Already connected to ${host}` };
@@ -65,6 +66,23 @@ export class WshConnectTool extends BrowserTool {
       }
 
       const client = new WshClient();
+
+      if (expose) {
+        // Connect in reverse mode — register as a peer
+        const sessionId = await client.connectReverse(host, {
+          username: user,
+          keyPair,
+          expose,
+        });
+        // Wire incoming session handler if available
+        if (typeof globalThis.__wshIncomingHandler === 'function') {
+          client.onReverseConnect = globalThis.__wshIncomingHandler;
+        }
+        connections.set(host, client);
+        const caps = Object.keys(expose).filter(k => expose[k]).join(', ');
+        return { success: true, output: `Connected to ${host} (session: ${sessionId}, exposing: ${caps || 'none'})` };
+      }
+
       const sessionId = await client.connect(host, {
         username: user,
         keyPair,

@@ -362,8 +362,8 @@ describe('CHANNEL_KIND extensions', () => {
     assert.equal(CHANNEL_KIND.FILE, 'file');
   });
 
-  it('has exactly 6 kinds', () => {
-    assert.equal(Object.keys(CHANNEL_KIND).length, 6);
+  it('has exactly 7 kinds', () => {
+    assert.equal(Object.keys(CHANNEL_KIND).length, 7);
   });
 });
 

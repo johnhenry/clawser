@@ -40,6 +40,12 @@ export const MSG = Object.freeze({
   PRESENCE:          0x36,
   CONTROL_CHANGED:   0x37,
   METRICS:           0x38,
+  CLIPBOARD:         0x39,
+  RECORDING_EXPORT:  0x3a,
+  COMMAND_JOURNAL:   0x3b,
+  METRICS_REQUEST:   0x3c,
+  SUSPEND_SESSION:   0x3d,
+  RESTART_PTY:       0x3e,
 
   // Mcp
   MCP_DISCOVER:      0x40,
@@ -88,6 +94,7 @@ export const CHANNEL_KIND = Object.freeze({
   FILE:  'file',
   TCP:   'tcp',
   UDP:   'udp',
+  JOB:   'job',
 });
 
 // ── Auth methods ──────────────────────────────────────────────────────
@@ -241,13 +248,10 @@ export function pong({ id } = {}) {
   };
 }
 
-export function attach({ sessionId, token, mode = "control" } = {}) {
-  return {
-    type: MSG.ATTACH,
-    session_id: sessionId,
-    token,
-    mode,
-  };
+export function attach({ sessionId, token, mode = "control", deviceLabel } = {}) {
+  const msg = { type: MSG.ATTACH, session_id: sessionId, token, mode };
+  if (deviceLabel !== undefined) msg.device_label = deviceLabel;
+  return msg;
 }
 
 export function resume({ sessionId, token, lastSeq } = {}) {
@@ -307,6 +311,46 @@ export function metrics({ cpu, memory, sessions, rtt } = {}) {
   if (memory !== undefined) msg.memory = memory;
   if (sessions !== undefined) msg.sessions = sessions;
   if (rtt !== undefined) msg.rtt = rtt;
+  return msg;
+}
+
+export function clipboard({ direction, data } = {}) {
+  return {
+    type: MSG.CLIPBOARD,
+    direction,
+    data,
+  };
+}
+
+export function recordingExport({ sessionId, format = "jsonl", data } = {}) {
+  const msg = { type: MSG.RECORDING_EXPORT, session_id: sessionId, format };
+  if (data !== undefined) msg.data = data;
+  return msg;
+}
+
+export function commandJournal({ sessionId, command, exitCode, durationMs, cwd, timestamp } = {}) {
+  const msg = { type: MSG.COMMAND_JOURNAL, session_id: sessionId, command, timestamp };
+  if (exitCode !== undefined) msg.exit_code = exitCode;
+  if (durationMs !== undefined) msg.duration_ms = durationMs;
+  if (cwd !== undefined) msg.cwd = cwd;
+  return msg;
+}
+
+export function metricsRequest() {
+  return { type: MSG.METRICS_REQUEST };
+}
+
+export function suspendSession({ sessionId, action } = {}) {
+  return {
+    type: MSG.SUSPEND_SESSION,
+    session_id: sessionId,
+    action,
+  };
+}
+
+export function restartPty({ sessionId, command } = {}) {
+  const msg = { type: MSG.RESTART_PTY, session_id: sessionId };
+  if (command !== undefined) msg.command = command;
   return msg;
 }
 

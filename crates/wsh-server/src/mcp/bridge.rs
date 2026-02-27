@@ -169,6 +169,11 @@ impl McpBridge {
         }))
     }
 
+    /// Check if a tool is registered.
+    pub fn has_tool(&self, name: &str) -> bool {
+        self.tools.contains_key(name)
+    }
+
     /// Number of registered tools.
     pub fn count(&self) -> usize {
         self.tools.len()

@@ -47,12 +47,29 @@ impl Default for ServerSection {
 }
 
 /// `[auth]` section of the config TOML.
+///
+/// # Password Authentication
+///
+/// To enable password auth, set `allow_password = true` and add entries
+/// to `password_hashes`:
+///
+/// ```toml
+/// [auth]
+/// allow_password = true
+///
+/// [auth.password_hashes]
+/// alice = "sha256:e3b0c44298fc..."  # SHA-256 hex digest of password
+/// bob = "sha256:5e884898da28..."
+/// ```
 #[derive(Debug, Clone, Deserialize)]
 pub struct AuthSection {
     #[serde(default = "default_true")]
     pub allow_pubkey: bool,
     #[serde(default = "default_true")]
     pub allow_password: bool,
+    /// Username → "sha256:<hex>" password hash pairs.
+    #[serde(default)]
+    pub password_hashes: std::collections::HashMap<String, String>,
 }
 
 impl Default for AuthSection {
@@ -60,6 +77,7 @@ impl Default for AuthSection {
         Self {
             allow_pubkey: true,
             allow_password: true,
+            password_hashes: std::collections::HashMap::new(),
         }
     }
 }
@@ -184,6 +202,8 @@ pub struct ServerConfig {
     pub gateway_max_connections: usize,
     /// Whether reverse tunnel listeners are allowed. See [`GatewaySection::enable_reverse_tunnels`].
     pub gateway_enable_reverse_tunnels: bool,
+    /// Username → "sha256:<hex>" password hash pairs for password auth.
+    pub password_hashes: std::collections::HashMap<String, String>,
 }
 
 impl ServerConfig {
@@ -269,6 +289,7 @@ impl ServerConfig {
             gateway_allowed_destinations: file_config.gateway.allowed_destinations,
             gateway_max_connections: file_config.gateway.max_connections,
             gateway_enable_reverse_tunnels: file_config.gateway.enable_reverse_tunnels,
+            password_hashes: file_config.auth.password_hashes,
         })
     }
 }

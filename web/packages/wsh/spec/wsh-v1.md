@@ -19,7 +19,7 @@
 - **Version**: `wsh-v1`
 - **Wire format**: CBOR
 - **Framing**: length prefixed be32
-- **Total message types**: 50 (including WS_DATA framing marker)
+- **Total message types**: 56 (including WS_DATA framing marker)
 
 ## Enums
 
@@ -35,6 +35,7 @@ Type: `string`
 | `file` |
 | `tcp` |
 | `udp` |
+| `job` |
 
 ### AuthMethod
 
@@ -75,6 +76,12 @@ Type: `string`
 | `0x36` | Presence | session |
 | `0x37` | ControlChanged | session |
 | `0x38` | Metrics | session |
+| `0x39` | Clipboard | session |
+| `0x3a` | RecordingExport | session |
+| `0x3b` | CommandJournal | session |
+| `0x3c` | MetricsRequest | session |
+| `0x3d` | SuspendSession | session |
+| `0x3e` | RestartPty | session |
 | `0x40` | McpDiscover | mcp |
 | `0x41` | McpTools | mcp |
 | `0x42` | McpCall | mcp |
@@ -267,6 +274,7 @@ Category: **session**
 | `session_id` | `string` | yes | — |
 | `token` | `bytes` | yes | — |
 | `mode` | `string` | no | `"control"` |
+| `device_label` | `string` | no | — |
 
 ### Resume (`0x31`)
 
@@ -338,6 +346,74 @@ Category: **session**
 | `memory` | `u64` | no | — |
 | `sessions` | `u32` | no | — |
 | `rtt` | `u64` | no | — |
+
+### Clipboard (`0x39`)
+
+Category: **session**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `direction` | `string` | yes | — |
+| `data` | `string` | yes | — |
+
+### RecordingExport (`0x3a`)
+
+Category: **session**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `session_id` | `string` | yes | — |
+| `format` | `string` | no | `"jsonl"` |
+| `data` | `string` | no | — |
+
+### CommandJournal (`0x3b`)
+
+Category: **session**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `session_id` | `string` | yes | — |
+| `command` | `string` | yes | — |
+| `exit_code` | `i32` | no | — |
+| `duration_ms` | `u64` | no | — |
+| `cwd` | `string` | no | — |
+| `timestamp` | `u64` | yes | — |
+
+### MetricsRequest (`0x3c`)
+
+Category: **session**
+
+> >
+
+*No fields.*
+
+### SuspendSession (`0x3d`)
+
+Category: **session**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `session_id` | `string` | yes | — |
+| `action` | `string` | yes | — |
+
+### RestartPty (`0x3e`)
+
+Category: **session**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `session_id` | `string` | yes | — |
+| `command` | `string` | no | — |
 
 ### McpDiscover (`0x40`)
 

@@ -13,7 +13,8 @@ import {
   MSG, AUTH_METHOD,
   hello, auth as authMsg, open as openMsg, close as closeMsg,
   attach as attachMsg, resume as resumeMsg, ping as pingMsg, pong as pongMsg,
-  reverseRegister as reverseRegisterMsg,
+  reverseRegister as reverseRegisterMsg, reverseList as reverseListMsg,
+  reverseConnect as reverseConnectMsg,
   mcpDiscover as mcpDiscoverMsg, mcpCall as mcpCallMsg,
 } from './messages.mjs';
 import { signChallenge, exportPublicKeyRaw } from './auth.mjs';
@@ -62,6 +63,9 @@ export class WshClient {
    */
   #waiters = new Map();
 
+  /** @type {string[]} Server-advertised features from SERVER_HELLO. */
+  #serverFeatures = [];
+
   /** @type {number|null} Ping interval handle. */
   #pingTimer = null;
 
@@ -84,6 +88,13 @@ export class WshClient {
    * @type {function(object): void|null}
    */
   onReverseConnect = null;
+
+  /**
+   * Called when a clipboard sync message arrives (OSC 52).
+   * The default handler writes to navigator.clipboard automatically.
+   * @type {function(object): void|null}
+   */
+  onClipboard = null;
 
   /**
    * Called when a gateway-subsystem control message arrives (opcodes 0x70-0x7f).
@@ -120,6 +131,20 @@ export class WshClient {
   /** Read-only view of active sessions. */
   get sessions() {
     return new Map(this.#sessions);
+  }
+
+  /** Server-advertised features from SERVER_HELLO. */
+  get features() {
+    return [...this.#serverFeatures];
+  }
+
+  /**
+   * Check if the server advertised a specific feature.
+   * @param {string} name - Feature name (e.g. 'gateway', 'reverse', 'mcp')
+   * @returns {boolean}
+   */
+  hasFeature(name) {
+    return this.#serverFeatures.includes(name);
   }
 
   // ── Connection ──────────────────────────────────────────────────────
@@ -189,6 +214,7 @@ export class WshClient {
       if (firstResponse.type === MSG.SERVER_HELLO) {
         // Server may proceed directly to auth if it accepted the hello.
         tempSessionId = firstResponse.session_id;
+        this.#serverFeatures = firstResponse.features || [];
 
         // If pubkey auth, we still need a challenge.
         if (authMethod === AUTH_METHOD.PUBKEY) {
@@ -534,6 +560,41 @@ export class WshClient {
     return sessionId;
   }
 
+  /**
+   * List peers registered on the relay server.
+   *
+   * @param {number} [timeout=10000] - Timeout in ms
+   * @returns {Promise<Array<{fingerprint_short: string, username: string, capabilities: string[], last_seen: number|null}>>}
+   */
+  async listPeers(timeout = DEFAULT_OPEN_TIMEOUT) {
+    this.#assertAuthenticated('listPeers');
+
+    await this.#transport.sendControl(reverseListMsg());
+
+    const response = await this.#waitForMessage(
+      [MSG.REVERSE_PEERS],
+      timeout,
+      'Timed out waiting for peer list'
+    );
+
+    return response.peers || [];
+  }
+
+  /**
+   * Initiate a reverse connection to a registered peer.
+   *
+   * @param {string} targetFingerprint - Fingerprint (or prefix) of the target peer
+   * @param {number} [timeout=10000] - Timeout in ms
+   * @returns {Promise<void>}
+   */
+  async reverseConnectTo(targetFingerprint, timeout = DEFAULT_OPEN_TIMEOUT) {
+    this.#assertAuthenticated('reverseConnectTo');
+
+    await this.#transport.sendControl(
+      reverseConnectMsg({ targetFingerprint, username: '' })
+    );
+  }
+
   // ── File transfer ───────────────────────────────────────────────────
 
   /**
@@ -794,6 +855,7 @@ export class WshClient {
 
       if (firstResponse.type === MSG.SERVER_HELLO) {
         tempSessionId = firstResponse.session_id;
+        this.#serverFeatures = firstResponse.features || [];
 
         if (authMethod === AUTH_METHOD.PUBKEY) {
           const challengeMsg = await this.#waitForMessage(
@@ -951,6 +1013,21 @@ export class WshClient {
           this.onReverseConnect?.(msg);
         } catch (err) {
           console.error('[wsh:client] onReverseConnect handler error:', err);
+        }
+        break;
+
+      case MSG.CLIPBOARD:
+        // OSC 52 clipboard sync — write to navigator.clipboard if available.
+        if (msg.direction === 'server_to_client' && msg.data) {
+          try {
+            const text = atob(msg.data);
+            navigator.clipboard?.writeText(text).catch(() => {});
+          } catch { /* ignore decode errors */ }
+        }
+        try {
+          this.onClipboard?.(msg);
+        } catch (err) {
+          console.error('[wsh:client] onClipboard handler error:', err);
         }
         break;
 

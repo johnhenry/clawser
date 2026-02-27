@@ -312,6 +312,7 @@ impl WshClient {
                 session_id: session_id.to_string(),
                 token: token.clone(),
                 mode,
+                device_label: None,
             }),
         };
 
