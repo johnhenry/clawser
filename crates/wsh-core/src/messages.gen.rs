@@ -83,6 +83,9 @@ pub enum MsgType {
 
     RateControl = 0x87,
     RateWarning = 0x88,
+
+    SessionLink = 0x89,
+    SessionUnlink = 0x8a,
 }
 
 impl From<MsgType> for u8 {
@@ -159,6 +162,8 @@ impl TryFrom<u8> for MsgType {
             0x86 => Ok(Self::CompressAck),
             0x87 => Ok(Self::RateControl),
             0x88 => Ok(Self::RateWarning),
+            0x89 => Ok(Self::SessionLink),
+            0x8a => Ok(Self::SessionUnlink),
             _ => Err(format!("unknown message type: 0x{v:02x}")),
         }
     }
@@ -267,6 +272,8 @@ pub enum Payload {
     CompressAck(CompressAckPayload),
     RateControl(RateControlPayload),
     RateWarning(RateWarningPayload),
+    SessionLink(SessionLinkPayload),
+    SessionUnlink(SessionUnlinkPayload),
     Empty(EmptyPayload),
 }
 
@@ -714,6 +721,22 @@ pub struct RateWarningPayload {
     pub session_id: String,
     pub queued_bytes: u64,
     pub action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionLinkPayload {
+    pub source_session: String,
+    pub target_host: String,
+    pub target_port: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_user: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionUnlinkPayload {
+    pub link_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

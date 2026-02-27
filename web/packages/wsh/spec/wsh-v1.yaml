@@ -859,6 +859,41 @@ messages:
           required: true
           description: '"ok", "pausing", or "dropping"'
 
+  # ── Cross-session linking ────────────────────────────────────────────
+  # Jump host support — link one session to another server so data
+  # flows through the first server as a hop.
+  linking:
+    SessionLink:
+      code: 0x89
+      description: >
+        Request a cross-session link (jump host).  The server opens a
+        new wsh connection to target_host and bridges the two sessions.
+      fields:
+        source_session:
+          type: string
+          required: true
+        target_host:
+          type: string
+          required: true
+        target_port:
+          type: u16
+          required: true
+        target_user:
+          type: string
+          required: false
+
+    SessionUnlink:
+      code: 0x8a
+      description: >
+        Tear down a cross-session link.
+      fields:
+        link_id:
+          type: string
+          required: true
+        reason:
+          type: string
+          required: false
+
 nested_types:
   AttachmentInfo:
     fields:

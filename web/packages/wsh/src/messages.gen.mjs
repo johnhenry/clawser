@@ -95,6 +95,10 @@ export const MSG = Object.freeze({
   // Ratecontrol
   RATE_CONTROL:      0x87,
   RATE_WARNING:      0x88,
+
+  // Linking
+  SESSION_LINK:      0x89,
+  SESSION_UNLINK:    0x8a,
 });
 
 // Reverse lookup: number → name
@@ -605,6 +609,18 @@ export function rateWarning({ sessionId, queuedBytes, action } = {}) {
     queued_bytes: queuedBytes,
     action,
   };
+}
+
+export function sessionLink({ sourceSession, targetHost, targetPort, targetUser } = {}) {
+  const msg = { type: MSG.SESSION_LINK, source_session: sourceSession, target_host: targetHost, target_port: targetPort };
+  if (targetUser !== undefined) msg.target_user = targetUser;
+  return msg;
+}
+
+export function sessionUnlink({ linkId, reason } = {}) {
+  const msg = { type: MSG.SESSION_UNLINK, link_id: linkId };
+  if (reason !== undefined) msg.reason = reason;
+  return msg;
 }
 
 // ── Utility ───────────────────────────────────────────────────────────

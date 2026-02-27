@@ -19,7 +19,7 @@
 - **Version**: `wsh-v1`
 - **Wire format**: CBOR
 - **Framing**: length prefixed be32
-- **Total message types**: 65 (including WS_DATA framing marker)
+- **Total message types**: 67 (including WS_DATA framing marker)
 
 ## Enums
 
@@ -115,6 +115,8 @@ Type: `string`
 | `0x86` | CompressAck | compression |
 | `0x87` | RateControl | ratecontrol |
 | `0x88` | RateWarning | ratecontrol |
+| `0x89` | SessionLink | linking |
+| `0x8a` | SessionUnlink | linking |
 
 ## Message Details
 
@@ -770,6 +772,30 @@ Category: **ratecontrol**
 | `session_id` | `string` | yes | — |
 | `queued_bytes` | `u64` | yes | — |
 | `action` | `string` | yes | — |
+
+### SessionLink (`0x89`)
+
+Category: **linking**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `source_session` | `string` | yes | — |
+| `target_host` | `string` | yes | — |
+| `target_port` | `u16` | yes | — |
+| `target_user` | `string` | no | — |
+
+### SessionUnlink (`0x8a`)
+
+Category: **linking**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `link_id` | `string` | yes | — |
+| `reason` | `string` | no | — |
 
 ## Nested Types
 

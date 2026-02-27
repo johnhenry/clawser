@@ -15,6 +15,7 @@ import {
   shareSession, shareRevoke,
   compressBegin, compressAck,
   rateControl, rateWarning,
+  sessionLink, sessionUnlink,
   msgName, isValidMessage,
   AUTH_METHOD, CHANNEL_KIND,
 } from '../src/messages.mjs';
@@ -525,6 +526,44 @@ describe('per-attachment rate control', () => {
   it('rate control messages validate correctly', () => {
     assert.ok(isValidMessage(rateControl({ sessionId: 's1', maxBytesPerSec: 0 })));
     assert.ok(isValidMessage(rateWarning({ sessionId: 's1', queuedBytes: 0, action: 'ok' })));
+  });
+});
+
+describe('cross-session linking (jump host)', () => {
+  it('sessionLink', () => {
+    const msg = sessionLink({ sourceSession: 's1', targetHost: 'jump.example.com', targetPort: 22, targetUser: 'admin' });
+    assert.equal(msg.type, MSG.SESSION_LINK);
+    assert.equal(msg.source_session, 's1');
+    assert.equal(msg.target_host, 'jump.example.com');
+    assert.equal(msg.target_port, 22);
+    assert.equal(msg.target_user, 'admin');
+  });
+
+  it('sessionLink with optional target user', () => {
+    const msg = sessionLink({ sourceSession: 's1', targetHost: 'host', targetPort: 22 });
+    assert.equal(msg.target_user, undefined);
+  });
+
+  it('sessionUnlink', () => {
+    const msg = sessionUnlink({ linkId: 'link-42', reason: 'user requested' });
+    assert.equal(msg.type, MSG.SESSION_UNLINK);
+    assert.equal(msg.link_id, 'link-42');
+    assert.equal(msg.reason, 'user requested');
+  });
+
+  it('sessionUnlink without reason', () => {
+    const msg = sessionUnlink({ linkId: 'link-42' });
+    assert.equal(msg.reason, undefined);
+  });
+
+  it('session link codes', () => {
+    assert.equal(MSG.SESSION_LINK, 0x89);
+    assert.equal(MSG.SESSION_UNLINK, 0x8a);
+  });
+
+  it('session link messages validate correctly', () => {
+    assert.ok(isValidMessage(sessionLink({ sourceSession: 's1', targetHost: 'h', targetPort: 22 })));
+    assert.ok(isValidMessage(sessionUnlink({ linkId: 'x' })));
   });
 });
 

@@ -1530,6 +1530,25 @@ impl WshServer {
                 Ok(None)
             }
 
+            // ── Cross-session linking (jump host) ─────────────────
+            (MsgType::SessionLink, Payload::SessionLink(p)) => {
+                debug!(source = %p.source_session, target = %p.target_host, port = p.target_port, "session link request");
+                // Stub: in production, open a new wsh connection to target_host
+                // and bridge the two sessions
+                Ok(Some(Envelope {
+                    msg_type: MsgType::Error,
+                    payload: Payload::Error(ErrorPayload {
+                        code: 5,
+                        message: "session linking not yet implemented".into(),
+                    }),
+                }))
+            }
+
+            (MsgType::SessionUnlink, Payload::SessionUnlink(p)) => {
+                debug!(link_id = %p.link_id, "session unlink");
+                Ok(None)
+            }
+
             // ── Unhandled ───────────────────────────────────────────
             (msg_type, _) => {
                 debug!(?msg_type, "unhandled message type in session loop");
