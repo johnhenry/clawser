@@ -1519,6 +1519,17 @@ impl WshServer {
                 Ok(None)
             }
 
+            // ── Rate control ──────────────────────────────────────
+            (MsgType::RateControl, Payload::RateControl(p)) => {
+                debug!(session_id = %p.session_id, max_bps = p.max_bytes_per_sec, policy = %p.policy, "rate control set");
+                Ok(None)
+            }
+
+            (MsgType::RateWarning, Payload::RateWarning(p)) => {
+                debug!(session_id = %p.session_id, queued = p.queued_bytes, action = %p.action, "rate warning");
+                Ok(None)
+            }
+
             // ── Unhandled ───────────────────────────────────────────
             (msg_type, _) => {
                 debug!(?msg_type, "unhandled message type in session loop");

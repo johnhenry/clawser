@@ -91,6 +91,10 @@ export const MSG = Object.freeze({
   // Compression
   COMPRESS_BEGIN:    0x85,
   COMPRESS_ACK:      0x86,
+
+  // Ratecontrol
+  RATE_CONTROL:      0x87,
+  RATE_WARNING:      0x88,
 });
 
 // Reverse lookup: number → name
@@ -582,6 +586,24 @@ export function compressAck({ algorithm, accepted } = {}) {
     type: MSG.COMPRESS_ACK,
     algorithm,
     accepted,
+  };
+}
+
+export function rateControl({ sessionId, maxBytesPerSec, policy = "pause" } = {}) {
+  return {
+    type: MSG.RATE_CONTROL,
+    session_id: sessionId,
+    max_bytes_per_sec: maxBytesPerSec,
+    policy,
+  };
+}
+
+export function rateWarning({ sessionId, queuedBytes, action } = {}) {
+  return {
+    type: MSG.RATE_WARNING,
+    session_id: sessionId,
+    queued_bytes: queuedBytes,
+    action,
   };
 }
 

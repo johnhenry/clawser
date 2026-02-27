@@ -19,7 +19,7 @@
 - **Version**: `wsh-v1`
 - **Wire format**: CBOR
 - **Framing**: length prefixed be32
-- **Total message types**: 63 (including WS_DATA framing marker)
+- **Total message types**: 65 (including WS_DATA framing marker)
 
 ## Enums
 
@@ -113,6 +113,8 @@ Type: `string`
 | `0x84` | ShareRevoke | sharing |
 | `0x85` | CompressBegin | compression |
 | `0x86` | CompressAck | compression |
+| `0x87` | RateControl | ratecontrol |
+| `0x88` | RateWarning | ratecontrol |
 
 ## Message Details
 
@@ -744,6 +746,30 @@ Category: **compression**
 |-------|------|----------|---------|
 | `algorithm` | `string` | yes | — |
 | `accepted` | `bool` | yes | — |
+
+### RateControl (`0x87`)
+
+Category: **ratecontrol**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `session_id` | `string` | yes | — |
+| `max_bytes_per_sec` | `u64` | yes | — |
+| `policy` | `string` | no | `"pause"` |
+
+### RateWarning (`0x88`)
+
+Category: **ratecontrol**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `session_id` | `string` | yes | — |
+| `queued_bytes` | `u64` | yes | — |
+| `action` | `string` | yes | — |
 
 ## Nested Types
 

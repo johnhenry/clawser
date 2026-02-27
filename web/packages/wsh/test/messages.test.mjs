@@ -14,6 +14,7 @@ import {
   guestInvite, guestJoin, guestRevoke,
   shareSession, shareRevoke,
   compressBegin, compressAck,
+  rateControl, rateWarning,
   msgName, isValidMessage,
   AUTH_METHOD, CHANNEL_KIND,
 } from '../src/messages.mjs';
@@ -491,6 +492,39 @@ describe('stream compression negotiation', () => {
   it('compress messages validate correctly', () => {
     assert.ok(isValidMessage(compressBegin({ algorithm: 'zstd' })));
     assert.ok(isValidMessage(compressAck({ algorithm: 'zstd', accepted: true })));
+  });
+});
+
+describe('per-attachment rate control', () => {
+  it('rateControl', () => {
+    const msg = rateControl({ sessionId: 's1', maxBytesPerSec: 1048576, policy: 'drop' });
+    assert.equal(msg.type, MSG.RATE_CONTROL);
+    assert.equal(msg.session_id, 's1');
+    assert.equal(msg.max_bytes_per_sec, 1048576);
+    assert.equal(msg.policy, 'drop');
+  });
+
+  it('rateControl with default policy', () => {
+    const msg = rateControl({ sessionId: 's1', maxBytesPerSec: 0 });
+    assert.equal(msg.policy, 'pause');
+  });
+
+  it('rateWarning', () => {
+    const msg = rateWarning({ sessionId: 's1', queuedBytes: 4096, action: 'dropping' });
+    assert.equal(msg.type, MSG.RATE_WARNING);
+    assert.equal(msg.session_id, 's1');
+    assert.equal(msg.queued_bytes, 4096);
+    assert.equal(msg.action, 'dropping');
+  });
+
+  it('rate control codes', () => {
+    assert.equal(MSG.RATE_CONTROL, 0x87);
+    assert.equal(MSG.RATE_WARNING, 0x88);
+  });
+
+  it('rate control messages validate correctly', () => {
+    assert.ok(isValidMessage(rateControl({ sessionId: 's1', maxBytesPerSec: 0 })));
+    assert.ok(isValidMessage(rateWarning({ sessionId: 's1', queuedBytes: 0, action: 'ok' })));
   });
 });
 

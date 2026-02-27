@@ -822,6 +822,43 @@ messages:
           type: bool
           required: true
 
+  # ── Rate control ────────────────────────────────────────────────────
+  # Per-attachment flow control for slow consumers.  When an attached
+  # client falls behind, the server can drop or pause output delivery.
+  ratecontrol:
+    RateControl:
+      code: 0x87
+      description: >
+        Set per-attachment rate limits.  Sent by either side to configure
+        the maximum data rate for the session.
+      fields:
+        session_id:
+          type: string
+          required: true
+        max_bytes_per_sec:
+          type: u64
+          required: true
+        policy:
+          type: string
+          default: '"pause"'
+          description: '"pause" (backpressure) or "drop" (discard excess)'
+
+    RateWarning:
+      code: 0x88
+      description: >
+        Sent by the server when a client is falling behind.
+      fields:
+        session_id:
+          type: string
+          required: true
+        queued_bytes:
+          type: u64
+          required: true
+        action:
+          type: string
+          required: true
+          description: '"ok", "pausing", or "dropping"'
+
 nested_types:
   AttachmentInfo:
     fields:

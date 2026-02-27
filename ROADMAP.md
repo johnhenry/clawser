@@ -279,7 +279,7 @@ Priority: Complete the wsh protocol implementation — browser-native remote she
 - [x] Ephemeral guest sessions (short-lived share links)
 - [x] Multi-attach read-only URL sharing
 - [x] Stream compression negotiation (zstd)
-- [ ] Per-attachment rate control (slow consumer policy)
+- [x] Per-attachment rate control (slow consumer policy)
 - [ ] Cross-session linking (jump host support)
 - [ ] AI co-pilot attachment mode (read-only AI observer)
 - [ ] E2E encrypted session mode

@@ -80,6 +80,9 @@ pub enum MsgType {
 
     CompressBegin = 0x85,
     CompressAck = 0x86,
+
+    RateControl = 0x87,
+    RateWarning = 0x88,
 }
 
 impl From<MsgType> for u8 {
@@ -154,6 +157,8 @@ impl TryFrom<u8> for MsgType {
             0x84 => Ok(Self::ShareRevoke),
             0x85 => Ok(Self::CompressBegin),
             0x86 => Ok(Self::CompressAck),
+            0x87 => Ok(Self::RateControl),
+            0x88 => Ok(Self::RateWarning),
             _ => Err(format!("unknown message type: 0x{v:02x}")),
         }
     }
@@ -260,6 +265,8 @@ pub enum Payload {
     ShareRevoke(ShareRevokePayload),
     CompressBegin(CompressBeginPayload),
     CompressAck(CompressAckPayload),
+    RateControl(RateControlPayload),
+    RateWarning(RateWarningPayload),
     Empty(EmptyPayload),
 }
 
@@ -692,6 +699,21 @@ pub struct CompressBeginPayload {
 pub struct CompressAckPayload {
     pub algorithm: String,
     pub accepted: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RateControlPayload {
+    pub session_id: String,
+    pub max_bytes_per_sec: u64,
+    #[serde(default)]
+    pub policy: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RateWarningPayload {
+    pub session_id: String,
+    pub queued_bytes: u64,
+    pub action: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
