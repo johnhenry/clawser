@@ -1481,6 +1481,25 @@ impl WshServer {
                 Ok(None) // no reply needed
             }
 
+            // ── Session sharing ───────────────────────────────────────
+            (MsgType::ShareSession, Payload::ShareSession(p)) => {
+                debug!(session_id = %p.session_id, mode = %p.mode, ttl = p.ttl, "share session");
+                // Stub: generate share_id, store mapping. Echo back for now.
+                Ok(Some(Envelope {
+                    msg_type: MsgType::ShareSession,
+                    payload: Payload::ShareSession(ShareSessionPayload {
+                        session_id: p.session_id.clone(),
+                        mode: p.mode.clone(),
+                        ttl: p.ttl,
+                    }),
+                }))
+            }
+
+            (MsgType::ShareRevoke, Payload::ShareRevoke(p)) => {
+                debug!(share_id = %p.share_id, "share revoked");
+                Ok(None)
+            }
+
             // ── Unhandled ───────────────────────────────────────────
             (msg_type, _) => {
                 debug!(?msg_type, "unhandled message type in session loop");

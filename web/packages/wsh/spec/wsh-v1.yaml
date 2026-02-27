@@ -756,6 +756,40 @@ messages:
           type: string
           required: false
 
+  # ── Session sharing ─────────────────────────────────────────────────
+  # Multi-attach read-only URL sharing.  A session owner creates a
+  # share link that allows others to attach in read-only mode.
+  sharing:
+    ShareSession:
+      code: 0x83
+      description: >
+        Sent by the session owner to create a shareable read-only link.
+        The server generates a share_id and returns it for URL construction.
+      fields:
+        session_id:
+          type: string
+          required: true
+        mode:
+          type: string
+          default: '"read"'
+          description: '"read" or "write"'
+        ttl:
+          type: u64
+          required: true
+          description: "Share link lifetime in seconds"
+
+    ShareRevoke:
+      code: 0x84
+      description: >
+        Sent by the session owner to revoke an active share link.
+      fields:
+        share_id:
+          type: string
+          required: true
+        reason:
+          type: string
+          required: false
+
 nested_types:
   AttachmentInfo:
     fields:

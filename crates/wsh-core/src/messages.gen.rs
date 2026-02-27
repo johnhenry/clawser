@@ -74,6 +74,9 @@ pub enum MsgType {
     GuestInvite = 0x80,
     GuestJoin = 0x81,
     GuestRevoke = 0x82,
+
+    ShareSession = 0x83,
+    ShareRevoke = 0x84,
 }
 
 impl From<MsgType> for u8 {
@@ -144,6 +147,8 @@ impl TryFrom<u8> for MsgType {
             0x80 => Ok(Self::GuestInvite),
             0x81 => Ok(Self::GuestJoin),
             0x82 => Ok(Self::GuestRevoke),
+            0x83 => Ok(Self::ShareSession),
+            0x84 => Ok(Self::ShareRevoke),
             _ => Err(format!("unknown message type: 0x{v:02x}")),
         }
     }
@@ -246,6 +251,8 @@ pub enum Payload {
     GuestInvite(GuestInvitePayload),
     GuestJoin(GuestJoinPayload),
     GuestRevoke(GuestRevokePayload),
+    ShareSession(ShareSessionPayload),
+    ShareRevoke(ShareRevokePayload),
     Empty(EmptyPayload),
 }
 
@@ -648,6 +655,21 @@ pub struct GuestJoinPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GuestRevokePayload {
     pub token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShareSessionPayload {
+    pub session_id: String,
+    #[serde(default)]
+    pub mode: String,
+    pub ttl: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShareRevokePayload {
+    pub share_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }

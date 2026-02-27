@@ -12,6 +12,7 @@ import {
   inboundOpen, inboundAccept, inboundReject, dnsResult,
   listenRequest, listenOk, listenFail, listenClose, gatewayData,
   guestInvite, guestJoin, guestRevoke,
+  shareSession, shareRevoke,
   msgName, isValidMessage,
   AUTH_METHOD, CHANNEL_KIND,
 } from '../src/messages.mjs';
@@ -416,6 +417,43 @@ describe('ephemeral guest sessions', () => {
     assert.ok(isValidMessage(guestInvite({ sessionId: 's1', ttl: 300 })));
     assert.ok(isValidMessage(guestJoin({ token: 'x' })));
     assert.ok(isValidMessage(guestRevoke({ token: 'x' })));
+  });
+});
+
+describe('multi-attach read-only URL sharing', () => {
+  it('shareSession', () => {
+    const msg = shareSession({ sessionId: 's1', mode: 'read', ttl: 3600 });
+    assert.equal(msg.type, MSG.SHARE_SESSION);
+    assert.equal(msg.session_id, 's1');
+    assert.equal(msg.mode, 'read');
+    assert.equal(msg.ttl, 3600);
+  });
+
+  it('shareSession with default mode', () => {
+    const msg = shareSession({ sessionId: 's1', ttl: 600 });
+    assert.equal(msg.mode, 'read');
+  });
+
+  it('shareRevoke', () => {
+    const msg = shareRevoke({ shareId: 'share-abc', reason: 'no longer needed' });
+    assert.equal(msg.type, MSG.SHARE_REVOKE);
+    assert.equal(msg.share_id, 'share-abc');
+    assert.equal(msg.reason, 'no longer needed');
+  });
+
+  it('shareRevoke without reason', () => {
+    const msg = shareRevoke({ shareId: 'share-abc' });
+    assert.equal(msg.reason, undefined);
+  });
+
+  it('share message codes', () => {
+    assert.equal(MSG.SHARE_SESSION, 0x83);
+    assert.equal(MSG.SHARE_REVOKE, 0x84);
+  });
+
+  it('share messages validate correctly', () => {
+    assert.ok(isValidMessage(shareSession({ sessionId: 's1', ttl: 60 })));
+    assert.ok(isValidMessage(shareRevoke({ shareId: 'x' })));
   });
 });
 

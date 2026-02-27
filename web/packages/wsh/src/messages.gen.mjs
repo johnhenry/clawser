@@ -83,6 +83,10 @@ export const MSG = Object.freeze({
   GUEST_INVITE:      0x80,
   GUEST_JOIN:        0x81,
   GUEST_REVOKE:      0x82,
+
+  // Sharing
+  SHARE_SESSION:     0x83,
+  SHARE_REVOKE:      0x84,
 });
 
 // Reverse lookup: number → name
@@ -542,6 +546,21 @@ export function guestJoin({ token, deviceLabel } = {}) {
 
 export function guestRevoke({ token, reason } = {}) {
   const msg = { type: MSG.GUEST_REVOKE, token };
+  if (reason !== undefined) msg.reason = reason;
+  return msg;
+}
+
+export function shareSession({ sessionId, mode = "read", ttl } = {}) {
+  return {
+    type: MSG.SHARE_SESSION,
+    session_id: sessionId,
+    mode,
+    ttl,
+  };
+}
+
+export function shareRevoke({ shareId, reason } = {}) {
+  const msg = { type: MSG.SHARE_REVOKE, share_id: shareId };
   if (reason !== undefined) msg.reason = reason;
   return msg;
 }
