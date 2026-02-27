@@ -438,12 +438,14 @@ impl WshServer {
 
                 // TCP relay data event (TCP→client)
                 Some(event) = data_rx.recv() => {
-                    let msg = match event {
+                    let msg = match &event {
                         GatewayEvent::Data { gateway_id, data } => {
-                            build_gateway_data(gateway_id, data)
+                            build_gateway_data(*gateway_id, data.clone())
                         }
                         GatewayEvent::Closed { gateway_id } => {
-                            build_gateway_close_msg(gateway_id)
+                            // Clean up forwarder maps so write_channels don't leak
+                            self.gateway_forwarder.close(*gateway_id).await;
+                            build_gateway_close_msg(*gateway_id)
                         }
                     };
                     let frame = frame_encode(&msg)?;
@@ -501,12 +503,14 @@ impl WshServer {
                 }
 
                 Some(event) = data_rx.recv() => {
-                    let msg = match event {
+                    let msg = match &event {
                         GatewayEvent::Data { gateway_id, data } => {
-                            build_gateway_data(gateway_id, data)
+                            build_gateway_data(*gateway_id, data.clone())
                         }
                         GatewayEvent::Closed { gateway_id } => {
-                            build_gateway_close_msg(gateway_id)
+                            // Clean up forwarder maps so write_channels don't leak
+                            self.gateway_forwarder.close(*gateway_id).await;
+                            build_gateway_close_msg(*gateway_id)
                         }
                     };
                     let frame = frame_encode(&msg)?;

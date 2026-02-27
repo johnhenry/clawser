@@ -129,3 +129,16 @@ export class SocketClosedError extends NetwayError {
     this.name = 'SocketClosedError';
   }
 }
+
+/**
+ * Thrown when a gateway operation (connect, listen, resolve, sendDatagram)
+ * does not receive a response from the server within the configured timeout.
+ *
+ * @property {string} code - Always `'ETIMEDOUT'`.
+ */
+export class OperationTimeoutError extends NetwayError {
+  constructor(operation) {
+    super(`Gateway operation timed out: ${operation}`, 'ETIMEDOUT');
+    this.name = 'OperationTimeoutError';
+  }
+}

@@ -19,8 +19,11 @@ import { StreamSocket } from './stream-socket.mjs';
 import { DatagramSocket } from './datagram-socket.mjs';
 import { Listener } from './listener.mjs';
 import { OperationQueue } from './queue.mjs';
-import { ConnectionRefusedError, NetwayError } from './errors.mjs';
+import { ConnectionRefusedError, NetwayError, OperationTimeoutError } from './errors.mjs';
 import { GATEWAY_ERROR } from './constants.mjs';
+
+/** Default timeout (ms) for gateway operations that await a server response. */
+const DEFAULT_OPERATION_TIMEOUT_MS = 30_000;
 
 /**
  * A backend that proxies all networking through a remote wsh gateway server.
@@ -39,6 +42,7 @@ export class GatewayBackend extends Backend {
   #closed = false;
   #gatewayIdCounter = 0;
   #listenerIdCounter = 0;
+  #operationTimeoutMs;
 
   /**
    * Create a GatewayBackend.
@@ -49,11 +53,15 @@ export class GatewayBackend extends Backend {
    *   `onGatewayMessage` callback property.
    * @param {Object} [opts.queueConfig] - Configuration passed to the internal
    *   {@link OperationQueue} (accepts `maxSize` and `drainTimeoutMs`).
+   * @param {number} [opts.operationTimeoutMs=30000] - Timeout in milliseconds
+   *   for gateway operations (connect, listen, resolve, sendDatagram). Set to
+   *   `0` to disable timeouts.
    */
-  constructor({ wshClient, queueConfig } = {}) {
+  constructor({ wshClient, queueConfig, operationTimeoutMs = DEFAULT_OPERATION_TIMEOUT_MS } = {}) {
     super();
     this.#wshClient = wshClient;
     this.#queue = new OperationQueue(queueConfig);
+    this.#operationTimeoutMs = operationTimeoutMs;
     if (wshClient) {
       wshClient.onGatewayMessage = (msg) => this.#handleGatewayMessage(msg);
     }
@@ -91,6 +99,32 @@ export class GatewayBackend extends Backend {
   }
 
   /**
+   * Wrap a pending operation promise with an optional timeout. When the timeout
+   * fires, the pending entry is removed from the map and the promise is rejected
+   * with an {@link OperationTimeoutError}.
+   *
+   * @param {Promise} promise - The operation promise.
+   * @param {string} opName - Human-readable operation name for error messages.
+   * @param {number|string} id - The gateway_id or listener_id.
+   * @param {Map} pendingMap - The pending map to clean up on timeout.
+   * @returns {Promise} The original promise, or a race against the timeout.
+   * @private
+   */
+  #withTimeout(promise, opName, id, pendingMap) {
+    if (!this.#operationTimeoutMs) return promise;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pendingMap.delete(id);
+        reject(new OperationTimeoutError(opName));
+      }, this.#operationTimeoutMs);
+      promise.then(
+        (v) => { clearTimeout(timer); resolve(v); },
+        (e) => { clearTimeout(timer); reject(e); },
+      );
+    });
+  }
+
+  /**
    * Send an OPEN_TCP (0x70) control message and wait for GATEWAY_OK/FAIL.
    * @private
    */
@@ -99,9 +133,10 @@ export class GatewayBackend extends Backend {
     const msg = { type: 0x70, gateway_id: gatewayId, host, port }; // OPEN_TCP
     await this.#wshClient.sendControl(msg);
 
-    return new Promise((resolve, reject) => {
+    const p = new Promise((resolve, reject) => {
       this.#pendingConnections.set(gatewayId, { resolve, reject });
     });
+    return this.#withTimeout(p, `connect ${host}:${port}`, gatewayId, this.#pendingConnections);
   }
 
   /**
@@ -131,9 +166,10 @@ export class GatewayBackend extends Backend {
     const msg = { type: 0x7a, listener_id: listenerId, port, bind_addr: '0.0.0.0' }; // LISTEN_REQUEST
     await this.#wshClient.sendControl(msg);
 
-    return new Promise((resolve, reject) => {
+    const p = new Promise((resolve, reject) => {
       this.#pendingListens.set(listenerId, { resolve, reject, listener });
     });
+    return this.#withTimeout(p, `listen :${port}`, listenerId, this.#pendingListens);
   }
 
   /**
@@ -165,9 +201,10 @@ export class GatewayBackend extends Backend {
     const msg = { type: 0x71, gateway_id: gatewayId, host, port }; // OPEN_UDP
     await this.#wshClient.sendControl(msg);
 
-    return new Promise((resolve, reject) => {
+    const p = new Promise((resolve, reject) => {
       this.#pendingUdp.set(gatewayId, { resolve, reject, data });
     });
+    return this.#withTimeout(p, `sendDatagram ${host}:${port}`, gatewayId, this.#pendingUdp);
   }
 
   /**
@@ -196,9 +233,10 @@ export class GatewayBackend extends Backend {
     const msg = { type: 0x72, gateway_id: gatewayId, name, record_type: type }; // RESOLVE_DNS
     await this.#wshClient.sendControl(msg);
 
-    return new Promise((resolve, reject) => {
+    const p = new Promise((resolve, reject) => {
       this.#pendingDns.set(gatewayId, { resolve, reject });
     });
+    return this.#withTimeout(p, `resolve ${name}`, gatewayId, this.#pendingDns);
   }
 
   /**
@@ -211,6 +249,7 @@ export class GatewayBackend extends Backend {
    */
   #startDataPump(gatewayId, relaySocket) {
     (async () => {
+      let transportError = false;
       try {
         while (true) {
           const chunk = await relaySocket.read();
@@ -220,12 +259,18 @@ export class GatewayBackend extends Backend {
           });
         }
       } catch (_) {
-        // Transport closed or errored — stop pumping
+        // Transport closed or errored — close relay socket so user-side
+        // reads return null (EOF) instead of hanging indefinitely.
+        transportError = true;
+        await relaySocket.close();
+        this.#activeSockets.delete(gatewayId);
       }
-      // Socket closed locally, tell server
-      await this.#wshClient.sendControl({
-        type: 0x75, gateway_id: gatewayId,
-      }).catch(() => {});
+      // Tell server the channel is done (best-effort)
+      if (!transportError) {
+        await this.#wshClient.sendControl({
+          type: 0x75, gateway_id: gatewayId,
+        }).catch(() => {});
+      }
     })();
   }
 

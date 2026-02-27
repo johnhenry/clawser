@@ -414,4 +414,78 @@ describe('GatewayBackend', () => {
     await assert.rejects(() => sendPromise, { name: 'ConnectionRefusedError' });
     await backend.close();
   });
+
+  // ── Timeout tests ───────────────────────────────────────────────────
+
+  it('connect → no response → times out with OperationTimeoutError', async () => {
+    const client = new MockWshClient({ connected: true });
+    const backend = new GatewayBackend({ wshClient: client, operationTimeoutMs: 50 });
+
+    const connectPromise = backend.connect('slow.host', 80);
+    // Never inject a response — should timeout
+
+    await assert.rejects(() => connectPromise, { name: 'OperationTimeoutError', code: 'ETIMEDOUT' });
+    await backend.close();
+  });
+
+  it('resolve → no response → times out', async () => {
+    const client = new MockWshClient({ connected: true });
+    const backend = new GatewayBackend({ wshClient: client, operationTimeoutMs: 50 });
+
+    const resolvePromise = backend.resolve('slow.host');
+
+    await assert.rejects(() => resolvePromise, { code: 'ETIMEDOUT' });
+    await backend.close();
+  });
+
+  it('timeout does not fire when server responds in time', async () => {
+    const client = new MockWshClient({ connected: true });
+    const backend = new GatewayBackend({ wshClient: client, operationTimeoutMs: 200 });
+
+    const connectPromise = backend.connect('fast.host', 80);
+    await tick();
+    const openMsg = client.lastSent;
+
+    // Respond immediately
+    client.inject({ type: 0x73, gateway_id: openMsg.gateway_id });
+    const socket = await connectPromise;
+    assert.ok(socket);
+    assert.equal(socket.closed, false);
+
+    await socket.close();
+    await backend.close();
+  });
+
+  // ── Data pump transport error test ──────────────────────────────────
+
+  it('data pump transport error closes relay socket so user reads get EOF', async () => {
+    const client = new MockWshClient({ connected: true });
+    const backend = new GatewayBackend({ wshClient: client });
+
+    const connectPromise = backend.connect('example.com', 80);
+    await tick();
+    const openMsg = client.lastSent;
+
+    client.inject({ type: 0x73, gateway_id: openMsg.gateway_id });
+    const socket = await connectPromise;
+
+    // Write to user socket to feed the data pump
+    await socket.write(new Uint8Array([1, 2, 3]));
+    await tick();
+
+    // Make sendControl throw to simulate transport failure
+    client.sendControl = () => { throw new Error('transport dead'); };
+
+    // Write again — pump will try to send and hit the error
+    await socket.write(new Uint8Array([4, 5, 6]));
+    // Give the pump time to process and close the relay
+    await new Promise(r => setTimeout(r, 50));
+
+    // The user-side socket read should now return null (EOF) since
+    // the relay socket was closed by the error handler
+    const result = await socket.read();
+    assert.equal(result, null);
+
+    await backend.close();
+  });
 });
