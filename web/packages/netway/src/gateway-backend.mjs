@@ -30,7 +30,8 @@ import { GATEWAY_ERROR } from './constants.mjs';
 export class GatewayBackend extends Backend {
   #wshClient;
   #queue;
-  #pendingConnections = new Map();  // gateway_id -> { resolve, reject }
+  #pendingConnections = new Map();  // gateway_id -> { resolve, reject } (TCP)
+  #pendingUdp = new Map();          // gateway_id -> { resolve, reject, data } (UDP)
   #pendingListens = new Map();      // listener_id -> { resolve, reject, listener }
   #pendingDns = new Map();          // gateway_id -> { resolve, reject }
   #activeListeners = new Map();     // listener_id -> Listener
@@ -138,24 +139,35 @@ export class GatewayBackend extends Backend {
   /**
    * Send a datagram through the gateway. If offline, the operation is queued.
    *
-   * Note: The current implementation sends an OPEN_UDP (0x71) message but does
-   * not yet relay the actual datagram payload (simplified).
+   * Opens a UDP channel via OPEN_UDP (0x71), waits for GATEWAY_OK, then
+   * sends the payload as a GatewayData (0x7e) message.
    *
    * @param {string} host - The target hostname or IP.
    * @param {number} port - The target port number.
    * @param {Uint8Array} data - The datagram payload.
    * @returns {Promise<void>}
+   * @throws {ConnectionRefusedError} If the gateway rejects the UDP open.
    * @throws {QueueFullError} If offline and the operation queue is full.
    */
   async sendDatagram(host, port, data) {
     if (!this.connected) {
       return this.#queue.enqueue({ type: 'sendDatagram', host, port, data });
     }
+    return this.#doSendDatagram(host, port, data);
+  }
+
+  /**
+   * Send an OPEN_UDP (0x71), wait for GATEWAY_OK, then send data as GatewayData.
+   * @private
+   */
+  async #doSendDatagram(host, port, data) {
     const gatewayId = this.#nextGatewayId();
     const msg = { type: 0x71, gateway_id: gatewayId, host, port }; // OPEN_UDP
     await this.#wshClient.sendControl(msg);
-    // For UDP, data is sent as a follow-up once channel is open
-    // Simplified: just send the open for now
+
+    return new Promise((resolve, reject) => {
+      this.#pendingUdp.set(gatewayId, { resolve, reject, data });
+    });
   }
 
   /**
@@ -239,24 +251,38 @@ export class GatewayBackend extends Backend {
 
     switch (type) {
       case 0x73: { // GATEWAY_OK
-        const pending = this.#pendingConnections.get(msg.gateway_id);
-        if (pending) {
+        const pendingTcp = this.#pendingConnections.get(msg.gateway_id);
+        const pendingUdp = this.#pendingUdp.get(msg.gateway_id);
+        if (pendingTcp) {
           this.#pendingConnections.delete(msg.gateway_id);
           // Create a StreamSocket pair — one side for the user, one for wsh data relay
           const [userSocket, relaySocket] = StreamSocket.createPair();
           this.#activeSockets.set(msg.gateway_id, relaySocket);
-          pending.resolve(userSocket);
+          pendingTcp.resolve(userSocket);
           // Start pumping data from relay socket to server
           this.#startDataPump(msg.gateway_id, relaySocket);
+        } else if (pendingUdp) {
+          // UDP: send queued datagram payload and close the channel
+          this.#pendingUdp.delete(msg.gateway_id);
+          this.#wshClient.sendControl({
+            type: 0x7e, gateway_id: msg.gateway_id, data: pendingUdp.data,
+          }).then(() => {
+            this.#wshClient.sendControl({
+              type: 0x75, gateway_id: msg.gateway_id,
+            }).catch(() => {});
+            pendingUdp.resolve();
+          }).catch(pendingUdp.reject);
         }
         break;
       }
 
       case 0x74: { // GATEWAY_FAIL
         const pending = this.#pendingConnections.get(msg.gateway_id)
+          || this.#pendingUdp.get(msg.gateway_id)
           || this.#pendingDns.get(msg.gateway_id);
         if (pending) {
           this.#pendingConnections.delete(msg.gateway_id);
+          this.#pendingUdp.delete(msg.gateway_id);
           this.#pendingDns.delete(msg.gateway_id);
           pending.reject(new ConnectionRefusedError(`${msg.message} (code: ${msg.code})`));
         }
@@ -357,7 +383,7 @@ export class GatewayBackend extends Backend {
         case 'connect': return this.#doConnect(op.host, op.port);
         case 'listen': return this.#doListen(op.port);
         case 'resolve': return this.#doResolve(op.name, op.recordType);
-        case 'sendDatagram': return this.sendDatagram(op.host, op.port, op.data);
+        case 'sendDatagram': return this.#doSendDatagram(op.host, op.port, op.data);
         default: throw new Error(`Unknown queued op: ${op.type}`);
       }
     });
@@ -379,9 +405,11 @@ export class GatewayBackend extends Backend {
     this.#activeListeners.clear();
     // Reject all pending
     for (const p of this.#pendingConnections.values()) p.reject(new NetwayError('Backend closed', 'ECLOSED'));
+    for (const p of this.#pendingUdp.values()) p.reject(new NetwayError('Backend closed', 'ECLOSED'));
     for (const p of this.#pendingListens.values()) p.reject(new NetwayError('Backend closed', 'ECLOSED'));
     for (const p of this.#pendingDns.values()) p.reject(new NetwayError('Backend closed', 'ECLOSED'));
     this.#pendingConnections.clear();
+    this.#pendingUdp.clear();
     this.#pendingListens.clear();
     this.#pendingDns.clear();
   }

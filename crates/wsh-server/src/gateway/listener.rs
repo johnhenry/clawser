@@ -11,6 +11,7 @@ use super::forwarder::GatewayForwarder;
 use super::policy::GatewayPolicyEnforcer;
 use super::GatewayEvent;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Mutex};
@@ -28,6 +29,9 @@ pub struct ReverseListenerManager {
     listeners: Mutex<HashMap<u32, ListenerEntry>>,
     /// Pending inbound TCP connections awaiting `InboundAccept`: `channel_id` to `TcpStream`.
     pending_connections: Arc<Mutex<HashMap<u32, TcpStream>>>,
+    /// Global channel_id counter shared across all listeners to prevent collisions
+    /// in `pending_connections`.
+    next_channel_id: Arc<AtomicU32>,
 }
 
 /// Bookkeeping for a single active reverse tunnel listener.
@@ -55,6 +59,7 @@ impl ReverseListenerManager {
             policy,
             listeners: Mutex::new(HashMap::new()),
             pending_connections: Arc::new(Mutex::new(HashMap::new())),
+            next_channel_id: Arc::new(AtomicU32::new(1)),
         }
     }
 
@@ -111,9 +116,10 @@ impl ReverseListenerManager {
                 // Spawn accept loop — guard lives until loop ends
                 let listener_id_copy = listener_id;
                 let pending = self.pending_connections.clone();
+                let channel_counter = self.next_channel_id.clone();
                 tokio::spawn(async move {
                     let _guard = guard; // keep alive for connection counting
-                    Self::accept_loop(tcp_listener, cancel_rx, listener_id_copy, inbound_tx, pending).await;
+                    Self::accept_loop(tcp_listener, cancel_rx, listener_id_copy, inbound_tx, pending, channel_counter).await;
                     debug!(listener_id = listener_id_copy, "accept loop ended");
                 });
 
@@ -195,9 +201,8 @@ impl ReverseListenerManager {
         listener_id: u32,
         inbound_tx: mpsc::Sender<InboundEvent>,
         pending: Arc<Mutex<HashMap<u32, TcpStream>>>,
+        channel_counter: Arc<AtomicU32>,
     ) {
-        let mut next_channel_id: u32 = 1;
-
         loop {
             tokio::select! {
                 _ = cancel_rx.recv() => {
@@ -207,8 +212,7 @@ impl ReverseListenerManager {
                 result = listener.accept() => {
                     match result {
                         Ok((stream, peer_addr)) => {
-                            let channel_id = next_channel_id;
-                            next_channel_id += 1;
+                            let channel_id = channel_counter.fetch_add(1, Ordering::Relaxed);
 
                             info!(
                                 listener_id,
@@ -251,8 +255,8 @@ impl ReverseListenerManager {
 pub struct InboundEvent {
     /// The listener that accepted this connection.
     pub listener_id: u32,
-    /// Locally assigned channel identifier, unique within a listener and
-    /// monotonically increasing.
+    /// Globally unique channel identifier, assigned from a shared atomic
+    /// counter to prevent collisions across listeners.
     pub channel_id: u32,
     /// IP address of the connecting peer.
     pub peer_addr: String,

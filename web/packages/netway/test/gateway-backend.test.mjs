@@ -363,4 +363,55 @@ describe('GatewayBackend', () => {
     listener.close();
     await backend.close();
   });
+
+  // ── UDP relay tests ──────────────────────────────────────────────────
+
+  it('sendDatagram → sends OpenUdp → mock GatewayOk → sends GatewayData + GatewayClose', async () => {
+    const client = new MockWshClient({ connected: true });
+    const backend = new GatewayBackend({ wshClient: client });
+
+    const payload = new Uint8Array([0x01, 0x02, 0x03]);
+    const sendPromise = backend.sendDatagram('8.8.8.8', 53, payload);
+    await tick();
+
+    // Verify OpenUdp was sent
+    assert.equal(client.sent.length, 1);
+    const openMsg = client.lastSent;
+    assert.equal(openMsg.type, 0x71); // OPEN_UDP
+    assert.equal(openMsg.host, '8.8.8.8');
+    assert.equal(openMsg.port, 53);
+
+    // Inject GatewayOk response
+    client.inject({ type: 0x73, gateway_id: openMsg.gateway_id });
+    await tick();
+
+    await sendPromise;
+
+    // Verify GatewayData was sent with the payload
+    const dataMsgs = client.findSent(0x7e);
+    assert.equal(dataMsgs.length, 1);
+    assert.equal(dataMsgs[0].gateway_id, openMsg.gateway_id);
+    assert.deepEqual(dataMsgs[0].data, payload);
+
+    // Verify GatewayClose was sent to close the UDP channel
+    const closeMsgs = client.findSent(0x75);
+    assert.equal(closeMsgs.length, 1);
+    assert.equal(closeMsgs[0].gateway_id, openMsg.gateway_id);
+
+    await backend.close();
+  });
+
+  it('sendDatagram → mock GatewayFail → throws ConnectionRefusedError', async () => {
+    const client = new MockWshClient({ connected: true });
+    const backend = new GatewayBackend({ wshClient: client });
+
+    const sendPromise = backend.sendDatagram('blocked.host', 53, new Uint8Array([1]));
+    await tick();
+    const openMsg = client.lastSent;
+
+    client.inject({ type: 0x74, gateway_id: openMsg.gateway_id, code: 4, message: 'policy denied' });
+
+    await assert.rejects(() => sendPromise, { name: 'ConnectionRefusedError' });
+    await backend.close();
+  });
 });

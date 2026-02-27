@@ -115,7 +115,8 @@ impl GatewayForwarder {
         }
     }
 
-    /// Handle an `OpenUdp` message: policy check, bind local socket, connect to remote.
+    /// Handle an `OpenUdp` message: policy check, bind local socket, connect to remote,
+    /// and spawn a bidirectional UDP relay task.
     ///
     /// Returns [`MsgType::GatewayOk`] on success or [`MsgType::GatewayFail`]
     /// on policy denial or bind failure.
@@ -125,11 +126,13 @@ impl GatewayForwarder {
     /// * `gateway_id` - Client-assigned identifier for this gateway connection.
     /// * `host` - Target hostname or IP address.
     /// * `port` - Target UDP port.
+    /// * `data_tx` - Channel for sending UDP→client data events back to the session loop.
     pub async fn handle_open_udp(
         &self,
         gateway_id: u32,
         host: &str,
         port: u16,
+        data_tx: mpsc::Sender<GatewayEvent>,
     ) -> Envelope {
         if let Err(reason) = self.policy.check_connect(host, port) {
             return build_gateway_fail(gateway_id, 4, &reason);
@@ -143,16 +146,31 @@ impl GatewayForwarder {
                     return build_gateway_fail(gateway_id, 1, &e.to_string());
                 }
 
-                // TODO: move guard into a UDP relay task once data relay is implemented
-                let _guard = self.policy.acquire();
+                let guard = self.policy.acquire();
 
-                let (cancel_tx, _cancel_rx) = mpsc::channel::<()>(1);
+                let (cancel_tx, cancel_rx) = mpsc::channel::<()>(1);
                 self.udp_connections
                     .lock()
                     .await
                     .insert(gateway_id, cancel_tx);
 
+                // Create write channel (client→UDP)
+                let (write_tx, write_rx) = mpsc::channel::<Vec<u8>>(64);
+                self.write_channels
+                    .lock()
+                    .await
+                    .insert(gateway_id, write_tx);
+
                 info!(gateway_id, addr = %addr, "UDP socket opened");
+
+                // Spawn bidirectional UDP relay task
+                let gateway_id_copy = gateway_id;
+                tokio::spawn(async move {
+                    let _guard = guard;
+                    Self::udp_relay(socket, cancel_rx, write_rx, data_tx, gateway_id_copy).await;
+                    debug!(gateway_id = gateway_id_copy, "UDP relay ended");
+                });
+
                 build_gateway_ok(gateway_id, None)
             }
             Err(e) => {
@@ -285,6 +303,56 @@ impl GatewayForwarder {
 
         // Cleanup
         let _ = write_half.shutdown().await;
+    }
+
+    /// Bidirectional UDP relay (runs in a spawned task).
+    ///
+    /// Three concurrent branches:
+    /// - **Cancel**: Shuts down the relay when the gateway connection is closed.
+    /// - **UDP→Client**: Receives datagrams from the remote peer and sends
+    ///   `GatewayEvent::Data` through `data_tx`.
+    /// - **Client→UDP**: Reads from `write_rx` (data sent by the client via
+    ///   `GatewayData`) and sends it as a UDP datagram.
+    async fn udp_relay(
+        socket: UdpSocket,
+        mut cancel_rx: mpsc::Receiver<()>,
+        mut write_rx: mpsc::Receiver<Vec<u8>>,
+        data_tx: mpsc::Sender<GatewayEvent>,
+        gateway_id: u32,
+    ) {
+        let mut buf = vec![0u8; 65536]; // max UDP datagram size
+
+        loop {
+            tokio::select! {
+                _ = cancel_rx.recv() => {
+                    debug!(gateway_id, "UDP relay cancelled");
+                    break;
+                }
+                result = socket.recv(&mut buf) => {
+                    match result {
+                        Ok(n) => {
+                            let chunk = buf[..n].to_vec();
+                            if data_tx.send(GatewayEvent::Data { gateway_id, data: chunk }).await.is_err() {
+                                debug!(gateway_id, "data_tx closed, ending UDP relay");
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            warn!(gateway_id, error = %e, "UDP recv error");
+                            let _ = data_tx.send(GatewayEvent::Closed { gateway_id }).await;
+                            break;
+                        }
+                    }
+                }
+                Some(data) = write_rx.recv() => {
+                    if let Err(e) = socket.send(&data).await {
+                        warn!(gateway_id, error = %e, "UDP send error");
+                        let _ = data_tx.send(GatewayEvent::Closed { gateway_id }).await;
+                        break;
+                    }
+                }
+            }
+        }
     }
 }
 

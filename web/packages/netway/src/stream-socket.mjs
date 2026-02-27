@@ -26,21 +26,42 @@ class AsyncBuffer {
   #queue = [];
   #waiters = [];
   #closed = false;
+  #highWaterMark;
+
+  /**
+   * Create an AsyncBuffer.
+   *
+   * @param {Object} [opts={}]
+   * @param {number} [opts.highWaterMark=0] - Maximum queue depth before the
+   *   buffer is closed to prevent unbounded memory growth. `0` means unlimited.
+   */
+  constructor({ highWaterMark = 0 } = {}) {
+    this.#highWaterMark = highWaterMark;
+  }
 
   /**
    * Push data into the buffer. If a consumer is waiting, the data is delivered
    * immediately; otherwise it is enqueued. Pushes on a closed buffer are silently
-   * ignored.
+   * ignored. If the queue exceeds `highWaterMark`, the buffer is closed.
    *
    * @param {Uint8Array} data - The data chunk to enqueue.
+   * @returns {boolean} `true` if the data was accepted, `false` if the buffer
+   *   was closed (either already closed or due to overflow).
    */
   push(data) {
-    if (this.#closed) return;
+    if (this.#closed) return false;
     if (this.#waiters.length > 0) {
       this.#waiters.shift()(data);
-    } else {
-      this.#queue.push(data);
+      return true;
     }
+    this.#queue.push(data);
+    // Check high-water mark — stop accepting new pushes but keep queue
+    // intact so existing data can still be drained by pull().
+    if (this.#highWaterMark > 0 && this.#queue.length >= this.#highWaterMark) {
+      this.#closed = true;
+      return false;
+    }
+    return true;
   }
 
   /**
@@ -119,7 +140,9 @@ export class StreamSocket {
    */
   async write(data) {
     if (this.#closed) throw new SocketClosedError();
-    this.#outbound.push(data);
+    if (!this.#outbound.push(data)) {
+      throw new SocketClosedError();
+    }
   }
 
   /**
@@ -144,12 +167,16 @@ export class StreamSocket {
    * communication. Data written to one socket can be read from the other, and
    * vice versa.
    *
+   * @param {Object} [opts={}]
+   * @param {number} [opts.highWaterMark=1024] - Maximum queue depth per buffer
+   *   before the socket is closed to prevent unbounded memory growth. Set to
+   *   `0` for unlimited (not recommended for production use).
    * @returns {[StreamSocket, StreamSocket]} A two-element array `[socketA, socketB]`
    *   where writing to `socketA` delivers to `socketB.read()`, and vice versa.
    */
-  static createPair() {
-    const bufA = new AsyncBuffer();
-    const bufB = new AsyncBuffer();
+  static createPair({ highWaterMark = 1024 } = {}) {
+    const bufA = new AsyncBuffer({ highWaterMark });
+    const bufB = new AsyncBuffer({ highWaterMark });
     const socketA = new StreamSocket({ inbound: bufB, outbound: bufA });
     const socketB = new StreamSocket({ inbound: bufA, outbound: bufB });
     return [socketA, socketB];

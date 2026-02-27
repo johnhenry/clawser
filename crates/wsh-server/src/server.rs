@@ -595,7 +595,7 @@ impl WshServer {
                 }
                 let resp = self
                     .gateway_forwarder
-                    .handle_open_udp(p.gateway_id, &p.host, p.port)
+                    .handle_open_udp(p.gateway_id, &p.host, p.port, data_tx)
                     .await;
                 Ok(Some(resp))
             }
