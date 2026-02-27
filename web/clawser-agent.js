@@ -1171,6 +1171,16 @@ export class ClawserAgent {
         const { estimateCost } = await getProvidersModule();
         const cost = estimateCost(response.model, response.usage);
         this.#autonomy.recordCost(Math.round(cost * 100));
+        // Step 26: Emit kernel trace event for cost tracking
+        if (this._kernelIntegration) {
+          this._kernelIntegration.traceLlmCall({
+            model: response.model,
+            provider: this.#activeProvider?.name || 'unknown',
+            input_tokens: response.usage.input_tokens || 0,
+            output_tokens: response.usage.output_tokens || 0,
+            cost_usd: cost,
+          });
+        }
       }
 
       // For non-native providers: execute code blocks, then follow-up LLM call
@@ -2166,6 +2176,12 @@ export class ClawserAgent {
 
   /** Get the active workspace ID */
   getWorkspace() { return this.#workspaceId; }
+
+  /** Get the event log for kernel integration (Step 29). */
+  get eventLog() { return this.#eventLog; }
+
+  /** Kernel integration adapter (Step 26/29/30). Set by workspace lifecycle. */
+  _kernelIntegration = null;
 
   /** Persist all memories to localStorage for survival across reloads */
   persistMemories() {
