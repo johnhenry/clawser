@@ -21,6 +21,7 @@ import {
   echoAck, echoState,
   termSync, termDiff,
   nodeAnnounce, nodeRedirect,
+  sessionGrant, sessionRevoke,
   msgName, isValidMessage,
   AUTH_METHOD, CHANNEL_KIND,
 } from '../src/messages.mjs';
@@ -752,6 +753,44 @@ describe('horizontal scaling', () => {
   it('scaling messages validate correctly', () => {
     assert.ok(isValidMessage(nodeAnnounce({ nodeId: 'n', endpoint: 'e', load: 0, capacity: 1 })));
     assert.ok(isValidMessage(nodeRedirect({ targetNode: 'n', targetEndpoint: 'e', sessionId: 's' })));
+  });
+});
+
+describe('shared sessions across principals', () => {
+  it('sessionGrant', () => {
+    const msg = sessionGrant({ sessionId: 's1', principal: 'alice', permissions: ['read', 'write'] });
+    assert.equal(msg.type, MSG.SESSION_GRANT);
+    assert.equal(msg.session_id, 's1');
+    assert.equal(msg.principal, 'alice');
+    assert.deepEqual(msg.permissions, ['read', 'write']);
+  });
+
+  it('sessionGrant default permissions', () => {
+    const msg = sessionGrant({ sessionId: 's1', principal: 'bob' });
+    assert.deepEqual(msg.permissions, ['read']);
+  });
+
+  it('sessionRevoke', () => {
+    const msg = sessionRevoke({ sessionId: 's1', principal: 'alice', reason: 'access removed' });
+    assert.equal(msg.type, MSG.SESSION_REVOKE);
+    assert.equal(msg.session_id, 's1');
+    assert.equal(msg.principal, 'alice');
+    assert.equal(msg.reason, 'access removed');
+  });
+
+  it('sessionRevoke without reason', () => {
+    const msg = sessionRevoke({ sessionId: 's1', principal: 'bob' });
+    assert.equal(msg.reason, undefined);
+  });
+
+  it('session sharing codes', () => {
+    assert.equal(MSG.SESSION_GRANT, 0x96);
+    assert.equal(MSG.SESSION_REVOKE, 0x97);
+  });
+
+  it('session sharing messages validate correctly', () => {
+    assert.ok(isValidMessage(sessionGrant({ sessionId: 's', principal: 'p' })));
+    assert.ok(isValidMessage(sessionRevoke({ sessionId: 's', principal: 'p' })));
   });
 });
 

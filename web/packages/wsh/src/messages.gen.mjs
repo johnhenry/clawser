@@ -120,6 +120,10 @@ export const MSG = Object.freeze({
   // Scaling
   NODE_ANNOUNCE:     0x94,
   NODE_REDIRECT:     0x95,
+
+  // Principals
+  SESSION_GRANT:     0x96,
+  SESSION_REVOKE:    0x97,
 });
 
 // Reverse lookup: number → name
@@ -730,6 +734,21 @@ export function nodeAnnounce({ nodeId, endpoint, load, capacity } = {}) {
 
 export function nodeRedirect({ targetNode, targetEndpoint, sessionId, reason } = {}) {
   const msg = { type: MSG.NODE_REDIRECT, target_node: targetNode, target_endpoint: targetEndpoint, session_id: sessionId };
+  if (reason !== undefined) msg.reason = reason;
+  return msg;
+}
+
+export function sessionGrant({ sessionId, principal, permissions = ["read"] } = {}) {
+  return {
+    type: MSG.SESSION_GRANT,
+    session_id: sessionId,
+    principal,
+    permissions,
+  };
+}
+
+export function sessionRevoke({ sessionId, principal, reason } = {}) {
+  const msg = { type: MSG.SESSION_REVOKE, session_id: sessionId, principal };
   if (reason !== undefined) msg.reason = reason;
   return msg;
 }

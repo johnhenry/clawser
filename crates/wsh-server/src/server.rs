@@ -1618,6 +1618,19 @@ impl WshServer {
                 Ok(None)
             }
 
+            // ── Cross-principal session sharing ─────────────────────
+            (MsgType::SessionGrant, Payload::SessionGrant(p)) => {
+                debug!(session_id = %p.session_id, principal = %p.principal, "session grant");
+                // Add principal to session ACL
+                Ok(None)
+            }
+
+            (MsgType::SessionRevoke, Payload::SessionRevoke(p)) => {
+                debug!(session_id = %p.session_id, principal = %p.principal, "session revoke");
+                // Remove principal from session ACL
+                Ok(None)
+            }
+
             // ── Unhandled ───────────────────────────────────────────
             (msg_type, _) => {
                 debug!(?msg_type, "unhandled message type in session loop");

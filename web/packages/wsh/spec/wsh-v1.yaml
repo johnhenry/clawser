@@ -1117,6 +1117,43 @@ messages:
           type: string
           required: false
 
+  # ── Cross-principal session sharing ──────────────────────────────────
+  # Allow session owners to grant access to other authenticated users
+  # (principals).  This enables collaborative multi-user sessions.
+  principals:
+    SessionGrant:
+      code: 0x96
+      description: >
+        Grant another principal access to a session.  The principal
+        must be an authenticated user on the server.
+      fields:
+        session_id:
+          type: string
+          required: true
+        principal:
+          type: string
+          required: true
+          description: "Username or fingerprint of the grantee"
+        permissions:
+          type: "string[]"
+          default: '["read"]'
+          description: '"read", "write", or "control"'
+
+    SessionRevoke:
+      code: 0x97
+      description: >
+        Revoke a previously granted session access.
+      fields:
+        session_id:
+          type: string
+          required: true
+        principal:
+          type: string
+          required: true
+        reason:
+          type: string
+          required: false
+
 nested_types:
   AttachmentInfo:
     fields:

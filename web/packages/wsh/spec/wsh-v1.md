@@ -19,7 +19,7 @@
 - **Version**: `wsh-v1`
 - **Wire format**: CBOR
 - **Framing**: length prefixed be32
-- **Total message types**: 78 (including WS_DATA framing marker)
+- **Total message types**: 80 (including WS_DATA framing marker)
 
 ## Enums
 
@@ -128,6 +128,8 @@ Type: `string`
 | `0x93` | TermDiff | termsync |
 | `0x94` | NodeAnnounce | scaling |
 | `0x95` | NodeRedirect | scaling |
+| `0x96` | SessionGrant | principals |
+| `0x97` | SessionRevoke | principals |
 
 ## Message Details
 
@@ -941,6 +943,30 @@ Category: **scaling**
 | `target_node` | `string` | yes | — |
 | `target_endpoint` | `string` | yes | — |
 | `session_id` | `string` | yes | — |
+| `reason` | `string` | no | — |
+
+### SessionGrant (`0x96`)
+
+Category: **principals**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `session_id` | `string` | yes | — |
+| `principal` | `string` | yes | — |
+| `permissions` | `string[]` | no | `["read"]` |
+
+### SessionRevoke (`0x97`)
+
+Category: **principals**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `session_id` | `string` | yes | — |
+| `principal` | `string` | yes | — |
 | `reason` | `string` | no | — |
 
 ## Nested Types

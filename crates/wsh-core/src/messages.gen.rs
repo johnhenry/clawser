@@ -102,6 +102,9 @@ pub enum MsgType {
 
     NodeAnnounce = 0x94,
     NodeRedirect = 0x95,
+
+    SessionGrant = 0x96,
+    SessionRevoke = 0x97,
 }
 
 impl From<MsgType> for u8 {
@@ -191,6 +194,8 @@ impl TryFrom<u8> for MsgType {
             0x93 => Ok(Self::TermDiff),
             0x94 => Ok(Self::NodeAnnounce),
             0x95 => Ok(Self::NodeRedirect),
+            0x96 => Ok(Self::SessionGrant),
+            0x97 => Ok(Self::SessionRevoke),
             _ => Err(format!("unknown message type: 0x{v:02x}")),
         }
     }
@@ -312,6 +317,8 @@ pub enum Payload {
     TermDiff(TermDiffPayload),
     NodeAnnounce(NodeAnnouncePayload),
     NodeRedirect(NodeRedirectPayload),
+    SessionGrant(SessionGrantPayload),
+    SessionRevoke(SessionRevokePayload),
     Empty(EmptyPayload),
 }
 
@@ -862,6 +869,22 @@ pub struct NodeRedirectPayload {
     pub target_node: String,
     pub target_endpoint: String,
     pub session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionGrantPayload {
+    pub session_id: String,
+    pub principal: String,
+    #[serde(default)]
+    pub permissions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionRevokePayload {
+    pub session_id: String,
+    pub principal: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }
