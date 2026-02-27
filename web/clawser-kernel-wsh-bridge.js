@@ -2,10 +2,11 @@
  * Kernel ↔ wsh bridge — maps wsh session participants to kernel tenants.
  *
  * Listens to wsh client events and manages tenant lifecycle automatically:
- *   GuestJoin    → createTenant({ capabilities: [CLOCK, STDIO], env: { GUEST: 'true', TTL: '3600' } })
- *   CopilotAttach → createTenant({ capabilities: [STDIO], env: { COPILOT: 'true', MODE: 'read-only' } })
- *   SessionGrant  → createTenant({ capabilities: [...grantedCaps] })
- *   GuestRevoke / CopilotDetach / SessionRevoke → destroyTenant(tenantId)
+ *   GuestJoin      → createTenant({ capabilities: [CLOCK, STDIO], env: { GUEST: 'true', TTL: '3600' } })
+ *   CopilotAttach  → createTenant({ capabilities: [STDIO], env: { COPILOT: 'true', MODE: 'read-only' } })
+ *   SessionGrant   → createTenant({ capabilities: [...grantedCaps] })
+ *   ReverseConnect → createTenant({ capabilities: [STDIO, CLOCK], env: { REVERSE: 'true' } })
+ *   GuestRevoke / CopilotDetach / SessionRevoke / close → destroyTenant(tenantId)
  *
  * @module clawser-kernel-wsh-bridge
  */
@@ -79,6 +80,33 @@ export class KernelWshBridge {
   }
 
   /**
+   * Handle an incoming reverse connection from a remote CLI client.
+   * Grants restricted capabilities — STDIO and CLOCK only by default,
+   * since the remote user is executing tools through the relay and should
+   * not get full FS or NET access.
+   *
+   * @param {Object} event
+   * @param {string} event.username - Remote CLI username.
+   * @param {string} event.fingerprint - Remote CLI fingerprint.
+   * @param {string[]} [event.capabilities] - Override default caps.
+   * @returns {{ tenantId: string }}
+   */
+  handleReverseConnect({ username, fingerprint, capabilities }) {
+    const caps = capabilities || [KERNEL_CAP.STDIO, KERNEL_CAP.CLOCK];
+    const tenant = this.#kernel.createTenant({
+      capabilities: caps,
+      env: {
+        REVERSE: 'true',
+        USERNAME: username,
+        FINGERPRINT: fingerprint,
+        PARTICIPANT_ID: username,
+      },
+    });
+    this.#tenantMap.set(username, tenant.id);
+    return { tenantId: tenant.id };
+  }
+
+  /**
    * Handle a participant departure (GuestRevoke, CopilotDetach, SessionRevoke).
    *
    * @param {string} participantId - Participant identifier.
@@ -102,26 +130,33 @@ export class KernelWshBridge {
   }
 
   /**
-   * Bind to a wsh client event emitter. Expects the client to have
-   * `on(event, callback)` method.
+   * Bind to a wsh client's callback properties.
    *
-   * @param {Object} wshClient - wsh client with event emitter interface.
+   * WshClient uses direct callback properties (onReverseConnect, onClose, etc.)
+   * rather than EventEmitter `.on()`. This method wires those callbacks,
+   * chaining with any previously-set handler.
+   *
+   * @param {Object} wshClient - wsh client with callback properties.
    */
   bind(wshClient) {
-    if (!wshClient || typeof wshClient.on !== 'function') return;
+    if (!wshClient) return;
 
-    const handlers = [
-      ['GuestJoin', (e) => this.handleGuestJoin(e)],
-      ['CopilotAttach', (e) => this.handleCopilotAttach(e)],
-      ['SessionGrant', (e) => this.handleSessionGrant(e)],
-      ['GuestRevoke', (e) => this.handleParticipantLeave(e.guestId)],
-      ['CopilotDetach', (e) => this.handleParticipantLeave(e.copilotId)],
-      ['SessionRevoke', (e) => this.handleParticipantLeave(e.participantId)],
-    ];
+    // Wire onReverseConnect — the primary entry point for incoming CLI peers.
+    const prevReverseConnect = wshClient.onReverseConnect;
+    wshClient.onReverseConnect = (msg) => {
+      this.handleReverseConnect({
+        username: msg.username,
+        fingerprint: msg.target_fingerprint || msg.fingerprint || '',
+      });
+      if (prevReverseConnect) prevReverseConnect(msg);
+    };
 
-    for (const [event, handler] of handlers) {
-      wshClient.on(event, handler);
-    }
+    // Wire onClose — clean up all tenants when the client disconnects.
+    const prevClose = wshClient.onClose;
+    wshClient.onClose = (reason) => {
+      this.close();
+      if (prevClose) prevClose(reason);
+    };
   }
 
   /**

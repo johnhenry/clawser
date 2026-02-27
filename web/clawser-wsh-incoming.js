@@ -16,6 +16,16 @@
 
 import { getWshConnections } from './clawser-wsh-tools.js';
 
+// ── Kernel bridge integration (optional) ────────────────────────────
+/** @type {import('./clawser-kernel-wsh-bridge.js').KernelWshBridge|null} */
+let _kernelBridge = null;
+
+/** Set the kernel-wsh bridge for tenant lifecycle. */
+export function setKernelBridge(bridge) { _kernelBridge = bridge; }
+
+/** Get the current kernel-wsh bridge. */
+export function getKernelBridge() { return _kernelBridge; }
+
 // ── Incoming session tracking ────────────────────────────────────────
 
 /** @type {Map<string, IncomingSession>} username → session */
@@ -33,6 +43,8 @@ class IncomingSession {
     this.client = client;
     this.createdAt = Date.now();
     this.state = 'active';
+    /** @type {string|null} Kernel tenant ID (set by handleReverseConnect if bridge is active). */
+    this.tenantId = null;
     /** @type {boolean} Whether this session is actively listening for relay messages. */
     this._listening = false;
   }
@@ -262,6 +274,10 @@ class IncomingSession {
   close() {
     this.state = 'closed';
     this.stopListening();
+    // Destroy kernel tenant for this reverse-connect peer.
+    if (_kernelBridge) {
+      _kernelBridge.handleParticipantLeave(this.username);
+    }
     incomingSessions.delete(this.username);
   }
 }
@@ -323,6 +339,15 @@ export function handleReverseConnect(msg) {
   // Create incoming session, keyed by username.
   const session = new IncomingSession(msg, activeClient);
   incomingSessions.set(msg.username, session);
+
+  // Create a kernel tenant for this reverse-connect peer.
+  if (_kernelBridge) {
+    const { tenantId } = _kernelBridge.handleReverseConnect({
+      username: msg.username,
+      fingerprint: msg.target_fingerprint || '',
+    });
+    session.tenantId = tenantId;
+  }
 
   // Wire up relay message listening so Open/McpCall/etc. from the CLI
   // are routed through this session.
