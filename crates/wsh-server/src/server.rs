@@ -1656,6 +1656,31 @@ impl WshServer {
                 Ok(None)
             }
 
+            // ── Policy engine ──────────────────────────────────────
+            (MsgType::PolicyEval, Payload::PolicyEval(p)) => {
+                debug!(request_id = %p.request_id, action = %p.action, principal = %p.principal, "policy eval");
+                // Stub: allow all by default (no policy loaded)
+                Ok(Some(Envelope {
+                    msg_type: MsgType::PolicyResult,
+                    payload: Payload::PolicyResult(PolicyResultPayload {
+                        request_id: p.request_id.clone(),
+                        allowed: true,
+                        reason: Some("no policy loaded (default allow)".into()),
+                    }),
+                }))
+            }
+
+            (MsgType::PolicyResult, Payload::PolicyResult(_)) => {
+                // Server-to-client only
+                Ok(None)
+            }
+
+            (MsgType::PolicyUpdate, Payload::PolicyUpdate(p)) => {
+                debug!(policy_id = %p.policy_id, version = p.version, "policy update");
+                // Stub: store policy rules for future evaluation
+                Ok(None)
+            }
+
             // ── Unhandled ───────────────────────────────────────────
             (msg_type, _) => {
                 debug!(?msg_type, "unhandled message type in session loop");

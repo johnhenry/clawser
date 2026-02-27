@@ -19,7 +19,7 @@
 - **Version**: `wsh-v1`
 - **Wire format**: CBOR
 - **Framing**: length prefixed be32
-- **Total message types**: 83 (including WS_DATA framing marker)
+- **Total message types**: 86 (including WS_DATA framing marker)
 
 ## Enums
 
@@ -133,6 +133,9 @@ Type: `string`
 | `0x98` | FileOp | filechannel |
 | `0x99` | FileResult | filechannel |
 | `0x9a` | FileChunk | filechannel |
+| `0x9b` | PolicyEval | policy |
+| `0x9c` | PolicyResult | policy |
+| `0x9d` | PolicyUpdate | policy |
 
 ## Message Details
 
@@ -1011,6 +1014,43 @@ Category: **filechannel**
 | `offset` | `u64` | yes | — |
 | `data` | `bytes` | yes | — |
 | `is_final` | `bool` | yes | — |
+
+### PolicyEval (`0x9b`)
+
+Category: **policy**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `request_id` | `string` | yes | — |
+| `action` | `string` | yes | — |
+| `principal` | `string` | yes | — |
+| `context` | `json` | no | `{}` |
+
+### PolicyResult (`0x9c`)
+
+Category: **policy**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `request_id` | `string` | yes | — |
+| `allowed` | `bool` | yes | — |
+| `reason` | `string` | no | — |
+
+### PolicyUpdate (`0x9d`)
+
+Category: **policy**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `policy_id` | `string` | yes | — |
+| `rules` | `json` | yes | — |
+| `version` | `u64` | yes | — |
 
 ## Nested Types
 

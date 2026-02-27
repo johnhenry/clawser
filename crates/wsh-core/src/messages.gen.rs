@@ -109,6 +109,10 @@ pub enum MsgType {
     FileOp = 0x98,
     FileResult = 0x99,
     FileChunk = 0x9a,
+
+    PolicyEval = 0x9b,
+    PolicyResult = 0x9c,
+    PolicyUpdate = 0x9d,
 }
 
 impl From<MsgType> for u8 {
@@ -203,6 +207,9 @@ impl TryFrom<u8> for MsgType {
             0x98 => Ok(Self::FileOp),
             0x99 => Ok(Self::FileResult),
             0x9a => Ok(Self::FileChunk),
+            0x9b => Ok(Self::PolicyEval),
+            0x9c => Ok(Self::PolicyResult),
+            0x9d => Ok(Self::PolicyUpdate),
             _ => Err(format!("unknown message type: 0x{v:02x}")),
         }
     }
@@ -329,6 +336,9 @@ pub enum Payload {
     FileOp(FileOpPayload),
     FileResult(FileResultPayload),
     FileChunk(FileChunkPayload),
+    PolicyEval(PolicyEvalPayload),
+    PolicyResult(PolicyResultPayload),
+    PolicyUpdate(PolicyUpdatePayload),
     Empty(EmptyPayload),
 }
 
@@ -927,6 +937,30 @@ pub struct FileChunkPayload {
     #[serde(with = "serde_bytes")]
     pub data: Vec<u8>,
     pub is_final: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PolicyEvalPayload {
+    pub request_id: String,
+    pub action: String,
+    pub principal: String,
+    #[serde(default)]
+    pub context: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PolicyResultPayload {
+    pub request_id: String,
+    pub allowed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PolicyUpdatePayload {
+    pub policy_id: String,
+    pub rules: serde_json::Value,
+    pub version: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

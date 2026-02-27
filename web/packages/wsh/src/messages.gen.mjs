@@ -129,6 +129,11 @@ export const MSG = Object.freeze({
   FILE_OP:           0x98,
   FILE_RESULT:       0x99,
   FILE_CHUNK:        0x9a,
+
+  // Policy
+  POLICY_EVAL:       0x9b,
+  POLICY_RESULT:     0x9c,
+  POLICY_UPDATE:     0x9d,
 });
 
 // Reverse lookup: number → name
@@ -778,6 +783,31 @@ export function fileChunk({ channelId, offset, data, isFinal } = {}) {
     offset,
     data,
     is_final: isFinal,
+  };
+}
+
+export function policyEval({ requestId, action, principal, context = {} } = {}) {
+  return {
+    type: MSG.POLICY_EVAL,
+    request_id: requestId,
+    action,
+    principal,
+    context,
+  };
+}
+
+export function policyResult({ requestId, allowed, reason } = {}) {
+  const msg = { type: MSG.POLICY_RESULT, request_id: requestId, allowed };
+  if (reason !== undefined) msg.reason = reason;
+  return msg;
+}
+
+export function policyUpdate({ policyId, rules, version } = {}) {
+  return {
+    type: MSG.POLICY_UPDATE,
+    policy_id: policyId,
+    rules,
+    version,
   };
 }
 

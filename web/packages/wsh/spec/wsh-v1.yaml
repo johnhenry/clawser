@@ -1223,6 +1223,64 @@ messages:
           required: true
           description: "True if this is the last chunk"
 
+  # ── Policy engine ────────────────────────────────────────────────────
+  # OPA-like enterprise policy enforcement.  Actions are evaluated
+  # against policy rules before execution.  Policies can be updated
+  # at runtime without server restart.
+  policy:
+    PolicyEval:
+      code: 0x9b
+      description: >
+        Request policy evaluation for an action.  The server checks
+        the action against loaded policy rules and returns a decision.
+      fields:
+        request_id:
+          type: string
+          required: true
+        action:
+          type: string
+          required: true
+          description: '"open_pty", "exec", "file_write", "gateway", etc.'
+        principal:
+          type: string
+          required: true
+        context:
+          type: json
+          default: "{}"
+          description: "Additional context (IP, time, session metadata)"
+
+    PolicyResult:
+      code: 0x9c
+      description: >
+        Policy evaluation result.
+      fields:
+        request_id:
+          type: string
+          required: true
+        allowed:
+          type: bool
+          required: true
+        reason:
+          type: string
+          required: false
+
+    PolicyUpdate:
+      code: 0x9d
+      description: >
+        Push a policy update.  The server reloads policy rules from
+        the provided document.
+      fields:
+        policy_id:
+          type: string
+          required: true
+        rules:
+          type: json
+          required: true
+          description: "Policy document (JSON rule set)"
+        version:
+          type: u64
+          required: true
+
 nested_types:
   AttachmentInfo:
     fields:

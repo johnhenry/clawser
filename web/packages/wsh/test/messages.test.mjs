@@ -23,6 +23,7 @@ import {
   nodeAnnounce, nodeRedirect,
   sessionGrant, sessionRevoke,
   fileOp, fileResult, fileChunk,
+  policyEval, policyResult, policyUpdate,
   msgName, isValidMessage,
   AUTH_METHOD, CHANNEL_KIND,
 } from '../src/messages.mjs';
@@ -850,6 +851,56 @@ describe('structured file channel (SFTP replacement)', () => {
     assert.ok(isValidMessage(fileOp({ channelId: 1, op: 'stat', path: '/' })));
     assert.ok(isValidMessage(fileResult({ channelId: 1, success: true })));
     assert.ok(isValidMessage(fileChunk({ channelId: 1, offset: 0, data: new Uint8Array(0), isFinal: false })));
+  });
+});
+
+describe('policy engine (OPA-like)', () => {
+  it('policyEval', () => {
+    const msg = policyEval({ requestId: 'r1', action: 'open_pty', principal: 'alice', context: { ip: '10.0.0.1' } });
+    assert.equal(msg.type, MSG.POLICY_EVAL);
+    assert.equal(msg.request_id, 'r1');
+    assert.equal(msg.action, 'open_pty');
+    assert.equal(msg.principal, 'alice');
+    assert.deepEqual(msg.context, { ip: '10.0.0.1' });
+  });
+
+  it('policyEval default context', () => {
+    const msg = policyEval({ requestId: 'r1', action: 'exec', principal: 'bob' });
+    assert.deepEqual(msg.context, {});
+  });
+
+  it('policyResult', () => {
+    const msg = policyResult({ requestId: 'r1', allowed: true, reason: 'policy matched' });
+    assert.equal(msg.type, MSG.POLICY_RESULT);
+    assert.equal(msg.request_id, 'r1');
+    assert.equal(msg.allowed, true);
+    assert.equal(msg.reason, 'policy matched');
+  });
+
+  it('policyResult denied without reason', () => {
+    const msg = policyResult({ requestId: 'r1', allowed: false });
+    assert.equal(msg.allowed, false);
+    assert.equal(msg.reason, undefined);
+  });
+
+  it('policyUpdate', () => {
+    const msg = policyUpdate({ policyId: 'p1', rules: { deny: ['exec'] }, version: 2 });
+    assert.equal(msg.type, MSG.POLICY_UPDATE);
+    assert.equal(msg.policy_id, 'p1');
+    assert.deepEqual(msg.rules, { deny: ['exec'] });
+    assert.equal(msg.version, 2);
+  });
+
+  it('policy engine codes', () => {
+    assert.equal(MSG.POLICY_EVAL, 0x9b);
+    assert.equal(MSG.POLICY_RESULT, 0x9c);
+    assert.equal(MSG.POLICY_UPDATE, 0x9d);
+  });
+
+  it('policy messages validate correctly', () => {
+    assert.ok(isValidMessage(policyEval({ requestId: 'r', action: 'a', principal: 'p' })));
+    assert.ok(isValidMessage(policyResult({ requestId: 'r', allowed: true })));
+    assert.ok(isValidMessage(policyUpdate({ policyId: 'p', rules: {}, version: 1 })));
   });
 });
 

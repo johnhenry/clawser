@@ -288,7 +288,7 @@ Priority: Complete the wsh protocol implementation — browser-native remote she
 - [x] Horizontal scaling (stateless tokens, shared secret)
 - [x] Shared sessions across principals
 - [x] Structured file channel (SFTP replacement)
-- [ ] Policy engine (OPA-like enterprise control)
+- [x] Policy engine (OPA-like enterprise control)
 
 ---
 
