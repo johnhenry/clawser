@@ -16,6 +16,7 @@ import {
   compressBegin, compressAck,
   rateControl, rateWarning,
   sessionLink, sessionUnlink,
+  copilotAttach, copilotSuggest, copilotDetach,
   msgName, isValidMessage,
   AUTH_METHOD, CHANNEL_KIND,
 } from '../src/messages.mjs';
@@ -564,6 +565,58 @@ describe('cross-session linking (jump host)', () => {
   it('session link messages validate correctly', () => {
     assert.ok(isValidMessage(sessionLink({ sourceSession: 's1', targetHost: 'h', targetPort: 22 })));
     assert.ok(isValidMessage(sessionUnlink({ linkId: 'x' })));
+  });
+});
+
+describe('AI co-pilot attachment mode', () => {
+  it('copilotAttach', () => {
+    const msg = copilotAttach({ sessionId: 's1', model: 'claude-sonnet', contextWindow: 200000 });
+    assert.equal(msg.type, MSG.COPILOT_ATTACH);
+    assert.equal(msg.session_id, 's1');
+    assert.equal(msg.model, 'claude-sonnet');
+    assert.equal(msg.context_window, 200000);
+  });
+
+  it('copilotAttach with optional context window', () => {
+    const msg = copilotAttach({ sessionId: 's1', model: 'gpt-4' });
+    assert.equal(msg.context_window, undefined);
+  });
+
+  it('copilotSuggest', () => {
+    const msg = copilotSuggest({ sessionId: 's1', suggestion: 'try: git stash', confidence: 0.95 });
+    assert.equal(msg.type, MSG.COPILOT_SUGGEST);
+    assert.equal(msg.session_id, 's1');
+    assert.equal(msg.suggestion, 'try: git stash');
+    assert.equal(msg.confidence, 0.95);
+  });
+
+  it('copilotSuggest with optional confidence', () => {
+    const msg = copilotSuggest({ sessionId: 's1', suggestion: 'hello' });
+    assert.equal(msg.confidence, undefined);
+  });
+
+  it('copilotDetach', () => {
+    const msg = copilotDetach({ sessionId: 's1', reason: 'user dismissed' });
+    assert.equal(msg.type, MSG.COPILOT_DETACH);
+    assert.equal(msg.session_id, 's1');
+    assert.equal(msg.reason, 'user dismissed');
+  });
+
+  it('copilotDetach without reason', () => {
+    const msg = copilotDetach({ sessionId: 's1' });
+    assert.equal(msg.reason, undefined);
+  });
+
+  it('copilot codes', () => {
+    assert.equal(MSG.COPILOT_ATTACH, 0x8b);
+    assert.equal(MSG.COPILOT_SUGGEST, 0x8c);
+    assert.equal(MSG.COPILOT_DETACH, 0x8d);
+  });
+
+  it('copilot messages validate correctly', () => {
+    assert.ok(isValidMessage(copilotAttach({ sessionId: 's1', model: 'm' })));
+    assert.ok(isValidMessage(copilotSuggest({ sessionId: 's1', suggestion: 's' })));
+    assert.ok(isValidMessage(copilotDetach({ sessionId: 's1' })));
   });
 });
 

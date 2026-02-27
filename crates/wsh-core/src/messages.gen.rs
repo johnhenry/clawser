@@ -86,6 +86,10 @@ pub enum MsgType {
 
     SessionLink = 0x89,
     SessionUnlink = 0x8a,
+
+    CopilotAttach = 0x8b,
+    CopilotSuggest = 0x8c,
+    CopilotDetach = 0x8d,
 }
 
 impl From<MsgType> for u8 {
@@ -164,6 +168,9 @@ impl TryFrom<u8> for MsgType {
             0x88 => Ok(Self::RateWarning),
             0x89 => Ok(Self::SessionLink),
             0x8a => Ok(Self::SessionUnlink),
+            0x8b => Ok(Self::CopilotAttach),
+            0x8c => Ok(Self::CopilotSuggest),
+            0x8d => Ok(Self::CopilotDetach),
             _ => Err(format!("unknown message type: 0x{v:02x}")),
         }
     }
@@ -274,6 +281,9 @@ pub enum Payload {
     RateWarning(RateWarningPayload),
     SessionLink(SessionLinkPayload),
     SessionUnlink(SessionUnlinkPayload),
+    CopilotAttach(CopilotAttachPayload),
+    CopilotSuggest(CopilotSuggestPayload),
+    CopilotDetach(CopilotDetachPayload),
     Empty(EmptyPayload),
 }
 
@@ -735,6 +745,29 @@ pub struct SessionLinkPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionUnlinkPayload {
     pub link_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CopilotAttachPayload {
+    pub session_id: String,
+    pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CopilotSuggestPayload {
+    pub session_id: String,
+    pub suggestion: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CopilotDetachPayload {
+    pub session_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }

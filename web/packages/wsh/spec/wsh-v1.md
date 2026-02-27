@@ -19,7 +19,7 @@
 - **Version**: `wsh-v1`
 - **Wire format**: CBOR
 - **Framing**: length prefixed be32
-- **Total message types**: 67 (including WS_DATA framing marker)
+- **Total message types**: 70 (including WS_DATA framing marker)
 
 ## Enums
 
@@ -117,6 +117,9 @@ Type: `string`
 | `0x88` | RateWarning | ratecontrol |
 | `0x89` | SessionLink | linking |
 | `0x8a` | SessionUnlink | linking |
+| `0x8b` | CopilotAttach | copilot |
+| `0x8c` | CopilotSuggest | copilot |
+| `0x8d` | CopilotDetach | copilot |
 
 ## Message Details
 
@@ -795,6 +798,41 @@ Category: **linking**
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `link_id` | `string` | yes | — |
+| `reason` | `string` | no | — |
+
+### CopilotAttach (`0x8b`)
+
+Category: **copilot**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `session_id` | `string` | yes | — |
+| `model` | `string` | yes | — |
+| `context_window` | `u64` | no | — |
+
+### CopilotSuggest (`0x8c`)
+
+Category: **copilot**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `session_id` | `string` | yes | — |
+| `suggestion` | `string` | yes | — |
+| `confidence` | `f64` | no | — |
+
+### CopilotDetach (`0x8d`)
+
+Category: **copilot**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `session_id` | `string` | yes | — |
 | `reason` | `string` | no | — |
 
 ## Nested Types

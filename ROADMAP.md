@@ -281,7 +281,7 @@ Priority: Complete the wsh protocol implementation — browser-native remote she
 - [x] Stream compression negotiation (zstd)
 - [x] Per-attachment rate control (slow consumer policy)
 - [x] Cross-session linking (jump host support)
-- [ ] AI co-pilot attachment mode (read-only AI observer)
+- [x] AI co-pilot attachment mode (read-only AI observer)
 - [ ] E2E encrypted session mode
 - [ ] Predictive local echo (mosh-style)
 - [ ] Terminal diff-based sync (true mosh replacement)

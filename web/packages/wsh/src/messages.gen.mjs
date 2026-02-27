@@ -99,6 +99,11 @@ export const MSG = Object.freeze({
   // Linking
   SESSION_LINK:      0x89,
   SESSION_UNLINK:    0x8a,
+
+  // Copilot
+  COPILOT_ATTACH:    0x8b,
+  COPILOT_SUGGEST:   0x8c,
+  COPILOT_DETACH:    0x8d,
 });
 
 // Reverse lookup: number → name
@@ -619,6 +624,24 @@ export function sessionLink({ sourceSession, targetHost, targetPort, targetUser 
 
 export function sessionUnlink({ linkId, reason } = {}) {
   const msg = { type: MSG.SESSION_UNLINK, link_id: linkId };
+  if (reason !== undefined) msg.reason = reason;
+  return msg;
+}
+
+export function copilotAttach({ sessionId, model, contextWindow } = {}) {
+  const msg = { type: MSG.COPILOT_ATTACH, session_id: sessionId, model };
+  if (contextWindow !== undefined) msg.context_window = contextWindow;
+  return msg;
+}
+
+export function copilotSuggest({ sessionId, suggestion, confidence } = {}) {
+  const msg = { type: MSG.COPILOT_SUGGEST, session_id: sessionId, suggestion };
+  if (confidence !== undefined) msg.confidence = confidence;
+  return msg;
+}
+
+export function copilotDetach({ sessionId, reason } = {}) {
+  const msg = { type: MSG.COPILOT_DETACH, session_id: sessionId };
   if (reason !== undefined) msg.reason = reason;
   return msg;
 }

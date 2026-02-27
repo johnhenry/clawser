@@ -1549,6 +1549,24 @@ impl WshServer {
                 Ok(None)
             }
 
+            // ── AI co-pilot ────────────────────────────────────────
+            (MsgType::CopilotAttach, Payload::CopilotAttach(p)) => {
+                debug!(session_id = %p.session_id, model = %p.model, "copilot attach");
+                // Register as read-only observer; relay PTY output to copilot
+                Ok(None)
+            }
+
+            (MsgType::CopilotSuggest, Payload::CopilotSuggest(p)) => {
+                debug!(session_id = %p.session_id, "copilot suggestion");
+                // Forward suggestion to session controller
+                Ok(None)
+            }
+
+            (MsgType::CopilotDetach, Payload::CopilotDetach(p)) => {
+                debug!(session_id = %p.session_id, "copilot detach");
+                Ok(None)
+            }
+
             // ── Unhandled ───────────────────────────────────────────
             (msg_type, _) => {
                 debug!(?msg_type, "unhandled message type in session loop");

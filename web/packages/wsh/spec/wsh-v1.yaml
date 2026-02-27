@@ -894,6 +894,56 @@ messages:
           type: string
           required: false
 
+  # ── AI co-pilot ─────────────────────────────────────────────────────
+  # Read-only AI observer mode.  An AI model attaches to a session,
+  # observes terminal output, and can offer suggestions without
+  # directly controlling the session.
+  copilot:
+    CopilotAttach:
+      code: 0x8b
+      description: >
+        Sent by an AI agent to attach as a read-only co-pilot observer.
+      fields:
+        session_id:
+          type: string
+          required: true
+        model:
+          type: string
+          required: true
+          description: "Model identifier (e.g. 'claude-sonnet', 'gpt-4')"
+        context_window:
+          type: u64
+          required: false
+          description: "Model context window size in tokens"
+
+    CopilotSuggest:
+      code: 0x8c
+      description: >
+        Sent by the co-pilot to offer a suggestion to the session user.
+      fields:
+        session_id:
+          type: string
+          required: true
+        suggestion:
+          type: string
+          required: true
+        confidence:
+          type: f64
+          required: false
+          description: "Confidence score 0.0-1.0"
+
+    CopilotDetach:
+      code: 0x8d
+      description: >
+        Sent by either side to end the co-pilot attachment.
+      fields:
+        session_id:
+          type: string
+          required: true
+        reason:
+          type: string
+          required: false
+
 nested_types:
   AttachmentInfo:
     fields:
