@@ -77,6 +77,9 @@ pub enum MsgType {
 
     ShareSession = 0x83,
     ShareRevoke = 0x84,
+
+    CompressBegin = 0x85,
+    CompressAck = 0x86,
 }
 
 impl From<MsgType> for u8 {
@@ -149,6 +152,8 @@ impl TryFrom<u8> for MsgType {
             0x82 => Ok(Self::GuestRevoke),
             0x83 => Ok(Self::ShareSession),
             0x84 => Ok(Self::ShareRevoke),
+            0x85 => Ok(Self::CompressBegin),
+            0x86 => Ok(Self::CompressAck),
             _ => Err(format!("unknown message type: 0x{v:02x}")),
         }
     }
@@ -253,6 +258,8 @@ pub enum Payload {
     GuestRevoke(GuestRevokePayload),
     ShareSession(ShareSessionPayload),
     ShareRevoke(ShareRevokePayload),
+    CompressBegin(CompressBeginPayload),
+    CompressAck(CompressAckPayload),
     Empty(EmptyPayload),
 }
 
@@ -672,6 +679,19 @@ pub struct ShareRevokePayload {
     pub share_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompressBeginPayload {
+    pub algorithm: String,
+    #[serde(default)]
+    pub level: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompressAckPayload {
+    pub algorithm: String,
+    pub accepted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

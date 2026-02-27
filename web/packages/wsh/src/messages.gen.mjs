@@ -87,6 +87,10 @@ export const MSG = Object.freeze({
   // Sharing
   SHARE_SESSION:     0x83,
   SHARE_REVOKE:      0x84,
+
+  // Compression
+  COMPRESS_BEGIN:    0x85,
+  COMPRESS_ACK:      0x86,
 });
 
 // Reverse lookup: number → name
@@ -563,6 +567,22 @@ export function shareRevoke({ shareId, reason } = {}) {
   const msg = { type: MSG.SHARE_REVOKE, share_id: shareId };
   if (reason !== undefined) msg.reason = reason;
   return msg;
+}
+
+export function compressBegin({ algorithm, level = 3 } = {}) {
+  return {
+    type: MSG.COMPRESS_BEGIN,
+    algorithm,
+    level,
+  };
+}
+
+export function compressAck({ algorithm, accepted } = {}) {
+  return {
+    type: MSG.COMPRESS_ACK,
+    algorithm,
+    accepted,
+  };
 }
 
 // ── Utility ───────────────────────────────────────────────────────────

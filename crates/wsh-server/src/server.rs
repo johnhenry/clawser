@@ -1500,6 +1500,25 @@ impl WshServer {
                 Ok(None)
             }
 
+            // ── Compression negotiation ────────────────────────────
+            (MsgType::CompressBegin, Payload::CompressBegin(p)) => {
+                debug!(algorithm = %p.algorithm, level = p.level, "compression proposed");
+                // Stub: accept zstd, reject others
+                let accepted = p.algorithm == "zstd";
+                Ok(Some(Envelope {
+                    msg_type: MsgType::CompressAck,
+                    payload: Payload::CompressAck(CompressAckPayload {
+                        algorithm: p.algorithm.clone(),
+                        accepted,
+                    }),
+                }))
+            }
+
+            (MsgType::CompressAck, Payload::CompressAck(p)) => {
+                debug!(algorithm = %p.algorithm, accepted = p.accepted, "compression ack");
+                Ok(None)
+            }
+
             // ── Unhandled ───────────────────────────────────────────
             (msg_type, _) => {
                 debug!(?msg_type, "unhandled message type in session loop");

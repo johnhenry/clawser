@@ -13,6 +13,7 @@ import {
   listenRequest, listenOk, listenFail, listenClose, gatewayData,
   guestInvite, guestJoin, guestRevoke,
   shareSession, shareRevoke,
+  compressBegin, compressAck,
   msgName, isValidMessage,
   AUTH_METHOD, CHANNEL_KIND,
 } from '../src/messages.mjs';
@@ -454,6 +455,42 @@ describe('multi-attach read-only URL sharing', () => {
   it('share messages validate correctly', () => {
     assert.ok(isValidMessage(shareSession({ sessionId: 's1', ttl: 60 })));
     assert.ok(isValidMessage(shareRevoke({ shareId: 'x' })));
+  });
+});
+
+describe('stream compression negotiation', () => {
+  it('compressBegin', () => {
+    const msg = compressBegin({ algorithm: 'zstd', level: 3 });
+    assert.equal(msg.type, MSG.COMPRESS_BEGIN);
+    assert.equal(msg.algorithm, 'zstd');
+    assert.equal(msg.level, 3);
+  });
+
+  it('compressBegin with default level', () => {
+    const msg = compressBegin({ algorithm: 'zstd' });
+    assert.equal(msg.level, 3);
+  });
+
+  it('compressAck', () => {
+    const msg = compressAck({ algorithm: 'zstd', accepted: true });
+    assert.equal(msg.type, MSG.COMPRESS_ACK);
+    assert.equal(msg.algorithm, 'zstd');
+    assert.equal(msg.accepted, true);
+  });
+
+  it('compressAck rejected', () => {
+    const msg = compressAck({ algorithm: 'zstd', accepted: false });
+    assert.equal(msg.accepted, false);
+  });
+
+  it('compress message codes', () => {
+    assert.equal(MSG.COMPRESS_BEGIN, 0x85);
+    assert.equal(MSG.COMPRESS_ACK, 0x86);
+  });
+
+  it('compress messages validate correctly', () => {
+    assert.ok(isValidMessage(compressBegin({ algorithm: 'zstd' })));
+    assert.ok(isValidMessage(compressAck({ algorithm: 'zstd', accepted: true })));
   });
 });
 

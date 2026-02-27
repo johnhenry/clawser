@@ -19,7 +19,7 @@
 - **Version**: `wsh-v1`
 - **Wire format**: CBOR
 - **Framing**: length prefixed be32
-- **Total message types**: 61 (including WS_DATA framing marker)
+- **Total message types**: 63 (including WS_DATA framing marker)
 
 ## Enums
 
@@ -111,6 +111,8 @@ Type: `string`
 | `0x82` | GuestRevoke | guest |
 | `0x83` | ShareSession | sharing |
 | `0x84` | ShareRevoke | sharing |
+| `0x85` | CompressBegin | compression |
+| `0x86` | CompressAck | compression |
 
 ## Message Details
 
@@ -720,6 +722,28 @@ Category: **sharing**
 |-------|------|----------|---------|
 | `share_id` | `string` | yes | — |
 | `reason` | `string` | no | — |
+
+### CompressBegin (`0x85`)
+
+Category: **compression**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `algorithm` | `string` | yes | — |
+| `level` | `u32` | no | `3` |
+
+### CompressAck (`0x86`)
+
+Category: **compression**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `algorithm` | `string` | yes | — |
+| `accepted` | `bool` | yes | — |
 
 ## Nested Types
 

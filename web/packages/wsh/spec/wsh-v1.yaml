@@ -790,6 +790,38 @@ messages:
           type: string
           required: false
 
+  # ── Stream compression ──────────────────────────────────────────────
+  # Negotiate per-connection compression.  Either side may propose
+  # compression; the peer accepts or rejects.  After CompressAck with
+  # accepted=true, all subsequent frames are compressed.
+  compression:
+    CompressBegin:
+      code: 0x85
+      description: >
+        Propose stream compression.  Sent by either side before data
+        transfer begins (or after renegotiation).
+      fields:
+        algorithm:
+          type: string
+          required: true
+          description: '"zstd", "lz4", or "deflate"'
+        level:
+          type: u32
+          default: 3
+          description: "Compression level (algorithm-specific)"
+
+    CompressAck:
+      code: 0x86
+      description: >
+        Accept or reject a compression proposal.
+      fields:
+        algorithm:
+          type: string
+          required: true
+        accepted:
+          type: bool
+          required: true
+
 nested_types:
   AttachmentInfo:
     fields:
