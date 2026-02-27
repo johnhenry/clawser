@@ -11,6 +11,7 @@ import {
   openTcp, openUdp, resolveDns, gatewayOk, gatewayFail, gatewayClose,
   inboundOpen, inboundAccept, inboundReject, dnsResult,
   listenRequest, listenOk, listenFail, listenClose, gatewayData,
+  guestInvite, guestJoin, guestRevoke,
   msgName, isValidMessage,
   AUTH_METHOD, CHANNEL_KIND,
 } from '../src/messages.mjs';
@@ -364,6 +365,57 @@ describe('CHANNEL_KIND extensions', () => {
 
   it('has exactly 7 kinds', () => {
     assert.equal(Object.keys(CHANNEL_KIND).length, 7);
+  });
+});
+
+describe('ephemeral guest sessions', () => {
+  it('guestInvite', () => {
+    const msg = guestInvite({ sessionId: 's1', ttl: 600, permissions: ['read'] });
+    assert.equal(msg.type, MSG.GUEST_INVITE);
+    assert.equal(msg.session_id, 's1');
+    assert.equal(msg.ttl, 600);
+    assert.deepEqual(msg.permissions, ['read']);
+  });
+
+  it('guestInvite with default permissions', () => {
+    const msg = guestInvite({ sessionId: 's1', ttl: 300 });
+    assert.deepEqual(msg.permissions, ['read']);
+  });
+
+  it('guestJoin', () => {
+    const msg = guestJoin({ token: 'abc123', deviceLabel: 'Guest/Chrome' });
+    assert.equal(msg.type, MSG.GUEST_JOIN);
+    assert.equal(msg.token, 'abc123');
+    assert.equal(msg.device_label, 'Guest/Chrome');
+  });
+
+  it('guestJoin without device label', () => {
+    const msg = guestJoin({ token: 'abc123' });
+    assert.equal(msg.device_label, undefined);
+  });
+
+  it('guestRevoke', () => {
+    const msg = guestRevoke({ token: 'abc123', reason: 'expired' });
+    assert.equal(msg.type, MSG.GUEST_REVOKE);
+    assert.equal(msg.token, 'abc123');
+    assert.equal(msg.reason, 'expired');
+  });
+
+  it('guestRevoke without reason', () => {
+    const msg = guestRevoke({ token: 'abc123' });
+    assert.equal(msg.reason, undefined);
+  });
+
+  it('guest message codes in 0x80-0x82 range', () => {
+    assert.equal(MSG.GUEST_INVITE, 0x80);
+    assert.equal(MSG.GUEST_JOIN, 0x81);
+    assert.equal(MSG.GUEST_REVOKE, 0x82);
+  });
+
+  it('guest messages validate correctly', () => {
+    assert.ok(isValidMessage(guestInvite({ sessionId: 's1', ttl: 300 })));
+    assert.ok(isValidMessage(guestJoin({ token: 'x' })));
+    assert.ok(isValidMessage(guestRevoke({ token: 'x' })));
   });
 });
 

@@ -78,6 +78,11 @@ export const MSG = Object.freeze({
   LISTEN_FAIL:       0x7c,
   LISTEN_CLOSE:      0x7d,
   GATEWAY_DATA:      0x7e,
+
+  // Guest
+  GUEST_INVITE:      0x80,
+  GUEST_JOIN:        0x81,
+  GUEST_REVOKE:      0x82,
 });
 
 // Reverse lookup: number → name
@@ -518,6 +523,27 @@ export function gatewayData({ gatewayId, data } = {}) {
     gateway_id: gatewayId,
     data,
   };
+}
+
+export function guestInvite({ sessionId, ttl, permissions = ["read"] } = {}) {
+  return {
+    type: MSG.GUEST_INVITE,
+    session_id: sessionId,
+    ttl,
+    permissions,
+  };
+}
+
+export function guestJoin({ token, deviceLabel } = {}) {
+  const msg = { type: MSG.GUEST_JOIN, token };
+  if (deviceLabel !== undefined) msg.device_label = deviceLabel;
+  return msg;
+}
+
+export function guestRevoke({ token, reason } = {}) {
+  const msg = { type: MSG.GUEST_REVOKE, token };
+  if (reason !== undefined) msg.reason = reason;
+  return msg;
 }
 
 // ── Utility ───────────────────────────────────────────────────────────

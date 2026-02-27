@@ -19,7 +19,7 @@
 - **Version**: `wsh-v1`
 - **Wire format**: CBOR
 - **Framing**: length prefixed be32
-- **Total message types**: 56 (including WS_DATA framing marker)
+- **Total message types**: 59 (including WS_DATA framing marker)
 
 ## Enums
 
@@ -106,6 +106,9 @@ Type: `string`
 | `0x7c` | ListenFail | gateway |
 | `0x7d` | ListenClose | gateway |
 | `0x7e` | GatewayData | gateway |
+| `0x80` | GuestInvite | guest |
+| `0x81` | GuestJoin | guest |
+| `0x82` | GuestRevoke | guest |
 
 ## Message Details
 
@@ -658,6 +661,40 @@ Category: **gateway**
 |-------|------|----------|---------|
 | `gateway_id` | `u32` | yes | — |
 | `data` | `bytes` | yes | — |
+
+### GuestInvite (`0x80`)
+
+Category: **guest**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `session_id` | `string` | yes | — |
+| `ttl` | `u64` | yes | — |
+| `permissions` | `string[]` | no | `["read"]` |
+
+### GuestJoin (`0x81`)
+
+Category: **guest**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `token` | `string` | yes | — |
+| `device_label` | `string` | no | — |
+
+### GuestRevoke (`0x82`)
+
+Category: **guest**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `token` | `string` | yes | — |
+| `reason` | `string` | no | — |
 
 ## Nested Types
 

@@ -707,6 +707,55 @@ messages:
           type: bytes
           required: true
 
+  # ── Guest sessions ──────────────────────────────────────────────────
+  # Ephemeral guest sessions allow session owners to create short-lived
+  # share links.  A guest invite produces a single-use token that a
+  # guest can present via GuestJoin to attach with limited permissions.
+  guest:
+    GuestInvite:
+      code: 0x80
+      description: >
+        Sent by the session owner to create an ephemeral guest token.
+        The server generates a short-lived token and returns it in the
+        same message (echo-back) so the owner can share it.
+      fields:
+        session_id:
+          type: string
+          required: true
+        ttl:
+          type: u64
+          required: true
+          description: "Token lifetime in seconds"
+        permissions:
+          type: "string[]"
+          default: '["read"]'
+          description: '"read", "write", or "control"'
+
+    GuestJoin:
+      code: 0x81
+      description: >
+        Sent by a guest to join a session using an ephemeral token.
+        On success the server replies with Presence; on failure AuthFail.
+      fields:
+        token:
+          type: string
+          required: true
+        device_label:
+          type: string
+          required: false
+
+    GuestRevoke:
+      code: 0x82
+      description: >
+        Sent by the session owner to revoke an outstanding guest token.
+      fields:
+        token:
+          type: string
+          required: true
+        reason:
+          type: string
+          required: false
+
 nested_types:
   AttachmentInfo:
     fields:

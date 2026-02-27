@@ -70,6 +70,10 @@ pub enum MsgType {
     ListenFail = 0x7c,
     ListenClose = 0x7d,
     GatewayData = 0x7e,
+
+    GuestInvite = 0x80,
+    GuestJoin = 0x81,
+    GuestRevoke = 0x82,
 }
 
 impl From<MsgType> for u8 {
@@ -137,6 +141,9 @@ impl TryFrom<u8> for MsgType {
             0x7c => Ok(Self::ListenFail),
             0x7d => Ok(Self::ListenClose),
             0x7e => Ok(Self::GatewayData),
+            0x80 => Ok(Self::GuestInvite),
+            0x81 => Ok(Self::GuestJoin),
+            0x82 => Ok(Self::GuestRevoke),
             _ => Err(format!("unknown message type: 0x{v:02x}")),
         }
     }
@@ -236,6 +243,9 @@ pub enum Payload {
     ListenFail(ListenFailPayload),
     ListenClose(ListenClosePayload),
     GatewayData(GatewayDataPayload),
+    GuestInvite(GuestInvitePayload),
+    GuestJoin(GuestJoinPayload),
+    GuestRevoke(GuestRevokePayload),
     Empty(EmptyPayload),
 }
 
@@ -618,6 +628,28 @@ pub struct GatewayDataPayload {
     pub gateway_id: u32,
     #[serde(with = "serde_bytes")]
     pub data: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GuestInvitePayload {
+    pub session_id: String,
+    pub ttl: u64,
+    #[serde(default)]
+    pub permissions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GuestJoinPayload {
+    pub token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_label: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GuestRevokePayload {
+    pub token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

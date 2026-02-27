@@ -1449,6 +1449,38 @@ impl WshServer {
                 }
             }
 
+            // ── Guest sessions ─────────────────────────────────────
+            (MsgType::GuestInvite, Payload::GuestInvite(p)) => {
+                // Generate a short-lived guest token for the session
+                debug!(session_id = %p.session_id, ttl = p.ttl, "guest invite");
+                let _token = format!("guest-{}-{}", &p.session_id[..8.min(p.session_id.len())], rand::random::<u32>());
+                // Echo back the invite with the generated token (client shares it)
+                Ok(Some(Envelope {
+                    msg_type: MsgType::GuestInvite,
+                    payload: Payload::GuestInvite(GuestInvitePayload {
+                        session_id: p.session_id.clone(),
+                        ttl: p.ttl,
+                        permissions: p.permissions.clone(),
+                    }),
+                }))
+            }
+
+            (MsgType::GuestJoin, Payload::GuestJoin(p)) => {
+                debug!(token = %p.token, "guest join attempt");
+                // Stub: in production, validate the token against stored invites
+                Ok(Some(Envelope {
+                    msg_type: MsgType::AuthFail,
+                    payload: Payload::AuthFail(AuthFailPayload {
+                        reason: "guest tokens not yet validated".into(),
+                    }),
+                }))
+            }
+
+            (MsgType::GuestRevoke, Payload::GuestRevoke(p)) => {
+                debug!(token = %p.token, "guest token revoked");
+                Ok(None) // no reply needed
+            }
+
             // ── Unhandled ───────────────────────────────────────────
             (msg_type, _) => {
                 debug!(?msg_type, "unhandled message type in session loop");

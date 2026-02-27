@@ -276,7 +276,7 @@ Priority: Complete the wsh protocol implementation — browser-native remote she
 - [x] Idle suspend (SIGSTOP/SIGCONT instead of kill)
 - [x] Graceful PTY restart (restart shell without killing session)
 - [ ] ghostty-web terminal frontend integration
-- [ ] Ephemeral guest sessions (short-lived share links)
+- [x] Ephemeral guest sessions (short-lived share links)
 - [ ] Multi-attach read-only URL sharing
 - [ ] Stream compression negotiation (zstd)
 - [ ] Per-attachment rate control (slow consumer policy)
