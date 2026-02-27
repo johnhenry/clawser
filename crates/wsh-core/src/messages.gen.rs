@@ -105,6 +105,10 @@ pub enum MsgType {
 
     SessionGrant = 0x96,
     SessionRevoke = 0x97,
+
+    FileOp = 0x98,
+    FileResult = 0x99,
+    FileChunk = 0x9a,
 }
 
 impl From<MsgType> for u8 {
@@ -196,6 +200,9 @@ impl TryFrom<u8> for MsgType {
             0x95 => Ok(Self::NodeRedirect),
             0x96 => Ok(Self::SessionGrant),
             0x97 => Ok(Self::SessionRevoke),
+            0x98 => Ok(Self::FileOp),
+            0x99 => Ok(Self::FileResult),
+            0x9a => Ok(Self::FileChunk),
             _ => Err(format!("unknown message type: 0x{v:02x}")),
         }
     }
@@ -319,6 +326,9 @@ pub enum Payload {
     NodeRedirect(NodeRedirectPayload),
     SessionGrant(SessionGrantPayload),
     SessionRevoke(SessionRevokePayload),
+    FileOp(FileOpPayload),
+    FileResult(FileResultPayload),
+    FileChunk(FileChunkPayload),
     Empty(EmptyPayload),
 }
 
@@ -887,6 +897,36 @@ pub struct SessionRevokePayload {
     pub principal: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileOpPayload {
+    pub channel_id: u32,
+    pub op: String,
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub length: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileResultPayload {
+    pub channel_id: u32,
+    pub success: bool,
+    #[serde(default)]
+    pub metadata: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileChunkPayload {
+    pub channel_id: u32,
+    pub offset: u64,
+    #[serde(with = "serde_bytes")]
+    pub data: Vec<u8>,
+    pub is_final: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

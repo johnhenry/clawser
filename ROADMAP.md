@@ -287,7 +287,7 @@ Priority: Complete the wsh protocol implementation — browser-native remote she
 - [x] Terminal diff-based sync (true mosh replacement)
 - [x] Horizontal scaling (stateless tokens, shared secret)
 - [x] Shared sessions across principals
-- [ ] Structured file channel (SFTP replacement)
+- [x] Structured file channel (SFTP replacement)
 - [ ] Policy engine (OPA-like enterprise control)
 
 ---

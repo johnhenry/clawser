@@ -19,7 +19,7 @@
 - **Version**: `wsh-v1`
 - **Wire format**: CBOR
 - **Framing**: length prefixed be32
-- **Total message types**: 80 (including WS_DATA framing marker)
+- **Total message types**: 83 (including WS_DATA framing marker)
 
 ## Enums
 
@@ -130,6 +130,9 @@ Type: `string`
 | `0x95` | NodeRedirect | scaling |
 | `0x96` | SessionGrant | principals |
 | `0x97` | SessionRevoke | principals |
+| `0x98` | FileOp | filechannel |
+| `0x99` | FileResult | filechannel |
+| `0x9a` | FileChunk | filechannel |
 
 ## Message Details
 
@@ -968,6 +971,46 @@ Category: **principals**
 | `session_id` | `string` | yes | — |
 | `principal` | `string` | yes | — |
 | `reason` | `string` | no | — |
+
+### FileOp (`0x98`)
+
+Category: **filechannel**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `channel_id` | `u32` | yes | — |
+| `op` | `string` | yes | — |
+| `path` | `string` | yes | — |
+| `offset` | `u64` | no | — |
+| `length` | `u64` | no | — |
+
+### FileResult (`0x99`)
+
+Category: **filechannel**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `channel_id` | `u32` | yes | — |
+| `success` | `bool` | yes | — |
+| `metadata` | `json` | no | `{}` |
+| `error_message` | `string` | no | — |
+
+### FileChunk (`0x9a`)
+
+Category: **filechannel**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `channel_id` | `u32` | yes | — |
+| `offset` | `u64` | yes | — |
+| `data` | `bytes` | yes | — |
+| `is_final` | `bool` | yes | — |
 
 ## Nested Types
 

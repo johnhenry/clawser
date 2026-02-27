@@ -124,6 +124,11 @@ export const MSG = Object.freeze({
   // Principals
   SESSION_GRANT:     0x96,
   SESSION_REVOKE:    0x97,
+
+  // Filechannel
+  FILE_OP:           0x98,
+  FILE_RESULT:       0x99,
+  FILE_CHUNK:        0x9a,
 });
 
 // Reverse lookup: number → name
@@ -751,6 +756,29 @@ export function sessionRevoke({ sessionId, principal, reason } = {}) {
   const msg = { type: MSG.SESSION_REVOKE, session_id: sessionId, principal };
   if (reason !== undefined) msg.reason = reason;
   return msg;
+}
+
+export function fileOp({ channelId, op, path, offset, length } = {}) {
+  const msg = { type: MSG.FILE_OP, channel_id: channelId, op, path };
+  if (offset !== undefined) msg.offset = offset;
+  if (length !== undefined) msg.length = length;
+  return msg;
+}
+
+export function fileResult({ channelId, success, metadata = {}, errorMessage } = {}) {
+  const msg = { type: MSG.FILE_RESULT, channel_id: channelId, success, metadata };
+  if (errorMessage !== undefined) msg.error_message = errorMessage;
+  return msg;
+}
+
+export function fileChunk({ channelId, offset, data, isFinal } = {}) {
+  return {
+    type: MSG.FILE_CHUNK,
+    channel_id: channelId,
+    offset,
+    data,
+    is_final: isFinal,
+  };
 }
 
 // ── Utility ───────────────────────────────────────────────────────────

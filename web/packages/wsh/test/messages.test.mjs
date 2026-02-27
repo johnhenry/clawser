@@ -22,6 +22,7 @@ import {
   termSync, termDiff,
   nodeAnnounce, nodeRedirect,
   sessionGrant, sessionRevoke,
+  fileOp, fileResult, fileChunk,
   msgName, isValidMessage,
   AUTH_METHOD, CHANNEL_KIND,
 } from '../src/messages.mjs';
@@ -791,6 +792,64 @@ describe('shared sessions across principals', () => {
   it('session sharing messages validate correctly', () => {
     assert.ok(isValidMessage(sessionGrant({ sessionId: 's', principal: 'p' })));
     assert.ok(isValidMessage(sessionRevoke({ sessionId: 's', principal: 'p' })));
+  });
+});
+
+describe('structured file channel (SFTP replacement)', () => {
+  it('fileOp', () => {
+    const msg = fileOp({ channelId: 1, op: 'stat', path: '/etc/hosts' });
+    assert.equal(msg.type, MSG.FILE_OP);
+    assert.equal(msg.channel_id, 1);
+    assert.equal(msg.op, 'stat');
+    assert.equal(msg.path, '/etc/hosts');
+  });
+
+  it('fileOp with optional fields', () => {
+    const msg = fileOp({ channelId: 1, op: 'read', path: '/tmp/file', offset: 100, length: 512 });
+    assert.equal(msg.offset, 100);
+    assert.equal(msg.length, 512);
+  });
+
+  it('fileOp optional fields absent', () => {
+    const msg = fileOp({ channelId: 1, op: 'list', path: '/' });
+    assert.equal(msg.offset, undefined);
+    assert.equal(msg.length, undefined);
+  });
+
+  it('fileResult', () => {
+    const msg = fileResult({ channelId: 1, success: true, metadata: { size: 1024, mode: '0644' } });
+    assert.equal(msg.type, MSG.FILE_RESULT);
+    assert.equal(msg.channel_id, 1);
+    assert.equal(msg.success, true);
+    assert.deepEqual(msg.metadata, { size: 1024, mode: '0644' });
+  });
+
+  it('fileResult failure', () => {
+    const msg = fileResult({ channelId: 1, success: false, errorMessage: 'not found' });
+    assert.equal(msg.success, false);
+    assert.equal(msg.error_message, 'not found');
+  });
+
+  it('fileChunk', () => {
+    const data = new Uint8Array([1, 2, 3, 4]);
+    const msg = fileChunk({ channelId: 1, offset: 0, data, isFinal: true });
+    assert.equal(msg.type, MSG.FILE_CHUNK);
+    assert.equal(msg.channel_id, 1);
+    assert.equal(msg.offset, 0);
+    assert.equal(msg.data, data);
+    assert.equal(msg.is_final, true);
+  });
+
+  it('file channel codes', () => {
+    assert.equal(MSG.FILE_OP, 0x98);
+    assert.equal(MSG.FILE_RESULT, 0x99);
+    assert.equal(MSG.FILE_CHUNK, 0x9a);
+  });
+
+  it('file channel messages validate correctly', () => {
+    assert.ok(isValidMessage(fileOp({ channelId: 1, op: 'stat', path: '/' })));
+    assert.ok(isValidMessage(fileResult({ channelId: 1, success: true })));
+    assert.ok(isValidMessage(fileChunk({ channelId: 1, offset: 0, data: new Uint8Array(0), isFinal: false })));
   });
 });
 

@@ -1154,6 +1154,75 @@ messages:
           type: string
           required: false
 
+  # ── Structured file channel ──────────────────────────────────────────
+  # SFTP replacement — structured file operations over wsh channels.
+  # Supports stat, list, read, write, mkdir, remove, rename.
+  filechannel:
+    FileOp:
+      code: 0x98
+      description: >
+        Request a file operation (stat, list, read, write, mkdir,
+        remove, rename).
+      fields:
+        channel_id:
+          type: u32
+          required: true
+        op:
+          type: string
+          required: true
+          description: '"stat", "list", "read", "write", "mkdir", "remove", "rename"'
+        path:
+          type: string
+          required: true
+        offset:
+          type: u64
+          required: false
+          description: "Byte offset for read/write"
+        length:
+          type: u64
+          required: false
+          description: "Byte count for read"
+
+    FileResult:
+      code: 0x99
+      description: >
+        Result of a file operation.  Success with optional metadata,
+        or failure with error message.
+      fields:
+        channel_id:
+          type: u32
+          required: true
+        success:
+          type: bool
+          required: true
+        metadata:
+          type: json
+          default: "{}"
+          description: "File metadata (size, mode, mtime, etc.)"
+        error_message:
+          type: string
+          required: false
+
+    FileChunk:
+      code: 0x9a
+      description: >
+        Data chunk for file read/write transfers.  The final flag
+        indicates the last chunk in the sequence.
+      fields:
+        channel_id:
+          type: u32
+          required: true
+        offset:
+          type: u64
+          required: true
+        data:
+          type: bytes
+          required: true
+        is_final:
+          type: bool
+          required: true
+          description: "True if this is the last chunk"
+
 nested_types:
   AttachmentInfo:
     fields:

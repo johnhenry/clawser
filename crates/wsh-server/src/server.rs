@@ -1631,6 +1631,31 @@ impl WshServer {
                 Ok(None)
             }
 
+            // ── Structured file channel ────────────────────────────
+            (MsgType::FileOp, Payload::FileOp(p)) => {
+                debug!(channel_id = p.channel_id, op = %p.op, path = %p.path, "file op");
+                // Stub: dispatch file operation (stat, list, read, write, etc.)
+                Ok(Some(Envelope {
+                    msg_type: MsgType::FileResult,
+                    payload: Payload::FileResult(FileResultPayload {
+                        channel_id: p.channel_id,
+                        success: false,
+                        metadata: serde_json::Value::Object(Default::default()),
+                        error_message: Some("file operations not yet implemented".into()),
+                    }),
+                }))
+            }
+
+            (MsgType::FileResult, Payload::FileResult(_)) => {
+                // Server-to-client only
+                Ok(None)
+            }
+
+            (MsgType::FileChunk, Payload::FileChunk(p)) => {
+                debug!(channel_id = p.channel_id, offset = p.offset, len = p.data.len(), is_final = p.is_final, "file chunk");
+                Ok(None)
+            }
+
             // ── Unhandled ───────────────────────────────────────────
             (msg_type, _) => {
                 debug!(?msg_type, "unhandled message type in session loop");
