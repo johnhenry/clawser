@@ -271,16 +271,27 @@ export class McpManager {
    * @param {string} name - Display name for this server
    * @param {string} endpoint - Server endpoint URL
    */
+  /** @type {import('./clawser-kernel-integration.js').KernelIntegration|null} */
+  _kernelIntegration = null;
+
   async addServer(name, endpoint) {
     const client = new McpClient(endpoint, { onLog: this.#onLog });
     await client.connect();
     this.#clients.set(name, client);
+    // Step 25: Register MCP server as svc:// service in kernel
+    if (this._kernelIntegration) {
+      this._kernelIntegration.registerMcpService(name, client);
+    }
     return client;
   }
 
   removeServer(name) {
     const client = this.#clients.get(name);
     if (client) {
+      // Step 25: Unregister from kernel service registry
+      if (this._kernelIntegration) {
+        this._kernelIntegration.unregisterMcpService(name);
+      }
       client.disconnect();
       this.#clients.delete(name);
     }

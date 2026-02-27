@@ -22,6 +22,13 @@ import { TerminalSessionManager } from './clawser-terminal-sessions.js';
 import { ClawserAgent } from './clawser-agent.js';
 import { createDefaultRegistry, WorkspaceFs, registerAgentTools, AskUserQuestionTool } from './clawser-tools.js';
 import { ClawserShell, ShellTool } from './clawser-shell.js';
+
+// Kernel integration (optional — no-op if kernel not initialized)
+let _kernelIntegration = null;
+/** Set the kernel integration adapter for workspace lifecycle hooks. */
+export function setKernelIntegration(ki) { _kernelIntegration = ki; }
+/** Get the current kernel integration adapter. */
+export function getKernelIntegration() { return _kernelIntegration; }
 import { ActivateSkillTool, DeactivateSkillTool, SkillInstallTool, SkillUpdateTool, SkillRemoveTool, SkillListTool, SkillSearchTool } from './clawser-skills.js';
 
 import { MountListTool, MountResolveTool } from './clawser-mount.js';
@@ -123,6 +130,12 @@ export async function switchWorkspace(newId, convId) {
   // Persist terminal session before switching
   if (state.terminalSessions) {
     await state.terminalSessions.persist().catch(() => {});
+  }
+
+  // Destroy kernel tenant for outgoing workspace
+  if (_kernelIntegration) {
+    const oldWsId = state.agent.getWorkspace();
+    _kernelIntegration.destroyWorkspaceTenant(oldWsId);
   }
 
   // Save current workspace
@@ -327,6 +340,12 @@ export async function initWorkspace(wsId, convId) {
     addMsg('system', 'Initializing agent...');
     const rc = state.agent.init({});
     if (rc !== 0) throw new Error(`agent.init returned ${rc}`);
+
+    // Create kernel tenant for this workspace (Step 23)
+    if (_kernelIntegration) {
+      _kernelIntegration.createWorkspaceTenant(wsId);
+      _kernelIntegration.hookEventLog(state.agent.eventLog);
+    }
 
     registerAgentTools(state.browserTools, state.agent);
 
