@@ -90,15 +90,18 @@ impl SessionManager {
         env: Option<&std::collections::HashMap<String, String>>,
         recording_dir: Option<&std::path::Path>,
     ) -> WshResult<String> {
-        let sessions = self.sessions.read().await;
-        if sessions.len() >= self.max_sessions {
-            return Err(WshError::Other(format!(
-                "max sessions ({}) reached",
-                self.max_sessions
-            )));
+        // Pre-check with read lock (fast rejection for common case)
+        {
+            let sessions = self.sessions.read().await;
+            if sessions.len() >= self.max_sessions {
+                return Err(WshError::Other(format!(
+                    "max sessions ({}) reached",
+                    self.max_sessions
+                )));
+            }
         }
-        drop(sessions);
 
+        // Spawn PTY and prepare session (outside lock)
         let session_id = generate_session_id();
         let pty = PtyHandle::spawn(command, cols, rows, env)?;
 
@@ -131,7 +134,15 @@ impl SessionManager {
             idle_timeout_secs: self.default_idle_timeout,
         };
 
+        // Re-check under write lock to prevent TOCTOU race
         let mut sessions = self.sessions.write().await;
+        if sessions.len() >= self.max_sessions {
+            // Another concurrent create slipped in between our read and write
+            return Err(WshError::Other(format!(
+                "max sessions ({}) reached",
+                self.max_sessions
+            )));
+        }
         info!(session_id = %session_id, "session created");
         sessions.insert(session_id.clone(), session);
 

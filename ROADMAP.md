@@ -361,6 +361,16 @@ Priority: Complete the wsh protocol implementation — browser-native remote she
 - [x] 8 untested default tests (hello.features, serverHello.features/fingerprints, authMethods.methods, openOk.streamIds, attach.mode, reverseRegister.capabilities, fileResult.metadata)
 - [x] 16 optional field tests (open.env/cols/rows, metrics.memory/sessions/rtt/all-omitted, attach.device_label, fileResult.error_message)
 
+### Phase 6.12: Final Non-Critical Fixes — COMPLETE
+- [x] channel_id collision — replaced hash-based channel_id with atomic counter (AtomicU32), collision-free
+- [x] Close/Resize wrong session — added channel_sessions map (channel_id → session_id) for correct routing
+- [x] SessionManager TOCTOU — re-check count under write lock after PTY spawn to prevent max_sessions+N race
+- [x] GuestRevoke silent response — now returns GuestRevoke confirmation or Error on not-found
+- [x] ShareRevoke silent response — now returns ShareRevoke confirmation or Error on not-found
+- [x] next_conn_id wrap-around — alloc_conn_id() skips 0 (reserved sentinel) on u64 wrap
+- [x] WS frame size limit — added MAX_WS_FRAME_SIZE (1 MiB) consistent with QUIC transport limit
+- [x] channel_sessions GC — added to periodic GC task, cleaned against active session IDs
+
 ### Phase 6.11: Fourth Audit Fixes — COMPLETE
 **Critical:**
 - [x] Password auth bypass — `auth.password = None` silently skipped validation; now rejects with "password required"

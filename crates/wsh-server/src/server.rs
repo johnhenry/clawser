@@ -16,7 +16,7 @@ use crate::transport::{websocket, webtransport};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, warn};
@@ -186,8 +186,14 @@ pub struct WshServer {
     /// Connection-to-session mapping: conn_id → session_id.
     /// Used to scope E2E relay and CopilotSuggest to session participants only.
     conn_session_map: Arc<RwLock<HashMap<u64, String>>>,
+    /// Channel-to-session mapping: channel_id → session_id.
+    /// Used by Close/Resize to operate on the correct session.
+    channel_sessions: Arc<RwLock<HashMap<u32, String>>>,
     /// Atomic counter for generating unique connection IDs.
+    /// Starts at 1; 0 is reserved as sentinel for unwrap_or(0).
     next_conn_id: Arc<AtomicU64>,
+    /// Atomic counter for generating unique channel IDs (collision-free).
+    next_channel_id: Arc<AtomicU32>,
 }
 
 impl WshServer {
@@ -269,7 +275,9 @@ impl WshServer {
             echo_trackers: Arc::new(RwLock::new(HashMap::new())),
             share_entries: Arc::new(RwLock::new(HashMap::new())),
             conn_session_map: Arc::new(RwLock::new(HashMap::new())),
+            channel_sessions: Arc::new(RwLock::new(HashMap::new())),
             next_conn_id: Arc::new(AtomicU64::new(1)),
+            next_channel_id: Arc::new(AtomicU32::new(1)),
         })
     }
 
@@ -309,6 +317,7 @@ impl WshServer {
         let gc_copilot_sessions = server.copilot_sessions.clone();
         let gc_terminal_configs = server.terminal_configs.clone();
         let gc_echo_trackers = server.echo_trackers.clone();
+        let gc_channel_sessions = server.channel_sessions.clone();
         let idle_warning_grace: u64 = 300; // Warn 5 minutes before idle timeout
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
@@ -389,6 +398,8 @@ impl WshServer {
                     gc_rate_control_state.write().await.retain(|sid, _| active_ids.contains(sid));
                     // copilot_sessions
                     gc_copilot_sessions.write().await.retain(|sid, _| active_ids.contains(sid));
+                    // channel_sessions
+                    gc_channel_sessions.write().await.retain(|_, sid| active_ids.contains(sid));
                 }
 
                 // GC conn_session_map entries for connections no longer in peer_senders
@@ -593,7 +604,7 @@ impl WshServer {
                 let (peer_tx, peer_rx) = mpsc::channel::<Envelope>(64);
                 // Assign a unique conn_id and register in peer_senders/conn_session_map
                 // so E2E relay, CopilotSuggest, and idle warnings are session-scoped.
-                let conn_id = self.next_conn_id.fetch_add(1, Ordering::Relaxed);
+                let conn_id = self.alloc_conn_id();
                 self.peer_senders
                     .write()
                     .await
@@ -760,7 +771,7 @@ impl WshServer {
                 let (peer_tx, peer_rx) = mpsc::channel::<Envelope>(64);
                 // Assign a unique conn_id and register in peer_senders/conn_session_map
                 // so E2E relay, CopilotSuggest, and idle warnings are session-scoped.
-                let conn_id = self.next_conn_id.fetch_add(1, Ordering::Relaxed);
+                let conn_id = self.alloc_conn_id();
                 self.peer_senders
                     .write()
                     .await
@@ -982,6 +993,17 @@ impl WshServer {
         }
 
         Ok(())
+    }
+
+    /// Allocate a unique connection ID, skipping 0 (reserved as sentinel).
+    fn alloc_conn_id(&self) -> u64 {
+        loop {
+            let id = self.next_conn_id.fetch_add(1, Ordering::Relaxed);
+            if id != 0 {
+                return id;
+            }
+            // Wrapped to 0 — skip it and try next
+        }
     }
 
     /// Build the list of features this server advertises based on configuration.
@@ -1360,15 +1382,10 @@ impl WshServer {
                             .await
                         {
                             Ok(session_id) => {
-                                // Use a proper hash of the full session_id as the channel_id
-                                // (previously used only first 4 bytes, causing collisions)
-                                let channel_id = {
-                                    use std::collections::hash_map::DefaultHasher;
-                                    use std::hash::{Hash, Hasher};
-                                    let mut hasher = DefaultHasher::new();
-                                    session_id.hash(&mut hasher);
-                                    hasher.finish() as u32
-                                };
+                                // Atomic monotonic counter — collision-free channel IDs
+                                let channel_id = self.next_channel_id.fetch_add(1, Ordering::Relaxed);
+                                // Register channel → session mapping for Close/Resize routing
+                                self.channel_sessions.write().await.insert(channel_id, session_id.clone());
                                 // Update conn_session_map so E2E relay is session-scoped
                                 if let Some(cid) = ctx.conn_id {
                                     self.conn_session_map.write().await.insert(cid, session_id.clone());
@@ -1399,10 +1416,15 @@ impl WshServer {
                 }
             }
             (MsgType::Resize, Payload::Resize(p)) => {
-                // Find session by iterating (channel_id mapping is simplified)
-                debug!(channel_id = p.channel_id, cols = p.cols, rows = p.rows, "resize request");
-                // Touch session activity
-                self.sessions.touch(&ctx.session_id).await;
+                // Look up the session for this channel_id
+                let target_session = {
+                    let ch_map = self.channel_sessions.read().await;
+                    ch_map.get(&p.channel_id).cloned()
+                };
+                let sid = target_session.as_deref().unwrap_or(&ctx.session_id);
+                debug!(channel_id = p.channel_id, cols = p.cols, rows = p.rows, session_id = %sid, "resize request");
+                // Touch session activity on the correct session
+                self.sessions.touch(sid).await;
                 Ok(None)
             }
             (MsgType::Signal, Payload::Signal(p)) => {
@@ -1410,9 +1432,18 @@ impl WshServer {
                 Ok(None)
             }
             (MsgType::Close, Payload::Close(p)) => {
-                debug!(channel_id = p.channel_id, "close request");
-                // Detach from session
-                let _ = self.sessions.detach(&ctx.session_id).await;
+                // Look up the session for this channel_id
+                let target_session = {
+                    let ch_map = self.channel_sessions.read().await;
+                    ch_map.get(&p.channel_id).cloned()
+                };
+                let sid = target_session.as_deref().unwrap_or(&ctx.session_id);
+                debug!(channel_id = p.channel_id, session_id = %sid, "close request");
+                // Detach from the correct session and clean up channel mapping
+                if let Err(e) = self.sessions.detach(sid).await {
+                    warn!(channel_id = p.channel_id, error = %e, "detach failed on close");
+                }
+                self.channel_sessions.write().await.remove(&p.channel_id);
                 Ok(None)
             }
 
@@ -1952,11 +1983,24 @@ impl WshServer {
                         guest.revoked = true;
                         info!(token = %p.token, session_id = %session_id, "guest token revoked");
                     }
+                    // Confirm revocation to client
+                    Ok(Some(Envelope {
+                        msg_type: MsgType::GuestRevoke,
+                        payload: Payload::GuestRevoke(GuestRevokePayload {
+                            token: p.token.clone(),
+                            reason: Some("revoked by owner".into()),
+                        }),
+                    }))
                 } else {
                     drop(tokens);
-                    debug!(token = %p.token, "guest token not found for revocation");
+                    Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload {
+                            code: 4,
+                            message: "guest token not found".into(),
+                        }),
+                    }))
                 }
-                Ok(None)
             }
 
             // ── Session sharing ───────────────────────────────────────
@@ -2014,11 +2058,24 @@ impl WshServer {
                     }
                     self.share_entries.write().await.remove(&p.share_id);
                     info!(share_id = %p.share_id, session_id = %session_id, "share revoked");
+                    // Confirm revocation to client
+                    Ok(Some(Envelope {
+                        msg_type: MsgType::ShareRevoke,
+                        payload: Payload::ShareRevoke(ShareRevokePayload {
+                            share_id: p.share_id.clone(),
+                            reason: Some("revoked by owner".into()),
+                        }),
+                    }))
                 } else {
                     drop(shares);
-                    debug!(share_id = %p.share_id, "share not found for revocation");
+                    Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload {
+                            code: 4,
+                            message: "share not found".into(),
+                        }),
+                    }))
                 }
-                Ok(None)
             }
 
             // ── Compression negotiation ────────────────────────────

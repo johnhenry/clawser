@@ -77,15 +77,28 @@ pub async fn ws_send_binary(
         .map_err(|e| WshError::Transport(format!("WS send failed: {e}")))
 }
 
+/// Maximum frame size for WebSocket messages (1 MiB, consistent with QUIC limit).
+const MAX_WS_FRAME_SIZE: usize = 1_048_576;
+
 /// Helper: receive the next binary message from a WebSocket.
 ///
 /// Returns `None` if the connection is closed. Text messages are ignored.
+/// Rejects frames larger than 1 MiB (consistent with QUIC transport limit).
 pub async fn ws_recv_binary(
     ws: &mut tokio_tungstenite::WebSocketStream<TcpStream>,
 ) -> WshResult<Option<Vec<u8>>> {
     loop {
         match ws.next().await {
-            Some(Ok(Message::Binary(data))) => return Ok(Some(data.to_vec())),
+            Some(Ok(Message::Binary(data))) => {
+                if data.len() > MAX_WS_FRAME_SIZE {
+                    return Err(WshError::InvalidMessage(format!(
+                        "WS frame too large: {} bytes (max {})",
+                        data.len(),
+                        MAX_WS_FRAME_SIZE
+                    )));
+                }
+                return Ok(Some(data.to_vec()));
+            }
             Some(Ok(Message::Close(_))) => return Ok(None),
             Some(Ok(Message::Ping(payload))) => {
                 // Respond to pings automatically
