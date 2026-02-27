@@ -99,6 +99,9 @@ pub enum MsgType {
 
     TermSync = 0x92,
     TermDiff = 0x93,
+
+    NodeAnnounce = 0x94,
+    NodeRedirect = 0x95,
 }
 
 impl From<MsgType> for u8 {
@@ -186,6 +189,8 @@ impl TryFrom<u8> for MsgType {
             0x91 => Ok(Self::EchoState),
             0x92 => Ok(Self::TermSync),
             0x93 => Ok(Self::TermDiff),
+            0x94 => Ok(Self::NodeAnnounce),
+            0x95 => Ok(Self::NodeRedirect),
             _ => Err(format!("unknown message type: 0x{v:02x}")),
         }
     }
@@ -305,6 +310,8 @@ pub enum Payload {
     EchoState(EchoStatePayload),
     TermSync(TermSyncPayload),
     TermDiff(TermDiffPayload),
+    NodeAnnounce(NodeAnnouncePayload),
+    NodeRedirect(NodeRedirectPayload),
     Empty(EmptyPayload),
 }
 
@@ -840,6 +847,23 @@ pub struct TermDiffPayload {
     pub base_seq: u64,
     #[serde(with = "serde_bytes")]
     pub patch: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeAnnouncePayload {
+    pub node_id: String,
+    pub endpoint: String,
+    pub load: f64,
+    pub capacity: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeRedirectPayload {
+    pub target_node: String,
+    pub target_endpoint: String,
+    pub session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

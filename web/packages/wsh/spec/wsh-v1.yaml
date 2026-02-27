@@ -1070,6 +1070,53 @@ messages:
           required: true
           description: "Binary diff patch (run-length encoded cell changes)"
 
+  # ── Horizontal scaling ───────────────────────────────────────────────
+  # Multi-node cluster support.  Nodes announce themselves and can
+  # redirect clients to less-loaded peers.  Stateless session tokens
+  # (HMAC-based) allow any node to validate without shared state.
+  scaling:
+    NodeAnnounce:
+      code: 0x94
+      description: >
+        Sent between cluster nodes to announce presence and load.
+        Used for load-aware routing decisions.
+      fields:
+        node_id:
+          type: string
+          required: true
+        endpoint:
+          type: string
+          required: true
+          description: "WebSocket/WebTransport URL for this node"
+        load:
+          type: f64
+          required: true
+          description: "Current load factor 0.0-1.0"
+        capacity:
+          type: u32
+          required: true
+          description: "Max concurrent sessions"
+
+    NodeRedirect:
+      code: 0x95
+      description: >
+        Sent by a node to redirect a client to a different node.
+        The client should reconnect to target_endpoint and present
+        its session token (which is valid across all cluster nodes).
+      fields:
+        target_node:
+          type: string
+          required: true
+        target_endpoint:
+          type: string
+          required: true
+        session_id:
+          type: string
+          required: true
+        reason:
+          type: string
+          required: false
+
 nested_types:
   AttachmentInfo:
     fields:

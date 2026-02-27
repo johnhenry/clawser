@@ -20,6 +20,7 @@ import {
   keyExchange, encryptedFrame,
   echoAck, echoState,
   termSync, termDiff,
+  nodeAnnounce, nodeRedirect,
   msgName, isValidMessage,
   AUTH_METHOD, CHANNEL_KIND,
 } from '../src/messages.mjs';
@@ -716,6 +717,41 @@ describe('terminal diff-based sync', () => {
   it('term sync messages validate correctly', () => {
     assert.ok(isValidMessage(termSync({ channelId: 1, frameSeq: 0, stateHash: new Uint8Array(0) })));
     assert.ok(isValidMessage(termDiff({ channelId: 1, frameSeq: 0, baseSeq: 0, patch: new Uint8Array(0) })));
+  });
+});
+
+describe('horizontal scaling', () => {
+  it('nodeAnnounce', () => {
+    const msg = nodeAnnounce({ nodeId: 'node-1', endpoint: 'wss://n1.example.com', load: 0.42, capacity: 100 });
+    assert.equal(msg.type, MSG.NODE_ANNOUNCE);
+    assert.equal(msg.node_id, 'node-1');
+    assert.equal(msg.endpoint, 'wss://n1.example.com');
+    assert.equal(msg.load, 0.42);
+    assert.equal(msg.capacity, 100);
+  });
+
+  it('nodeRedirect', () => {
+    const msg = nodeRedirect({ targetNode: 'node-2', targetEndpoint: 'wss://n2.example.com', sessionId: 's1', reason: 'rebalance' });
+    assert.equal(msg.type, MSG.NODE_REDIRECT);
+    assert.equal(msg.target_node, 'node-2');
+    assert.equal(msg.target_endpoint, 'wss://n2.example.com');
+    assert.equal(msg.session_id, 's1');
+    assert.equal(msg.reason, 'rebalance');
+  });
+
+  it('nodeRedirect with optional reason', () => {
+    const msg = nodeRedirect({ targetNode: 'n', targetEndpoint: 'e', sessionId: 's' });
+    assert.equal(msg.reason, undefined);
+  });
+
+  it('scaling codes', () => {
+    assert.equal(MSG.NODE_ANNOUNCE, 0x94);
+    assert.equal(MSG.NODE_REDIRECT, 0x95);
+  });
+
+  it('scaling messages validate correctly', () => {
+    assert.ok(isValidMessage(nodeAnnounce({ nodeId: 'n', endpoint: 'e', load: 0, capacity: 1 })));
+    assert.ok(isValidMessage(nodeRedirect({ targetNode: 'n', targetEndpoint: 'e', sessionId: 's' })));
   });
 });
 

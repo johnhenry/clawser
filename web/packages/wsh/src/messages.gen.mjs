@@ -116,6 +116,10 @@ export const MSG = Object.freeze({
   // Termsync
   TERM_SYNC:         0x92,
   TERM_DIFF:         0x93,
+
+  // Scaling
+  NODE_ANNOUNCE:     0x94,
+  NODE_REDIRECT:     0x95,
 });
 
 // Reverse lookup: number → name
@@ -712,6 +716,22 @@ export function termDiff({ channelId, frameSeq, baseSeq, patch } = {}) {
     base_seq: baseSeq,
     patch,
   };
+}
+
+export function nodeAnnounce({ nodeId, endpoint, load, capacity } = {}) {
+  return {
+    type: MSG.NODE_ANNOUNCE,
+    node_id: nodeId,
+    endpoint,
+    load,
+    capacity,
+  };
+}
+
+export function nodeRedirect({ targetNode, targetEndpoint, sessionId, reason } = {}) {
+  const msg = { type: MSG.NODE_REDIRECT, target_node: targetNode, target_endpoint: targetEndpoint, session_id: sessionId };
+  if (reason !== undefined) msg.reason = reason;
+  return msg;
 }
 
 // ── Utility ───────────────────────────────────────────────────────────

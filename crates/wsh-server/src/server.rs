@@ -1605,6 +1605,19 @@ impl WshServer {
                 Ok(None)
             }
 
+            // ── Horizontal scaling ──────────────────────────────────
+            (MsgType::NodeAnnounce, Payload::NodeAnnounce(p)) => {
+                debug!(node_id = %p.node_id, endpoint = %p.endpoint, load = p.load, "node announce");
+                // Inter-node gossip — update routing table
+                Ok(None)
+            }
+
+            (MsgType::NodeRedirect, Payload::NodeRedirect(p)) => {
+                debug!(target_node = %p.target_node, session_id = %p.session_id, "node redirect");
+                // Server-to-client: instruct client to reconnect elsewhere
+                Ok(None)
+            }
+
             // ── Unhandled ───────────────────────────────────────────
             (msg_type, _) => {
                 debug!(?msg_type, "unhandled message type in session loop");

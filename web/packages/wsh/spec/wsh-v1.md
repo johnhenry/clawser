@@ -19,7 +19,7 @@
 - **Version**: `wsh-v1`
 - **Wire format**: CBOR
 - **Framing**: length prefixed be32
-- **Total message types**: 76 (including WS_DATA framing marker)
+- **Total message types**: 78 (including WS_DATA framing marker)
 
 ## Enums
 
@@ -126,6 +126,8 @@ Type: `string`
 | `0x91` | EchoState | echo |
 | `0x92` | TermSync | termsync |
 | `0x93` | TermDiff | termsync |
+| `0x94` | NodeAnnounce | scaling |
+| `0x95` | NodeRedirect | scaling |
 
 ## Message Details
 
@@ -914,6 +916,32 @@ Category: **termsync**
 | `frame_seq` | `u64` | yes | — |
 | `base_seq` | `u64` | yes | — |
 | `patch` | `bytes` | yes | — |
+
+### NodeAnnounce (`0x94`)
+
+Category: **scaling**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `node_id` | `string` | yes | — |
+| `endpoint` | `string` | yes | — |
+| `load` | `f64` | yes | — |
+| `capacity` | `u32` | yes | — |
+
+### NodeRedirect (`0x95`)
+
+Category: **scaling**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `target_node` | `string` | yes | — |
+| `target_endpoint` | `string` | yes | — |
+| `session_id` | `string` | yes | — |
+| `reason` | `string` | no | — |
 
 ## Nested Types
 
