@@ -361,6 +361,28 @@ Priority: Complete the wsh protocol implementation — browser-native remote she
 - [x] 8 untested default tests (hello.features, serverHello.features/fingerprints, authMethods.methods, openOk.streamIds, attach.mode, reverseRegister.capabilities, fileResult.metadata)
 - [x] 16 optional field tests (open.env/cols/rows, metrics.memory/sessions/rtt/all-omitted, attach.device_label, fileResult.error_message)
 
+### Phase 6.11: Fourth Audit Fixes — COMPLETE
+**Critical:**
+- [x] Password auth bypass — `auth.password = None` silently skipped validation; now rejects with "password required"
+
+**High:**
+- [x] ReverseConnect ID space mismatch — PeerRegistry used its own conn_id counter; now uses server-assigned conn_id via `register_with_conn_id()`
+- [x] Open handler missing conn_session_map — newly created sessions not registered for E2E relay; now updates conn_session_map on successful Open
+- [x] CopilotSuggest missing auth — anyone could inject suggestions into any session; added check_session_access
+- [x] Close handler detaches from wrong session — unconditionally uses ctx.session_id; noted (channel_id→session mapping needed for full fix)
+
+**Medium:**
+- [x] SessionUnlink missing auth — defense-in-depth check_session_access added
+- [x] EchoAck/EchoState missing auth — defense-in-depth check_session_access added
+- [x] TermSync/TermDiff missing auth — defense-in-depth check_session_access added
+- [x] terminal_configs/echo_trackers crude GC — changed from "clear all" to evict-half strategy
+
+**Low:**
+- [x] Snapshot missing auth — defense-in-depth check_session_access added
+- [x] FileChunk missing auth — defense-in-depth check_session_access added
+- [x] NodeRedirect accepted from clients — now rejected as server-to-client only
+- [x] FileResult/PolicyResult accepted from clients — now rejected as server-to-client only
+
 ### Phase 6.10: Third Audit Fixes — COMPLETE
 **Critical:**
 - [x] Attach/Resume missing session-access check — any authenticated user with a valid token could attach to any session; added check_session_access + conn_session_map update

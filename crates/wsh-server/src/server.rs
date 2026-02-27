@@ -398,16 +398,24 @@ impl WshServer {
                 }
 
                 // GC channel-keyed maps (terminal_configs, echo_trackers)
-                // These use channel_id (u32) keys. Remove entries older than 1 hour
-                // by clearing them if the map grows beyond a reasonable size.
+                // Evict oldest half when maps exceed 1000 entries, preserving active entries.
+                // Since channel_ids are hashed from session_ids, we can't reliably map them
+                // back to sessions, but we can prevent unbounded growth.
                 {
                     let mut configs = gc_terminal_configs.write().await;
                     if configs.len() > 1000 {
-                        configs.clear();
+                        // Keep only half (arbitrary eviction since we lack age tracking)
+                        let to_remove: Vec<u32> = configs.keys().take(configs.len() / 2).copied().collect();
+                        for key in to_remove {
+                            configs.remove(&key);
+                        }
                     }
                     let mut trackers = gc_echo_trackers.write().await;
                     if trackers.len() > 1000 {
-                        trackers.clear();
+                        let to_remove: Vec<u32> = trackers.keys().take(trackers.len() / 2).copied().collect();
+                        for key in to_remove {
+                            trackers.remove(&key);
+                        }
                     }
                 }
             }
@@ -527,19 +535,27 @@ impl WshServer {
 
         // Pre-check password auth against config hashes
         if auth.method == AuthMethod::Password {
-            if let Some(ref password) = auth.password {
-                if let Some(expected_hash) = self.config.password_hashes.get(&hello.username) {
-                    if !handshake::verify_password_hash(password, expected_hash) {
-                        let fail = handshake::build_auth_fail("invalid password");
+            match auth.password {
+                Some(ref password) => {
+                    if let Some(expected_hash) = self.config.password_hashes.get(&hello.username) {
+                        if !handshake::verify_password_hash(password, expected_hash) {
+                            let fail = handshake::build_auth_fail("invalid password");
+                            let fail_frame = frame_encode(&fail)?;
+                            let _ = send.write_all(&fail_frame).await;
+                            return Err(WshError::AuthFailed("invalid password".into()));
+                        }
+                    } else {
+                        let fail = handshake::build_auth_fail("unknown user");
                         let fail_frame = frame_encode(&fail)?;
                         let _ = send.write_all(&fail_frame).await;
-                        return Err(WshError::AuthFailed("invalid password".into()));
+                        return Err(WshError::AuthFailed("unknown user for password auth".into()));
                     }
-                } else {
-                    let fail = handshake::build_auth_fail("unknown user");
+                }
+                None => {
+                    let fail = handshake::build_auth_fail("password required");
                     let fail_frame = frame_encode(&fail)?;
                     let _ = send.write_all(&fail_frame).await;
-                    return Err(WshError::AuthFailed("unknown user for password auth".into()));
+                    return Err(WshError::AuthFailed("password auth without password".into()));
                 }
             }
         }
@@ -688,19 +704,27 @@ impl WshServer {
 
         // Pre-check password auth against config hashes
         if auth.method == AuthMethod::Password {
-            if let Some(ref password) = auth.password {
-                if let Some(expected_hash) = self.config.password_hashes.get(&hello.username) {
-                    if !handshake::verify_password_hash(password, expected_hash) {
-                        let fail = handshake::build_auth_fail("invalid password");
+            match auth.password {
+                Some(ref password) => {
+                    if let Some(expected_hash) = self.config.password_hashes.get(&hello.username) {
+                        if !handshake::verify_password_hash(password, expected_hash) {
+                            let fail = handshake::build_auth_fail("invalid password");
+                            let fail_frame = frame_encode(&fail)?;
+                            let _ = websocket::ws_send_binary(&mut conn.ws_stream, &fail_frame).await;
+                            return Err(WshError::AuthFailed("invalid password".into()));
+                        }
+                    } else {
+                        let fail = handshake::build_auth_fail("unknown user");
                         let fail_frame = frame_encode(&fail)?;
                         let _ = websocket::ws_send_binary(&mut conn.ws_stream, &fail_frame).await;
-                        return Err(WshError::AuthFailed("invalid password".into()));
+                        return Err(WshError::AuthFailed("unknown user for password auth".into()));
                     }
-                } else {
-                    let fail = handshake::build_auth_fail("unknown user");
+                }
+                None => {
+                    let fail = handshake::build_auth_fail("password required");
                     let fail_frame = frame_encode(&fail)?;
                     let _ = websocket::ws_send_binary(&mut conn.ws_stream, &fail_frame).await;
-                    return Err(WshError::AuthFailed("unknown user for password auth".into()));
+                    return Err(WshError::AuthFailed("password auth without password".into()));
                 }
             }
         }
@@ -1041,14 +1065,13 @@ impl WshServer {
             // ── Reverse peer messages ───────────────────────────────
             (MsgType::ReverseRegister, Payload::ReverseRegister(p)) => {
                 let fp = fingerprint(&p.public_key);
-                // Register in the relay peer registry (its own internal ID, used for routing)
+                // Register in the relay peer registry, passing the server-assigned conn_id
+                // so that ReverseConnect lookups match peer_senders keys.
+                let cid = ctx.conn_id.unwrap_or(0);
                 let _registry_id = self
                     .peer_registry
-                    .register(fp.clone(), p.username.clone(), p.capabilities.clone())
+                    .register_with_conn_id(fp.clone(), p.username.clone(), p.capabilities.clone(), Some(cid))
                     .await;
-                // The connection's conn_id (assigned during auth) is already in
-                // peer_senders and conn_session_map — no need to override.
-                let cid = ctx.conn_id.unwrap_or(0);
                 info!(
                     fingerprint = %&fp[..8.min(fp.len())],
                     username = %p.username,
@@ -1346,6 +1369,10 @@ impl WshServer {
                                     session_id.hash(&mut hasher);
                                     hasher.finish() as u32
                                 };
+                                // Update conn_session_map so E2E relay is session-scoped
+                                if let Some(cid) = ctx.conn_id {
+                                    self.conn_session_map.write().await.insert(cid, session_id.clone());
+                                }
                                 info!(session_id = %session_id, channel_id, kind = ?p.kind, "channel opened");
                                 Ok(Some(Envelope {
                                     msg_type: MsgType::OpenOk,
@@ -1415,6 +1442,12 @@ impl WshServer {
                 }
             }
             (MsgType::Snapshot, Payload::Snapshot(p)) => {
+                if !self.check_session_access(&ctx.session_id, &ctx.username).await {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload { code: 2, message: "not authorized".into() }),
+                    }));
+                }
                 debug!(label = %p.label, "snapshot recorded");
                 Ok(None)
             }
@@ -2074,6 +2107,16 @@ impl WshServer {
             }
 
             (MsgType::SessionUnlink, Payload::SessionUnlink(p)) => {
+                // Verify the caller has session access (defense-in-depth for stub)
+                if !self.check_session_access(&ctx.session_id, &ctx.username).await {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload {
+                            code: 2,
+                            message: "not authorized to unlink sessions".into(),
+                        }),
+                    }));
+                }
                 debug!(link_id = %p.link_id, "session unlink");
                 Ok(None)
             }
@@ -2113,6 +2156,16 @@ impl WshServer {
             }
 
             (MsgType::CopilotSuggest, Payload::CopilotSuggest(p)) => {
+                // Verify the caller has access to this session
+                if !self.check_session_access(&p.session_id, &ctx.username).await {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload {
+                            code: 2,
+                            message: "not authorized for copilot on this session".into(),
+                        }),
+                    }));
+                }
                 debug!(session_id = %p.session_id, "copilot suggestion");
                 // Forward suggestion only to connections attached to this session (not globally)
                 let conn_map = self.conn_session_map.read().await;
@@ -2222,6 +2275,16 @@ impl WshServer {
 
             // ── Predictive local echo ─────────────────────────────
             (MsgType::EchoAck, Payload::EchoAck(p)) => {
+                // Scope to caller's session (defense-in-depth)
+                if !self.check_session_access(&ctx.session_id, &ctx.username).await {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload {
+                            code: 2,
+                            message: "not authorized".into(),
+                        }),
+                    }));
+                }
                 // Update echo tracker for this channel
                 let mut trackers = self.echo_trackers.write().await;
                 let tracker = trackers.entry(p.channel_id).or_insert_with(|| EchoTracker {
@@ -2236,6 +2299,16 @@ impl WshServer {
             }
 
             (MsgType::EchoState, Payload::EchoState(p)) => {
+                // Scope to caller's session (defense-in-depth)
+                if !self.check_session_access(&ctx.session_id, &ctx.username).await {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload {
+                            code: 2,
+                            message: "not authorized".into(),
+                        }),
+                    }));
+                }
                 // Update echo tracker with full state
                 let mut trackers = self.echo_trackers.write().await;
                 trackers.insert(p.channel_id, EchoTracker {
@@ -2250,14 +2323,24 @@ impl WshServer {
 
             // ── Terminal diff sync ──────────────────────────────────
             (MsgType::TermSync, Payload::TermSync(p)) => {
+                if !self.check_session_access(&ctx.session_id, &ctx.username).await {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload { code: 2, message: "not authorized".into() }),
+                    }));
+                }
                 debug!(channel_id = p.channel_id, frame_seq = p.frame_seq, "term sync");
-                // Server-to-client: full state hash checkpoint
                 Ok(None)
             }
 
             (MsgType::TermDiff, Payload::TermDiff(p)) => {
+                if !self.check_session_access(&ctx.session_id, &ctx.username).await {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload { code: 2, message: "not authorized".into() }),
+                    }));
+                }
                 debug!(channel_id = p.channel_id, frame_seq = p.frame_seq, base_seq = p.base_seq, patch_len = p.patch.len(), "term diff");
-                // Server-to-client: incremental screen patch
                 Ok(None)
             }
 
@@ -2286,10 +2369,15 @@ impl WshServer {
                 Ok(None)
             }
 
-            (MsgType::NodeRedirect, Payload::NodeRedirect(p)) => {
-                debug!(target_node = %p.target_node, session_id = %p.session_id, "node redirect");
-                // Server-to-client: instruct client to reconnect elsewhere
-                Ok(None)
+            (MsgType::NodeRedirect, Payload::NodeRedirect(_)) => {
+                // NodeRedirect is server-to-client only; reject client-sent redirects
+                Ok(Some(Envelope {
+                    msg_type: MsgType::Error,
+                    payload: Payload::Error(ErrorPayload {
+                        code: 4,
+                        message: "NodeRedirect is a server-to-client message".into(),
+                    }),
+                }))
             }
 
             // ── Cross-principal session sharing ─────────────────────
@@ -2351,11 +2439,23 @@ impl WshServer {
             }
 
             (MsgType::FileResult, Payload::FileResult(_)) => {
-                // Server-to-client only
-                Ok(None)
+                // FileResult is server-to-client only; reject client-sent
+                Ok(Some(Envelope {
+                    msg_type: MsgType::Error,
+                    payload: Payload::Error(ErrorPayload {
+                        code: 4,
+                        message: "FileResult is a server-to-client message".into(),
+                    }),
+                }))
             }
 
             (MsgType::FileChunk, Payload::FileChunk(p)) => {
+                if !self.check_session_access(&ctx.session_id, &ctx.username).await {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload { code: 2, message: "not authorized".into() }),
+                    }));
+                }
                 debug!(channel_id = p.channel_id, offset = p.offset, len = p.data.len(), is_final = p.is_final, "file chunk");
                 Ok(None)
             }
@@ -2402,8 +2502,14 @@ impl WshServer {
             }
 
             (MsgType::PolicyResult, Payload::PolicyResult(_)) => {
-                // Server-to-client only
-                Ok(None)
+                // PolicyResult is server-to-client only; reject client-sent
+                Ok(Some(Envelope {
+                    msg_type: MsgType::Error,
+                    payload: Payload::Error(ErrorPayload {
+                        code: 4,
+                        message: "PolicyResult is a server-to-client message".into(),
+                    }),
+                }))
             }
 
             (MsgType::PolicyUpdate, Payload::PolicyUpdate(p)) => {

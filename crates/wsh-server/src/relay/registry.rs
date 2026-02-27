@@ -47,17 +47,35 @@ impl PeerRegistry {
         }
     }
 
-    /// Register a peer. Returns the assigned connection ID.
+    /// Register a peer with a specific connection ID (from the server's ID space).
+    /// This ensures the registry's connection_id matches peer_senders keys.
+    /// If `server_conn_id` is `None`, generates an internal one (legacy fallback).
     pub async fn register(
         &self,
         fingerprint: String,
         username: String,
         capabilities: Vec<String>,
     ) -> u64 {
-        let mut conn_id_lock = self.next_conn_id.lock().await;
-        let conn_id = *conn_id_lock;
-        *conn_id_lock += 1;
-        drop(conn_id_lock);
+        self.register_with_conn_id(fingerprint, username, capabilities, None).await
+    }
+
+    /// Register a peer with an explicit server-assigned connection ID.
+    pub async fn register_with_conn_id(
+        &self,
+        fingerprint: String,
+        username: String,
+        capabilities: Vec<String>,
+        server_conn_id: Option<u64>,
+    ) -> u64 {
+        let conn_id = match server_conn_id {
+            Some(id) => id,
+            None => {
+                let mut conn_id_lock = self.next_conn_id.lock().await;
+                let id = *conn_id_lock;
+                *conn_id_lock += 1;
+                id
+            }
+        };
 
         let now = Instant::now();
         let entry = PeerEntry {
