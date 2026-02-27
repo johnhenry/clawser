@@ -225,6 +225,13 @@ Priority: Complete the wsh protocol implementation — browser-native remote she
 - [x] Rust CLI: wire `run_reverse()` (connect + register + hold)
 - [x] Rust CLI: wire `run_peers()` (connect + list + display)
 - [x] Rust CLI: `wsh connect <fingerprint>` reverse connect mode
+- [x] WshClient: `onRelayMessage` callback for relay-forwarded messages
+- [x] WshClient: `_isRelayForwardable()` — route Open/McpCall/McpDiscover/Close/Resize/Signal
+- [x] WshClient: `_transport` getter for relay reply sending
+- [x] IncomingSession: `startListening()` — wire onRelayMessage on connect
+- [x] IncomingSession: `handleRelayMessage()` — dispatch Open/McpDiscover/McpCall/Close
+- [x] IncomingSession: `_sendReply()` — send responses back through relay bridge
+- [x] IncomingSession: stale session replacement on re-connect
 
 ### Phase 6.3: Session Management (Server)
 - [x] Server dispatch: Attach (0x30) — token validation + ring buffer replay

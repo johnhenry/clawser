@@ -78,6 +78,8 @@ pub struct WshClient {
     response_tx: Arc<Mutex<HashMap<u8, Vec<oneshot::Sender<Envelope>>>>>,
     /// Whether the client is connected.
     connected: Arc<Mutex<bool>>,
+    /// Receiver for incoming ReverseConnect notifications (take-once).
+    reverse_connect_rx: Arc<Mutex<Option<mpsc::Receiver<Envelope>>>>,
 }
 
 impl WshClient {
@@ -97,6 +99,10 @@ impl WshClient {
             Arc::new(Mutex::new(HashMap::new()));
         let connected = Arc::new(Mutex::new(true));
 
+        // Channel for unsolicited incoming ReverseConnect messages
+        let (rc_tx, rc_rx) = mpsc::channel::<Envelope>(16);
+        let reverse_connect_rx = Arc::new(Mutex::new(Some(rc_rx)));
+
         let mut client = Self {
             transport: transport.clone(),
             session_id: None,
@@ -108,6 +114,7 @@ impl WshClient {
             outgoing_tx: outgoing_tx.clone(),
             response_tx: response_tx.clone(),
             connected: connected.clone(),
+            reverse_connect_rx,
         };
 
         // Perform handshake with timeout
@@ -139,6 +146,7 @@ impl WshClient {
                     sessions,
                     connected,
                     outgoing_tx_clone,
+                    Some(rc_tx),
                 )
                 .await;
             })
@@ -206,6 +214,22 @@ impl WshClient {
     /// Whether the client is currently connected.
     pub async fn is_connected(&self) -> bool {
         *self.connected.lock().await
+    }
+
+    /// Take the reverse-connect receiver for handling incoming connections.
+    ///
+    /// Can only be called once (moves the receiver out). Returns `None` on
+    /// subsequent calls.
+    pub async fn take_reverse_connect_rx(&self) -> Option<mpsc::Receiver<Envelope>> {
+        self.reverse_connect_rx.lock().await.take()
+    }
+
+    /// Send a control message without waiting for any response (fire-and-forget).
+    ///
+    /// Unlike `send_and_wait_public`, this does not register a response listener
+    /// and returns immediately after the message is queued for sending.
+    pub async fn send_fire_and_forget(&self, envelope: Envelope) -> WshResult<()> {
+        self.send_control_message(envelope).await
     }
 
     /// Send a control message and wait for a specific response type (public API).
@@ -583,6 +607,7 @@ impl WshClient {
         sessions: Arc<Mutex<HashMap<u32, Arc<WshSession>>>>,
         connected: Arc<Mutex<bool>>,
         outgoing_tx: mpsc::Sender<Vec<u8>>,
+        reverse_connect_tx: Option<mpsc::Sender<Envelope>>,
     ) {
         loop {
             let is_connected = { *connected.lock().await };
@@ -646,6 +671,7 @@ impl WshClient {
                                         &response_tx,
                                         &sessions,
                                         &outgoing_tx,
+                                        &reverse_connect_tx,
                                     ).await;
                                 }
                                 Err(e) => {
@@ -673,6 +699,7 @@ impl WshClient {
         response_tx: &Arc<Mutex<HashMap<u8, Vec<oneshot::Sender<Envelope>>>>>,
         sessions: &Arc<Mutex<HashMap<u32, Arc<WshSession>>>>,
         outgoing_tx: &mpsc::Sender<Vec<u8>>,
+        reverse_connect_tx: &Option<mpsc::Sender<Envelope>>,
     ) {
         let msg_type_u8: u8 = envelope.msg_type.into();
 
@@ -721,6 +748,18 @@ impl WshClient {
             MsgType::Shutdown => {
                 if let Payload::Shutdown(sd) = &envelope.payload {
                     tracing::warn!("server shutdown: {}", sd.reason);
+                }
+            }
+
+            // Incoming reverse connection request (unsolicited from relay)
+            MsgType::ReverseConnect => {
+                tracing::info!("incoming reverse connect request");
+                if let Some(tx) = reverse_connect_tx {
+                    if let Err(e) = tx.send(envelope).await {
+                        tracing::warn!("reverse connect channel full or closed: {}", e);
+                    }
+                } else {
+                    tracing::debug!("reverse connect received but no handler registered");
                 }
             }
 

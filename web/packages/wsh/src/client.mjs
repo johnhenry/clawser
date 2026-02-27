@@ -97,6 +97,18 @@ export class WshClient {
   onClipboard = null;
 
   /**
+   * Called when a relay-forwarded message arrives from a remote peer.
+   *
+   * In reverse mode, the relay bridge forwards messages from the CLI peer
+   * to this browser client.  Messages that the client would not normally
+   * receive as a peer (Open, McpCall, McpDiscover, Close, Resize, Signal)
+   * are routed here instead of being silently dropped.
+   *
+   * @type {function(object): void|null}
+   */
+  onRelayMessage = null;
+
+  /**
    * Called when a gateway-subsystem control message arrives (opcodes 0x70-0x7f).
    *
    * The gateway subsystem proxies TCP/UDP connections and DNS lookups through
@@ -136,6 +148,16 @@ export class WshClient {
   /** Server-advertised features from SERVER_HELLO. */
   get features() {
     return [...this.#serverFeatures];
+  }
+
+  /**
+   * Low-level transport reference.
+   * Exposed for relay message replies (IncomingSession._sendReply).
+   * Prefer higher-level methods (openSession, callTool, etc.) for normal use.
+   * @returns {import('./transport.mjs').WshTransport|null}
+   */
+  get _transport() {
+    return this.#transport;
   }
 
   /**
@@ -969,6 +991,20 @@ export class WshClient {
       return;
     }
 
+    // Route relay-forwarded messages from remote CLI peers.
+    // In reverse mode, the server's relay bridge forwards Open, McpCall,
+    // McpDiscover, etc. from the CLI to this browser client.  These are
+    // message types that a normal client would never receive from the
+    // server, so we intercept them here before the channel dispatch.
+    if (this.onRelayMessage && this._isRelayForwardable(type)) {
+      try {
+        this.onRelayMessage(msg);
+      } catch (err) {
+        console.error('[wsh:client] onRelayMessage handler error:', err);
+      }
+      return;
+    }
+
     // Dispatch channel-specific messages to sessions.
     const channelId = msg.channel_id;
     if (channelId !== undefined && this.#sessions.has(channelId)) {
@@ -1180,6 +1216,21 @@ export class WshClient {
   }
 
   // ── Internal: helpers ───────────────────────────────────────────────
+
+  /**
+   * Check whether a message type is relay-forwardable — i.e. a message
+   * that a client would not normally receive from the server, but that
+   * arrives via the relay bridge from a remote CLI peer.
+   *
+   * @param {number} type - Message opcode
+   * @returns {boolean}
+   */
+  _isRelayForwardable(type) {
+    return [
+      MSG.OPEN, MSG.MCP_DISCOVER, MSG.MCP_CALL,
+      MSG.CLOSE, MSG.RESIZE, MSG.SIGNAL,
+    ].includes(type);
+  }
 
   /**
    * Get the next channel ID.

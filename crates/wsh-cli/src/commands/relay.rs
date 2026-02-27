@@ -56,7 +56,13 @@ pub async fn run_reverse(
     .map_err(|e| anyhow::anyhow!("{e}"))
     .context("failed to connect to relay")?;
 
-    // Send ReverseRegister message
+    // Take the reverse-connect receiver before sending registration
+    let mut rc_rx = client
+        .take_reverse_connect_rx()
+        .await
+        .expect("reverse connect receiver already taken");
+
+    // Send ReverseRegister message (fire-and-forget, no reply expected)
     let register = Envelope {
         msg_type: MsgType::ReverseRegister,
         payload: Payload::ReverseRegister(ReverseRegisterPayload {
@@ -66,19 +72,31 @@ pub async fn run_reverse(
         }),
     };
     client
-        .send_and_wait_public(register, MsgType::Pong) // fire-and-forget, use pong as dummy
+        .send_fire_and_forget(register)
         .await
-        .ok(); // Ignore timeout — ReverseRegister has no reply
+        .map_err(|e| anyhow::anyhow!("{e}"))
+        .context("failed to send ReverseRegister")?;
 
     println!("Registered as peer {short_fp} on {relay_host}:{port}");
     println!("Waiting for connections... (Ctrl+C to stop)");
 
-    // Hold connection open, handle incoming reverse connections
-    tokio::signal::ctrl_c()
-        .await
-        .map_err(|e| anyhow::anyhow!("ctrl_c signal error: {e}"))?;
+    // Event loop: handle incoming reverse connections or Ctrl+C
+    loop {
+        tokio::select! {
+            Some(envelope) = rc_rx.recv() => {
+                if let Payload::ReverseConnect(p) = &envelope.payload {
+                    println!("Incoming connection from: {}", p.username);
+                    println!("  target: {}", p.target_fingerprint);
+                    // For now, just acknowledge. Full session handling comes later.
+                }
+            }
+            _ = tokio::signal::ctrl_c() => {
+                println!("\nDisconnecting...");
+                break;
+            }
+        }
+    }
 
-    println!("\nDisconnecting...");
     client
         .disconnect()
         .await
@@ -205,7 +223,7 @@ pub async fn run_connect(
     .map_err(|e| anyhow::anyhow!("{e}"))
     .context("failed to connect to relay")?;
 
-    // Send ReverseConnect targeting the peer
+    // Send ReverseConnect targeting the peer (fire-and-forget)
     let connect_msg = Envelope {
         msg_type: MsgType::ReverseConnect,
         payload: Payload::ReverseConnect(ReverseConnectPayload {
@@ -216,11 +234,11 @@ pub async fn run_connect(
 
     println!("Connecting to peer {target_fingerprint} via {relay_host}:{port}...");
 
-    // Fire-and-forget — the relay will forward to the target
     client
-        .send_and_wait_public(connect_msg, MsgType::Pong)
+        .send_fire_and_forget(connect_msg)
         .await
-        .ok(); // No direct reply expected
+        .map_err(|e| anyhow::anyhow!("{e}"))
+        .context("failed to send ReverseConnect")?;
 
     println!("Reverse connect sent. Waiting for peer response...");
     println!("(Press Ctrl+C to disconnect)");

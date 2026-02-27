@@ -189,6 +189,11 @@ pub struct WshServer {
     /// Channel-to-session mapping: channel_id → session_id.
     /// Used by Close/Resize to operate on the correct session.
     channel_sessions: Arc<RwLock<HashMap<u32, String>>>,
+    /// Relay pairs: maps conn_id → partner conn_id for bidirectional relay.
+    /// When a ReverseConnect bridge is established between a CLI client and a
+    /// browser peer, both directions are stored here so that forwardable
+    /// messages from one side are relayed to the other.
+    relay_pairs: Arc<RwLock<HashMap<u64, u64>>>,
     /// Atomic counter for generating unique connection IDs.
     /// Starts at 1; 0 is reserved as sentinel for unwrap_or(0).
     next_conn_id: Arc<AtomicU64>,
@@ -276,6 +281,7 @@ impl WshServer {
             share_entries: Arc::new(RwLock::new(HashMap::new())),
             conn_session_map: Arc::new(RwLock::new(HashMap::new())),
             channel_sessions: Arc::new(RwLock::new(HashMap::new())),
+            relay_pairs: Arc::new(RwLock::new(HashMap::new())),
             next_conn_id: Arc::new(AtomicU64::new(1)),
             next_channel_id: Arc::new(AtomicU32::new(1)),
         })
@@ -318,6 +324,7 @@ impl WshServer {
         let gc_terminal_configs = server.terminal_configs.clone();
         let gc_echo_trackers = server.echo_trackers.clone();
         let gc_channel_sessions = server.channel_sessions.clone();
+        let gc_relay_pairs = server.relay_pairs.clone();
         let idle_warning_grace: u64 = 300; // Warn 5 minutes before idle timeout
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
@@ -406,6 +413,12 @@ impl WshServer {
                 {
                     let senders = gc_peer_senders.read().await;
                     gc_conn_session_map.write().await.retain(|cid, _| senders.contains_key(cid));
+                }
+
+                // GC relay_pairs entries for connections no longer in peer_senders
+                {
+                    let senders = gc_peer_senders.read().await;
+                    gc_relay_pairs.write().await.retain(|cid, _| senders.contains_key(cid));
                 }
 
                 // GC channel-keyed maps (terminal_configs, echo_trackers)
@@ -630,6 +643,11 @@ impl WshServer {
                 if let Some(cid) = ctx.conn_id {
                     self.peer_senders.write().await.remove(&cid);
                     self.conn_session_map.write().await.remove(&cid);
+                    // Clean up relay bridge — remove both directions
+                    let mut pairs = self.relay_pairs.write().await;
+                    if let Some(partner) = pairs.remove(&cid) {
+                        pairs.remove(&partner);
+                    }
                 }
                 self.peer_registry.unregister(&ctx.fingerprint).await;
             }
@@ -796,6 +814,11 @@ impl WshServer {
                 if let Some(cid) = ctx.conn_id {
                     self.peer_senders.write().await.remove(&cid);
                     self.conn_session_map.write().await.remove(&cid);
+                    // Clean up relay bridge — remove both directions
+                    let mut pairs = self.relay_pairs.write().await;
+                    if let Some(partner) = pairs.remove(&cid) {
+                        pairs.remove(&partner);
+                    }
                 }
                 self.peer_registry.unregister(&ctx.fingerprint).await;
             }
@@ -1076,6 +1099,30 @@ impl WshServer {
         }
     }
 
+    /// Check whether a message type should be forwarded through a relay bridge
+    /// rather than processed locally. These are the "data plane" messages that
+    /// flow between CLI and browser during a reverse connection.
+    fn is_relay_forwardable(msg_type: MsgType) -> bool {
+        matches!(
+            msg_type,
+            MsgType::Open
+                | MsgType::OpenOk
+                | MsgType::OpenFail
+                | MsgType::Close
+                | MsgType::Exit
+                | MsgType::Resize
+                | MsgType::Signal
+                | MsgType::GatewayData
+                | MsgType::GatewayOk
+                | MsgType::GatewayFail
+                | MsgType::GatewayClose
+                | MsgType::McpDiscover
+                | MsgType::McpTools
+                | MsgType::McpCall
+                | MsgType::McpResult
+        )
+    }
+
     async fn dispatch_message(
         &self,
         envelope: Envelope,
@@ -1083,6 +1130,35 @@ impl WshServer {
         inbound_tx: mpsc::Sender<crate::gateway::listener::InboundEvent>,
         data_tx: mpsc::Sender<GatewayEvent>,
     ) -> WshResult<Option<Envelope>> {
+        // ── Relay bridge forwarding ──────────────────────────────
+        // If this connection has a relay partner (established via ReverseConnect),
+        // forward eligible message types to the partner instead of processing
+        // them locally. This creates a transparent bidirectional bridge between
+        // CLI client and browser peer.
+        if let Some(conn_id) = ctx.conn_id {
+            if Self::is_relay_forwardable(envelope.msg_type) {
+                let relay_pairs = self.relay_pairs.read().await;
+                if let Some(&partner_id) = relay_pairs.get(&conn_id) {
+                    drop(relay_pairs);
+                    let senders = self.peer_senders.read().await;
+                    if let Some(sender) = senders.get(&partner_id) {
+                        let _ = sender.try_send(envelope);
+                        return Ok(None); // forwarded, don't process locally
+                    }
+                    // Partner sender gone — clean up stale relay pair
+                    drop(senders);
+                    let mut pairs = self.relay_pairs.write().await;
+                    pairs.remove(&conn_id);
+                    pairs.remove(&partner_id);
+                    warn!(
+                        conn_id,
+                        partner_id,
+                        "relay partner sender gone, cleaning up bridge"
+                    );
+                }
+            }
+        }
+
         match (&envelope.msg_type, &envelope.payload) {
             // ── Reverse peer messages ───────────────────────────────
             (MsgType::ReverseRegister, Payload::ReverseRegister(p)) => {
@@ -1129,9 +1205,10 @@ impl WshServer {
                     .await
                 {
                     Ok(result) => {
+                        let target_conn_id = result.target_connection_id;
                         // Forward the ReverseConnect to the target peer's transport
                         let senders = self.peer_senders.read().await;
-                        if let Some(target_tx) = senders.get(&result.target_connection_id) {
+                        if let Some(target_tx) = senders.get(&target_conn_id) {
                             let fwd = Envelope {
                                 msg_type: MsgType::ReverseConnect,
                                 payload: Payload::ReverseConnect(ReverseConnectPayload {
@@ -1149,11 +1226,28 @@ impl WshServer {
                                     }),
                                 }));
                             }
-                            info!(
-                                requester = %p.username,
-                                target = %&result.target_fingerprint[..8.min(result.target_fingerprint.len())],
-                                "reverse connect forwarded"
-                            );
+                            drop(senders);
+
+                            // Set up relay bridge between requester and target.
+                            // After this, forwardable messages from either side
+                            // will be transparently relayed to the other.
+                            if let Some(requester_conn_id) = ctx.conn_id {
+                                let mut pairs = self.relay_pairs.write().await;
+                                pairs.insert(requester_conn_id, target_conn_id);
+                                pairs.insert(target_conn_id, requester_conn_id);
+                                info!(
+                                    requester = requester_conn_id,
+                                    target = target_conn_id,
+                                    target_fp = %&result.target_fingerprint[..8.min(result.target_fingerprint.len())],
+                                    "relay bridge established"
+                                );
+                            } else {
+                                info!(
+                                    requester = %p.username,
+                                    target = %&result.target_fingerprint[..8.min(result.target_fingerprint.len())],
+                                    "reverse connect forwarded (no bridge — requester has no conn_id)"
+                                );
+                            }
                             Ok(None)
                         } else {
                             Ok(Some(Envelope {
