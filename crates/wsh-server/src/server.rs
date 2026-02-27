@@ -662,6 +662,13 @@ impl WshServer {
                 Ok(None)
             }
 
+            (MsgType::InboundReject, Payload::InboundReject(p)) => {
+                self.reverse_listener
+                    .handle_inbound_reject(p.channel_id)
+                    .await;
+                Ok(None)
+            }
+
             // ── Keepalive ───────────────────────────────────────────
             (MsgType::Ping, Payload::PingPong(p)) => {
                 Ok(Some(Envelope {

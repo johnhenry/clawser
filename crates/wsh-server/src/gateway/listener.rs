@@ -151,6 +151,20 @@ impl ReverseListenerManager {
         }
     }
 
+    /// Handle an `InboundReject` from the client: remove and drop the pending
+    /// TcpStream so it doesn't leak.
+    ///
+    /// # Arguments
+    ///
+    /// * `channel_id` - The channel_id from the original `InboundOpen`.
+    pub async fn handle_inbound_reject(&self, channel_id: u32) {
+        if self.pending_connections.lock().await.remove(&channel_id).is_some() {
+            debug!(channel_id, "pending connection rejected and dropped");
+        } else {
+            debug!(channel_id, "no pending connection for InboundReject");
+        }
+    }
+
     /// Handle an `InboundAccept` from the client: take the pending TcpStream,
     /// spawn a bidirectional relay, and register the write channel.
     ///

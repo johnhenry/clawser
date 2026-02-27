@@ -14,8 +14,13 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpStream, UdpSocket};
 use tokio::sync::{mpsc, Mutex};
+use tokio::time::{self, Duration, Instant};
 use tracing::{debug, info, warn};
 use wsh_core::messages::*;
+
+/// Idle timeout for UDP relay channels. If no data is sent or received for
+/// this duration, the relay shuts down automatically to prevent resource leaks.
+const UDP_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Manages active gateway forwarding connections (TCP, UDP) and DNS lookups.
 ///
@@ -321,6 +326,8 @@ impl GatewayForwarder {
         gateway_id: u32,
     ) {
         let mut buf = vec![0u8; 65536]; // max UDP datagram size
+        let idle_deadline = time::sleep(UDP_IDLE_TIMEOUT);
+        tokio::pin!(idle_deadline);
 
         loop {
             tokio::select! {
@@ -328,9 +335,15 @@ impl GatewayForwarder {
                     debug!(gateway_id, "UDP relay cancelled");
                     break;
                 }
+                () = &mut idle_deadline => {
+                    info!(gateway_id, timeout_secs = UDP_IDLE_TIMEOUT.as_secs(), "UDP relay idle timeout");
+                    let _ = data_tx.send(GatewayEvent::Closed { gateway_id }).await;
+                    break;
+                }
                 result = socket.recv(&mut buf) => {
                     match result {
                         Ok(n) => {
+                            idle_deadline.as_mut().reset(Instant::now() + UDP_IDLE_TIMEOUT);
                             let chunk = buf[..n].to_vec();
                             if data_tx.send(GatewayEvent::Data { gateway_id, data: chunk }).await.is_err() {
                                 debug!(gateway_id, "data_tx closed, ending UDP relay");
@@ -345,6 +358,7 @@ impl GatewayForwarder {
                     }
                 }
                 Some(data) = write_rx.recv() => {
+                    idle_deadline.as_mut().reset(Instant::now() + UDP_IDLE_TIMEOUT);
                     if let Err(e) = socket.send(&data).await {
                         warn!(gateway_id, error = %e, "UDP send error");
                         let _ = data_tx.send(GatewayEvent::Closed { gateway_id }).await;
