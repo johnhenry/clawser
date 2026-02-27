@@ -16,6 +16,7 @@ use crate::transport::{websocket, webtransport};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, warn};
@@ -93,6 +94,7 @@ struct RateControlState {
 #[derive(Clone, Debug)]
 struct CopilotSession {
     model: String,
+    conn_id: u64,
     peer_tx: mpsc::Sender<Envelope>,
 }
 
@@ -184,6 +186,8 @@ pub struct WshServer {
     /// Connection-to-session mapping: conn_id → session_id.
     /// Used to scope E2E relay and CopilotSuggest to session participants only.
     conn_session_map: Arc<RwLock<HashMap<u64, String>>>,
+    /// Atomic counter for generating unique connection IDs.
+    next_conn_id: Arc<AtomicU64>,
 }
 
 impl WshServer {
@@ -265,6 +269,7 @@ impl WshServer {
             echo_trackers: Arc::new(RwLock::new(HashMap::new())),
             share_entries: Arc::new(RwLock::new(HashMap::new())),
             conn_session_map: Arc::new(RwLock::new(HashMap::new())),
+            next_conn_id: Arc::new(AtomicU64::new(1)),
         })
     }
 
@@ -298,16 +303,23 @@ impl WshServer {
         let gc_guest_tokens = server.guest_tokens.clone();
         let gc_cluster_nodes = server.cluster_nodes.clone();
         let gc_share_entries = server.share_entries.clone();
+        let gc_conn_session_map = server.conn_session_map.clone();
+        let gc_session_acls = server.session_acls.clone();
+        let gc_rate_control_state = server.rate_control_state.clone();
+        let gc_copilot_sessions = server.copilot_sessions.clone();
+        let gc_terminal_configs = server.terminal_configs.clone();
+        let gc_echo_trackers = server.echo_trackers.clone();
         let idle_warning_grace: u64 = 300; // Warn 5 minutes before idle timeout
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
             loop {
                 interval.tick().await;
 
-                // Send idle warnings to sessions nearing timeout
+                // Send idle warnings to sessions nearing timeout (scoped to session participants)
                 {
                     let sessions = gc_sessions.list().await;
                     let senders = gc_peer_senders.read().await;
+                    let conn_map = gc_conn_session_map.read().await;
                     for session in &sessions {
                         if session.attached_count == 0 {
                             // Session is detached; check if idle warning threshold reached
@@ -322,9 +334,13 @@ impl WshServer {
                                         expires_in,
                                     }),
                                 };
-                                // Broadcast to all connected peers (best effort)
-                                for sender in senders.values() {
-                                    let _ = sender.try_send(warning.clone());
+                                // Send only to connections associated with THIS session
+                                for (&conn_id, sid) in conn_map.iter() {
+                                    if sid == &session.id {
+                                        if let Some(sender) = senders.get(&conn_id) {
+                                            let _ = sender.try_send(warning.clone());
+                                        }
+                                    }
                                 }
                                 debug!(
                                     session_id = %session.id,
@@ -361,6 +377,38 @@ impl WshServer {
                 {
                     let mut limits = gc_rate_limits.lock().await;
                     limits.gc();
+                }
+
+                // GC session-keyed maps for sessions that no longer exist
+                {
+                    let active_ids: std::collections::HashSet<String> = gc_sessions
+                        .list().await.iter().map(|s| s.id.clone()).collect();
+                    // session_acls
+                    gc_session_acls.write().await.retain(|sid, _| active_ids.contains(sid));
+                    // rate_control_state
+                    gc_rate_control_state.write().await.retain(|sid, _| active_ids.contains(sid));
+                    // copilot_sessions
+                    gc_copilot_sessions.write().await.retain(|sid, _| active_ids.contains(sid));
+                }
+
+                // GC conn_session_map entries for connections no longer in peer_senders
+                {
+                    let senders = gc_peer_senders.read().await;
+                    gc_conn_session_map.write().await.retain(|cid, _| senders.contains_key(cid));
+                }
+
+                // GC channel-keyed maps (terminal_configs, echo_trackers)
+                // These use channel_id (u32) keys. Remove entries older than 1 hour
+                // by clearing them if the map grows beyond a reasonable size.
+                {
+                    let mut configs = gc_terminal_configs.write().await;
+                    if configs.len() > 1000 {
+                        configs.clear();
+                    }
+                    let mut trackers = gc_echo_trackers.write().await;
+                    if trackers.len() > 1000 {
+                        trackers.clear();
+                    }
                 }
             }
         });
@@ -527,13 +575,24 @@ impl WshServer {
                 );
 
                 let (peer_tx, peer_rx) = mpsc::channel::<Envelope>(64);
+                // Assign a unique conn_id and register in peer_senders/conn_session_map
+                // so E2E relay, CopilotSuggest, and idle warnings are session-scoped.
+                let conn_id = self.next_conn_id.fetch_add(1, Ordering::Relaxed);
+                self.peer_senders
+                    .write()
+                    .await
+                    .insert(conn_id, peer_tx.clone());
+                self.conn_session_map
+                    .write()
+                    .await
+                    .insert(conn_id, result.session_id.clone());
                 let mut ctx = ConnectionContext {
                     username: result.username.clone(),
                     fingerprint: result.fingerprint.clone(),
                     session_id: result.session_id.clone(),
                     token: result.token.clone(),
                     peer_tx,
-                    conn_id: None,
+                    conn_id: Some(conn_id),
                 };
 
                 // Session message loop
@@ -675,13 +734,24 @@ impl WshServer {
                 );
 
                 let (peer_tx, peer_rx) = mpsc::channel::<Envelope>(64);
+                // Assign a unique conn_id and register in peer_senders/conn_session_map
+                // so E2E relay, CopilotSuggest, and idle warnings are session-scoped.
+                let conn_id = self.next_conn_id.fetch_add(1, Ordering::Relaxed);
+                self.peer_senders
+                    .write()
+                    .await
+                    .insert(conn_id, peer_tx.clone());
+                self.conn_session_map
+                    .write()
+                    .await
+                    .insert(conn_id, result.session_id.clone());
                 let mut ctx = ConnectionContext {
                     username: result.username.clone(),
                     fingerprint: result.fingerprint.clone(),
                     session_id: result.session_id.clone(),
                     token: result.token.clone(),
                     peer_tx,
-                    conn_id: None,
+                    conn_id: Some(conn_id),
                 };
 
                 // Session message loop
@@ -971,26 +1041,18 @@ impl WshServer {
             // ── Reverse peer messages ───────────────────────────────
             (MsgType::ReverseRegister, Payload::ReverseRegister(p)) => {
                 let fp = fingerprint(&p.public_key);
-                let conn_id = self
+                // Register in the relay peer registry (its own internal ID, used for routing)
+                let _registry_id = self
                     .peer_registry
                     .register(fp.clone(), p.username.clone(), p.capabilities.clone())
                     .await;
-                // Store the peer's outbound sender so ReverseConnect can push to it
-                self.peer_senders
-                    .write()
-                    .await
-                    .insert(conn_id, ctx.peer_tx.clone());
-                // Track conn_id for cleanup on disconnect
-                ctx.conn_id = Some(conn_id);
-                // Map this connection to its session for scoped relay
-                self.conn_session_map
-                    .write()
-                    .await
-                    .insert(conn_id, ctx.session_id.clone());
+                // The connection's conn_id (assigned during auth) is already in
+                // peer_senders and conn_session_map — no need to override.
+                let cid = ctx.conn_id.unwrap_or(0);
                 info!(
                     fingerprint = %&fp[..8.min(fp.len())],
                     username = %p.username,
-                    conn_id,
+                    conn_id = cid,
                     "reverse peer registered"
                 );
                 Ok(None)
@@ -1093,6 +1155,16 @@ impl WshServer {
                         }),
                     }));
                 }
+                // Verify the caller owns or has been granted access to this session
+                if !self.check_session_access(&p.session_id, &ctx.username).await {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload {
+                            code: 2,
+                            message: "not authorized to attach to this session".into(),
+                        }),
+                    }));
+                }
                 if let Err(e) = self.sessions.attach(&p.session_id).await {
                     return Ok(Some(Envelope {
                         msg_type: MsgType::Error,
@@ -1101,6 +1173,10 @@ impl WshServer {
                             message: e.to_string(),
                         }),
                     }));
+                }
+                // Update conn_session_map so E2E relay is session-scoped
+                if let Some(cid) = ctx.conn_id {
+                    self.conn_session_map.write().await.insert(cid, p.session_id.clone());
                 }
                 // Replay ring buffer contents
                 let replay_data = self
@@ -1144,6 +1220,16 @@ impl WshServer {
                         }),
                     }));
                 }
+                // Verify the caller owns or has been granted access to this session
+                if !self.check_session_access(&p.session_id, &ctx.username).await {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload {
+                            code: 2,
+                            message: "not authorized to resume this session".into(),
+                        }),
+                    }));
+                }
                 if let Err(e) = self.sessions.attach(&p.session_id).await {
                     return Ok(Some(Envelope {
                         msg_type: MsgType::Error,
@@ -1152,6 +1238,10 @@ impl WshServer {
                             message: e.to_string(),
                         }),
                     }));
+                }
+                // Update conn_session_map so E2E relay is session-scoped
+                if let Some(cid) = ctx.conn_id {
+                    self.conn_session_map.write().await.insert(cid, p.session_id.clone());
                 }
                 // For resume, replay from last_seq - ring buffer replays all for now
                 let replay_data = self
@@ -1505,6 +1595,16 @@ impl WshServer {
 
             // ── Recording export ──────────────────────────────────
             (MsgType::RecordingExport, Payload::RecordingExport(p)) => {
+                // Verify the caller owns or has access to this session
+                if !self.check_session_access(&p.session_id, &ctx.username).await {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload {
+                            code: 2,
+                            message: "not authorized to export recording for this session".into(),
+                        }),
+                    }));
+                }
                 debug!(session_id = %p.session_id, format = %p.format, "recording export request");
                 // Sanitize session_id to prevent path traversal
                 let safe_id = match Self::sanitize_session_id(&p.session_id) {
@@ -1555,6 +1655,16 @@ impl WshServer {
 
             // ── Command journal ──────────────────────────────────────
             (MsgType::CommandJournal, Payload::CommandJournal(p)) => {
+                // Verify the caller owns or has access to this session
+                if !self.check_session_access(&p.session_id, &ctx.username).await {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload {
+                            code: 2,
+                            message: "not authorized to write journal for this session".into(),
+                        }),
+                    }));
+                }
                 debug!(
                     session_id = %p.session_id,
                     command = %p.command,
@@ -1696,17 +1806,21 @@ impl WshServer {
                     }));
                 }
                 // Generate a high-entropy guest token (u128 for sufficient randomness)
-                let token = format!("guest-{}-{:032x}", &p.session_id[..8.min(p.session_id.len())], rand::random::<u128>());
+                // Use chars().take(8) to avoid UTF-8 panic on multi-byte session_id
+                let sid_prefix: String = p.session_id.chars().take(8).collect();
+                let token = format!("guest-{}-{:032x}", sid_prefix, rand::random::<u128>());
+                // Cap TTL at 24 hours to prevent effectively-permanent tokens
+                let ttl = p.ttl.min(86400);
                 let guest = GuestToken {
                     token: token.clone(),
                     session_id: p.session_id.clone(),
                     permissions: p.permissions.clone(),
                     created: std::time::Instant::now(),
-                    ttl: p.ttl,
+                    ttl,
                     revoked: false,
                 };
                 self.guest_tokens.write().await.insert(token.clone(), guest);
-                info!(session_id = %p.session_id, ttl = p.ttl, "guest token created");
+                info!(session_id = %p.session_id, ttl, "guest token created");
                 // Return the token to the session owner via GuestInvite echo
                 // Note: the token is embedded in the session_id field for transport
                 // (a dedicated 'token' field would be cleaner but requires spec change)
@@ -1714,7 +1828,7 @@ impl WshServer {
                     msg_type: MsgType::GuestInvite,
                     payload: Payload::GuestInvite(GuestInvitePayload {
                         session_id: token,
-                        ttl: p.ttl,
+                        ttl,
                         permissions: p.permissions.clone(),
                     }),
                 }))
@@ -1733,6 +1847,10 @@ impl WshServer {
                             g.revoked = true;
                         }
                         drop(tokens);
+                        // Update conn_session_map so E2E relay is session-scoped
+                        if let Some(cid) = ctx.conn_id {
+                            self.conn_session_map.write().await.insert(cid, session_id.clone());
+                        }
                         // Attach the guest to the session
                         if let Err(e) = self.sessions.attach(&session_id).await {
                             return Ok(Some(Envelope {
@@ -1822,7 +1940,9 @@ impl WshServer {
                 }
                 debug!(session_id = %p.session_id, mode = %p.mode, ttl = p.ttl, "share session");
                 // Generate a share_id with high entropy and store it
-                let share_id = format!("share-{}-{:032x}", &p.session_id[..8.min(p.session_id.len())], rand::random::<u128>());
+                // Use chars().take(8) to avoid UTF-8 panic on multi-byte session_id
+                let sid_prefix: String = p.session_id.chars().take(8).collect();
+                let share_id = format!("share-{}-{:032x}", sid_prefix, rand::random::<u128>());
                 let entry = ShareEntry {
                     share_id: share_id.clone(),
                     session_id: p.session_id.clone(),
@@ -1843,7 +1963,28 @@ impl WshServer {
             }
 
             (MsgType::ShareRevoke, Payload::ShareRevoke(p)) => {
-                debug!(share_id = %p.share_id, "share revoked");
+                debug!(share_id = %p.share_id, "share revoke attempt");
+                // Look up the share entry to verify ownership
+                let shares = self.share_entries.read().await;
+                if let Some(entry) = shares.get(&p.share_id) {
+                    let session_id = entry.session_id.clone();
+                    drop(shares);
+                    // Only the session owner can revoke shares
+                    if !self.check_session_owner(&session_id, &ctx.username).await {
+                        return Ok(Some(Envelope {
+                            msg_type: MsgType::Error,
+                            payload: Payload::Error(ErrorPayload {
+                                code: 2,
+                                message: "not authorized to revoke this share".into(),
+                            }),
+                        }));
+                    }
+                    self.share_entries.write().await.remove(&p.share_id);
+                    info!(share_id = %p.share_id, session_id = %session_id, "share revoked");
+                } else {
+                    drop(shares);
+                    debug!(share_id = %p.share_id, "share not found for revocation");
+                }
                 Ok(None)
             }
 
@@ -1939,9 +2080,20 @@ impl WshServer {
 
             // ── AI co-pilot ────────────────────────────────────────
             (MsgType::CopilotAttach, Payload::CopilotAttach(p)) => {
+                // Verify the caller has access to this session
+                if !self.check_session_access(&p.session_id, &ctx.username).await {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload {
+                            code: 2,
+                            message: "not authorized to attach copilot to this session".into(),
+                        }),
+                    }));
+                }
                 // Register as read-only observer for the session
                 let copilot = CopilotSession {
                     model: p.model.clone(),
+                    conn_id: ctx.conn_id.unwrap_or(0),
                     peer_tx: ctx.peer_tx.clone(),
                 };
                 let mut sessions = self.copilot_sessions.write().await;
@@ -1985,24 +2137,31 @@ impl WshServer {
             }
 
             (MsgType::CopilotDetach, Payload::CopilotDetach(p)) => {
-                // Remove copilot from session
+                // Remove copilot matching this connection's conn_id (not pop())
+                let caller_conn_id = ctx.conn_id.unwrap_or(0);
                 let mut sessions = self.copilot_sessions.write().await;
                 if let Some(copilots) = sessions.get_mut(&p.session_id) {
-                    // Remove all copilots matching this connection's peer_tx
-                    // (simplified: remove last one since we don't track connection identity)
-                    if !copilots.is_empty() {
-                        copilots.pop();
-                    }
+                    copilots.retain(|c| c.conn_id != caller_conn_id);
                     if copilots.is_empty() {
                         sessions.remove(&p.session_id);
                     }
                 }
-                info!(session_id = %p.session_id, "copilot detached");
+                info!(session_id = %p.session_id, conn_id = caller_conn_id, "copilot detached");
                 Ok(None)
             }
 
             // ── E2E encryption ─────────────────────────────────────
             (MsgType::KeyExchange, Payload::KeyExchange(p)) => {
+                // Verify the caller has access to this session before relaying
+                if !self.check_session_access(&p.session_id, &ctx.username).await {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload {
+                            code: 2,
+                            message: "not authorized for key exchange on this session".into(),
+                        }),
+                    }));
+                }
                 debug!(session_id = %p.session_id, algorithm = %p.algorithm, "key exchange");
                 // Relay the key exchange ONLY to other clients attached to the SAME session,
                 // excluding the sender. Previously broadcast to ALL peers (cross-session leak).
@@ -2028,6 +2187,16 @@ impl WshServer {
             }
 
             (MsgType::EncryptedFrame, Payload::EncryptedFrame(p)) => {
+                // Verify the caller has access to this session before relaying
+                if !self.check_session_access(&p.session_id, &ctx.username).await {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload {
+                            code: 2,
+                            message: "not authorized for encrypted relay on this session".into(),
+                        }),
+                    }));
+                }
                 // Opaque relay — forward ONLY to other clients attached to the SAME session,
                 // excluding the sender. Previously broadcast to ALL peers (cross-session leak).
                 let fwd = Envelope {
@@ -2238,14 +2407,17 @@ impl WshServer {
             }
 
             (MsgType::PolicyUpdate, Payload::PolicyUpdate(p)) => {
-                // Only the server administrator (first authorized key) should update policies.
-                // For now, require session owner check on the current session.
-                if !self.check_session_owner(&ctx.session_id, &ctx.username).await {
+                // Only the server administrator (first authorized key) can update policies.
+                // The first key in authorized_keys is treated as admin.
+                let is_admin = self.authorized_keys.first()
+                    .map(|k| k.fingerprint == ctx.fingerprint)
+                    .unwrap_or(false);
+                if !is_admin {
                     return Ok(Some(Envelope {
                         msg_type: MsgType::Error,
                         payload: Payload::Error(ErrorPayload {
                             code: 2,
-                            message: "not authorized to update policy".into(),
+                            message: "only the server administrator can update policies".into(),
                         }),
                     }));
                 }
@@ -2262,6 +2434,16 @@ impl WshServer {
 
             // ── Terminal frontend config ────────────────────────────
             (MsgType::TerminalConfig, Payload::TerminalConfig(p)) => {
+                // Verify the caller has access to their own session
+                if !self.check_session_access(&ctx.session_id, &ctx.username).await {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::Error,
+                        payload: Payload::Error(ErrorPayload {
+                            code: 2,
+                            message: "not authorized to configure terminal".into(),
+                        }),
+                    }));
+                }
                 // Store per-channel terminal config
                 let config = TerminalConfigState {
                     frontend: p.frontend.clone(),

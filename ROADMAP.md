@@ -361,6 +361,30 @@ Priority: Complete the wsh protocol implementation — browser-native remote she
 - [x] 8 untested default tests (hello.features, serverHello.features/fingerprints, authMethods.methods, openOk.streamIds, attach.mode, reverseRegister.capabilities, fileResult.metadata)
 - [x] 16 optional field tests (open.env/cols/rows, metrics.memory/sessions/rtt/all-omitted, attach.device_label, fileResult.error_message)
 
+### Phase 6.10: Third Audit Fixes — COMPLETE
+**Critical:**
+- [x] Attach/Resume missing session-access check — any authenticated user with a valid token could attach to any session; added check_session_access + conn_session_map update
+- [x] ShareRevoke was a no-op — logged and returned None without removing entries; now validates ownership and removes from share_entries
+- [x] conn_session_map not populated on Attach/Resume/GuestJoin — only ReverseRegister populated it; now all session-joining paths update it
+
+**High:**
+- [x] RecordingExport missing auth — anyone could export any session's recording; added check_session_access
+- [x] CommandJournal missing auth — anyone could write journal entries for any session; added check_session_access
+- [x] CopilotAttach missing auth — anyone could attach copilot to any session; added check_session_access
+- [x] CopilotDetach wrong removal — used pop() removing last copilot instead of matching; added conn_id to CopilotSession and match by conn_id
+- [x] KeyExchange/EncryptedFrame missing auth on session_id — anyone could relay E2E to any session; added check_session_access
+- [x] Idle warning broadcast to ALL peers — scoped to session participants via conn_session_map
+
+**Medium:**
+- [x] GC missing for 6 maps — session_acls, rate_control_state, copilot_sessions, terminal_configs, echo_trackers, conn_session_map now GC'd periodically
+- [x] GuestToken TTL uncapped — u64::MAX ttl creates permanent tokens; capped at 86400 (24h)
+- [x] PolicyUpdate auth always true — check_session_owner on own session always passes; use admin fingerprint check (first authorized key)
+- [x] UTF-8 panic in GuestInvite/ShareSession — byte slicing `[..8]` on multi-byte session_id panics; use chars().take(8)
+
+**Low:**
+- [x] TerminalConfig missing auth — anyone could set config for any channel; added check_session_access
+- [x] ReverseRegister conn_id conflict — auth path now assigns conn_id, ReverseRegister no longer overrides
+
 ---
 
 ## Design Principles
