@@ -1290,3 +1290,197 @@ describe('gateway MSG constants', () => {
     assert.ok(isValidMessage(gatewayData({ gatewayId: 1, data: new Uint8Array(0) })));
   });
 });
+
+// ── Explicit opcode assertions for handshake/channel/transport/session/MCP/reverse ──
+
+describe('MSG opcode values — handshake', () => {
+  it('has correct hex values', () => {
+    assert.equal(MSG.HELLO, 0x01);
+    assert.equal(MSG.SERVER_HELLO, 0x02);
+    assert.equal(MSG.CHALLENGE, 0x03);
+    assert.equal(MSG.AUTH_METHODS, 0x04);
+    assert.equal(MSG.AUTH, 0x05);
+    assert.equal(MSG.AUTH_OK, 0x06);
+    assert.equal(MSG.AUTH_FAIL, 0x07);
+  });
+});
+
+describe('MSG opcode values — channel', () => {
+  it('has correct hex values', () => {
+    assert.equal(MSG.OPEN, 0x10);
+    assert.equal(MSG.OPEN_OK, 0x11);
+    assert.equal(MSG.OPEN_FAIL, 0x12);
+    assert.equal(MSG.RESIZE, 0x13);
+    assert.equal(MSG.SIGNAL, 0x14);
+    assert.equal(MSG.EXIT, 0x15);
+    assert.equal(MSG.CLOSE, 0x16);
+  });
+});
+
+describe('MSG opcode values — transport', () => {
+  it('has correct hex values', () => {
+    assert.equal(MSG.ERROR, 0x20);
+    assert.equal(MSG.PING, 0x21);
+    assert.equal(MSG.PONG, 0x22);
+  });
+});
+
+describe('MSG opcode values — session', () => {
+  it('has correct hex values', () => {
+    assert.equal(MSG.ATTACH, 0x30);
+    assert.equal(MSG.RESUME, 0x31);
+    assert.equal(MSG.RENAME, 0x32);
+    assert.equal(MSG.IDLE_WARNING, 0x33);
+    assert.equal(MSG.SHUTDOWN, 0x34);
+    assert.equal(MSG.SNAPSHOT, 0x35);
+    assert.equal(MSG.PRESENCE, 0x36);
+    assert.equal(MSG.CONTROL_CHANGED, 0x37);
+    assert.equal(MSG.METRICS, 0x38);
+  });
+});
+
+describe('MSG opcode values — MCP', () => {
+  it('has correct hex values', () => {
+    assert.equal(MSG.MCP_DISCOVER, 0x40);
+    assert.equal(MSG.MCP_TOOLS, 0x41);
+    assert.equal(MSG.MCP_CALL, 0x42);
+    assert.equal(MSG.MCP_RESULT, 0x43);
+  });
+});
+
+describe('MSG opcode values — reverse', () => {
+  it('has correct hex values', () => {
+    assert.equal(MSG.REVERSE_REGISTER, 0x50);
+    assert.equal(MSG.REVERSE_LIST, 0x51);
+    assert.equal(MSG.REVERSE_PEERS, 0x52);
+    assert.equal(MSG.REVERSE_CONNECT, 0x53);
+  });
+});
+
+describe('MSG opcode values — framing', () => {
+  it('WS_DATA has correct hex value', () => {
+    assert.equal(MSG.WS_DATA, 0x60);
+  });
+});
+
+// ── Untested defaults ───────────────────────────────────────────────
+
+describe('constructor defaults', () => {
+  it('hello.features defaults to []', () => {
+    const msg = hello({ username: 'test' });
+    assert.deepEqual(msg.features, []);
+  });
+
+  it('serverHello.features defaults to []', () => {
+    const msg = serverHello({ sessionId: 'abc' });
+    assert.deepEqual(msg.features, []);
+  });
+
+  it('serverHello.fingerprints defaults to []', () => {
+    const msg = serverHello({ sessionId: 'abc' });
+    assert.deepEqual(msg.fingerprints, []);
+  });
+
+  it('authMethods.methods defaults to [AUTH_METHOD.PUBKEY]', () => {
+    const msg = authMethods();
+    assert.deepEqual(msg.methods, [AUTH_METHOD.PUBKEY]);
+  });
+
+  it('openOk.streamIds defaults to []', () => {
+    const msg = openOk({ channelId: 1 });
+    assert.deepEqual(msg.stream_ids, []);
+  });
+
+  it('attach.mode defaults to "control"', () => {
+    const msg = attach({ sessionId: 'sess1', token: 'tok1' });
+    assert.equal(msg.mode, 'control');
+  });
+
+  it('reverseRegister.capabilities defaults to []', () => {
+    const msg = reverseRegister({ publicKey: new Uint8Array(32), username: 'u' });
+    assert.deepEqual(msg.capabilities, []);
+  });
+
+  it('fileResult.metadata defaults to {}', () => {
+    const msg = fileResult({ channelId: 1, success: true });
+    assert.deepEqual(msg.metadata, {});
+  });
+});
+
+// ── Untested optional fields ────────────────────────────────────────
+
+describe('optional field coverage', () => {
+  it('open.env present', () => {
+    const msg = open({ kind: 'pty', cols: 80, rows: 24, env: { TERM: 'xterm' } });
+    assert.deepEqual(msg.env, { TERM: 'xterm' });
+  });
+
+  it('open.env absent', () => {
+    const msg = open({ kind: 'pty', cols: 80, rows: 24 });
+    assert.equal(msg.env, undefined);
+  });
+
+  it('open.cols absent', () => {
+    const msg = open({ kind: 'pty' });
+    assert.equal(msg.cols, undefined);
+  });
+
+  it('open.rows absent', () => {
+    const msg = open({ kind: 'pty' });
+    assert.equal(msg.rows, undefined);
+  });
+
+  it('metrics.memory present', () => {
+    const msg = metrics({ memory: 1024 });
+    assert.equal(msg.memory, 1024);
+  });
+
+  it('metrics.memory absent', () => {
+    const msg = metrics({});
+    assert.equal(msg.memory, undefined);
+  });
+
+  it('metrics.sessions present', () => {
+    const msg = metrics({ sessions: 5 });
+    assert.equal(msg.sessions, 5);
+  });
+
+  it('metrics.sessions absent', () => {
+    const msg = metrics({});
+    assert.equal(msg.sessions, undefined);
+  });
+
+  it('metrics.rtt present', () => {
+    const msg = metrics({ rtt: 42.5 });
+    assert.equal(msg.rtt, 42.5);
+  });
+
+  it('metrics.rtt absent', () => {
+    const msg = metrics({});
+    assert.equal(msg.rtt, undefined);
+  });
+
+  it('metrics all fields omitted', () => {
+    const msg = metrics();
+    assert.equal(msg.type, MSG.METRICS);
+    assert.equal(msg.cpu, undefined);
+    assert.equal(msg.memory, undefined);
+    assert.equal(msg.sessions, undefined);
+    assert.equal(msg.rtt, undefined);
+  });
+
+  it('attach.device_label present', () => {
+    const msg = attach({ sessionId: 's1', token: 't1', mode: 'read', deviceLabel: 'Chrome/Mac' });
+    assert.equal(msg.device_label, 'Chrome/Mac');
+  });
+
+  it('attach.device_label absent', () => {
+    const msg = attach({ sessionId: 's1', token: 't1' });
+    assert.equal(msg.device_label, undefined);
+  });
+
+  it('fileResult.error_message absent', () => {
+    const msg = fileResult({ channelId: 1, success: true });
+    assert.equal(msg.error_message, undefined);
+  });
+});

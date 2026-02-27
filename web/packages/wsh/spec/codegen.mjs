@@ -362,6 +362,95 @@ function emitJS(schema) {
   return out.join(NL);
 }
 
+// ── Rust default-value helpers ────────────────────────────────────────
+
+/** PascalCase → snake_case */
+function toSnakeCase(name) {
+  return name.replace(/([a-z])([A-Z])/g, '$1_$2')
+             .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')
+             .toLowerCase();
+}
+
+/**
+ * Check if a YAML default differs from the Rust type's Default trait.
+ * Trivial defaults: "" for String, 0 for numbers, [] for Vec, {} for json.
+ */
+function isNonTrivialDefault(yamlType, defaultVal) {
+  // String type: trivial default is ""
+  if (yamlType === 'string' || yamlType === 'ChannelKind' || yamlType === 'AuthMethod') {
+    return typeof defaultVal === 'string' && defaultVal !== '' && defaultVal !== '""';
+  }
+  // Numeric types: trivial default is 0
+  if (['u8', 'u16', 'u32', 'u64', 'i32', 'f64'].includes(yamlType)) {
+    return defaultVal !== 0;
+  }
+  // Array types: trivial default is []
+  if (yamlType.endsWith('[]')) {
+    if (typeof defaultVal === 'string' && (defaultVal === '[]' || defaultVal === '"[]"')) return false;
+    if (Array.isArray(defaultVal) && defaultVal.length === 0) return false;
+    // String-encoded non-empty arrays like '["read"]' are non-trivial
+    if (typeof defaultVal === 'string' && defaultVal.startsWith('[') && defaultVal !== '[]') return true;
+    return Array.isArray(defaultVal) && defaultVal.length > 0;
+  }
+  // JSON: trivial default is {}
+  if (yamlType === 'json') {
+    if (typeof defaultVal === 'object' && Object.keys(defaultVal).length === 0) return false;
+    if (defaultVal === '{}') return false;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Emit a Rust default function body for a non-trivial YAML default.
+ */
+function emitDefaultFn(fnName, rustTypeName, yamlType, defaultVal) {
+  // String defaults
+  if (yamlType === 'string') {
+    const strVal = typeof defaultVal === 'string' ? defaultVal.replace(/^"|"$/g, '') : String(defaultVal);
+    return `fn ${fnName}() -> ${rustTypeName} {\n    "${strVal}".to_string()\n}`;
+  }
+  // Numeric defaults
+  if (['u8', 'u16', 'u32', 'u64', 'i32', 'f64'].includes(yamlType)) {
+    return `fn ${fnName}() -> ${rustTypeName} {\n    ${defaultVal}\n}`;
+  }
+  // String array with values (may be parsed as actual array or as string '["read"]')
+  if (yamlType === 'string[]') {
+    let items;
+    if (Array.isArray(defaultVal)) {
+      items = defaultVal;
+    } else if (typeof defaultVal === 'string' && defaultVal.startsWith('[')) {
+      // Parse string-encoded array like '["read"]'
+      try { items = JSON.parse(defaultVal); } catch { items = []; }
+    }
+    if (items && items.length > 0) {
+      const rustItems = items.map(v => {
+        const s = typeof v === 'string' ? v.replace(/^"|"$/g, '') : String(v);
+        return `"${s}".to_string()`;
+      }).join(', ');
+      return `fn ${fnName}() -> ${rustTypeName} {\n    vec![${rustItems}]\n}`;
+    }
+  }
+  // AuthMethod array
+  if (yamlType === 'AuthMethod[]') {
+    let items;
+    if (Array.isArray(defaultVal)) {
+      items = defaultVal;
+    } else if (typeof defaultVal === 'string' && defaultVal.startsWith('[')) {
+      try { items = JSON.parse(defaultVal); } catch { items = []; }
+    }
+    if (items && items.length > 0) {
+      const rustItems = items.map(v => {
+        const s = typeof v === 'string' ? v.replace(/^"|"$/g, '') : String(v);
+        return `AuthMethod::${s[0].toUpperCase() + s.slice(1)}`;
+      }).join(', ');
+      return `fn ${fnName}() -> ${rustTypeName} {\n    vec![${rustItems}]\n}`;
+    }
+  }
+  // Fallback: bare default
+  return `fn ${fnName}() -> ${rustTypeName} {\n    Default::default()\n}`;
+}
+
 // ── Rust Emitter ─────────────────────────────────────────────────────
 
 function rustType(yamlType, required, hasDefault) {
@@ -541,11 +630,13 @@ function emitRust(schema) {
   out.push('}');
   out.push('');
 
+  // Track custom default functions to emit after each struct
   for (const msg of rustMessages) {
     if (msg.name === 'Ping' || msg.name === 'Pong') continue;
 
     const fields = msg.fields || {};
     const fieldEntries = Object.entries(fields);
+    const defaultFns = []; // collect {fnName, rustCode} for after the struct
 
     out.push('#[derive(Debug, Clone, Serialize, Deserialize)]');
     out.push(`pub struct ${msg.name}Payload {`);
@@ -563,18 +654,23 @@ function emitRust(schema) {
         const attrs = [];
 
         if (hasDefault && !isBytes) {
-          attrs.push('default');
+          // Check if the default is non-trivial (differs from Rust's Default trait)
+          const needsCustomDefault = isNonTrivialDefault(fieldDef.type, fieldDef.default);
+          if (needsCustomDefault) {
+            const fnName = `default_${toSnakeCase(msg.name)}_${fieldName}`;
+            attrs.push(`default = "${fnName}"`);
+            defaultFns.push({
+              fnName,
+              rustCode: emitDefaultFn(fnName, rType, fieldDef.type, fieldDef.default),
+            });
+          } else {
+            attrs.push('default');
+          }
         }
 
         if (!isRequired && !hasDefault) {
           attrs.push('default');
           attrs.push('skip_serializing_if = "Option::is_none"');
-        }
-
-        // Special default for attach mode
-        if (msg.name === 'Attach' && fieldName === 'mode') {
-          attrs.length = 0; // clear
-          attrs.push('default = "default_attach_mode"');
         }
 
         // Bytes handling
@@ -598,11 +694,9 @@ function emitRust(schema) {
     out.push('}');
     out.push('');
 
-    // Default function for attach mode
-    if (msg.name === 'Attach') {
-      out.push('fn default_attach_mode() -> String {');
-      out.push('    "control".to_string()');
-      out.push('}');
+    // Emit any custom default functions after the struct
+    for (const { rustCode } of defaultFns) {
+      out.push(rustCode);
       out.push('');
     }
   }

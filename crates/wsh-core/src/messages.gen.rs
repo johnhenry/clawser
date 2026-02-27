@@ -542,10 +542,14 @@ pub struct ClipboardPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecordingExportPayload {
     pub session_id: String,
-    #[serde(default)]
+    #[serde(default = "default_recording_export_format")]
     pub format: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data: Option<String>,
+}
+
+fn default_recording_export_format() -> String {
+    "jsonl".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -640,8 +644,12 @@ pub struct OpenUdpPayload {
 pub struct ResolveDnsPayload {
     pub gateway_id: u32,
     pub name: String,
-    #[serde(default)]
+    #[serde(default = "default_resolve_dns_record_type")]
     pub record_type: String,
+}
+
+fn default_resolve_dns_record_type() -> String {
+    "A".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -699,8 +707,12 @@ pub struct DnsResultPayload {
 pub struct ListenRequestPayload {
     pub listener_id: u32,
     pub port: u16,
-    #[serde(default)]
+    #[serde(default = "default_listen_request_bind_addr")]
     pub bind_addr: String,
+}
+
+fn default_listen_request_bind_addr() -> String {
+    "0.0.0.0".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -731,8 +743,12 @@ pub struct GatewayDataPayload {
 pub struct GuestInvitePayload {
     pub session_id: String,
     pub ttl: u64,
-    #[serde(default)]
+    #[serde(default = "default_guest_invite_permissions")]
     pub permissions: Vec<String>,
+}
+
+fn default_guest_invite_permissions() -> Vec<String> {
+    vec!["read".to_string()]
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -752,9 +768,13 @@ pub struct GuestRevokePayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShareSessionPayload {
     pub session_id: String,
-    #[serde(default)]
+    #[serde(default = "default_share_session_mode")]
     pub mode: String,
     pub ttl: u64,
+}
+
+fn default_share_session_mode() -> String {
+    "read".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -767,8 +787,12 @@ pub struct ShareRevokePayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompressBeginPayload {
     pub algorithm: String,
-    #[serde(default)]
+    #[serde(default = "default_compress_begin_level")]
     pub level: u32,
+}
+
+fn default_compress_begin_level() -> u32 {
+    3
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -781,8 +805,12 @@ pub struct CompressAckPayload {
 pub struct RateControlPayload {
     pub session_id: String,
     pub max_bytes_per_sec: u64,
-    #[serde(default)]
+    #[serde(default = "default_rate_control_policy")]
     pub policy: String,
+}
+
+fn default_rate_control_policy() -> String {
+    "pause".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -901,8 +929,12 @@ pub struct NodeRedirectPayload {
 pub struct SessionGrantPayload {
     pub session_id: String,
     pub principal: String,
-    #[serde(default)]
+    #[serde(default = "default_session_grant_permissions")]
     pub permissions: Vec<String>,
+}
+
+fn default_session_grant_permissions() -> Vec<String> {
+    vec!["read".to_string()]
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

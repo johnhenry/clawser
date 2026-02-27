@@ -326,6 +326,41 @@ Priority: Complete the wsh protocol implementation — browser-native remote she
 - [x] Import 6 missing constructors (clipboard, recordingExport, commandJournal, metricsRequest, suspendSession, restartPty)
 - [x] Add tests for 15 imported-but-untested constructors (authMethods, openFail, error, resume, rename, idleWarning, shutdown, snapshot, presence, controlChanged, mcpCall, mcpResult, reverseList, reversePeers, reverseConnect)
 
+### Phase 6.9: Second Audit Fixes — COMPLETE
+**Critical:**
+- [x] E2E cross-session leak — KeyExchange/EncryptedFrame broadcast to ALL peers; scope to session participants only, exclude sender
+
+**High:**
+- [x] CopilotSuggest global broadcast — scoped to session participants only via conn_session_map
+- [x] ACL escalation — check_session_access allows grantees to call Grant/Revoke/GuestInvite/ShareSession; add check_session_owner for privileged operations
+- [x] GuestRevoke missing auth — anyone could revoke any token; add session ownership check
+- [x] PolicyUpdate missing auth — anyone could update policy; add session ownership check
+
+**Medium:**
+- [x] NodeAnnounce missing auth — anyone could inject cluster nodes; add session ownership check
+- [x] WS port overflow — port + 1 on u16 could overflow at 65535; use checked_add
+- [x] Guest token low entropy — used u32 random (4B); upgraded to u128 (16B)
+- [x] SuspendSession false success — no-op stub returned Ok(None); now returns honest error
+- [x] Channel ID collision — used first 4 bytes of session_id; use full DefaultHasher
+- [x] GuestJoin single-use — tokens not consumed after use; mark as revoked on join
+- [x] ShareSession storage — generated share_id but never stored; add ShareEntry store with GC
+
+**Low:**
+- [x] RateWarning missing session check — added check_session_access
+- [x] Rename missing ownership check — added check_session_access
+- [x] RestartPty missing ownership check — added check_session_access
+
+**Codegen:**
+- [x] 8 Rust serde(default) mismatches — codegen now emits named default functions for non-trivial defaults (RecordingExport.format, ResolveDns.record_type, ListenRequest.bind_addr, ShareSession.mode, CompressBegin.level, RateControl.policy, GuestInvite.permissions, SessionGrant.permissions)
+
+**Spec:**
+- [x] ChannelKind 'job' missing description — added "Background automation job channel"
+
+**Tests:**
+- [x] 35 MSG opcode explicit value assertions (handshake, channel, transport, session, MCP, reverse, framing)
+- [x] 8 untested default tests (hello.features, serverHello.features/fingerprints, authMethods.methods, openOk.streamIds, attach.mode, reverseRegister.capabilities, fileResult.metadata)
+- [x] 16 optional field tests (open.env/cols/rows, metrics.memory/sessions/rtt/all-omitted, attach.device_label, fileResult.error_message)
+
 ---
 
 ## Design Principles

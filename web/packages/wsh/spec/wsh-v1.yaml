@@ -19,6 +19,7 @@ enums:
       file: "File transfer channel (upload or download)"
       tcp: "Gateway-proxied TCP stream to an external host:port"
       udp: "Gateway-proxied UDP datagram socket to an external host:port"
+      job: "Background automation job channel for structured task execution"
   AuthMethod:
     type: string
     values: [pubkey, password]
