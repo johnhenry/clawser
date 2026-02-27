@@ -19,7 +19,7 @@
 - **Version**: `wsh-v1`
 - **Wire format**: CBOR
 - **Framing**: length prefixed be32
-- **Total message types**: 72 (including WS_DATA framing marker)
+- **Total message types**: 74 (including WS_DATA framing marker)
 
 ## Enums
 
@@ -122,6 +122,8 @@ Type: `string`
 | `0x8d` | CopilotDetach | copilot |
 | `0x8e` | KeyExchange | e2e |
 | `0x8f` | EncryptedFrame | e2e |
+| `0x90` | EchoAck | echo |
+| `0x91` | EchoState | echo |
 
 ## Message Details
 
@@ -860,6 +862,31 @@ Category: **e2e**
 | `nonce` | `bytes` | yes | — |
 | `ciphertext` | `bytes` | yes | — |
 | `session_id` | `string` | yes | — |
+
+### EchoAck (`0x90`)
+
+Category: **echo**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `channel_id` | `u32` | yes | — |
+| `echo_seq` | `u64` | yes | — |
+
+### EchoState (`0x91`)
+
+Category: **echo**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `channel_id` | `u32` | yes | — |
+| `echo_seq` | `u64` | yes | — |
+| `cursor_x` | `u16` | yes | — |
+| `cursor_y` | `u16` | yes | — |
+| `pending` | `u32` | yes | — |
 
 ## Nested Types
 

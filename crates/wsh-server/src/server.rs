@@ -1581,6 +1581,17 @@ impl WshServer {
                 Ok(None)
             }
 
+            // ── Predictive local echo ─────────────────────────────
+            (MsgType::EchoAck, Payload::EchoAck(p)) => {
+                debug!(channel_id = p.channel_id, echo_seq = p.echo_seq, "echo ack");
+                Ok(None) // client-to-server only; server generates these
+            }
+
+            (MsgType::EchoState, Payload::EchoState(p)) => {
+                debug!(channel_id = p.channel_id, echo_seq = p.echo_seq, "echo state");
+                Ok(None) // server-to-client only
+            }
+
             // ── Unhandled ───────────────────────────────────────────
             (msg_type, _) => {
                 debug!(?msg_type, "unhandled message type in session loop");

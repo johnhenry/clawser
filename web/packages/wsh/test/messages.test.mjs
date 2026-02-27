@@ -18,6 +18,7 @@ import {
   sessionLink, sessionUnlink,
   copilotAttach, copilotSuggest, copilotDetach,
   keyExchange, encryptedFrame,
+  echoAck, echoState,
   msgName, isValidMessage,
   AUTH_METHOD, CHANNEL_KIND,
 } from '../src/messages.mjs';
@@ -649,6 +650,40 @@ describe('E2E encrypted session mode', () => {
   it('E2E messages validate correctly', () => {
     assert.ok(isValidMessage(keyExchange({ algorithm: 'x25519', publicKey: new Uint8Array(32), sessionId: 's1' })));
     assert.ok(isValidMessage(encryptedFrame({ nonce: new Uint8Array(12), ciphertext: new Uint8Array(0), sessionId: 's1' })));
+  });
+});
+
+describe('predictive local echo (mosh-style)', () => {
+  it('echoAck', () => {
+    const msg = echoAck({ channelId: 1, echoSeq: 42 });
+    assert.equal(msg.type, MSG.ECHO_ACK);
+    assert.equal(msg.channel_id, 1);
+    assert.equal(msg.echo_seq, 42);
+  });
+
+  it('echoState', () => {
+    const msg = echoState({ channelId: 1, echoSeq: 42, cursorX: 10, cursorY: 5, pending: 3 });
+    assert.equal(msg.type, MSG.ECHO_STATE);
+    assert.equal(msg.channel_id, 1);
+    assert.equal(msg.echo_seq, 42);
+    assert.equal(msg.cursor_x, 10);
+    assert.equal(msg.cursor_y, 5);
+    assert.equal(msg.pending, 3);
+  });
+
+  it('echoState with defaults', () => {
+    const msg = echoState({ channelId: 1, echoSeq: 0, cursorX: 0, cursorY: 0, pending: 0 });
+    assert.equal(msg.pending, 0);
+  });
+
+  it('echo codes', () => {
+    assert.equal(MSG.ECHO_ACK, 0x90);
+    assert.equal(MSG.ECHO_STATE, 0x91);
+  });
+
+  it('echo messages validate correctly', () => {
+    assert.ok(isValidMessage(echoAck({ channelId: 1, echoSeq: 0 })));
+    assert.ok(isValidMessage(echoState({ channelId: 1, echoSeq: 0, cursorX: 0, cursorY: 0, pending: 0 })));
   });
 });
 

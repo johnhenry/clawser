@@ -985,6 +985,48 @@ messages:
           type: string
           required: true
 
+  # ── Predictive local echo ────────────────────────────────────────────
+  # Mosh-style local echo.  The client speculatively renders keystrokes
+  # and the server confirms via EchoAck.  EchoState carries cursor
+  # position so the client can reconcile predictions.
+  echo:
+    EchoAck:
+      code: 0x90
+      description: >
+        Sent by the server to confirm that input up to echo_seq has
+        been processed and rendered.  The client can retire predictions
+        up to this sequence number.
+      fields:
+        channel_id:
+          type: u32
+          required: true
+        echo_seq:
+          type: u64
+          required: true
+
+    EchoState:
+      code: 0x91
+      description: >
+        Sent by the server with current terminal cursor state so the
+        client can reconcile local predictions with actual state.
+      fields:
+        channel_id:
+          type: u32
+          required: true
+        echo_seq:
+          type: u64
+          required: true
+        cursor_x:
+          type: u16
+          required: true
+        cursor_y:
+          type: u16
+          required: true
+        pending:
+          type: u32
+          required: true
+          description: "Number of unacknowledged input bytes on server"
+
 nested_types:
   AttachmentInfo:
     fields:

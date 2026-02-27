@@ -108,6 +108,10 @@ export const MSG = Object.freeze({
   // E2e
   KEY_EXCHANGE:      0x8e,
   ENCRYPTED_FRAME:   0x8f,
+
+  // Echo
+  ECHO_ACK:          0x90,
+  ECHO_STATE:        0x91,
 });
 
 // Reverse lookup: number → name
@@ -665,6 +669,25 @@ export function encryptedFrame({ nonce, ciphertext, sessionId } = {}) {
     nonce,
     ciphertext,
     session_id: sessionId,
+  };
+}
+
+export function echoAck({ channelId, echoSeq } = {}) {
+  return {
+    type: MSG.ECHO_ACK,
+    channel_id: channelId,
+    echo_seq: echoSeq,
+  };
+}
+
+export function echoState({ channelId, echoSeq, cursorX, cursorY, pending } = {}) {
+  return {
+    type: MSG.ECHO_STATE,
+    channel_id: channelId,
+    echo_seq: echoSeq,
+    cursor_x: cursorX,
+    cursor_y: cursorY,
+    pending,
   };
 }
 

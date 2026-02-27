@@ -93,6 +93,9 @@ pub enum MsgType {
 
     KeyExchange = 0x8e,
     EncryptedFrame = 0x8f,
+
+    EchoAck = 0x90,
+    EchoState = 0x91,
 }
 
 impl From<MsgType> for u8 {
@@ -176,6 +179,8 @@ impl TryFrom<u8> for MsgType {
             0x8d => Ok(Self::CopilotDetach),
             0x8e => Ok(Self::KeyExchange),
             0x8f => Ok(Self::EncryptedFrame),
+            0x90 => Ok(Self::EchoAck),
+            0x91 => Ok(Self::EchoState),
             _ => Err(format!("unknown message type: 0x{v:02x}")),
         }
     }
@@ -291,6 +296,8 @@ pub enum Payload {
     CopilotDetach(CopilotDetachPayload),
     KeyExchange(KeyExchangePayload),
     EncryptedFrame(EncryptedFramePayload),
+    EchoAck(EchoAckPayload),
+    EchoState(EchoStatePayload),
     Empty(EmptyPayload),
 }
 
@@ -794,6 +801,21 @@ pub struct EncryptedFramePayload {
     #[serde(with = "serde_bytes")]
     pub ciphertext: Vec<u8>,
     pub session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EchoAckPayload {
+    pub channel_id: u32,
+    pub echo_seq: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EchoStatePayload {
+    pub channel_id: u32,
+    pub echo_seq: u64,
+    pub cursor_x: u16,
+    pub cursor_y: u16,
+    pub pending: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
