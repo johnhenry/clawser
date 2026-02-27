@@ -24,6 +24,7 @@ import {
   sessionGrant, sessionRevoke,
   fileOp, fileResult, fileChunk,
   policyEval, policyResult, policyUpdate,
+  terminalConfig,
   msgName, isValidMessage,
   AUTH_METHOD, CHANNEL_KIND,
 } from '../src/messages.mjs';
@@ -901,6 +902,33 @@ describe('policy engine (OPA-like)', () => {
     assert.ok(isValidMessage(policyEval({ requestId: 'r', action: 'a', principal: 'p' })));
     assert.ok(isValidMessage(policyResult({ requestId: 'r', allowed: true })));
     assert.ok(isValidMessage(policyUpdate({ policyId: 'p', rules: {}, version: 1 })));
+  });
+});
+
+describe('ghostty-web terminal frontend integration', () => {
+  it('terminalConfig', () => {
+    const msg = terminalConfig({
+      channelId: 1,
+      frontend: 'ghostty-web',
+      options: { fontFamily: 'JetBrains Mono', fontSize: 14, theme: 'dracula' },
+    });
+    assert.equal(msg.type, MSG.TERMINAL_CONFIG);
+    assert.equal(msg.channel_id, 1);
+    assert.equal(msg.frontend, 'ghostty-web');
+    assert.deepEqual(msg.options, { fontFamily: 'JetBrains Mono', fontSize: 14, theme: 'dracula' });
+  });
+
+  it('terminalConfig default options', () => {
+    const msg = terminalConfig({ channelId: 1, frontend: 'xterm.js' });
+    assert.deepEqual(msg.options, {});
+  });
+
+  it('terminal config code', () => {
+    assert.equal(MSG.TERMINAL_CONFIG, 0x9e);
+  });
+
+  it('terminal config validates correctly', () => {
+    assert.ok(isValidMessage(terminalConfig({ channelId: 1, frontend: 'ghostty-web' })));
   });
 });
 

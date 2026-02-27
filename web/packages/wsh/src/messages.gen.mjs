@@ -134,6 +134,9 @@ export const MSG = Object.freeze({
   POLICY_EVAL:       0x9b,
   POLICY_RESULT:     0x9c,
   POLICY_UPDATE:     0x9d,
+
+  // Terminal
+  TERMINAL_CONFIG:   0x9e,
 });
 
 // Reverse lookup: number → name
@@ -808,6 +811,15 @@ export function policyUpdate({ policyId, rules, version } = {}) {
     policy_id: policyId,
     rules,
     version,
+  };
+}
+
+export function terminalConfig({ channelId, frontend, options = {} } = {}) {
+  return {
+    type: MSG.TERMINAL_CONFIG,
+    channel_id: channelId,
+    frontend,
+    options,
   };
 }
 

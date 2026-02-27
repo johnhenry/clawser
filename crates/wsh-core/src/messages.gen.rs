@@ -113,6 +113,8 @@ pub enum MsgType {
     PolicyEval = 0x9b,
     PolicyResult = 0x9c,
     PolicyUpdate = 0x9d,
+
+    TerminalConfig = 0x9e,
 }
 
 impl From<MsgType> for u8 {
@@ -210,6 +212,7 @@ impl TryFrom<u8> for MsgType {
             0x9b => Ok(Self::PolicyEval),
             0x9c => Ok(Self::PolicyResult),
             0x9d => Ok(Self::PolicyUpdate),
+            0x9e => Ok(Self::TerminalConfig),
             _ => Err(format!("unknown message type: 0x{v:02x}")),
         }
     }
@@ -339,6 +342,7 @@ pub enum Payload {
     PolicyEval(PolicyEvalPayload),
     PolicyResult(PolicyResultPayload),
     PolicyUpdate(PolicyUpdatePayload),
+    TerminalConfig(TerminalConfigPayload),
     Empty(EmptyPayload),
 }
 
@@ -961,6 +965,14 @@ pub struct PolicyUpdatePayload {
     pub policy_id: String,
     pub rules: serde_json::Value,
     pub version: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalConfigPayload {
+    pub channel_id: u32,
+    pub frontend: String,
+    #[serde(default)]
+    pub options: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

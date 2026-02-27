@@ -1281,6 +1281,30 @@ messages:
           type: u64
           required: true
 
+  # ── Terminal frontend ────────────────────────────────────────────────
+  # Negotiate terminal frontend configuration.  Allows the client to
+  # specify which terminal emulator to use (ghostty-web, xterm.js, etc.)
+  # and pass frontend-specific options.
+  terminal:
+    TerminalConfig:
+      code: 0x9e
+      description: >
+        Sent by the client to configure the terminal frontend for a
+        channel.  The server may use this to adjust PTY behavior
+        (e.g., TERM environment variable, color depth).
+      fields:
+        channel_id:
+          type: u32
+          required: true
+        frontend:
+          type: string
+          required: true
+          description: '"ghostty-web", "xterm.js", "hterm", or custom'
+        options:
+          type: json
+          default: "{}"
+          description: "Frontend-specific options (font, theme, keybindings)"
+
 nested_types:
   AttachmentInfo:
     fields:

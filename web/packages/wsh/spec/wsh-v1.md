@@ -19,7 +19,7 @@
 - **Version**: `wsh-v1`
 - **Wire format**: CBOR
 - **Framing**: length prefixed be32
-- **Total message types**: 86 (including WS_DATA framing marker)
+- **Total message types**: 87 (including WS_DATA framing marker)
 
 ## Enums
 
@@ -136,6 +136,7 @@ Type: `string`
 | `0x9b` | PolicyEval | policy |
 | `0x9c` | PolicyResult | policy |
 | `0x9d` | PolicyUpdate | policy |
+| `0x9e` | TerminalConfig | terminal |
 
 ## Message Details
 
@@ -1051,6 +1052,18 @@ Category: **policy**
 | `policy_id` | `string` | yes | — |
 | `rules` | `json` | yes | — |
 | `version` | `u64` | yes | — |
+
+### TerminalConfig (`0x9e`)
+
+Category: **terminal**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `channel_id` | `u32` | yes | — |
+| `frontend` | `string` | yes | — |
+| `options` | `json` | no | `{}` |
 
 ## Nested Types
 

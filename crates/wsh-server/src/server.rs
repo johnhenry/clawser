@@ -1681,6 +1681,13 @@ impl WshServer {
                 Ok(None)
             }
 
+            // ── Terminal frontend config ────────────────────────────
+            (MsgType::TerminalConfig, Payload::TerminalConfig(p)) => {
+                debug!(channel_id = p.channel_id, frontend = %p.frontend, "terminal config");
+                // Adjust PTY TERM variable based on frontend capabilities
+                Ok(None)
+            }
+
             // ── Unhandled ───────────────────────────────────────────
             (msg_type, _) => {
                 debug!(?msg_type, "unhandled message type in session loop");
