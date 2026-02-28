@@ -22,6 +22,19 @@ Clawser is a **beta-quality** browser-native AI agent platform. The core runtime
 - ARIA accessibility, keyboard shortcuts, light/dark mode, responsive design
 - CI/CD pipeline, Docker, Service Worker, PWA
 
+### Version History
+
+| Milestone | What shipped |
+|-----------|-------------|
+| **Phase 0** | Full codebase: pure JS agent, modular UI, providers, tools, tests. Post-modularization fixes. |
+| **Phase 1** | Core systems — Blocks 1 (shell), 4 (memory), 5 (vault), 6 (autonomy), 7 (identity), 20 (hooks), 23 (safety), 26 (cache) |
+| **Phase 2** | Infrastructure — Blocks 0 (bridge), 2 (mount), 3 (daemon), 8 (goals), 9 (delegation), 10 (metrics), 11 (fallback), 17 (skills registry), 19 (auth), 22 (self-repair), 24 (tool builder), 25 (undo), 27 (intent) |
+| **Phase 3** | Feature modules — Blocks 12 (git), 13 (hardware), 14 (channels), 15 (remote), 16 (OAuth), 18 (browser auto), 21 (routines), 28 (sandbox), 29 (heartbeat) |
+| **Batch 1** | Critical security and safety fixes across 7 areas |
+| **Batch 2** | Router single source of truth, state namespacing |
+| **Batch 3** | Panel enhancements, agent loop integration, 9 API mismatch fixes |
+| **0.1.0-beta** | 9 feature module integrations with 36 new agent tools. Phase 2 UI/agent loop wiring for all 30 blocks. |
+
 ---
 
 ## Phase 1: Foundation -- COMPLETE
@@ -31,7 +44,7 @@ Clawser is a **beta-quality** browser-native AI agent platform. The core runtime
 - [x] ARCHITECTURE.md — System design and module map
 - [x] ROADMAP.md — This document
 - [x] LICENSE — MIT license file at project root
-- [x] CHANGELOG.md — Version history from git log
+- [x] ~~CHANGELOG.md~~ — Merged into Version History section above
 - [x] CONTRIBUTING.md — Contributor guidelines
 - [x] SECURITY.md — Security policy and threat model
 - [x] docs/API.md — API reference for core modules
