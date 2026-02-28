@@ -16,7 +16,7 @@ Clawser is a **beta-quality** browser-native AI agent platform. The core runtime
 - Memory system with hybrid BM25+vector recall
 - Goal tracking, scheduler (cron), hook pipeline, response cache
 - Daemon mode with SharedWorker tab coordination and BroadcastChannel
-- Bridge interface for external tool integration (local server + extension)
+- Remote tool integration via wsh protocol (shell exec, file transfer, MCP bridging, CORS proxy)
 - Local filesystem mounting via FileSystemAccess API
 - Delegation, self-repair, undo, routines, heartbeat, auth profiles
 - ARIA accessibility, keyboard shortcuts, light/dark mode, responsive design
@@ -28,7 +28,7 @@ Clawser is a **beta-quality** browser-native AI agent platform. The core runtime
 |-----------|-------------|
 | **Phase 0** | Full codebase: pure JS agent, modular UI, providers, tools, tests. Post-modularization fixes. |
 | **Phase 1** | Core systems — Blocks 1 (shell), 4 (memory), 5 (vault), 6 (autonomy), 7 (identity), 20 (hooks), 23 (safety), 26 (cache) |
-| **Phase 2** | Infrastructure — Blocks 0 (bridge), 2 (mount), 3 (daemon), 8 (goals), 9 (delegation), 10 (metrics), 11 (fallback), 17 (skills registry), 19 (auth), 22 (self-repair), 24 (tool builder), 25 (undo), 27 (intent) |
+| **Phase 2** | Infrastructure — Blocks 0 (bridge→wsh), 2 (mount), 3 (daemon), 8 (goals), 9 (delegation), 10 (metrics), 11 (fallback), 17 (skills registry), 19 (auth), 22 (self-repair), 24 (tool builder), 25 (undo), 27 (intent) |
 | **Phase 3** | Feature modules — Blocks 12 (git), 13 (hardware), 14 (channels), 15 (remote), 16 (OAuth), 18 (browser auto), 21 (routines), 28 (sandbox), 29 (heartbeat) |
 | **Batch 1** | Critical security and safety fixes across 7 areas |
 | **Batch 2** | Router single source of truth, state namespacing |
@@ -251,21 +251,11 @@ Priority: Integrations, API, and community.
 
 ### External Tool Integration (Block 0)
 
-**Phase 6a: Bridge Interface + Local Server**
-- [x] `ExternalBridge` abstract class in `web/clawser-bridge.js`
-- [x] `LocalServerBridge` implementation (HTTP client w/ Bearer auth)
-- [x] `ExtensionBridge` implementation (postMessage RPC)
-- [x] `BridgeManager` (detection, lifecycle, extension→server fallback)
-- [x] 3 bridge agent tools: `bridge_status`, `bridge_list_tools`, `bridge_fetch`
-- [x] Auto-detect bridge on page load (`.detect()` called at startup)
-- [ ] Build `clawser-bridge` local server (Node.js, `npx clawser-bridge`)
-  - [ ] CORS proxy endpoint
-  - [ ] MCP hub (connect to multiple upstream MCP servers)
-  - [ ] System tools (file system, shell, git as MCP tools)
-  - [ ] `--generate-key` first-run flow (auth token in `~/.clawser/bridge.toml`)
-  - [ ] `--serve <dir>` optional flag for static file serving
-  - [ ] Health endpoint at `/health`
-- [ ] Bridge status indicator in UI + API key settings field
+**Phase 6a: Bridge → wsh Migration** -- COMPLETE
+- [x] Bridge system retired (ExternalBridge, LocalServerBridge, ExtensionBridge, BridgeManager — deleted)
+- [x] All bridge functionality replaced by wsh protocol: shell exec (`wsh_exec`), file transfer (`wsh_upload`/`wsh_download`), MCP bridging (`wsh_mcp_call`), reverse mode (`wsh_connect` with expose)
+- [x] `wsh_fetch` tool added — CORS proxy replacement via `curl` over `wsh_exec`
+- [x] Bridge dead code removed from OAuth, state, UI, SW, tests
 
 **Phase 6b: Browser Extension**
 - [ ] Scaffold Chrome extension (Manifest V3, background service worker)
@@ -481,7 +471,7 @@ Priority: Integrations, API, and community.
 ### Multi-Channel Input (Block 14) -- MOSTLY COMPLETE
 **Done:** ChannelManager, InboundMessage normalization, allowlists, formatForChannel, 3 tools (channel_list/send/history), 7 channel types defined — 465 LOC
 **Remaining:**
-- [ ] **Backend bridge server** — WebSocket relay + generic webhook receiver (server-side)
+- [ ] **Backend relay server** — WebSocket relay + generic webhook receiver (server-side)
 - [ ] **Telegram bot plugin** — Polling mode implementation
 - [ ] **Discord/Slack/Matrix plugins** — Gateway/Events API implementations
 - [ ] **Email plugin** — IMAP polling + SMTP send
@@ -500,7 +490,7 @@ Priority: Integrations, API, and community.
 **Done:** OAuthManager (popup flow, CSRF state, vault storage, auto-refresh), 5 providers (Google/GitHub/Notion/Slack/Linear), 4 tools, AuthProfileManager — 911 LOC
 **Remaining:**
 - [ ] **Popup auth handler wiring** — Connect injectable handler to real window.open
-- [ ] **Code exchange via bridge** — Server-side OAuth code→token exchange
+- [ ] **Code exchange via wsh** — Server-side OAuth code→token exchange
 - [ ] **Google Calendar/Gmail/Drive operations** — Read/write tools for Google APIs
 - [ ] **Notion/Slack/Linear read-write tools** — Platform-specific operations
 - [ ] **"Connected Apps" UI panel** — Settings section showing connected services

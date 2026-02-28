@@ -858,7 +858,7 @@ function categorize(toolName) {
   if (toolName.startsWith('auth_')) return 'Auth';
   if (toolName.startsWith('routine_')) return 'Routines';
   if (toolName.startsWith('remote_')) return 'Remote';
-  if (toolName.startsWith('bridge_')) return 'Bridge';
+  if (toolName.startsWith('wsh_')) return 'Remote (wsh)';
   if (toolName.startsWith('daemon_') || toolName.startsWith('self_repair_')) return 'System';
   if (toolName.startsWith('agent_switch') || toolName.startsWith('agent_consult')) return 'Agents';
   if (toolName.startsWith('skill_') || toolName.startsWith('activate_skill') || toolName.startsWith('deactivate_skill')) return 'Skills';

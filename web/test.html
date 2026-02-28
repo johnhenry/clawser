@@ -104,11 +104,6 @@ import {
 } from './clawser-undo.js';
 
 import {
-  BRIDGE_TYPES, ExternalBridge, LocalServerBridge, ExtensionBridge,
-  BridgeManager, BridgeStatusTool, BridgeListToolsTool, BridgeFetchTool,
-} from './clawser-bridge.js';
-
-import {
   DaemonPhase, DaemonState, CheckpointManager, TabCoordinator,
   DaemonController, DaemonStatusTool, DaemonCheckpointTool,
 } from './clawser-daemon.js';
@@ -170,6 +165,12 @@ import {
   WorkerSandbox, WasmSandbox, SandboxManager,
   SandboxRunTool, SandboxStatusTool,
 } from './clawser-sandbox.js';
+
+import {
+  WshConnectTool, WshExecTool, WshPtyOpenTool, WshPtyWriteTool,
+  WshUploadTool, WshDownloadTool, WshDisconnectTool, WshSessionsTool,
+  WshMcpCallTool, WshFetchTool, registerWshTools, getWshConnections,
+} from './clawser-wsh-tools.js';
 
 import { $, esc, state, on, off, emit, lsKey, setSending, setConversation, resetConversationState } from './clawser-state.js';
 
@@ -7143,157 +7144,133 @@ section('Undo — handler errors resilience');
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  EXTERNAL BRIDGE
+//  WSH TOOLS
 // ═══════════════════════════════════════════════════════════════
 
-section('Bridge — Constants & Abstract');
+section('wsh — Tool metadata');
 
 {
-  assert('BRIDGE_TYPES frozen', Object.isFrozen(BRIDGE_TYPES));
-  assertEq('LOCAL_SERVER', BRIDGE_TYPES.LOCAL_SERVER, 'local_server');
-  assertEq('EXTENSION', BRIDGE_TYPES.EXTENSION, 'extension');
-  assertEq('NONE', BRIDGE_TYPES.NONE, 'none');
+  const connect = new WshConnectTool();
+  assertEq('connect name', connect.name, 'wsh_connect');
+  assertEq('connect permission', connect.permission, 'approve');
+  assert('connect requires host', connect.parameters.required.includes('host'));
+  assert('connect requires user', connect.parameters.required.includes('user'));
 
-  const bridge = new ExternalBridge();
-  const available = await bridge.isAvailable();
-  assertEq('abstract not available', available, false);
-  assertEq('abstract type', bridge.type, 'none');
-  const tools = await bridge.listTools();
-  assertEq('abstract no tools', tools.length, 0);
-}
+  const exec = new WshExecTool();
+  assertEq('exec name', exec.name, 'wsh_exec');
+  assertEq('exec permission', exec.permission, 'approve');
+  assert('exec requires command', exec.parameters.required.includes('command'));
 
-section('Bridge — LocalServerBridge');
+  const ptyOpen = new WshPtyOpenTool();
+  assertEq('pty_open name', ptyOpen.name, 'wsh_pty_open');
+  assertEq('pty_open permission', ptyOpen.permission, 'approve');
 
-{
-  const mockFetch = async (url, opts = {}) => {
-    const path = new URL(url).pathname;
-    if (path === '/health') return { status: 200, ok: true, json: async () => ({}) };
-    if (path === '/mcp/tools') return { status: 200, ok: true, json: async () => ({
-      tools: [{ name: 'shell_exec', description: 'Run shell' }],
-    })};
-    if (path === '/mcp/call') return { status: 200, ok: true, json: async () => ({
-      success: true, output: 'done',
-    })};
-    if (path === '/proxy') return { status: 200, ok: true, json: async () => ({
-      status: 200, headers: {}, body: '<h1>Hi</h1>',
-    })};
-    return { status: 404, ok: false };
-  };
+  const ptyWrite = new WshPtyWriteTool();
+  assertEq('pty_write name', ptyWrite.name, 'wsh_pty_write');
+  assert('pty_write requires session_id', ptyWrite.parameters.required.includes('session_id'));
 
-  const bridge = new LocalServerBridge({ fetchFn: mockFetch });
-  assertEq('type', bridge.type, 'local_server');
-  assert('available', await bridge.isAvailable());
+  const upload = new WshUploadTool();
+  assertEq('upload name', upload.name, 'wsh_upload');
+  assert('upload requires local_path', upload.parameters.required.includes('local_path'));
 
-  const tools = await bridge.listTools();
-  assertEq('1 tool', tools.length, 1);
+  const download = new WshDownloadTool();
+  assertEq('download name', download.name, 'wsh_download');
+  assert('download requires remote_path', download.parameters.required.includes('remote_path'));
 
-  const result = await bridge.callTool('shell_exec', {});
-  assert('call success', result.success);
+  const disconnect = new WshDisconnectTool();
+  assertEq('disconnect name', disconnect.name, 'wsh_disconnect');
+  assertEq('disconnect permission', disconnect.permission, 'auto');
 
-  const proxy = await bridge.proxyFetch('http://example.com');
-  assertEq('proxy status', proxy.status, 200);
-}
+  const sessions = new WshSessionsTool();
+  assertEq('sessions name', sessions.name, 'wsh_sessions');
+  assertEq('sessions permission', sessions.permission, 'read');
 
-{
-  // Unavailable server
-  const bridge = new LocalServerBridge({ fetchFn: async () => { throw new Error('fail'); } });
-  assert('unavailable', !(await bridge.isAvailable()));
-  const result = await bridge.callTool('test', {});
-  assert('call fails', !result.success);
-}
+  const mcpCall = new WshMcpCallTool();
+  assertEq('mcp_call name', mcpCall.name, 'wsh_mcp_call');
+  assert('mcp_call requires tool', mcpCall.parameters.required.includes('tool'));
 
-{
-  // API key auth
-  let authHeader = null;
-  const mockFetch = async (url, opts = {}) => {
-    authHeader = opts.headers?.Authorization;
-    return { status: 200, ok: true, json: async () => ({}) };
-  };
-  const bridge = new LocalServerBridge({ fetchFn: mockFetch, apiKey: 'key123' });
-  await bridge.isAvailable();
-  assertEq('auth header', authHeader, 'Bearer key123');
-}
-
-section('Bridge — BridgeManager');
-
-{
-  const mockFetch = async (url) => {
-    if (url.includes('/health')) return { status: 200, ok: true, json: async () => ({}) };
-    if (url.includes('/mcp/tools')) return { status: 200, ok: true, json: async () => ({ tools: [{ name: 'a' }] })};
-    if (url.includes('/mcp/call')) return { status: 200, ok: true, json: async () => ({ success: true, output: 'ok' })};
-    return { status: 404, ok: false };
-  };
-
-  const mgr = new BridgeManager({
-    localBridge: new LocalServerBridge({ fetchFn: mockFetch }),
-    extensionBridge: new ExtensionBridge(),
-  });
-
-  const detected = await mgr.detect();
-  assertEq('detected local', detected, 'local_server');
-  assert('connected', mgr.isConnected);
-
-  const tools = await mgr.listTools();
-  assertEq('1 tool', tools.length, 1);
-
-  const result = await mgr.callTool('a', {});
-  assert('call success', result.success);
-
-  const prompt = mgr.buildPrompt();
-  assert('prompt has type', prompt.includes('local_server'));
-
-  await mgr.disconnect();
-  assert('disconnected', !mgr.isConnected);
-}
-
-{
-  // No bridges available
-  const mgr = new BridgeManager({
-    localBridge: new LocalServerBridge({ fetchFn: async () => { throw new Error(); } }),
-    extensionBridge: new ExtensionBridge(),
-  });
-  const detected = await mgr.detect();
-  assertEq('none detected', detected, 'none');
-  assertEq('empty prompt', mgr.buildPrompt(), '');
-}
-
-section('Bridge — Agent Tools');
-
-{
-  const mockFetch = async (url) => {
-    if (url.includes('/health')) return { status: 200, ok: true, json: async () => ({}) };
-    if (url.includes('/mcp/tools')) return { status: 200, ok: true, json: async () => ({
-      tools: [{ name: 'tool_a', description: 'Does A' }],
-    })};
-    if (url.includes('/proxy')) return { status: 200, ok: true, json: async () => ({
-      status: 200, headers: {}, body: 'test-body',
-    })};
-    return { status: 404, ok: false };
-  };
-  const mgr = new BridgeManager({
-    localBridge: new LocalServerBridge({ fetchFn: mockFetch }),
-    extensionBridge: new ExtensionBridge(),
-  });
-  await mgr.detect();
-
-  const statusTool = new BridgeStatusTool(mgr);
-  assertEq('status name', statusTool.name, 'bridge_status');
-  const sr = await statusTool.execute();
-  assert('status success', sr.success);
-  assert('has connected', sr.output.includes('true'));
-
-  const listTool = new BridgeListToolsTool(mgr);
-  assertEq('list name', listTool.name, 'bridge_list_tools');
-  const lr = await listTool.execute();
-  assert('list success', lr.success);
-  assert('has tool_a', lr.output.includes('tool_a'));
-
-  const fetchTool = new BridgeFetchTool(mgr);
-  assertEq('fetch name', fetchTool.name, 'bridge_fetch');
+  const fetchTool = new WshFetchTool();
+  assertEq('fetch name', fetchTool.name, 'wsh_fetch');
   assertEq('fetch permission', fetchTool.permission, 'approve');
-  const fr = await fetchTool.execute({ url: 'http://example.com' });
-  assert('fetch success', fr.success);
-  assert('fetch has body', fr.output.includes('test-body'));
+  assert('fetch requires url', fetchTool.parameters.required.includes('url'));
+  assert('fetch has method param', 'method' in fetchTool.parameters.properties);
+  assert('fetch has headers param', 'headers' in fetchTool.parameters.properties);
+  assert('fetch has body param', 'body' in fetchTool.parameters.properties);
+  assert('fetch has timeout_ms param', 'timeout_ms' in fetchTool.parameters.properties);
+}
+
+section('wsh — No-connection error handling');
+
+{
+  // All tools that need a connection should fail gracefully with no connections
+  const exec = new WshExecTool();
+  const r1 = await exec.execute({ command: 'echo hi' });
+  assert('exec fails without connection', !r1.success);
+  assert('exec error mentions connect', r1.error.includes('No active connection'));
+
+  const fetchTool = new WshFetchTool();
+  const r2 = await fetchTool.execute({ url: 'https://example.com' });
+  assert('fetch fails without connection', !r2.success);
+  assert('fetch error mentions connect', r2.error.includes('No active connection'));
+
+  const upload = new WshUploadTool();
+  const r3 = await upload.execute({ local_path: '/test', remote_path: '/tmp/test' });
+  assert('upload fails without connection', !r3.success);
+
+  const download = new WshDownloadTool();
+  const r4 = await download.execute({ remote_path: '/tmp/test', local_path: '/test' });
+  assert('download fails without connection', !r4.success);
+
+  const mcpCall = new WshMcpCallTool();
+  const r5 = await mcpCall.execute({ tool: 'test_tool' });
+  assert('mcp_call fails without connection', !r5.success);
+
+  const sessions = new WshSessionsTool();
+  const r6 = await sessions.execute();
+  assert('sessions succeeds (empty)', r6.success);
+  assert('sessions output says no active', r6.output.includes('No active'));
+}
+
+section('wsh — registerWshTools');
+
+{
+  const reg = new BrowserToolRegistry();
+  registerWshTools(reg);
+  assert('wsh_connect registered', reg.has('wsh_connect'));
+  assert('wsh_exec registered', reg.has('wsh_exec'));
+  assert('wsh_pty_open registered', reg.has('wsh_pty_open'));
+  assert('wsh_pty_write registered', reg.has('wsh_pty_write'));
+  assert('wsh_upload registered', reg.has('wsh_upload'));
+  assert('wsh_download registered', reg.has('wsh_download'));
+  assert('wsh_disconnect registered', reg.has('wsh_disconnect'));
+  assert('wsh_sessions registered', reg.has('wsh_sessions'));
+  assert('wsh_mcp_call registered', reg.has('wsh_mcp_call'));
+  assert('wsh_fetch registered', reg.has('wsh_fetch'));
+  // 10 tools total
+  const wshTools = reg.allSpecs().filter(s => s.name.startsWith('wsh_'));
+  assertEq('10 wsh tools', wshTools.length, 10);
+}
+
+section('wsh — getWshConnections');
+
+{
+  const conns = getWshConnections();
+  assert('returns a Map', conns instanceof Map);
+  assertEq('initially empty', conns.size, 0);
+}
+
+section('wsh — Disconnect no-op');
+
+{
+  const disconnect = new WshDisconnectTool();
+  // Disconnect with unknown host — should succeed gracefully
+  const r1 = await disconnect.execute({ host: 'wss://nonexistent:4422' });
+  assert('disconnect unknown host succeeds', r1.success);
+
+  // Disconnect all with no connections — should succeed
+  const r2 = await disconnect.execute();
+  assert('disconnect all succeeds', r2.success);
+  assert('reports 0 hosts', r2.output.includes('0'));
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -9612,6 +9589,29 @@ section('Integration — Hardware Wiring');
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  INTEGRATION — wsh Tool Wiring
+// ═══════════════════════════════════════════════════════════════
+
+section('Integration — wsh Tool Wiring');
+{
+  const reg = new BrowserToolRegistry();
+  registerWshTools(reg);
+
+  assert('wsh: wsh_connect registered', reg.has('wsh_connect'));
+  assert('wsh: wsh_exec registered', reg.has('wsh_exec'));
+  assert('wsh: wsh_fetch registered', reg.has('wsh_fetch'));
+  assert('wsh: wsh_pty_open registered', reg.has('wsh_pty_open'));
+  assert('wsh: wsh_upload registered', reg.has('wsh_upload'));
+  assert('wsh: wsh_download registered', reg.has('wsh_download'));
+  assert('wsh: wsh_disconnect registered', reg.has('wsh_disconnect'));
+  assert('wsh: wsh_sessions registered', reg.has('wsh_sessions'));
+  assert('wsh: wsh_mcp_call registered', reg.has('wsh_mcp_call'));
+
+  const r = await reg.execute('wsh_sessions', {});
+  assert('wsh: wsh_sessions returns ToolResult', r && typeof r.success === 'boolean');
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  INTEGRATION — Remote Wiring
 // ═══════════════════════════════════════════════════════════════
 
@@ -9657,20 +9657,6 @@ section('Integration — Mount Wiring');
 // ═══════════════════════════════════════════════════════════════
 //  INTEGRATION — Gap-fill Tool Wiring (31 tools from blocks 0-29)
 // ═══════════════════════════════════════════════════════════════
-
-section('Integration — Bridge Tool Wiring');
-{
-  const reg = new BrowserToolRegistry();
-  const bm = new BridgeManager({});
-  reg.register(new BridgeStatusTool(bm));
-  reg.register(new BridgeListToolsTool(bm));
-  reg.register(new BridgeFetchTool(bm));
-  assert('Bridge: bridge_status registered', reg.has('bridge_status'));
-  assert('Bridge: bridge_list_tools registered', reg.has('bridge_list_tools'));
-  assert('Bridge: bridge_fetch registered', reg.has('bridge_fetch'));
-  const r = await reg.execute('bridge_status', {});
-  assert('Bridge: bridge_status returns ToolResult', r && typeof r.success === 'boolean');
-}
 
 section('Integration — Goal Tool Wiring');
 {

@@ -16,7 +16,6 @@ const APP_SHELL = [
   '/web/clawser-agent-storage.js',
   '/web/clawser-app.js',
   '/web/clawser-auth-profiles.js',
-  '/web/clawser-bridge.js',
   '/web/clawser-browser-auto.js',
   '/web/clawser-channels.js',
   '/web/clawser-cli.js',
@@ -33,6 +32,7 @@ const APP_SHELL = [
   '/web/clawser-home-views.js',
   '/web/clawser-identity.js',
   '/web/clawser-intent.js',
+  '/web/clawser-log.js',
   '/web/clawser-item-bar.js',
   '/web/clawser-keys.js',
   '/web/clawser-mcp.js',
@@ -65,6 +65,7 @@ const APP_SHELL = [
   '/web/clawser-undo.js',
   '/web/clawser-vault.js',
   '/web/clawser-workspace-lifecycle.js',
+  '/web/clawser-wsh-tools.js',
   '/web/clawser-workspaces.js',
 ];
 

@@ -24,7 +24,7 @@ Step-by-step guides to get productive with Clawser, from first launch to advance
 | 06 | [Skills](06-skills.md) | 8 min | Installing, using, and creating skills |
 | 07 | [Tool Management](07-tool-management.md) | 8 min | Permissions, autonomy, command palette |
 | 08 | [Agents & Delegation](08-agents-and-delegation.md) | 10 min | Agent definitions, @agent refs, sub-agents |
-| 09 | [MCP & Extensions](09-mcp-and-extensions.md) | 8 min | MCP servers, bridge, local folder mounting |
+| 09 | [MCP & Extensions](09-mcp-and-extensions.md) | 8 min | MCP servers, wsh, local folder mounting |
 | 10 | [Routines & Automation](10-routines-and-automation.md) | 10 min | Cron, event, webhook triggers and guardrails |
 
 ## Prerequisites

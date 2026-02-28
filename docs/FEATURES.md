@@ -318,27 +318,19 @@ Uses `BroadcastChannel` (`clawser-tabs`) for multi-tab awareness:
 
 ---
 
-## Bridge Interface
+## wsh Remote Tools
 
-**File**: `web/clawser-bridge.js`
+**File**: `web/clawser-wsh-tools.js`
 
-Connects Clawser to external tool servers. Two bridge types with auto-detection (extension preferred over local server).
+Remote command execution, file transfer, PTY management, and CORS proxy via the wsh WebSocket shell protocol. Replaces the former bridge system.
 
-### Local Server Bridge
+- Shell exec (`wsh_exec`) — run commands on remote servers
+- File transfer (`wsh_upload`, `wsh_download`) — transfer files to/from remote servers
+- PTY sessions (`wsh_pty_open`, `wsh_pty_write`) — interactive terminal sessions
+- CORS proxy (`wsh_fetch`) — fetch URLs via curl on the remote server
+- MCP bridging (`wsh_mcp_call`) — call MCP tools on remote servers
 
-Connects to `http://localhost:9377` (configurable). Endpoints:
-- `GET /health` — availability check
-- `GET /mcp/tools` — list tools
-- `POST /mcp/call` — call a tool
-- `POST /proxy` — proxy fetch (CORS bypass)
-
-Supports optional API key authentication via Bearer token.
-
-### Extension Bridge
-
-Communicates via browser extension `postMessage` RPC. Detected via `globalThis.__clawser_ext__` marker. 10-second RPC timeout.
-
-**Tools**: `bridge_status`, `bridge_list_tools`, `bridge_fetch`
+**Tools**: `wsh_connect`, `wsh_exec`, `wsh_fetch`, `wsh_upload`, `wsh_download`, `wsh_pty_open`, `wsh_pty_write`, `wsh_disconnect`, `wsh_sessions`, `wsh_mcp_call`
 
 ---
 

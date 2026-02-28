@@ -1,6 +1,6 @@
 # MCP & Extensions
 
-Connect external MCP servers, use the bridge interface, and mount local folders for expanded tool access.
+Connect external MCP servers, use wsh remote tools, and mount local folders for expanded tool access.
 
 **Time:** ~8 minutes
 
@@ -52,39 +52,36 @@ MCP tools:
 - Have a 30-second configurable timeout
 - Show in the Tool Management panel alongside browser tools
 
-## 4. The Bridge Interface
+## 4. wsh Remote Tools
 
-The **Bridge** provides a second way to access external tools through two connection types:
+The **wsh** (WebSocket shell) protocol provides remote command execution, file transfer, PTY sessions, and CORS proxy capabilities.
 
-**Local Server Bridge** — Connects to `http://localhost:9377` with endpoints:
-- `/health` — Health check
-- `/mcp/tools` — Tool discovery
-- `/mcp/call` — Tool execution
-- `/proxy` — HTTP proxy for external requests
-
-**Extension Bridge** — Communicates via `postMessage` RPC with a browser extension. Detected automatically by the `globalThis.__clawser_ext__` marker.
-
-Clawser auto-detects which bridge is available, preferring the extension bridge over the local server.
-
-Check bridge status:
+Connect to a remote server:
 
 ```
-What's the bridge status?
+Connect to my server via wsh
 ```
 
-The agent calls `bridge_status` to report the connection type and health.
+The agent calls `wsh_connect` to establish the connection.
 
-## 5. Bridge Tools
+## 5. wsh Tools
 
-Three tools interact with the bridge:
+Ten tools interact with remote servers via wsh:
 
 | Tool | Permission | Description |
 |------|-----------|-------------|
-| `bridge_status` | read | Check connection type and health |
-| `bridge_list_tools` | read | List tools available through the bridge |
-| `bridge_fetch` | approve | Make HTTP requests through the bridge proxy |
+| `wsh_connect` | approve | Connect to a remote server |
+| `wsh_exec` | approve | Execute a command on the remote server |
+| `wsh_fetch` | approve | Fetch a URL via curl on the server (CORS bypass) |
+| `wsh_upload` | approve | Upload a file to the remote server |
+| `wsh_download` | approve | Download a file from the remote server |
+| `wsh_pty_open` | approve | Open an interactive PTY session |
+| `wsh_pty_write` | approve | Write to a PTY session |
+| `wsh_disconnect` | auto | Disconnect from a server |
+| `wsh_sessions` | read | List active sessions |
+| `wsh_mcp_call` | approve | Call an MCP tool on the server |
 
-The bridge proxy (`bridge_fetch`) is useful for accessing URLs that might be blocked by browser CORS restrictions, since the request routes through the bridge server.
+The CORS proxy (`wsh_fetch`) is useful for accessing URLs blocked by browser CORS restrictions, routing the request through the remote server via curl.
 
 ## 6. Mounting Local Folders
 
@@ -119,8 +116,8 @@ The agent uses `mount_resolve` to access the file from the mounted directory.
 | Action | How |
 |--------|-----|
 | Disconnect MCP server | Click remove in the MCP Servers section |
-| Check server health | `bridge_status` or MCP server list in Config |
-| View available tools | `bridge_list_tools` or Tool Management panel |
+| Check server health | `wsh_sessions` or MCP server list in Config |
+| View available tools | Tool Management panel |
 | Remove mount | Unmount from the Files panel |
 
 ## Next Steps

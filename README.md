@@ -92,7 +92,7 @@ Clawser is a pure JavaScript agent platform that runs entirely in the browser. I
 - **MCP** — Dynamic tools from connected MCP servers (prefixed `mcp_*`)
 - **Delegation** — Sub-agent delegation for complex multi-step tasks
 - **Tool Builder** — Dynamic tool creation at runtime via agent
-- **Bridge** — `bridge_status`, `bridge_list_tools`, `bridge_fetch` (external tool integration)
+- **wsh** — `wsh_connect`, `wsh_exec`, `wsh_fetch`, `wsh_upload`, `wsh_download`, `wsh_pty_open`, `wsh_pty_write`, `wsh_disconnect`, `wsh_sessions`, `wsh_mcp_call` (remote shell, file transfer, CORS proxy)
 - **Daemon** — `daemon_status`, `daemon_checkpoint`
 - **Auth** — `auth_list_profiles`, `auth_switch_profile`
 - **Undo** — Turn-based undo checkpoints for file and memory operations
@@ -201,7 +201,7 @@ Clawser is a pure JavaScript agent platform that runs entirely in the browser. I
 
 ### External Tool Integration
 
-- **Bridge Interface** — Abstract bridge pattern supporting local server bridge (`localhost:9377`) and browser extension bridge
+- **wsh Protocol** — Remote shell exec, file transfer, MCP bridging, and CORS proxy via WebSocket shell connections
 - **MCP Client** — Connect to external Model Context Protocol servers via Streamable HTTP transport with JSON-RPC, tool discovery, and 30-second configurable timeout
 - **Local Filesystem Mounting** — Mount local folders via File System Access API at `/mnt/` prefix with read-only mode support
 
@@ -375,7 +375,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for a detailed breakdown.
 | `clawser-tool-builder.js` | Dynamic tool creation |
 | `clawser-conversations.js` | Conversation lifecycle management |
 | `clawser-daemon.js` | Daemon mode: SharedWorker, BroadcastChannel, tab coordination |
-| `clawser-bridge.js` | External tool bridge (local server, browser extension) |
+| `clawser-wsh-tools.js` | Remote wsh tools (shell exec, file transfer, PTY, CORS proxy) |
 | `clawser-mount.js` | FileSystemAccess API local folder mounting |
 | `clawser-browser-auto.js` | Browser automation (page observation, element interaction) |
 | `clawser-auth-profiles.js` | Multi-account authentication management |
@@ -422,7 +422,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for a detailed breakdown.
 | **Undo** | undo, undo_status | approve / read |
 | **Self-Repair** | self_repair_status, self_repair_configure | read / approve |
 | **Heartbeat** | heartbeat_status, heartbeat_run | read / approve |
-| **Bridge** | bridge_status, bridge_list_tools, bridge_fetch | read / approve |
+| **wsh** | wsh_connect, wsh_exec, wsh_fetch, wsh_upload, wsh_download, wsh_pty_open, wsh_pty_write, wsh_disconnect, wsh_sessions, wsh_mcp_call | approve / read |
 | **Daemon** | daemon_status, daemon_checkpoint | read / approve |
 | **Mount** | mount_list, mount_resolve | read |
 | **Intent** | intent_classify, intent_add_override | read / approve |
@@ -497,7 +497,7 @@ Step-by-step guides to get productive with Clawser — see the [full tutorial in
 | [Skills](docs/tutorials/06-skills.md) | 8 min | Installing, using, and creating skills |
 | [Tool Management](docs/tutorials/07-tool-management.md) | 8 min | Permissions, autonomy, command palette |
 | [Agents & Delegation](docs/tutorials/08-agents-and-delegation.md) | 10 min | Agent definitions, @agent refs, sub-agents |
-| [MCP & Extensions](docs/tutorials/09-mcp-and-extensions.md) | 8 min | MCP servers, bridge, local folder mounting |
+| [MCP & Extensions](docs/tutorials/09-mcp-and-extensions.md) | 8 min | MCP servers, wsh, local folder mounting |
 | [Routines & Automation](docs/tutorials/10-routines-and-automation.md) | 10 min | Cron, event, webhook triggers and guardrails |
 
 ## Documentation
@@ -525,7 +525,7 @@ Step-by-step guides to get productive with Clawser — see the [full tutorial in
 The `.reference/` directory (gitignored) contains historical reference implementations from earlier stages of the project:
 
 - **ironclaw** — Original Rust/WASM agent core
-- **nullclaw** — Stripped-down null implementation used for testing the host bridge
+- **nullclaw** — Stripped-down null implementation used for testing the host interface
 - **zeroclaw** — Zero-dependency JavaScript prototype that preceded the current architecture
 
 These are kept locally for architectural reference and are not part of the runtime or distribution.

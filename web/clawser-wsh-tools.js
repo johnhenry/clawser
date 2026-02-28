@@ -156,7 +156,7 @@ export class WshExecTool extends BrowserTool {
       });
 
       const decoder = new TextDecoder();
-      const output = chunks.map(c => decoder.decode(c, { stream: true })).join('');
+      const output = chunks.map((c, i) => decoder.decode(c, { stream: i < chunks.length - 1 })).join('');
 
       return {
         success: exitCode === 0,
@@ -486,6 +486,115 @@ export class WshMcpCallTool extends BrowserTool {
   }
 }
 
+// ── wsh_fetch ─────────────────────────────────────────────────────────
+
+export class WshFetchTool extends BrowserTool {
+  get name() { return 'wsh_fetch'; }
+  get description() {
+    return 'Fetch a URL via the remote wsh server (CORS bypass). Runs curl on the server and returns status, headers, and body.';
+  }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'URL to fetch' },
+        method: { type: 'string', description: 'HTTP method (default: GET)' },
+        headers: { type: 'object', description: 'Request headers as key-value pairs' },
+        body: { type: 'string', description: 'Request body (for POST/PUT/PATCH)' },
+        host: { type: 'string', description: 'Server host (uses last connected if omitted)' },
+        timeout_ms: { type: 'number', description: 'Timeout in milliseconds (default: 30000)' },
+      },
+      required: ['url'],
+    };
+  }
+  get permission() { return 'approve'; }
+
+  async execute({ url, method = 'GET', headers = {}, body, host, timeout_ms = 30000 }) {
+    try {
+      const targetHost = host || [...connections.keys()].pop();
+      if (!targetHost) {
+        return { success: false, output: '', error: 'No active connection. Use wsh_connect first.' };
+      }
+
+      const client = await getClient(targetHost);
+      if (!client) {
+        return { success: false, output: '', error: `Not connected to ${targetHost}` };
+      }
+
+      // Build curl command
+      const parts = ['curl', '-sS', '-D-', '-X', method];
+      for (const [k, v] of Object.entries(headers)) {
+        parts.push('-H', `${k}: ${v}`);
+      }
+      if (body && ['POST', 'PUT', 'PATCH'].includes(method.toUpperCase())) {
+        parts.push('-d', body);
+      }
+      parts.push('--max-time', String(Math.ceil(timeout_ms / 1000)));
+      parts.push('--', url);
+
+      // Shell-escape each argument
+      const command = parts.map(p => {
+        if (/^[a-zA-Z0-9_./:@=,-]+$/.test(p)) return p;
+        return "'" + p.replace(/'/g, "'\\''") + "'";
+      }).join(' ');
+
+      const session = await client.openSession({ type: 'exec', command });
+
+      const chunks = [];
+      let exitCode = null;
+
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          session.close();
+          reject(new Error('Fetch timed out'));
+        }, timeout_ms + 5000); // extra buffer beyond curl's own timeout
+
+        session.onData = (data) => chunks.push(data);
+        session.onExit = (code) => {
+          exitCode = code;
+          clearTimeout(timer);
+          resolve();
+        };
+        session.onClose = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+      });
+
+      const decoder = new TextDecoder();
+      const raw = chunks.map((c, i) => decoder.decode(c, { stream: i < chunks.length - 1 })).join('');
+
+      if (exitCode !== 0) {
+        return { success: false, output: raw || `curl exited with code ${exitCode}`, error: `Fetch failed (exit ${exitCode})` };
+      }
+
+      // Parse curl -D- output: headers then blank line then body
+      const splitIdx = raw.indexOf('\r\n\r\n');
+      if (splitIdx === -1) {
+        return { success: true, output: raw };
+      }
+
+      const headerBlock = raw.slice(0, splitIdx);
+      const bodyContent = raw.slice(splitIdx + 4);
+
+      // Extract status from first line (e.g. "HTTP/1.1 200 OK")
+      const statusMatch = headerBlock.match(/^HTTP\/[\d.]+ (\d+)/);
+      const status = statusMatch ? parseInt(statusMatch[1], 10) : 0;
+
+      const bodyPreview = bodyContent.length > 8000
+        ? bodyContent.slice(0, 8000) + `\n... (truncated, ${bodyContent.length} chars total)`
+        : bodyContent;
+
+      return {
+        success: status >= 200 && status < 400,
+        output: `Status: ${status}\n${headerBlock}\n\nBody (${bodyContent.length} chars):\n${bodyPreview}`,
+      };
+    } catch (err) {
+      return { success: false, output: '', error: `Fetch failed: ${err.message}` };
+    }
+  }
+}
+
 // ── Registry helper ───────────────────────────────────────────────────
 
 /**
@@ -502,6 +611,7 @@ export function registerWshTools(registry) {
   registry.register(new WshDisconnectTool());
   registry.register(new WshSessionsTool());
   registry.register(new WshMcpCallTool());
+  registry.register(new WshFetchTool());
 }
 
 /**

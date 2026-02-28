@@ -856,35 +856,66 @@ Manually run heartbeat checks.
 
 ---
 
-## Bridge Tools
+## wsh Tools
 
-**File**: `web/clawser-bridge.js`
+**File**: `web/clawser-wsh-tools.js`
 
-### bridge_status
+### wsh_connect
 
-Show external bridge connection status.
+Connect to a remote server via the wsh protocol.
 
-**Permission**: `read`
+**Permission**: `approve`
 
-### bridge_list_tools
+### wsh_exec
 
-List tools available through the external bridge.
+Execute a command on a remote server.
 
-**Permission**: `read`
+**Permission**: `approve`
 
-### bridge_fetch
+### wsh_fetch
 
-Fetch a URL through the external bridge (bypasses CORS).
+Fetch a URL via curl on the remote server (CORS bypass).
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `url` | string | yes | URL to fetch |
-| `method` | string | no | HTTP method |
+| `method` | string | no | HTTP method (default: GET) |
 | `headers` | object | no | Request headers |
 | `body` | string | no | Request body |
+| `host` | string | no | Server host |
+| `timeout_ms` | number | no | Timeout in ms (default: 30000) |
 
 **Permission**: `approve`
-**Notes**: Truncates response at 2,000 chars. Requires active bridge connection.
+
+### wsh_upload / wsh_download
+
+Transfer files to/from a remote server.
+
+**Permission**: `approve`
+
+### wsh_pty_open / wsh_pty_write
+
+Open and interact with a remote PTY session.
+
+**Permission**: `approve`
+
+### wsh_disconnect
+
+Disconnect from a remote server.
+
+**Permission**: `auto`
+
+### wsh_sessions
+
+List active wsh sessions.
+
+**Permission**: `read`
+
+### wsh_mcp_call
+
+Call an MCP tool on a remote server.
+
+**Permission**: `approve`
 
 ---
 
@@ -1187,7 +1218,7 @@ Not a tool itself — Codex is the code execution engine for non-native-tool pro
 | Routines | clawser-routines.js | 4 |
 | Undo | clawser-undo.js | 2 |
 | Heartbeat | clawser-heartbeat.js | 2 |
-| Bridge | clawser-bridge.js | 3 |
+| wsh | clawser-wsh-tools.js | 10 |
 | Delegation | clawser-delegate.js | 1 |
 | Self-repair | clawser-self-repair.js | 2 |
 | Mount | clawser-mount.js | 2 |

@@ -71,27 +71,24 @@ export const OAUTH_PROVIDERS = Object.freeze({
 
 /**
  * An authenticated connection to an OAuth provider.
- * Wraps fetch with Bearer token and optional CORS bridge fallback.
+ * Wraps fetch with Bearer token.
  */
 export class OAuthConnection {
   #provider;
   #tokens;
   #baseUrl;
-  #bridgeUrl;
   #fetchFn;
 
   /**
    * @param {string} provider - Provider key from OAUTH_PROVIDERS
    * @param {object} tokens - { access_token, refresh_token, expires_at, scope }
    * @param {object} [opts]
-   * @param {string} [opts.bridgeUrl] - Bridge proxy URL for CORS fallback
    * @param {Function} [opts.fetchFn] - Injectable fetch
    */
   constructor(provider, tokens, opts = {}) {
     this.#provider = provider;
     this.#tokens = { ...tokens };
     this.#baseUrl = (OAUTH_PROVIDERS[provider]?.baseUrl || '').replace(/\/+$/, '');
-    this.#bridgeUrl = (opts.bridgeUrl || '').replace(/\/+$/, '');
     this.#fetchFn = opts.fetchFn || (typeof fetch !== 'undefined' ? fetch.bind(globalThis) : null);
   }
 
@@ -111,7 +108,7 @@ export class OAuthConnection {
   }
 
   /**
-   * Fetch an API endpoint with auth headers and CORS fallback.
+   * Fetch an API endpoint with auth headers.
    * @param {string} path - API path (e.g. /calendar/v3/events)
    * @param {object} [options] - Fetch options
    * @returns {Promise<Response>}
@@ -123,18 +120,8 @@ export class OAuthConnection {
     };
 
     const url = `${this.#baseUrl}${path}`;
-
-    try {
-      const resp = await this.#fetchFn(url, { ...options, headers });
-      return resp;
-    } catch (e) {
-      // CORS error → route through bridge if available
-      if (this.#bridgeUrl && e instanceof TypeError) {
-        const proxyUrl = `${this.#bridgeUrl}/proxy/${this.#provider}${path}`;
-        return this.#fetchFn(proxyUrl, { ...options, headers });
-      }
-      throw e;
-    }
+    const resp = await this.#fetchFn(url, { ...options, headers });
+    return resp;
   }
 }
 
@@ -156,9 +143,6 @@ export class OAuthManager {
   /** @type {string} */
   #redirectUri;
 
-  /** @type {string} */
-  #bridgeUrl;
-
   /** @type {Function|null} */
   #onLog;
 
@@ -178,7 +162,6 @@ export class OAuthManager {
    * @param {object} [opts]
    * @param {object} [opts.vault] - SecretVault instance
    * @param {string} [opts.redirectUri] - OAuth callback URI
-   * @param {string} [opts.bridgeUrl] - Bridge proxy URL
    * @param {Function} [opts.onLog]
    * @param {Function} [opts.openPopupFn] - (url) => Promise<{ code }>
    * @param {Function} [opts.exchangeCodeFn] - (provider, code, config) => Promise<tokens>
@@ -188,7 +171,6 @@ export class OAuthManager {
   constructor(opts = {}) {
     this.#vault = opts.vault || null;
     this.#redirectUri = opts.redirectUri || '';
-    this.#bridgeUrl = opts.bridgeUrl || '';
     this.#onLog = opts.onLog || null;
     this.#openPopupFn = opts.openPopupFn || null;
     this.#exchangeCodeFn = opts.exchangeCodeFn || null;
@@ -274,7 +256,6 @@ export class OAuthManager {
 
     // Create connection
     const conn = new OAuthConnection(provider, tokens, {
-      bridgeUrl: this.#bridgeUrl,
       fetchFn: this.#fetchFn,
     });
     this.#connections.set(provider, conn);
@@ -366,7 +347,6 @@ export class OAuthManager {
         if (raw) {
           const tokens = JSON.parse(raw);
           const conn = new OAuthConnection(provider, tokens, {
-            bridgeUrl: this.#bridgeUrl,
             fetchFn: this.#fetchFn,
           });
           this.#connections.set(provider, conn);

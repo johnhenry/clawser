@@ -44,7 +44,6 @@ import { registerWshTools } from './clawser-wsh-tools.js';
 import { registerNetwayTools } from './clawser-netway-tools.js';
 import { HwListTool, HwConnectTool, HwSendTool, HwReadTool, HwDisconnectTool, HwInfoTool } from './clawser-hardware.js';
 import { RemoteStatusTool, RemotePairTool, RemoteRevokeTool } from './clawser-remote.js';
-import { BridgeStatusTool, BridgeListToolsTool, BridgeFetchTool } from './clawser-bridge.js';
 import { GoalAddTool, GoalUpdateTool, GoalAddArtifactTool, GoalListTool } from './clawser-goals.js';
 import { DaemonStatusTool, DaemonCheckpointTool } from './clawser-daemon.js';
 import { OAuthListTool, OAuthConnectTool, OAuthDisconnectTool, OAuthApiTool } from './clawser-oauth.js';
@@ -434,7 +433,7 @@ export async function initWorkspace(wsId, convId) {
     state.browserTools.register(new SandboxRunTool(state.sandboxManager));
     state.browserTools.register(new SandboxStatusTool(state.sandboxManager));
 
-    // wsh — Web Shell (9 tools)
+    // wsh — Web Shell (10 tools)
     registerWshTools(state.browserTools);
 
     // netway — Virtual Networking (8 tools)
@@ -454,11 +453,6 @@ export async function initWorkspace(wsId, convId) {
     state.browserTools.register(new RemoteRevokeTool(state.pairingManager));
 
     // ── Gap-fill tools (31 tools from blocks 0-29) ─────────────
-
-    // Bridge (3)
-    state.browserTools.register(new BridgeStatusTool(state.bridgeManager));
-    state.browserTools.register(new BridgeListToolsTool(state.bridgeManager));
-    state.browserTools.register(new BridgeFetchTool(state.bridgeManager));
 
     // Goals (4)
     state.browserTools.register(new GoalAddTool(state.goalManager));

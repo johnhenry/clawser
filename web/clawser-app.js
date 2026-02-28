@@ -48,7 +48,6 @@ import { AutomationManager } from './clawser-browser-auto.js';
 import { SandboxManager } from './clawser-sandbox.js';
 import { PeripheralManager } from './clawser-hardware.js';
 import { PairingManager } from './clawser-remote.js';
-import { BridgeManager } from './clawser-bridge.js';
 import { GoalManager } from './clawser-goals.js';
 import { addEvent } from './clawser-ui-chat.js';
 
@@ -223,8 +222,6 @@ state.automationManager = new AutomationManager({ onLog: _onLog });
 state.sandboxManager = new SandboxManager({ onLog: _onLog });
 state.peripheralManager = new PeripheralManager({ onLog: _onLog });
 state.pairingManager = new PairingManager({ onLog: _onLog });
-state.bridgeManager = new BridgeManager({});
-state.bridgeManager.detect().catch(() => {}); // auto-detect bridge on startup
 state.goalManager = new GoalManager();
 state.skillRegistryClient = new SkillRegistryClient();
 
@@ -377,8 +374,6 @@ export async function shutdown() {
       await quiet(() => state.mcpManager.removeServer(name));
     }
   }
-  // Disconnect bridge
-  if (state.bridgeManager) await quiet(() => state.bridgeManager.disconnect());
   // Close kernel integration
   const { getKernelIntegration } = await import('./clawser-workspace-lifecycle.js');
   const ki = getKernelIntegration();

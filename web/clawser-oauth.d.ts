@@ -13,7 +13,7 @@ export interface OAuthProviderDef {
 export const OAUTH_PROVIDERS: Readonly<Record<string, OAuthProviderDef>>;
 
 export class OAuthConnection {
-  constructor(provider: string, tokens: { access_token: string; refresh_token?: string; expires_at?: number; scope?: string }, opts?: { bridgeUrl?: string; fetchFn?: typeof fetch });
+  constructor(provider: string, tokens: { access_token: string; refresh_token?: string; expires_at?: number; scope?: string }, opts?: { fetchFn?: typeof fetch });
   get provider(): string;
   get accessToken(): string;
   get refreshToken(): string | undefined;
@@ -28,7 +28,6 @@ export class OAuthManager {
   constructor(opts?: {
     vault?: unknown;
     redirectUri?: string;
-    bridgeUrl?: string;
     onLog?: (msg: string) => void;
     openPopupFn?: (url: string) => Promise<{ code: string }>;
     exchangeCodeFn?: (provider: string, code: string, config: unknown) => Promise<unknown>;

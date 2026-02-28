@@ -109,6 +109,21 @@ export declare class WshMcpCallTool {
   }): Promise<ToolResult>;
 }
 
+export declare class WshFetchTool {
+  get name(): 'wsh_fetch';
+  get description(): string;
+  get parameters(): object;
+  get permission(): 'approve';
+  execute(params: {
+    url: string;
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string;
+    host?: string;
+    timeout_ms?: number;
+  }): Promise<ToolResult>;
+}
+
 // ── Registration Helper ───────────────────────────────────────
 
 /**

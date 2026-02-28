@@ -15,7 +15,7 @@ Feature modules extend the core agent with specialized capabilities. Each module
 | Sandbox | `clawser-sandbox.js` | `sandbox_exec`, `sandbox_status` | Sandboxed code execution (uses andbox Worker sandbox) |
 | Peripherals | `clawser-peripherals.js` | `peripheral_list`, `peripheral_connect`, `peripheral_send` | Hardware device integration |
 | Pairing | `clawser-pairing.js` | `pair_request`, `pair_accept`, `pair_list` | Agent-to-agent pairing |
-| Bridge | `clawser-bridge.js` | `bridge_connect`, `bridge_send`, `bridge_status` | External system bridges |
+| wsh Tools | `clawser-wsh-tools.js` | `wsh_connect`, `wsh_exec`, `wsh_fetch`, `wsh_upload`, `wsh_download`, `wsh_pty_open`, `wsh_pty_write`, `wsh_disconnect`, `wsh_sessions`, `wsh_mcp_call` | Remote shell, file transfer, CORS proxy |
 | Goals | `clawser-goals.js` | `goal_add`, `goal_update`, `goal_complete`, `goal_list` | Hierarchical goal tracking |
 | Skill Registry | `clawser-skill-registry-client.js` | `skill_search`, `skill_install`, `skill_rate` | Community skill discovery |
 | Terminal Sessions | `clawser-terminal-sessions.js` | `session_create`, `session_switch`, `session_list` | Multiple terminal sessions |

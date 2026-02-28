@@ -110,7 +110,6 @@ export declare const state: {
     sandboxManager: unknown | null;
     peripheralManager: unknown | null;
     pairingManager: unknown | null;
-    bridgeManager: unknown | null;
     goalManager: unknown | null;
     skillRegistryClient: unknown | null;
     terminalSessions: unknown | null;
