@@ -76,7 +76,13 @@ class EventLog {
   /** Restore from a parsed event array */
   load(events) {
     this.#events = events;
-    this.#seq = events.length;
+    // Derive seq from existing event IDs to avoid ID collisions
+    let maxSeq = events.length;
+    for (const e of events) {
+      const match = e.id?.match(/_(\d+)$/);
+      if (match) maxSeq = Math.max(maxSeq, parseInt(match[1], 10) + 1);
+    }
+    this.#seq = maxSeq;
   }
 
   /** Serialize to JSONL (one JSON object per line) */
@@ -448,10 +454,10 @@ export class AutonomyController {
   checkLimits() {
     const now = Date.now();
 
-    // Reset hourly counter
+    // Reset hourly counter (aligned to hour boundary)
     if (now - this.#hourStart > 3_600_000) {
       this.#actionsThisHour = 0;
-      this.#hourStart = now;
+      this.#hourStart = now - (now % 3_600_000);
     }
 
     // Reset daily counter

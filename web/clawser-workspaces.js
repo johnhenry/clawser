@@ -59,13 +59,26 @@ export async function deleteWorkspace(id) {
   let list = loadWorkspaces();
   list = list.filter(w => w.id !== id);
   saveWorkspaces(list);
-  // Clean up persisted data
+  // Clean up persisted data — versioned keys via lsKey
   localStorage.removeItem(lsKey.memories(id));
   localStorage.removeItem(lsKey.config(id));
+  localStorage.removeItem(lsKey.toolPerms(id));
+  localStorage.removeItem(lsKey.security(id));
+  localStorage.removeItem(lsKey.skillsEnabled(id));
+  localStorage.removeItem(lsKey.autonomy(id));
+  localStorage.removeItem(lsKey.identity(id));
+  localStorage.removeItem(lsKey.selfRepair(id));
+  localStorage.removeItem(lsKey.sandbox(id));
+  localStorage.removeItem(lsKey.heartbeat(id));
+  localStorage.removeItem(lsKey.routines(id));
+  localStorage.removeItem(lsKey.termSessions(id));
+  // Clean up legacy unversioned keys
   localStorage.removeItem(`clawser_conversations_${id}`);
   localStorage.removeItem(`clawser_tool_perms_${id}`);
   localStorage.removeItem(`clawser_skills_enabled_${id}`);
   localStorage.removeItem(`clawser_active_conversation_${id}`);
+  localStorage.removeItem(`clawser_goals_${id}`);
+  localStorage.removeItem(`clawser_log_${id}`);
   try {
     const root = await navigator.storage.getDirectory();
     try {

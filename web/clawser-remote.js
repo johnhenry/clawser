@@ -34,9 +34,16 @@ export function generatePairingCode(length = DEFAULT_CODE_LENGTH) {
  */
 export function generateToken() {
   const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return `bearer_${Array.from(bytes, b => chars[b % chars.length]).join('')}`;
+  const limit = 256 - (256 % chars.length); // reject samples >= limit to avoid modulo bias
+  const result = [];
+  while (result.length < 32) {
+    const bytes = new Uint8Array(32 - result.length);
+    crypto.getRandomValues(bytes);
+    for (const b of bytes) {
+      if (b < limit) result.push(chars[b % chars.length]);
+    }
+  }
+  return `bearer_${result.join('')}`;
 }
 
 // ── PairingManager ──────────────────────────────────────────────
@@ -87,7 +94,13 @@ export class PairingManager {
     // Expire old codes
     this.#pruneExpiredCodes();
 
-    const code = generatePairingCode();
+    let code;
+    let attempts = 0;
+    do {
+      code = generatePairingCode();
+      attempts++;
+      if (attempts > 10) throw new Error('Failed to generate unique pairing code');
+    } while (this.#codes.has(code));
     this.#codes.set(code, {
       code,
       created: Date.now(),

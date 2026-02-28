@@ -77,7 +77,8 @@ export class ToolCallValidator {
       if (path.includes('..')) {
         issues.push({ severity: 'critical', msg: 'Path traversal detected' });
       }
-      if (path.startsWith('/state/vault/') || path === '/state/vault') {
+      if (path.startsWith('/state/vault/') || path === '/state/vault' ||
+          /(?:^|[\\/])clawser_vault(?:[\\/]|$)/.test(path)) {
         issues.push({ severity: 'critical', msg: 'Vault access blocked' });
       }
     }

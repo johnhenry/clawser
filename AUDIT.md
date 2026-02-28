@@ -10,9 +10,9 @@
 |----------|-------|-------|------------|
 | Critical | 8 | 8 | 0 |
 | High | 28 | 27 | 1 (by-design) |
-| Medium | 26 | 22 | 4 (by-design/mitigated/not-an-issue) |
-| Low | 15 | 15 | 0 |
-| **Total** | **77** | **72** | **5** |
+| Medium | 39 | 35 | 4 (by-design/mitigated/not-an-issue) |
+| Low | 25 | 25 | 0 |
+| **Total** | **100** | **95** | **5** |
 
 ---
 
@@ -630,3 +630,28 @@ Added `CheckpointManager.deleteCheckpoint(id)` method that removes stored data v
 | H26 | clawser-skills.js | SkillScriptTool permission changed from 'internal' to 'approve' |
 | H27 | clawser-vault.js | verify() restores previous key when canary check fails |
 | M26 | clawser-agent.js | persistConfig uses read-merge-write, strips apiKey |
+| M27 | clawser-auth-profiles.js | Credential object JSON-serialized before vault store, parsed on retrieve |
+| M28 | clawser-tools.js | ConsultAgentTool permission changed from 'auto' to 'approve' |
+| M29 | clawser-tools.js | DomModifyTool strips `<style>` elements in setHTML/insertHTML sanitizer |
+| M30 | clawser-codex.js | Spin-wait throws if sandbox creation failed instead of returning null |
+| M31 | clawser-safety.js | Vault path guard also checks real OPFS path `clawser_vault/` |
+| M32 | clawser-app.js | Vault passphrase input cleared on error to prevent DOM leak |
+| M33 | clawser-delegate.js | delegateAll() rewritten with recursive runner pattern for reliable results |
+| M34 | clawser-remote.js | generateToken() uses rejection sampling to eliminate modulo bias |
+| M35 | clawser-remote.js | createCode() checks for collision before inserting pairing code |
+| M36 | clawser-undo.js | undo() tracks file revert failures, reports partial reverts |
+| M37 | clawser-kernel-integration.js | Added unhookEventLog() to restore original append method |
+| M38 | clawser-accounts.js | Legacy migration matches by service name, not plaintext API key |
+| M39 | clawser-skills.js | SkillScriptTool creates fresh sandbox per execution, disposes after |
+| M40 | clawser-workspace-lifecycle.js | DelegateTool uses lazy getter for toolSpecs |
+| M41 | clawser-skills.js | SkillInstallTool/SkillUpdateTool/SkillRemoveTool use lazy wsId getter |
+| M42 | clawser-tools.js | FetchTool uses redirect:'manual' + re-checks redirect destination for SSRF |
+| M43 | clawser-app.js | ToolBuilder sandbox uses andbox Worker instead of new Function() |
+| L16 | clawser-agent.js | EventLog.load() derives seq from existing event IDs to avoid collisions |
+| L17 | clawser-agent.js | Hourly rate limit aligned to hour boundary instead of sliding window |
+| L18 | clawser-app.js | ConfigCache.flush() called in shutdown() before persist |
+| L19 | clawser-daemon.js | DaemonController.stop() force-resets state if transition invalid |
+| L20 | clawser-daemon.js | TabCoordinator.stop() clears stale tab entries |
+| L21 | clawser-workspaces.js | deleteWorkspace() cleans up all versioned lsKey.* entries |
+| L22 | clawser-shell.js | source() joins continuation lines (trailing backslash) before splitting |
+| L23 | clawser-mcp.js | SSE response parsing has timeout via AbortController signal |

@@ -1385,7 +1385,9 @@ export class ClawserShell {
     if (!this.fs) return;
     try {
       const content = await this.fs.readFile(path);
-      const lines = content.split('\n').filter(l => l.trim() && !l.trim().startsWith('#'));
+      // Join continuation lines (trailing backslash)
+      const joined = content.replace(/\\\n/g, '');
+      const lines = joined.split('\n').filter(l => l.trim() && !l.trim().startsWith('#'));
       for (const line of lines) {
         await this.exec(line);
       }

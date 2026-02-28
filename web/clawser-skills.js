@@ -1027,17 +1027,19 @@ class SkillScriptTool extends BrowserTool {
 
   async execute({ input = '' }) {
     try {
-      if (!this._sandbox) {
-        const { createSandbox } = await import('./packages-andbox.js');
-        this._sandbox = await createSandbox();
+      const { createSandbox } = await import('./packages-andbox.js');
+      const sandbox = await createSandbox();
+      try {
+        // Wrap script to expose `input` variable and capture return value
+        const wrapper = `const input = ${JSON.stringify(input)};\n${this.#scriptContent}`;
+        const result = await sandbox.evaluate(wrapper);
+        return {
+          success: true,
+          output: result == null ? '' : (typeof result === 'string' ? result : JSON.stringify(result)),
+        };
+      } finally {
+        sandbox.dispose?.();
       }
-      // Wrap script to expose `input` variable and capture return value
-      const wrapper = `const input = ${JSON.stringify(input)};\n${this.#scriptContent}`;
-      const result = await this._sandbox.evaluate(wrapper);
-      return {
-        success: true,
-        output: result == null ? '' : (typeof result === 'string' ? result : JSON.stringify(result)),
-      };
     } catch (e) {
       return { success: false, output: '', error: e.message };
     }
@@ -1596,12 +1598,19 @@ export class SkillInstallTool extends BrowserTool {
   #registry;
   #wsId;
 
+  /**
+   * @param {object} client
+   * @param {object} registry
+   * @param {string|Function} wsId - Workspace ID or getter function for lazy evaluation
+   */
   constructor(client, registry, wsId = 'default') {
     super();
     this.#client = client;
     this.#registry = registry;
     this.#wsId = wsId;
   }
+
+  get #activeWsId() { return typeof this.#wsId === 'function' ? this.#wsId() : this.#wsId; }
 
   get name() { return 'skill_install'; }
   get description() { return 'Install a skill from the registry by name or from a URL.'; }
@@ -1621,9 +1630,9 @@ export class SkillInstallTool extends BrowserTool {
     try {
       let result;
       if (name.startsWith('http://') || name.startsWith('https://')) {
-        result = await this.#client.installFromUrl(name, this.#registry, scope, this.#wsId);
+        result = await this.#client.installFromUrl(name, this.#registry, scope, this.#activeWsId);
       } else {
-        result = await this.#client.installFromRegistry(name, this.#registry, scope, this.#wsId);
+        result = await this.#client.installFromRegistry(name, this.#registry, scope, this.#activeWsId);
       }
       let msg = `Skill "${result.name}" installed (${scope}).`;
       if (result.warnings?.length) {
@@ -1651,6 +1660,8 @@ export class SkillUpdateTool extends BrowserTool {
     this.#wsId = wsId;
   }
 
+  get #activeWsId() { return typeof this.#wsId === 'function' ? this.#wsId() : this.#wsId; }
+
   get name() { return 'skill_update'; }
   get description() { return 'Check for and install updates for an installed skill.'; }
   get parameters() {
@@ -1675,7 +1686,7 @@ export class SkillUpdateTool extends BrowserTool {
         return { success: true, output: `Skill "${name}" is already at the latest version (${currentVersion}).` };
       }
 
-      const result = await this.#client.installFromRegistry(name, this.#registry, entry.scope, this.#wsId);
+      const result = await this.#client.installFromRegistry(name, this.#registry, entry.scope, this.#activeWsId);
       return { success: true, output: `Skill "${name}" updated from ${currentVersion} to ${check.latest}.` };
     } catch (e) {
       return { success: false, output: '', error: e.message };
@@ -1696,6 +1707,8 @@ export class SkillRemoveTool extends BrowserTool {
     this.#wsId = wsId;
   }
 
+  get #activeWsId() { return typeof this.#wsId === 'function' ? this.#wsId() : this.#wsId; }
+
   get name() { return 'skill_remove'; }
   get description() { return 'Uninstall a skill.'; }
   get parameters() {
@@ -1714,7 +1727,7 @@ export class SkillRemoveTool extends BrowserTool {
       if (!this.#registry.skills.has(name)) {
         return { success: false, output: '', error: `Skill "${name}" is not installed.` };
       }
-      await this.#registry.uninstall(name, this.#wsId);
+      await this.#registry.uninstall(name, this.#activeWsId);
       return { success: true, output: `Skill "${name}" removed.` };
     } catch (e) {
       return { success: false, output: '', error: e.message };

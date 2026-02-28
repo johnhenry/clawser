@@ -242,6 +242,7 @@ export class KernelIntegration {
 
     const tracer = this.#kernel.tracer;
     const originalAppend = eventLog.append.bind(eventLog);
+    eventLog._originalAppend = originalAppend;
 
     const EVENT_TYPE_MAP = {
       user_message: 'agent.user_message',
@@ -262,6 +263,19 @@ export class KernelIntegration {
 
     this.#eventLogTracers.add(eventLog);
     return eventLog.append;
+  }
+
+  /**
+   * Unhook a previously hooked EventLog, restoring its original append method.
+   * @param {Object} eventLog
+   */
+  unhookEventLog(eventLog) {
+    if (!eventLog) return;
+    if (eventLog._originalAppend) {
+      eventLog.append = eventLog._originalAppend;
+      delete eventLog._originalAppend;
+    }
+    this.#eventLogTracers.delete(eventLog);
   }
 
   // ── Step 30: Scheduler via kernel Clock + Signal ───────────────

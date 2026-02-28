@@ -97,9 +97,15 @@ export class McpClient {
 
     const contentType = resp.headers.get('Content-Type') || '';
 
-    // Handle SSE responses (server may stream)
+    // Handle SSE responses (server may stream) — pass abort signal for timeout
     if (contentType.includes('text/event-stream')) {
-      return this.#parseSseResponse(resp);
+      const sseController = new AbortController();
+      const sseTimer = setTimeout(() => sseController.abort(), this.#timeoutMs);
+      try {
+        return await this.#parseSseResponse(resp, sseController.signal);
+      } finally {
+        clearTimeout(sseTimer);
+      }
     }
 
     // Handle JSON response
@@ -116,13 +122,14 @@ export class McpClient {
     return result.result;
   }
 
-  async #parseSseResponse(resp) {
+  async #parseSseResponse(resp, signal) {
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
     let result = null;
 
     while (true) {
+      if (signal?.aborted) throw new Error('MCP SSE response timed out');
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });

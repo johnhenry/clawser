@@ -304,6 +304,7 @@ export class TabCoordinator {
     }
     this.#broadcast({ type: 'tab_leave', tabId: this.#tabId });
     this.#channel.close();
+    this.#tabs.clear();
   }
 
   /**
@@ -459,7 +460,9 @@ export class DaemonController {
       this.#coordinator.stop();
     }
 
-    this.#state.transition(DaemonPhase.STOPPED);
+    if (!this.#state.transition(DaemonPhase.STOPPED)) {
+      this.#state.reset?.(); // force reset if transition is invalid from current state
+    }
     return true;
   }
 

@@ -165,13 +165,17 @@ export class UndoManager {
       }
 
       // 3. Revert file operations (reverse order)
+      let fileRevertFailed = 0;
       const fileOps = [...cp.snapshot.fileOps].reverse();
       for (const op of fileOps) {
         if (this.#handlers.revertFile) {
           try {
             await this.#handlers.revertFile(op);
             details.fileOpsReverted++;
-          } catch { /* ignore */ }
+          } catch (e) {
+            fileRevertFailed++;
+            console.warn('[clawser] file revert failed:', e);
+          }
         }
       }
 
@@ -192,7 +196,7 @@ export class UndoManager {
         : null;
 
       this.#redoStack.push(cp);
-      results.push({ turnId: cp.turnId, reverted: true, details });
+      results.push({ turnId: cp.turnId, reverted: true, partial: fileRevertFailed > 0, details });
     }
 
     return results;

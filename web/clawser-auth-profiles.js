@@ -94,9 +94,10 @@ export class AuthProfileManager {
       ...opts,
     });
 
-    // Encrypt credentials in vault
+    // Encrypt credentials in vault (serialize object to JSON string)
     if (this.#vault) {
-      await this.#vault.store(`auth_${profile.id}`, credentials);
+      const secret = typeof credentials === 'string' ? credentials : JSON.stringify(credentials);
+      await this.#vault.store(`auth_${profile.id}`, secret);
     }
 
     this.#profiles.set(profile.id, profile);
@@ -167,7 +168,8 @@ export class AuthProfileManager {
     const profileId = this.#active.get(provider);
     if (!profileId || !this.#vault) return null;
     try {
-      return await this.#vault.retrieve(`auth_${profileId}`);
+      const raw = await this.#vault.retrieve(`auth_${profileId}`);
+      try { return JSON.parse(raw); } catch { return raw; }
     } catch {
       return null;
     }

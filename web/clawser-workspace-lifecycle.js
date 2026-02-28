@@ -8,7 +8,7 @@
  */
 import { $, state, lsKey, setSending, setConversation, resetConversationState, on, emit } from './clawser-state.js';
 import { modal } from './clawser-modal.js';
-import { loadWorkspaces, setActiveWorkspaceId, ensureDefaultWorkspace, getWorkspaceName, touchWorkspace } from './clawser-workspaces.js';
+import { loadWorkspaces, setActiveWorkspaceId, getActiveWorkspaceId, ensureDefaultWorkspace, getWorkspaceName, touchWorkspace } from './clawser-workspaces.js';
 import { loadConversations } from './clawser-conversations.js';
 import { saveConfig, applyRestoredConfig, rebuildProviderDropdown, setupProviders } from './clawser-accounts.js';
 import { updateRouteHash, PANELS, resetRenderedPanels, isPanelRendered } from './clawser-router.js';
@@ -409,7 +409,7 @@ export async function initWorkspace(wsId, convId) {
         return provider.chat(messages, { tools });
       },
       executeFn: async (name, params) => state.browserTools.execute(name, params),
-      toolSpecs: state.browserTools.allSpecs(),
+      toolSpecs: () => state.browserTools.allSpecs(),
     }));
 
     // Git (6)
@@ -506,9 +506,9 @@ export async function initWorkspace(wsId, convId) {
 
     // Skills Registry (5)
     state.browserTools.register(new SkillSearchTool(state.skillRegistryClient));
-    state.browserTools.register(new SkillInstallTool(state.skillRegistryClient, state.skillRegistry, activeWsId));
-    state.browserTools.register(new SkillUpdateTool(state.skillRegistryClient, state.skillRegistry, activeWsId));
-    state.browserTools.register(new SkillRemoveTool(state.skillRegistry, activeWsId));
+    state.browserTools.register(new SkillInstallTool(state.skillRegistryClient, state.skillRegistry, () => getActiveWorkspaceId()));
+    state.browserTools.register(new SkillUpdateTool(state.skillRegistryClient, state.skillRegistry, () => getActiveWorkspaceId()));
+    state.browserTools.register(new SkillRemoveTool(state.skillRegistry, () => getActiveWorkspaceId()));
     state.browserTools.register(new SkillListTool(state.skillRegistry));
 
     // AskUserQuestion (1)

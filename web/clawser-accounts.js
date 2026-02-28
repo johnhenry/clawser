@@ -265,7 +265,7 @@ export async function applyRestoredConfig(savedConfig) {
   // Legacy format: provider + apiKey (no accounts)
   if (savedConfig.provider && ['openai', 'anthropic'].includes(savedConfig.provider) && savedConfig.apiKey) {
     const accts = loadAccounts();
-    const existing = accts.find(a => a.service === savedConfig.provider && a.apiKey === savedConfig.apiKey);
+    const existing = accts.find(a => a.service === savedConfig.provider);
     if (existing) {
       providerSelect.value = `acct_${existing.id}`;
     } else {

@@ -263,7 +263,7 @@ export class FetchTool extends BrowserTool {
       }
     }
 
-    const opts = { method, headers };
+    const opts = { method, headers, redirect: 'manual' };
     if (body && method !== 'GET') opts.body = body;
 
     let resp;
@@ -271,6 +271,24 @@ export class FetchTool extends BrowserTool {
       resp = await fetch(url, opts);
     } catch (e) {
       return { success: false, output: '', error: `Network error: ${e.message}` };
+    }
+
+    // Handle redirects: re-check destination hostname against SSRF blocklist
+    if (resp.status >= 300 && resp.status < 400) {
+      const location = resp.headers.get('Location');
+      if (location) {
+        try {
+          const redir = new URL(location, url);
+          const rh = redir.hostname.toLowerCase();
+          if (/^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|0\.|169\.254\.|fc|fd|fe80|::ffff:|0x|0177)/i.test(rh) ||
+              /^\d+$/.test(rh) || rh === 'localhost' || rh === '::1' || rh === '[::1]' || redir.protocol === 'file:') {
+            return { success: false, output: '', error: `Redirect to private/reserved address blocked: ${rh}` };
+          }
+          resp = await fetch(redir.href, { ...opts, redirect: 'follow' });
+        } catch (e) {
+          return { success: false, output: '', error: `Redirect error: ${e.message}` };
+        }
+      }
     }
     const text = await resp.text();
     const respHeaders = {};
@@ -373,7 +391,7 @@ export class DomModifyTool extends BrowserTool {
           else {
             const t = document.createElement('template');
             t.innerHTML = value;
-            t.content.querySelectorAll('script,iframe,object,embed,base,meta,link,form,svg,math').forEach(s => s.remove());
+            t.content.querySelectorAll('script,iframe,object,embed,base,meta,link,form,svg,math,style').forEach(s => s.remove());
             // Strip on* event handlers and dangerous URLs from all surviving elements
             for (const node of t.content.querySelectorAll('*')) {
               for (const attr of [...node.attributes]) {
@@ -402,7 +420,7 @@ export class DomModifyTool extends BrowserTool {
           else {
             const t = document.createElement('template');
             t.innerHTML = value;
-            t.content.querySelectorAll('script,iframe,object,embed,base,meta,link,form,svg,math').forEach(s => s.remove());
+            t.content.querySelectorAll('script,iframe,object,embed,base,meta,link,form,svg,math,style').forEach(s => s.remove());
             for (const node of t.content.querySelectorAll('*')) {
               for (const attr of [...node.attributes]) {
                 if (/^on/i.test(attr.name)) node.removeAttribute(attr.name);
@@ -1308,7 +1326,7 @@ export class ConsultAgentTool extends BrowserTool {
       required: ['agent', 'message'],
     };
   }
-  get permission() { return 'auto'; }
+  get permission() { return 'approve'; }
 
   async execute(params) {
     try {

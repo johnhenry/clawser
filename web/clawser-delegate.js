@@ -288,23 +288,22 @@ export class DelegateManager {
   async delegateAll(optsList) {
     const agents = optsList.map(opts => this.create(opts));
     const results = [];
-    const running = new Set();
     const queue = [...agents];
 
     const runNext = async () => {
-      while (queue.length > 0 && running.size < this.#maxConcurrency) {
-        const agent = queue.shift();
-        const p = this.run(agent.id).then(r => { running.delete(p); return r; });
-        running.add(p);
-      }
-    };
-
-    await runNext();
-    while (running.size > 0) {
-      const result = await Promise.race(running);
+      if (queue.length === 0) return;
+      const agent = queue.shift();
+      const result = await this.run(agent.id);
       results.push(result);
       await runNext();
+    };
+
+    // Start up to maxConcurrency parallel runners
+    const runners = [];
+    for (let i = 0; i < this.#maxConcurrency && queue.length > 0; i++) {
+      runners.push(runNext());
     }
+    await Promise.all(runners);
     return results;
   }
 
@@ -370,7 +369,7 @@ export class DelegateTool extends BrowserTool {
     this.#manager = opts.manager;
     this.#chatFn = opts.chatFn;
     this.#executeFn = opts.executeFn;
-    this.#toolSpecs = opts.toolSpecs;
+    this.#toolSpecs = opts.toolSpecs; // may be a function for lazy evaluation
     this.#systemPrompt = opts.systemPrompt || '';
     this.#currentDepth = opts.currentDepth || 0;
   }
@@ -398,11 +397,12 @@ export class DelegateTool extends BrowserTool {
 
   async execute({ task, max_iterations, tools }) {
     try {
+      const specs = typeof this.#toolSpecs === 'function' ? this.#toolSpecs() : this.#toolSpecs;
       const result = await this.#manager.delegate({
         goal: task,
         chatFn: this.#chatFn,
         executeFn: this.#executeFn,
-        toolSpecs: this.#toolSpecs,
+        toolSpecs: specs,
         maxIterations: max_iterations || DEFAULT_MAX_ITERATIONS,
         allowedTools: tools,
         depth: this.#currentDepth + 1,

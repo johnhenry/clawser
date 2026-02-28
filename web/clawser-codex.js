@@ -167,6 +167,9 @@ export class Codex {
       while (this.#sandboxInitializing) {
         await new Promise(r => setTimeout(r, 10));
       }
+      if (!this.#sandbox || this.#sandbox.isDisposed()) {
+        throw new Error('Sandbox initialization failed');
+      }
       return this.#sandbox;
     }
 

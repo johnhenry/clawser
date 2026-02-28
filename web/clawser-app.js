@@ -12,7 +12,7 @@
  *
  * All cross-module coordination flows through the event bus (on/emit).
  */
-import { $, state, on, emit, migrateLocalStorageKeys } from './clawser-state.js';
+import { $, state, on, emit, migrateLocalStorageKeys, configCache } from './clawser-state.js';
 import { ensureDefaultWorkspace } from './clawser-workspaces.js';
 import { initAccountListeners } from './clawser-accounts.js';
 import { initRouterListeners } from './clawser-router.js';
@@ -203,7 +203,11 @@ state.oauthManager = new OAuthManager({ vault: state.vault });
 
 // ── Feature module singletons ────────────────────────────────────
 const _onLog = (level, msg) => console.log(`[clawser] ${msg}`);
-state.toolBuilder = new ToolBuilder(state.browserTools, (code) => new Function(code)());
+state.toolBuilder = new ToolBuilder(state.browserTools, async (code) => {
+  const { createSandbox } = await import('./packages-andbox.js');
+  const sb = await createSandbox();
+  try { return await sb.evaluate(code); } finally { sb.dispose?.(); }
+});
 state.channelManager = new ChannelManager({ onLog: _onLog });
 state.delegateManager = new DelegateManager({ maxConcurrency: 3 });
 state.gitBehavior = new GitBehavior({
@@ -334,6 +338,8 @@ async function showVaultModal(vault) {
         confirm.value = '';
         resolve();
       } catch (err) {
+        input.value = '';
+        confirm.value = '';
         error.textContent = err.message || 'Invalid passphrase';
         error.style.display = '';
       }
@@ -352,6 +358,8 @@ export async function shutdown() {
   if (state.daemonController) await quiet(() => state.daemonController.stop());
   // Stop routine engine
   if (state.routineEngine) await quiet(() => state.routineEngine.stop());
+  // Flush any debounced config writes
+  await quiet(() => configCache.flush());
   // Persist agent state
   if (state.agent) {
     await quiet(() => state.agent.persistMemories());
