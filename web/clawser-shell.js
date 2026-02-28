@@ -1427,7 +1427,7 @@ export class ShellTool extends BrowserTool {
       required: ['command'],
     };
   }
-  get permission() { return 'internal'; }
+  get permission() { return 'approve'; }
 
   async execute({ command }) {
     const shell = this.#getShell();

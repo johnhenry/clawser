@@ -88,7 +88,9 @@ class EventLog {
   static fromJSONL(text) {
     const log = new EventLog();
     if (!text || !text.trim()) return log;
-    const events = text.trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
+    const events = text.trim().split('\n').filter(Boolean).map(line => {
+      try { return JSON.parse(line); } catch { return null; }
+    }).filter(Boolean);
     log.load(events);
     return log;
   }
@@ -1171,10 +1173,7 @@ export class ClawserAgent {
       }
     }
 
-    // Undo: begin turn checkpoint
-    if (this.#undoManager) {
-      this.#undoManager.beginTurn({ historyLength: this.#history.length });
-    }
+    // Undo checkpoint is created by the UI layer (clawser-ui-chat.js)
 
     let maxIterations = this.#config.maxToolIterations || 20;
     let codexDone = false;
@@ -1385,10 +1384,7 @@ export class ClawserAgent {
       }
     }
 
-    // Undo: begin turn checkpoint
-    if (this.#undoManager) {
-      this.#undoManager.beginTurn({ historyLength: this.#history.length });
-    }
+    // Undo checkpoint is created by the UI layer (clawser-ui-chat.js)
 
     let maxIterations = this.#config.maxToolIterations || 20;
     let codexDone = false;
@@ -2259,13 +2255,30 @@ export class ClawserAgent {
    * @returns {Promise<{success: boolean, output: string, error?: string}>}
    */
   async executeToolDirect(name, params) {
+    // Safety validation (same checks as #executeToolCalls)
+    const validation = this.#safety?.validateToolCall(name, params) ?? { valid: true, issues: [] };
+    if (!validation.valid) {
+      const msg = validation.issues[0]?.msg || 'Validation failed';
+      return { success: false, output: '', error: `Safety: ${msg}` };
+    }
+
+    let result;
     if (this.#browserTools?.has(name)) {
-      return await this.#browserTools.execute(name, params);
+      result = await this.#browserTools.execute(name, params);
+    } else if (this.#mcpManager?.findClient(name)) {
+      result = await this.#mcpManager.executeTool(name, params);
+    } else {
+      return { success: false, output: '', error: `Tool not found: ${name}` };
     }
-    if (this.#mcpManager?.findClient(name)) {
-      return await this.#mcpManager.executeTool(name, params);
+
+    // Scan output for leaked secrets
+    if (result && result.output && this.#safety) {
+      const scanResult = this.#safety.scanOutput(result.output);
+      if (scanResult.findings.length > 0) {
+        result = { ...result, output: scanResult.content };
+      }
     }
-    return { success: false, output: '', error: `Tool not found: ${name}` };
+    return result;
   }
 
   // ── Checkpoint / Restore ────────────────────────────────────

@@ -532,7 +532,7 @@ export async function terminalExec(cmd) {
       if (!agent) { terminalAppend(`<div class="terminal-stderr">No agent available.</div>`); return; }
       agent.sendMessage(cmd);
       const resp = await agent.run();
-      const text = resp?.content || resp?.text || '(no response)';
+      const text = resp?.data || resp?.content || resp?.text || '(no response)';
       terminalAppend(`<div class="terminal-stdout">${esc(text)}</div>`);
       state.terminalSessions?.recordAgentResponse(text);
     } catch (e) {

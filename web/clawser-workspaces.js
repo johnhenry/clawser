@@ -63,6 +63,9 @@ export async function deleteWorkspace(id) {
   localStorage.removeItem(lsKey.memories(id));
   localStorage.removeItem(lsKey.config(id));
   localStorage.removeItem(`clawser_conversations_${id}`);
+  localStorage.removeItem(`clawser_tool_perms_${id}`);
+  localStorage.removeItem(`clawser_skills_enabled_${id}`);
+  localStorage.removeItem(`clawser_active_conversation_${id}`);
   try {
     const root = await navigator.storage.getDirectory();
     try {

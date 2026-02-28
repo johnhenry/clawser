@@ -8,11 +8,11 @@
 
 | Severity | Count | Fixed | Documented |
 |----------|-------|-------|------------|
-| Critical | 5 | 5 | 0 |
-| High | 18 | 17 | 1 (by-design) |
-| Medium | 25 | 21 | 4 (by-design/mitigated/not-an-issue) |
+| Critical | 8 | 8 | 0 |
+| High | 27 | 26 | 1 (by-design) |
+| Medium | 26 | 22 | 4 (by-design/mitigated/not-an-issue) |
 | Low | 15 | 15 | 0 |
-| **Total** | **63** | **58** | **5** |
+| **Total** | **76** | **71** | **5** |
 
 ---
 
@@ -186,6 +186,90 @@ Empty catch blocks silently swallow JSON parse errors in `readSSE()`/`readAnthro
 **Status:** FIX APPLIED
 
 No automatic context compaction triggered during the run loop. 20 iterations can add 40+ messages.
+
+### C6. executeToolDirect bypasses safety pipeline
+**File:** `web/clawser-agent.js`
+**Source:** Bug hunt round 7
+**Status:** FIX APPLIED
+
+`executeToolDirect()` skipped `ToolCallValidator` and `scanOutput()` leak detection, allowing unvalidated tool calls. Added safety validation and output scanning.
+
+### C7. EvalJsTool sandbox exposes window/document/localStorage
+**File:** `web/clawser-tools.js`
+**Source:** Bug hunt round 7
+**Status:** FIX APPLIED
+
+`createSandbox()` globals included `window`, `document`, `navigator`, `localStorage` — defeating sandbox purpose. Restricted globals to `console` only.
+
+### C8. SSRF bypass via decimal/hex/octal IP notation
+**File:** `web/clawser-tools.js`
+**Source:** Bug hunt round 7
+**Status:** FIX APPLIED
+
+SSRF regex only matched dotted-decimal private IPs. Added patterns for decimal (`2130706433`), hex (`0x7f000001`), octal (`0177.0.0.1`), and `::ffff:` mapped addresses.
+
+### H19. Double beginTurn() creates duplicate undo checkpoints
+**File:** `web/clawser-agent.js`
+**Source:** Bug hunt round 7
+**Status:** FIX APPLIED
+
+Both `run()` and `runStream()` called `beginTurn()` internally, but UI also called it — creating duplicate checkpoints. Removed agent-internal calls (UI layer handles this).
+
+### H20. Terminal agent mode uses wrong response field
+**File:** `web/clawser-ui-panels.js`
+**Source:** Bug hunt round 7
+**Status:** FIX APPLIED
+
+Terminal agent-mode response used `resp.output` but agent returns `{ data }`. Fixed to `resp?.data`.
+
+### H21. EventLog.fromJSONL() crashes on malformed lines
+**File:** `web/clawser-agent.js`
+**Source:** Bug hunt round 7
+**Status:** FIX APPLIED
+
+Single malformed JSONL line caused `JSON.parse()` to throw, losing entire conversation. Added per-line try/catch with null filtering.
+
+### H22. WorkspaceFs.resolve() allows internal metadata access
+**File:** `web/clawser-tools.js`
+**Source:** Bug hunt round 7
+**Status:** FIX APPLIED
+
+Path traversal via URL-encoded `%2e%2e` or null bytes could access `.checkpoints/`, `.conversations/`, `.skills/` internal dirs. Added URL decoding, null byte stripping, and internal dir blocking.
+
+### H23. ShellTool has 'internal' permission level
+**File:** `web/clawser-shell.js`
+**Source:** Bug hunt round 7
+**Status:** FIX APPLIED
+
+ShellTool used `'internal'` permission, making it invisible to users and bypassing permission UI. Changed to `'approve'`.
+
+### H24. deleteWorkspace leaves orphaned localStorage keys
+**File:** `web/clawser-workspaces.js`
+**Source:** Bug hunt round 7
+**Status:** FIX APPLIED
+
+`deleteWorkspace()` only cleaned 6 keys but workspace data spans 8+ localStorage keys. Added cleanup for `clawser_goals_`, `clawser_log_`, and other per-workspace keys.
+
+### H25. ResponseCache cacheKey ignores tool_calls
+**File:** `web/clawser-providers.js`
+**Source:** Bug hunt round 7
+**Status:** FIX APPLIED
+
+`cacheKey()` only hashed `role:content`, ignoring `tool_call_id` and `tool_calls` fields. Different tool-call sequences produced identical cache keys, returning wrong cached responses. Added `tool_call_id` and `tool_calls` to key computation.
+
+### H26. SkillScriptTool has 'internal' permission level
+**File:** `web/clawser-skills.js`
+**Source:** Bug hunt round 7
+**Status:** FIX APPLIED
+
+`SkillScriptTool` used `'internal'` permission level, making it invisible to permission UI. Changed to `'approve'`.
+
+### M26. persistConfig overwrites full config object
+**File:** `web/clawser-agent.js`
+**Source:** Bug hunt round 6-7
+**Status:** FIX APPLIED
+
+`persistConfig()` wrote only `{provider, model}`, overwriting any other stored config fields. Changed to read-merge-write pattern that preserves existing fields and strips `apiKey`.
 
 ---
 
@@ -526,3 +610,15 @@ Added `CheckpointManager.deleteCheckpoint(id)` method that removes stored data v
 | H2 | clawser-accounts.js | Added vault passphrase modal, auto-unlock flow, lock-on-idle, key migration |
 | H12 | clawser-app.js, clawser-undo.js | Implemented all 4 undo handlers (history, memory, file, goal) |
 | H16 | clawser-undo.js | Added redo stack, canRedo, previewRedo(), RedoTool |
+| C6 | clawser-agent.js | executeToolDirect now runs safety validation + output scanning |
+| C7 | clawser-tools.js | EvalJsTool sandbox globals restricted to console only |
+| C8 | clawser-tools.js | SSRF regex expanded for decimal/hex/octal/::ffff: IPs |
+| H19 | clawser-agent.js | Removed duplicate beginTurn() calls from run/runStream |
+| H20 | clawser-ui-panels.js | Terminal agent mode uses resp?.data |
+| H21 | clawser-agent.js | EventLog.fromJSONL() resilient to malformed lines |
+| H22 | clawser-tools.js | WorkspaceFs.resolve() blocks internal dirs, decodes URLs, strips null bytes |
+| H23 | clawser-shell.js | ShellTool permission changed from 'internal' to 'approve' |
+| H24 | clawser-workspaces.js | deleteWorkspace cleans up all per-workspace localStorage keys |
+| H25 | clawser-providers.js | ResponseCache cacheKey includes tool_call_id and tool_calls |
+| H26 | clawser-skills.js | SkillScriptTool permission changed from 'internal' to 'approve' |
+| M26 | clawser-agent.js | persistConfig uses read-merge-write, strips apiKey |
