@@ -166,7 +166,7 @@ Priority: Integrations, API, and community.
 
 ### Developer API
 - [ ] Plugin API — Formal extension point for third-party tools
-- [ ] TypeScript definitions — .d.ts files for all modules
+- [x] TypeScript definitions — .d.ts files for all modules
 - [ ] npm package — Publish core agent as reusable library
 - [ ] Embedding API — Drop Clawser into any web app
 

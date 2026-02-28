@@ -17,6 +17,7 @@ export {
   DEFAULTS, GATEWAY_ERROR, CAPABILITY,
   NetwayError, ConnectionRefusedError, PolicyDeniedError,
   AddressInUseError, QueueFullError, UnknownSchemeError, SocketClosedError,
+  OperationTimeoutError,
 
   // Core abstractions
   StreamSocket, DatagramSocket, Listener,
@@ -26,6 +27,7 @@ export {
 
   // Backends
   Backend, LoopbackBackend, GatewayBackend,
+  ServiceBackend, ChaosBackendWrapper, FsServiceBackend,
 
   // Network
   VirtualNetwork, ScopedNetwork,

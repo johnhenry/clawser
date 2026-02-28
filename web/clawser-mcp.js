@@ -186,6 +186,16 @@ export class McpClient {
   }
 
   async disconnect() {
+    // Notify server of session termination
+    if (this.#connected && this.#sessionId) {
+      try {
+        const headers = { 'Content-Type': 'application/json', 'Mcp-Session-Id': this.#sessionId };
+        await fetch(this.#endpoint, {
+          method: 'DELETE',
+          headers,
+        });
+      } catch { /* best-effort */ }
+    }
     this.#connected = false;
     this.#tools = [];
     this.#sessionId = null;

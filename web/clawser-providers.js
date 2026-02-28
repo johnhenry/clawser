@@ -54,7 +54,10 @@ async function* readSSE(response) {
           }
           try {
             yield { event: null, data: JSON.parse(payload) };
-          } catch { /* expected: partial JSON chunks in SSE stream */ }
+          } catch (e) {
+            // Expected for partial JSON chunks; log for diagnosis
+            if (typeof console !== 'undefined') console.debug('[SSE] JSON parse skip:', line);
+          }
         }
       }
     }
@@ -88,7 +91,10 @@ async function* readAnthropicSSE(response) {
         for (const line of lines) {
           if (line.startsWith('event: ')) eventType = line.slice(7).trim();
           else if (line.startsWith('data: ')) {
-            try { data = JSON.parse(line.slice(6)); } catch { /* expected: partial JSON in SSE event data */ }
+            try { data = JSON.parse(line.slice(6)); } catch (e) {
+              // Expected for partial JSON chunks; log for diagnosis
+              if (typeof console !== 'undefined') console.debug('[SSE] JSON parse skip:', line);
+            }
           }
         }
 

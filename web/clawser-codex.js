@@ -146,10 +146,13 @@ export class Codex {
       return formatted.join(' ');
     };
 
-    // Native fetch as capability
+    // Fetch routed through FetchTool to enforce domain allowlist
     caps._fetch = async (url, init) => {
-      const resp = await fetch(url, init);
-      return resp.text();
+      const result = await this.#tools.execute('browser_fetch', {
+        url, method: init?.method || 'GET', headers: init?.headers, body: init?.body
+      });
+      if (!result.success) throw new Error(result.error || 'Fetch failed');
+      return result.output;
     };
 
     return caps;

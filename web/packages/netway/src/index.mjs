@@ -76,6 +76,9 @@ export { OperationQueue } from './queue.mjs';
 export { Backend } from './backend.mjs';
 export { LoopbackBackend } from './loopback-backend.mjs';
 export { GatewayBackend } from './gateway-backend.mjs';
+export { ServiceBackend } from './service-backend.mjs';
+export { ChaosBackendWrapper } from './chaos-backend-wrapper.mjs';
+export { FsServiceBackend } from './fs-service-backend.mjs';
 
 // Network
 export { VirtualNetwork, ScopedNetwork } from './virtual-network.mjs';

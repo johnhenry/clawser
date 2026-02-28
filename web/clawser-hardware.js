@@ -249,6 +249,7 @@ export class BluetoothPeripheral extends PeripheralHandle {
   #dataCallbacks = [];
   #disconnectCallbacks = [];
   #subscribedChars = [];
+  #gattDisconnectHandler = null;
 
   /**
    * @param {object} device - Web Bluetooth device (or mock)
@@ -274,12 +275,13 @@ export class BluetoothPeripheral extends PeripheralHandle {
 
     // Listen for disconnect
     if (this.#device.addEventListener) {
-      this.#device.addEventListener('gattserverdisconnected', () => {
+      this.#gattDisconnectHandler = () => {
         this.#connected = false;
         for (const cb of this.#disconnectCallbacks) {
           try { cb(); } catch {}
         }
-      });
+      };
+      this.#device.addEventListener('gattserverdisconnected', this.#gattDisconnectHandler);
     }
   }
 
@@ -292,6 +294,11 @@ export class BluetoothPeripheral extends PeripheralHandle {
       try { await char.stopNotifications(); } catch {}
     }
     this.#subscribedChars = [];
+
+    if (this.#gattDisconnectHandler && this.#device?.removeEventListener) {
+      this.#device.removeEventListener('gattserverdisconnected', this.#gattDisconnectHandler);
+      this.#gattDisconnectHandler = null;
+    }
 
     if (this.#device?.gatt?.connected) {
       try { this.#device.gatt.disconnect(); } catch {}

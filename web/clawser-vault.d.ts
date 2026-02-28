@@ -1,0 +1,66 @@
+/**
+ * Type definitions for clawser-vault.js
+ * Encrypted secret storage using Web Crypto API
+ */
+
+// ── Crypto Constants ───────────────────────────────────────────
+
+export declare const PBKDF2_ITERATIONS: 600000;
+export declare const AES_KEY_LENGTH: 256;
+export declare const IV_BYTES: 12;
+export declare const SALT_BYTES: 16;
+
+// ── Crypto Primitives ──────────────────────────────────────────
+
+export declare function deriveKey(passphrase: string, salt: Uint8Array): Promise<CryptoKey>;
+
+export declare function encryptSecret(
+  plaintext: string,
+  derivedKey: CryptoKey,
+): Promise<{ iv: Uint8Array; ciphertext: Uint8Array }>;
+
+export declare function decryptSecret(
+  encrypted: { iv: Uint8Array; ciphertext: Uint8Array },
+  derivedKey: CryptoKey,
+): Promise<string>;
+
+// ── Storage Backends ───────────────────────────────────────────
+
+export interface VaultStorage {
+  read(name: string): Promise<Uint8Array | null>;
+  write(name: string, packed: Uint8Array): Promise<void>;
+  remove(name: string): Promise<void>;
+  list(): Promise<string[]>;
+}
+
+export declare class MemoryVaultStorage implements VaultStorage {
+  read(name: string): Promise<Uint8Array | null>;
+  write(name: string, packed: Uint8Array): Promise<void>;
+  remove(name: string): Promise<void>;
+  list(): Promise<string[]>;
+}
+
+export declare class OPFSVaultStorage implements VaultStorage {
+  constructor(dirName?: string);
+  read(name: string): Promise<Uint8Array | null>;
+  write(name: string, packed: Uint8Array): Promise<void>;
+  remove(name: string): Promise<void>;
+  list(): Promise<string[]>;
+}
+
+// ── SecretVault ────────────────────────────────────────────────
+
+export declare class SecretVault {
+  constructor(storage: VaultStorage);
+
+  get isLocked(): boolean;
+
+  unlock(passphrase: string): Promise<void>;
+  lock(): void;
+  store(name: string, secret: string): Promise<void>;
+  retrieve(name: string): Promise<string>;
+  delete(name: string): Promise<void>;
+  list(): Promise<string[]>;
+  exists(): Promise<boolean>;
+  verify(passphrase: string): Promise<boolean>;
+}

@@ -23,11 +23,9 @@ export const DEFAULT_RATE_LIMIT = 60; // requests per minute
  * @returns {string}
  */
 export function generatePairingCode(length = DEFAULT_CODE_LENGTH) {
-  const digits = [];
-  for (let i = 0; i < length; i++) {
-    digits.push(Math.floor(Math.random() * 10));
-  }
-  return digits.join('');
+  const arr = new Uint32Array(length);
+  crypto.getRandomValues(arr);
+  return Array.from(arr, v => v % 10).join('');
 }
 
 /**
@@ -36,11 +34,9 @@ export function generatePairingCode(length = DEFAULT_CODE_LENGTH) {
  */
 export function generateToken() {
   const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  const parts = [];
-  for (let i = 0; i < 32; i++) {
-    parts.push(chars[Math.floor(Math.random() * chars.length)]);
-  }
-  return `bearer_${parts.join('')}`;
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return `bearer_${Array.from(bytes, b => chars[b % chars.length]).join('')}`;
 }
 
 // ── PairingManager ──────────────────────────────────────────────

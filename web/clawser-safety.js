@@ -72,7 +72,7 @@ export class ToolCallValidator {
     const issues = [];
 
     // Path traversal in file tools
-    if (['fs_read', 'fs_write', 'fs_list', 'fs_delete'].includes(toolName)) {
+    if (['fs_read', 'fs_write', 'fs_list', 'fs_delete', 'browser_fs_read', 'browser_fs_write', 'browser_fs_list', 'browser_fs_delete'].includes(toolName)) {
       const path = args.path || '';
       if (path.includes('..')) {
         issues.push({ severity: 'critical', msg: 'Path traversal detected' });

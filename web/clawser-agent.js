@@ -563,6 +563,9 @@ export class ClawserAgent {
   // ── Workspace ────────────────────────────────────────────────
   #workspaceId = 'default';
 
+  // ── Destroy flag ─────────────────────────────────────────────
+  #destroyed = false;
+
   // ── Callbacks ────────────────────────────────────────────────
   #onEvent = () => {};
   #onLog = () => {};
@@ -641,6 +644,50 @@ export class ClawserAgent {
     // Preserve memories across reinit (workspace switch, new conversation)
     this.#eventLog.clear();
     return this.init(config);
+  }
+
+  /**
+   * Destroy the agent, releasing all resources.
+   * After calling destroy(), run() and runStream() will throw.
+   */
+  destroy() {
+    // 1. Clear all scheduler jobs
+    this.#schedulerJobs = [];
+    this.#schedulerNextId = 1;
+
+    // 2. Disconnect all MCP servers
+    if (this.#mcpManager) {
+      for (const name of this.#mcpManager.serverNames) {
+        this.#mcpManager.removeServer(name);
+      }
+    }
+
+    // 3. Null out kernel integration
+    this._kernelIntegration = null;
+
+    // 4. Clear history, goals, hooks
+    this.#history = [];
+    this.#goals = [];
+    this.#goalNextId = 1;
+    this.#hooks = new HookPipeline();
+
+    // 5. Reset subsystem instances
+    this.#browserTools = null;
+    this.#codex = null;
+    this.#selfRepairEngine = null;
+    this.#safety = null;
+    this.#memory = null;
+    this.#providers = null;
+    this.#mcpManager = null;
+    this.#fallbackExecutor = null;
+    this.#undoManager = null;
+    this.#responseCache = null;
+
+    // 6. Clear event log
+    this.#eventLog.clear();
+
+    // 7. Mark destroyed
+    this.#destroyed = true;
   }
 
   /** Register all browser tools and MCP tools */
@@ -1082,6 +1129,8 @@ export class ClawserAgent {
    * @returns {Promise<{status: number, data: string}>}
    */
   async run() {
+    if (this.#destroyed) throw new Error('Agent has been destroyed');
+
     // Autonomy: check limits before starting
     const limitsCheck = this.#autonomy.checkLimits();
     if (limitsCheck.blocked) {
@@ -1110,6 +1159,11 @@ export class ClawserAgent {
     let codexDone = false;
 
     while (maxIterations-- > 0) {
+      // Proactive context compaction
+      if (this.estimateHistoryTokens() > 12000) {
+        await this.compactContext();
+      }
+
       // Build the request
       const useNative = this.#providerHasNativeTools();
       const request = {
@@ -1175,7 +1229,7 @@ export class ClawserAgent {
         if (this._kernelIntegration) {
           this._kernelIntegration.traceLlmCall({
             model: response.model,
-            provider: this.#activeProvider?.name || 'unknown',
+            provider: this.#activeProvider || 'unknown',
             input_tokens: response.usage.input_tokens || 0,
             output_tokens: response.usage.output_tokens || 0,
             cost_usd: cost,
@@ -1298,6 +1352,8 @@ export class ClawserAgent {
    * @returns {AsyncGenerator}
    */
   async *runStream(options = {}) {
+    if (this.#destroyed) throw new Error('Agent has been destroyed');
+
     // Autonomy: check limits before starting
     const limitsCheck = this.#autonomy.checkLimits();
     if (limitsCheck.blocked) {
@@ -1328,6 +1384,11 @@ export class ClawserAgent {
     let codexDone = false;
 
     while (maxIterations-- > 0) {
+      // Proactive context compaction
+      if (this.estimateHistoryTokens() > 12000) {
+        await this.compactContext();
+      }
+
       const useNative = this.#providerHasNativeTools();
       const request = {
         messages: [...this.#history],

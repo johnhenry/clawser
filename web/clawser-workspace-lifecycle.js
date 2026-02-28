@@ -157,6 +157,14 @@ export async function switchWorkspace(newId, convId) {
   setActiveWorkspaceId(newId);
   touchWorkspace(newId);
 
+  // Create kernel tenant for incoming workspace (Fix H7)
+  if (_kernelIntegration) {
+    _kernelIntegration.createWorkspaceTenant(newId);
+    _kernelIntegration.hookEventLog(state.agent.eventLog);
+  }
+  // Wire kernel integration to agent (Fix H8)
+  state.agent._kernelIntegration = _kernelIntegration;
+
   // Create fresh shell session for new workspace
   await createShellSession();
 
@@ -346,6 +354,8 @@ export async function initWorkspace(wsId, convId) {
       _kernelIntegration.createWorkspaceTenant(wsId);
       _kernelIntegration.hookEventLog(state.agent.eventLog);
     }
+    // Wire kernel integration to agent (Fix H8)
+    state.agent._kernelIntegration = _kernelIntegration;
 
     registerAgentTools(state.browserTools, state.agent);
 

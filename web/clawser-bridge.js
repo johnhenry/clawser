@@ -262,6 +262,7 @@ export class ExtensionBridge extends ExternalBridge {
   #setupListener() {
     if (this.#listener) return;
     this.#listener = (event) => {
+      if (event.origin !== location.origin) return;
       if (event.data?.type === 'clawser-rpc-response' && event.data.id) {
         const resolve = this.#pending.get(event.data.id);
         if (resolve) {
@@ -290,7 +291,7 @@ export class ExtensionBridge extends ExternalBridge {
       });
 
       if (typeof globalThis.postMessage === 'function') {
-        globalThis.postMessage({ type: 'clawser-rpc', id, method, params }, '*');
+        globalThis.postMessage({ type: 'clawser-rpc', id, method, params }, location.origin);
       } else {
         clearTimeout(timer);
         this.#pending.delete(id);

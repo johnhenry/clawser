@@ -223,18 +223,18 @@ class IncomingSession {
     // Look up tool in the browser's registry (if available)
     const registry = globalThis.__clawserToolRegistry;
     if (!registry) {
-      return { success: false, error: 'No tool registry available' };
+      return { success: false, output: '', error: 'No tool registry available' };
     }
 
     const browserTool = registry.get(tool);
     if (!browserTool) {
-      return { success: false, error: `Tool "${tool}" not found` };
+      return { success: false, output: '', error: `Tool "${tool}" not found` };
     }
 
     try {
       return await browserTool.execute(args);
     } catch (err) {
-      return { success: false, error: err.message };
+      return { success: false, output: '', error: err.message };
     }
   }
 
@@ -258,14 +258,14 @@ class IncomingSession {
   async handleMcpCall(tool, args) {
     const mcpClient = globalThis.__clawserMcpClient;
     if (!mcpClient) {
-      return { success: false, error: 'No MCP client available' };
+      return { success: false, output: '', error: 'No MCP client available' };
     }
 
     try {
       const result = await mcpClient.callTool(tool, args);
       return { success: true, output: JSON.stringify(result) };
     } catch (err) {
-      return { success: false, error: err.message };
+      return { success: false, output: '', error: err.message };
     }
   }
 
