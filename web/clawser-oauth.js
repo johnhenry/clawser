@@ -246,6 +246,12 @@ export class OAuthManager {
     let code;
     if (this.#openPopupFn) {
       const result = await this.#openPopupFn(authUrl);
+      // Validate CSRF state parameter
+      if (this._pendingState && result.state !== this._pendingState) {
+        this._pendingState = null;
+        throw new Error('OAuth state mismatch — possible CSRF attack');
+      }
+      this._pendingState = null;
       code = result.code;
     } else {
       throw new Error('No popup handler configured');
@@ -377,6 +383,12 @@ export class OAuthManager {
   // ── Internal ──────────────────────────────────────────
 
   #buildAuthUrl(config, clientConfig, scopes) {
+    // Generate CSRF state token
+    const stateBytes = new Uint8Array(16);
+    crypto.getRandomValues(stateBytes);
+    const state = Array.from(stateBytes, b => b.toString(16).padStart(2, '0')).join('');
+    this._pendingState = state;
+
     const params = new URLSearchParams({
       client_id: clientConfig.clientId,
       redirect_uri: this.#redirectUri,
@@ -384,6 +396,7 @@ export class OAuthManager {
       scope: scopes.join(' '),
       access_type: 'offline',
       prompt: 'consent',
+      state,
     });
     return `${config.authUrl}?${params.toString()}`;
   }

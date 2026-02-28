@@ -391,9 +391,13 @@ export function registerWshCli(registry, getAgent, getShell) {
         expose,
       });
 
-      // Wire incoming handler
+      // Wire incoming handler, chaining with any existing handler
       if (typeof globalThis.__wshIncomingHandler === 'function') {
-        client.onReverseConnect = globalThis.__wshIncomingHandler;
+        const prevHandler = client.onReverseConnect;
+        client.onReverseConnect = (msg) => {
+          globalThis.__wshIncomingHandler(msg);
+          if (prevHandler) prevHandler(msg);
+        };
       }
 
       connections.set(parsed.host, client);

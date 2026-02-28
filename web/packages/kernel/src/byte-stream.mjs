@@ -54,6 +54,7 @@ class AsyncBuffer {
   #waiters = [];
   #writeClosed = false;
   #readClosed = false;
+  #paused = false;
   #highWaterMark;
 
   constructor({ highWaterMark = 0 } = {}) {
@@ -68,21 +69,32 @@ class AsyncBuffer {
     }
     this.#queue.push(data);
     if (this.#highWaterMark > 0 && this.#queue.length >= this.#highWaterMark) {
-      this.#writeClosed = true;
+      this.#paused = true;
       return false;
     }
     return true;
   }
 
   pull() {
-    if (this.#queue.length > 0) return Promise.resolve(this.#queue.shift());
+    if (this.#queue.length > 0) {
+      const item = this.#queue.shift();
+      // Resume writes when queue drains below high-water mark
+      if (this.#paused && this.#queue.length < this.#highWaterMark) {
+        this.#paused = false;
+      }
+      return Promise.resolve(item);
+    }
     if (this.#writeClosed || this.#readClosed) return Promise.resolve(null);
     return new Promise(resolve => this.#waiters.push(resolve));
   }
 
+  /** @returns {boolean} Whether the buffer is accepting writes */
+  get writable() { return !this.#writeClosed && !this.#readClosed && !this.#paused; }
+
   /** Signal no more writes — existing buffered data can still be drained. */
   closeWrite() {
     this.#writeClosed = true;
+    this.#paused = false;
     // Resolve waiters so blocked reads get null after queue is drained
     for (const w of this.#waiters) w(null);
     this.#waiters.length = 0;
@@ -92,6 +104,7 @@ class AsyncBuffer {
   closeRead() {
     this.#readClosed = true;
     this.#writeClosed = true;
+    this.#paused = false;
     for (const w of this.#waiters) w(null);
     this.#waiters.length = 0;
     this.#queue.length = 0;
@@ -228,9 +241,10 @@ export function compose(stream, ...transforms) {
 
     async write(data) {
       let result = data;
-      // Apply transforms in reverse for writes
+      // Apply inverse transforms in reverse for writes (fall back to transform if no untransform)
       for (let i = transforms.length - 1; i >= 0; i--) {
-        result = await transforms[i].transform(result);
+        const t = transforms[i];
+        result = await (t.untransform ? t.untransform(result) : t.transform(result));
       }
       await stream.write(result);
     },

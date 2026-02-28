@@ -36,6 +36,7 @@ const VALID_TRANSITIONS = {
 export class DaemonState {
   #phase = DaemonPhase.STOPPED;
   #history = [];
+  #maxHistory = 1000;
   #onChange;
 
   /**
@@ -64,6 +65,9 @@ export class DaemonState {
     const oldPhase = this.#phase;
     this.#phase = newPhase;
     this.#history.push({ from: oldPhase, to: newPhase, timestamp: Date.now() });
+    if (this.#history.length > this.#maxHistory) {
+      this.#history = this.#history.slice(-this.#maxHistory);
+    }
 
     if (this.#onChange) this.#onChange(newPhase, oldPhase);
     return true;
@@ -204,8 +208,20 @@ export class CheckpointManager {
   /** Number of stored checkpoints. */
   get size() { return this.#index.length; }
 
-  /** Clear all checkpoint metadata (does not delete stored data). */
-  clear() { this.#index = []; }
+  /**
+   * Clear all checkpoint metadata and delete stored data via writeFn.
+   * @returns {Promise<void>}
+   */
+  async clear() {
+    if (this.#writeFn) {
+      for (const meta of this.#index) {
+        try { await this.#writeFn(`checkpoint_${meta.id}`, null); } catch { /* best-effort */ }
+      }
+      try { await this.#writeFn('checkpoint_latest', null); } catch { /* best-effort */ }
+      try { await this.#writeFn('checkpoint_index', null); } catch { /* best-effort */ }
+    }
+    this.#index = [];
+  }
 }
 
 // ── TabCoordinator ──────────────────────────────────────────────

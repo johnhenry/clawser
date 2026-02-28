@@ -1434,13 +1434,20 @@ export class ClawserAgent {
       if (!provider.supportsStreaming) {
         // Fall back to non-streaming but yield intermediate events so UI stays informed
         let response;
-        if (this.#fallbackExecutor) {
-          const { result } = await this.#fallbackExecutor.execute(
-            (pid, mdl) => this.#providers.get(pid).chat(request, this.#apiKey, mdl)
-          );
-          response = result;
-        } else {
-          response = await provider.chat(request, this.#apiKey, this.#model);
+        try {
+          if (this.#fallbackExecutor) {
+            const { result } = await this.#fallbackExecutor.execute(
+              (pid, mdl) => this.#providers.get(pid).chat(request, this.#apiKey, mdl)
+            );
+            response = result;
+          } else {
+            response = await provider.chat(request, this.#apiKey, this.#model);
+          }
+        } catch (fallbackErr) {
+          this.#eventLog.append('provider_error', { message: fallbackErr.message }, 'system');
+          this.#onLog(3, `Non-streaming fallback error: ${fallbackErr.message}`);
+          yield { type: 'error', error: fallbackErr.message };
+          return;
         }
 
         // Codex path

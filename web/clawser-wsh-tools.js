@@ -74,9 +74,13 @@ export class WshConnectTool extends BrowserTool {
           keyPair,
           expose,
         });
-        // Wire incoming session handler if available
+        // Wire incoming session handler if available, chaining with any existing handler
         if (typeof globalThis.__wshIncomingHandler === 'function') {
-          client.onReverseConnect = globalThis.__wshIncomingHandler;
+          const prevHandler = client.onReverseConnect;
+          client.onReverseConnect = (msg) => {
+            globalThis.__wshIncomingHandler(msg);
+            if (prevHandler) prevHandler(msg);
+          };
         }
         connections.set(host, client);
         const caps = Object.keys(expose).filter(k => expose[k]).join(', ');

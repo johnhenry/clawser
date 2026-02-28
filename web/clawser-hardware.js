@@ -82,6 +82,18 @@ export class PeripheralHandle {
   onDisconnect(callback) {}
 
   /**
+   * Unregister a data callback.
+   * @param {Function} callback
+   */
+  offData(callback) {}
+
+  /**
+   * Unregister a disconnect callback.
+   * @param {Function} callback
+   */
+  offDisconnect(callback) {}
+
+  /**
    * Get device info.
    * @returns {object}
    */
@@ -197,8 +209,18 @@ export class SerialPeripheral extends PeripheralHandle {
     this.#dataCallbacks.push(callback);
   }
 
+  offData(callback) {
+    const idx = this.#dataCallbacks.indexOf(callback);
+    if (idx >= 0) this.#dataCallbacks.splice(idx, 1);
+  }
+
   onDisconnect(callback) {
     this.#disconnectCallbacks.push(callback);
+  }
+
+  offDisconnect(callback) {
+    const idx = this.#disconnectCallbacks.indexOf(callback);
+    if (idx >= 0) this.#disconnectCallbacks.splice(idx, 1);
   }
 
   #startReadLoop() {
@@ -370,8 +392,18 @@ export class BluetoothPeripheral extends PeripheralHandle {
     this.#dataCallbacks.push(callback);
   }
 
+  offData(callback) {
+    const idx = this.#dataCallbacks.indexOf(callback);
+    if (idx >= 0) this.#dataCallbacks.splice(idx, 1);
+  }
+
   onDisconnect(callback) {
     this.#disconnectCallbacks.push(callback);
+  }
+
+  offDisconnect(callback) {
+    const idx = this.#disconnectCallbacks.indexOf(callback);
+    if (idx >= 0) this.#disconnectCallbacks.splice(idx, 1);
   }
 }
 
@@ -456,8 +488,18 @@ export class USBPeripheral extends PeripheralHandle {
     this.#dataCallbacks.push(callback);
   }
 
+  offData(callback) {
+    const idx = this.#dataCallbacks.indexOf(callback);
+    if (idx >= 0) this.#dataCallbacks.splice(idx, 1);
+  }
+
   onDisconnect(callback) {
     this.#disconnectCallbacks.push(callback);
+  }
+
+  offDisconnect(callback) {
+    const idx = this.#disconnectCallbacks.indexOf(callback);
+    if (idx >= 0) this.#disconnectCallbacks.splice(idx, 1);
   }
 
   toJSON() {

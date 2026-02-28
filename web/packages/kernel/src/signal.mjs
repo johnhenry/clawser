@@ -114,17 +114,9 @@ export class SignalController {
    * @returns {AbortSignal}
    */
   get shutdownSignal() {
-    const ctrl = new AbortController();
-    const termSignal = this.abortSignal(SIGNAL.TERM);
-    const intSignal = this.abortSignal(SIGNAL.INT);
-
-    if (termSignal.aborted || intSignal.aborted) {
-      ctrl.abort();
-    } else {
-      termSignal.addEventListener('abort', () => ctrl.abort(), { once: true });
-      intSignal.addEventListener('abort', () => ctrl.abort(), { once: true });
-    }
-
-    return ctrl.signal;
+    return AbortSignal.any([
+      this.abortSignal(SIGNAL.TERM),
+      this.abortSignal(SIGNAL.INT),
+    ]);
   }
 }

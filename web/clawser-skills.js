@@ -250,12 +250,12 @@ export class SkillParser {
   static validateScript(content) {
     const warnings = [];
     const patterns = [
-      { regex: /\beval\s*\(/g,           label: 'eval() — dynamic code execution' },
-      { regex: /\bFunction\s*\(/g,       label: 'Function() — dynamic function creation' },
-      { regex: /\bdocument\.cookie\b/g,  label: 'document.cookie — cookie access' },
-      { regex: /\blocalStorage[\.\[]/g,  label: 'localStorage — storage access' },
-      { regex: /\bXMLHttpRequest\b/g,    label: 'XMLHttpRequest — direct XHR' },
-      { regex: /(?<!\w)import\s*\(/g,    label: 'import() — dynamic import' },
+      { regex: /\beval\s*\(/,           label: 'eval() — dynamic code execution' },
+      { regex: /\bFunction\s*\(/,       label: 'Function() — dynamic function creation' },
+      { regex: /\bdocument\.cookie\b/,  label: 'document.cookie — cookie access' },
+      { regex: /\blocalStorage[\.\[]/,  label: 'localStorage — storage access' },
+      { regex: /\bXMLHttpRequest\b/,    label: 'XMLHttpRequest — direct XHR' },
+      { regex: /(?<!\w)import\s*\(/,    label: 'import() — dynamic import' },
     ];
 
     for (const { regex, label } of patterns) {

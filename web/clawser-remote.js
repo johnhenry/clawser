@@ -66,10 +66,17 @@ export class PairingManager {
    * @param {number} [opts.tokenExpiry] - Token expiry in ms
    * @param {Function} [opts.onLog]
    */
+  /** @type {number[]} */
+  #exchangeAttempts = [];
+
+  /** @type {number} */
+  #maxExchangeAttempts;
+
   constructor(opts = {}) {
     this.#codeExpiry = opts.codeExpiry || DEFAULT_CODE_EXPIRY_MS;
     this.#tokenExpiry = opts.tokenExpiry || DEFAULT_TOKEN_EXPIRY_MS;
     this.#onLog = opts.onLog || null;
+    this.#maxExchangeAttempts = opts.maxExchangeAttempts || 5; // max attempts per minute
   }
 
   /**
@@ -97,6 +104,15 @@ export class PairingManager {
    * @returns {{ token: string, expires: number }|null}
    */
   exchangeCode(code, meta = {}) {
+    // Rate limit: max N attempts per 60s window
+    const now = Date.now();
+    this.#exchangeAttempts = this.#exchangeAttempts.filter(t => now - t < 60_000);
+    if (this.#exchangeAttempts.length >= this.#maxExchangeAttempts) {
+      this.#log('Pairing exchange rate limit exceeded');
+      return null;
+    }
+    this.#exchangeAttempts.push(now);
+
     const entry = this.#codes.get(code);
     if (!entry) return null;
 

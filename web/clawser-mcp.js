@@ -15,15 +15,10 @@
  *   const result = await mcp.callTool('tool_name', { arg: 'value' });
  */
 
-let jsonRpcId = 0;
-
-function nextId() {
-  return ++jsonRpcId;
-}
-
 export class McpClient {
   #endpoint;
   #sessionId = null;
+  #nextId = 0;
   #tools = [];
   #connected = false;
   #onLog;
@@ -59,7 +54,7 @@ export class McpClient {
   // ── JSON-RPC helpers ──────────────────────────────────────────
 
   async #rpc(method, params = {}) {
-    const id = nextId();
+    const id = ++this.#nextId;
     const body = {
       jsonrpc: '2.0',
       id,

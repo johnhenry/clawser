@@ -3,7 +3,7 @@
  *
  * Standardized tool implementations that execute in the browser runtime.
  * Each tool follows the ToolSpec / ToolResult protocol so it can be
- * registered with the WASM agent and invoked from the agent loop.
+ * registered with the agent and invoked from the agent loop.
  *
  * Tool layers:
  *   1. BrowserTool — base class with spec + execute
@@ -159,7 +159,7 @@ export class BrowserToolRegistry {
     return tool ? tool.spec : null;
   }
 
-  /** @returns {object[]} All tool specs for registration with WASM */
+  /** @returns {object[]} All tool specs for registration with the agent */
   allSpecs() {
     return [...this.#tools.values()].map(t => t.spec);
   }
@@ -233,18 +233,25 @@ export class FetchTool extends BrowserTool {
   }
 
   async execute({ url, method = 'GET', headers = {}, body }) {
+    let parsed;
+    try { parsed = new URL(url); } catch (e) {
+      return { success: false, output: '', error: `Invalid URL: ${url}` };
+    }
+    const hostname = parsed.hostname.toLowerCase();
+
+    // Block private/reserved addresses (SSRF mitigation)
+    if (/^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|0\.|169\.254\.|fc|fd|fe80)/i.test(hostname) ||
+        hostname === 'localhost' || hostname === '[::1]' || parsed.protocol === 'file:') {
+      return { success: false, output: '', error: `Blocked: fetching private/reserved address "${hostname}" is not allowed` };
+    }
+
     // Domain allowlist check
     if (this.#domainAllowlist) {
-      try {
-        const hostname = new URL(url).hostname.toLowerCase();
-        const allowed = [...this.#domainAllowlist].some(d =>
-          hostname === d || hostname.endsWith('.' + d)
-        );
-        if (!allowed) {
-          return { success: false, output: '', error: `Domain "${hostname}" is not in the allowlist` };
-        }
-      } catch (e) {
-        return { success: false, output: '', error: `Invalid URL: ${url}` };
+      const allowed = [...this.#domainAllowlist].some(d =>
+        hostname === d || hostname.endsWith('.' + d)
+      );
+      if (!allowed) {
+        return { success: false, output: '', error: `Domain "${hostname}" is not in the allowlist` };
       }
     }
 
@@ -358,12 +365,12 @@ export class DomModifyTool extends BrowserTool {
           else {
             const t = document.createElement('template');
             t.innerHTML = value;
-            t.content.querySelectorAll('script,iframe,object,embed,base,meta,link,form,svg').forEach(s => s.remove());
-            // Strip on* event handlers and javascript:/data:text/html URLs from all surviving elements
+            t.content.querySelectorAll('script,iframe,object,embed,base,meta,link,form,svg,math').forEach(s => s.remove());
+            // Strip on* event handlers and dangerous URLs from all surviving elements
             for (const node of t.content.querySelectorAll('*')) {
               for (const attr of [...node.attributes]) {
                 if (/^on/i.test(attr.name)) node.removeAttribute(attr.name);
-                if (/^(href|src|action|formaction)$/i.test(attr.name) && /^\s*(javascript:|data:text\/html)/i.test(attr.value)) node.removeAttribute(attr.name);
+                if (/^(href|src|action|formaction)$/i.test(attr.name) && /^\s*(javascript:|data:)/i.test(attr.value)) node.removeAttribute(attr.name);
               }
             }
             el.innerHTML = t.innerHTML;
@@ -373,9 +380,9 @@ export class DomModifyTool extends BrowserTool {
           if (!attribute) return { success: false, output: '', error: 'setAttribute requires "attribute" parameter' };
           // Block event handler attributes (XSS vector)
           if (/^on/i.test(attribute)) return { success: false, output: '', error: `Blocked: setting event handler attribute "${attribute}" is not allowed` };
-          // Block javascript: and data:text/html in href/src/action attributes
-          if (/^(href|src|action|formaction)$/i.test(attribute) && /^\s*(javascript:|data:text\/html)/i.test(value)) {
-            return { success: false, output: '', error: `Blocked: javascript: and data:text/html URLs in "${attribute}" are not allowed` };
+          // Block javascript: and data: in href/src/action attributes
+          if (/^(href|src|action|formaction)$/i.test(attribute) && /^\s*(javascript:|data:)/i.test(value)) {
+            return { success: false, output: '', error: `Blocked: javascript: and data: URLs in "${attribute}" are not allowed` };
           }
           el.setAttribute(attribute, value); break;
         case 'setStyle': el.style.cssText += value; break;
@@ -387,11 +394,11 @@ export class DomModifyTool extends BrowserTool {
           else {
             const t = document.createElement('template');
             t.innerHTML = value;
-            t.content.querySelectorAll('script,iframe,object,embed,base,meta,link,form,svg').forEach(s => s.remove());
+            t.content.querySelectorAll('script,iframe,object,embed,base,meta,link,form,svg,math').forEach(s => s.remove());
             for (const node of t.content.querySelectorAll('*')) {
               for (const attr of [...node.attributes]) {
                 if (/^on/i.test(attr.name)) node.removeAttribute(attr.name);
-                if (/^(href|src|action|formaction)$/i.test(attr.name) && /^\s*(javascript:|data:text\/html)/i.test(attr.value)) node.removeAttribute(attr.name);
+                if (/^(href|src|action|formaction)$/i.test(attr.name) && /^\s*(javascript:|data:)/i.test(attr.value)) node.removeAttribute(attr.name);
               }
             }
             el.insertAdjacentHTML('beforeend', t.innerHTML);
@@ -509,7 +516,7 @@ export class FsWriteTool extends BrowserTool {
       try { await writable.abort(); } catch { /* abort() may fail if stream already closed — benign */ }
       throw writeErr;
     }
-    return { success: true, output: `Wrote ${content.length} bytes to ${path}` };
+    return { success: true, output: `Wrote ${byteSize} bytes to ${path}` };
   }
 }
 

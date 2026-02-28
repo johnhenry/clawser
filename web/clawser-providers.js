@@ -164,7 +164,7 @@ export function estimateCost(model, usage) {
   const pricing = MODEL_PRICING[model];
   if (!pricing) return 0;
   const cachedTokens = usage.cache_read_input_tokens || 0;
-  const regularInputTokens = (usage.input_tokens || 0) - cachedTokens;
+  const regularInputTokens = Math.max(0, (usage.input_tokens || 0) - cachedTokens);
   return ((regularInputTokens / 1000) * pricing.input) +
          ((cachedTokens / 1000) * (pricing.cached_input || pricing.input)) +
          (((usage.output_tokens || 0) / 1000) * pricing.output);
@@ -292,7 +292,6 @@ export class ResponseCache {
    */
   static cacheKey(messages, model) {
     const significant = messages
-      .filter(m => m.role !== 'system')
       .map(m => `${m.role}:${m.content || ''}`)
       .join('|');
     return `${model}::${ResponseCache.hash(significant)}`;
@@ -565,21 +564,24 @@ export class ChromeAIProvider extends LLMProvider {
       prompt = fullPrompt;
     }
 
-    const content = await session.prompt(prompt);
-    // Read usage BEFORE destroying the session
-    const inputTokens = session.inputUsage ?? Math.round(prompt.length / 4);
-    const outputTokens = Math.round(content.length / 4);
-    if (conversationMsgs.length > 2 && session?.destroy) session.destroy();
-
-    return {
-      content,
-      tool_calls: [],
-      usage: { input_tokens: inputTokens, output_tokens: outputTokens },
-      model: 'chrome-ai',
-    };
+    const isOneShot = conversationMsgs.length > 2;
+    try {
+      const content = await session.prompt(prompt);
+      // Read usage BEFORE destroying the session
+      const inputTokens = session.inputUsage ?? Math.round(prompt.length / 4);
+      const outputTokens = Math.round(content.length / 4);
+      return {
+        content,
+        tool_calls: [],
+        usage: { input_tokens: inputTokens, output_tokens: outputTokens },
+        model: 'chrome-ai',
+      };
+    } finally {
+      if (isOneShot && session?.destroy) session.destroy();
+    }
   }
 
-  async *chatStream(request) {
+  async *chatStream(request, _apiKey, _modelOverride, options = {}) {
     const { systemContent, conversationMsgs, lastUser } = this.#preparePrompt(request);
     let prompt, session, isOneShot = false;
 
@@ -600,39 +602,39 @@ export class ChromeAIProvider extends LLMProvider {
 
     // Chrome AI streaming via promptStreaming()
     if (typeof session.promptStreaming === 'function') {
-      const stream = session.promptStreaming(prompt);
       let fullContent = '';
-      let lastLen = 0;
-      for await (const chunk of stream) {
-        const text = typeof chunk === 'string' ? chunk : chunk.toString();
-        // Chrome 131-137: yields accumulated text; Chrome 138+: yields deltas.
-        // Detect: if text starts with fullContent, it's accumulated; otherwise it's a delta.
-        let delta;
-        if (text.length >= lastLen && text.startsWith(fullContent)) {
-          // Accumulated mode — extract the new part
-          delta = text.slice(lastLen);
-          lastLen = text.length;
-          fullContent = text;
-        } else {
-          // Delta mode — chunk IS the new text
-          delta = text;
-          fullContent += text;
-          lastLen = fullContent.length;
+      try {
+        const stream = session.promptStreaming(prompt);
+        let lastLen = 0;
+        for await (const chunk of stream) {
+          if (options.signal?.aborted) break;
+          const text = typeof chunk === 'string' ? chunk : chunk.toString();
+          // Chrome 131-137: yields accumulated text; Chrome 138+: yields deltas.
+          let delta;
+          if (text.length >= lastLen && text.startsWith(fullContent)) {
+            delta = text.slice(lastLen);
+            lastLen = text.length;
+            fullContent = text;
+          } else {
+            delta = text;
+            fullContent += text;
+            lastLen = fullContent.length;
+          }
+          if (delta) yield { type: 'text', text: delta };
         }
-        if (delta) yield { type: 'text', text: delta };
+      } finally {
+        const inputTokens = session.inputUsage ?? Math.round(prompt.length / 4);
+        if (isOneShot && session?.destroy) session.destroy();
+        yield {
+          type: 'done',
+          response: {
+            content: fullContent,
+            tool_calls: [],
+            usage: { input_tokens: inputTokens, output_tokens: Math.round(fullContent.length / 4) },
+            model: 'chrome-ai',
+          },
+        };
       }
-      // Read usage BEFORE destroying the session
-      const inputTokens = session.inputUsage ?? Math.round(prompt.length / 4);
-      if (isOneShot && session?.destroy) session.destroy();
-      yield {
-        type: 'done',
-        response: {
-          content: fullContent,
-          tool_calls: [],
-          usage: { input_tokens: inputTokens, output_tokens: Math.round(fullContent.length / 4) },
-          model: 'chrome-ai',
-        },
-      };
     } else {
       // Fallback to non-streaming
       const response = await this.chat(request);
@@ -869,13 +871,16 @@ export class OpenAIProvider extends LLMProvider {
     const model = modelOverride || this.#model;
     const body = { ...buildOpenAIBody(request, model, options), stream: true, stream_options: { include_usage: true } };
 
-    const resp = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify(body),
-      signal: options.signal,
+    const resp = await withRetry(async () => {
+      const r = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify(body),
+        signal: options.signal,
+      });
+      if (!r.ok) throw new Error(`OpenAI ${r.status}: ${await r.text()}`);
+      return r;
     });
-    if (!resp.ok) throw new Error(`OpenAI ${resp.status}: ${await resp.text()}`);
 
     yield* streamOpenAI(resp, model);
   }
@@ -1121,13 +1126,16 @@ export class AnthropicProvider extends LLMProvider {
     const model = modelOverride || this.#model;
     const body = { ...this.#buildBody(request, model, options), stream: true };
 
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: this.#headers(apiKey),
-      body: JSON.stringify(body),
-      signal: options.signal,
+    const resp = await withRetry(async () => {
+      const r = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: this.#headers(apiKey),
+        body: JSON.stringify(body),
+        signal: options.signal,
+      });
+      if (!r.ok) throw new Error(`Anthropic ${r.status}: ${await r.text()}`);
+      return r;
     });
-    if (!resp.ok) throw new Error(`Anthropic ${resp.status}: ${await resp.text()}`);
 
     let content = '';
     const toolCalls = new Map(); // index → {id, name, arguments}
@@ -1258,13 +1266,17 @@ export class OpenAICompatibleProvider extends LLMProvider {
     const body = { ...buildOpenAIBody(request, model, options), stream: true, stream_options: { include_usage: true } };
     if (!this.#nativeTools) delete body.tools;
 
-    const resp = await fetch(`${this.#baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: this.#headers(apiKey),
-      body: JSON.stringify(body),
-      signal: options.signal,
+    const displayName = this.#displayName;
+    const resp = await withRetry(async () => {
+      const r = await fetch(`${this.#baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: this.#headers(apiKey),
+        body: JSON.stringify(body),
+        signal: options.signal,
+      });
+      if (!r.ok) throw new Error(`${displayName} ${r.status}: ${await r.text()}`);
+      return r;
     });
-    if (!resp.ok) throw new Error(`${this.#displayName} ${resp.status}: ${await resp.text()}`);
 
     yield* streamOpenAI(resp, model);
   }
@@ -1440,6 +1452,7 @@ export class MateyProvider extends LLMProvider {
     let content = '';
     try {
       for await (const chunk of bridge.chatStream(chatRequest)) {
+        if (options.signal?.aborted) break;
         const delta = chunk.choices?.[0]?.delta;
         if (delta?.content) {
           content += delta.content;

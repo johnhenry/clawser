@@ -141,6 +141,15 @@ export class ResourceTable {
     return result;
   }
 
+  /**
+   * List all handles in the table.
+   *
+   * @returns {string[]} Array of all allocated handles.
+   */
+  listAll() {
+    return [...this.#entries.keys()];
+  }
+
   /** Current number of entries. */
   get size() {
     return this.#entries.size;

@@ -26,6 +26,17 @@ export function setKernelBridge(bridge) { _kernelBridge = bridge; }
 /** Get the current kernel-wsh bridge. */
 export function getKernelBridge() { return _kernelBridge; }
 
+// ── Service injection (replaces globalThis side-channels) ────────────
+/** @type {import('./clawser-tools.js').BrowserToolRegistry|null} */
+let _toolRegistry = null;
+/** @type {object|null} */
+let _mcpClient = null;
+
+/** Inject the tool registry (replaces globalThis.__clawserToolRegistry reads). */
+export function setToolRegistry(registry) { _toolRegistry = registry; }
+/** Inject the MCP client (replaces globalThis.__clawserMcpClient reads). */
+export function setMcpClient(client) { _mcpClient = client; }
+
 // ── Incoming session tracking ────────────────────────────────────────
 
 /** @type {Map<string, IncomingSession>} username → session */
@@ -47,6 +58,8 @@ class IncomingSession {
     this.tenantId = null;
     /** @type {boolean} Whether this session is actively listening for relay messages. */
     this._listening = false;
+    /** @type {Function|null} Previous onRelayMessage handler, saved for restore on stopListening. */
+    this._prevRelayHandler = null;
   }
 
   // ── Relay message listener ──────────────────────────────────────────
@@ -63,15 +76,16 @@ class IncomingSession {
 
     // Wire the client's onRelayMessage callback.
     // If multiple sessions share a client (unlikely but possible),
-    // we chain the handlers.
-    const prevHandler = this.client.onRelayMessage;
+    // we chain the handlers.  Save the previous handler so we can
+    // restore it in stopListening().
+    this._prevRelayHandler = this.client.onRelayMessage;
 
     this.client.onRelayMessage = (msg) => {
       // Only handle if this session is still active.
       if (this.state === 'active') {
         this.handleRelayMessage(msg);
-      } else if (prevHandler) {
-        prevHandler(msg);
+      } else if (this._prevRelayHandler) {
+        this._prevRelayHandler(msg);
       }
     };
   }
@@ -82,11 +96,10 @@ class IncomingSession {
   stopListening() {
     if (!this._listening) return;
     this._listening = false;
-    // Clear our handler — don't try to restore a stale chain reference.
-    // If the session is closing, the client callback should be cleared.
-    if (this.client.onRelayMessage) {
-      this.client.onRelayMessage = null;
-    }
+    // Restore the previous handler instead of nulling the callback,
+    // so chained handlers from other sessions continue to work.
+    this.client.onRelayMessage = this._prevRelayHandler;
+    this._prevRelayHandler = null;
   }
 
   // ── Relay message dispatch ──────────────────────────────────────────
@@ -128,7 +141,7 @@ class IncomingSession {
         // CLI wants to discover browser tools.
         console.log('[wsh:incoming] McpDiscover from peer');
 
-        const registry = globalThis.__clawserToolRegistry;
+        const registry = _toolRegistry || globalThis.__clawserToolRegistry;
         const tools = registry
           ? [...registry.entries()].map(([name, tool]) => ({
               name,
@@ -221,7 +234,7 @@ class IncomingSession {
    */
   async handleToolCall(tool, args) {
     // Look up tool in the browser's registry (if available)
-    const registry = globalThis.__clawserToolRegistry;
+    const registry = _toolRegistry || globalThis.__clawserToolRegistry;
     if (!registry) {
       return { success: false, output: '', error: 'No tool registry available' };
     }
@@ -256,7 +269,7 @@ class IncomingSession {
    * @returns {Promise<object>}
    */
   async handleMcpCall(tool, args) {
-    const mcpClient = globalThis.__clawserMcpClient;
+    const mcpClient = _mcpClient || globalThis.__clawserMcpClient;
     if (!mcpClient) {
       return { success: false, output: '', error: 'No MCP client available' };
     }
