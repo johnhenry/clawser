@@ -295,6 +295,9 @@ async function showVaultModal(vault) {
   return new Promise((resolve) => {
     modal.showModal();
     input.focus();
+    modal.addEventListener('cancel', (e) => {
+      e.preventDefault(); // prevent Escape from closing — user must submit
+    });
     modal.querySelector('form').onsubmit = async (e) => {
       e.preventDefault();
       error.style.display = 'none';

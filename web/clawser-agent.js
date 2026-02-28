@@ -925,7 +925,7 @@ export class ClawserAgent {
       }
 
       // Safety: validate tool call arguments
-      const validation = this.#safety.validateToolCall(call.name, params);
+      const validation = this.#safety?.validateToolCall(call.name, params) ?? { valid: true, issues: [] };
       if (!validation.valid) {
         const msg = validation.issues[0]?.msg || 'Validation failed';
         result = { success: false, output: '', error: `Safety: ${msg}` };
@@ -994,7 +994,7 @@ export class ClawserAgent {
       }
 
       // Safety: scan tool output for leaked secrets
-      if (result && result.output) {
+      if (result && result.output && this.#safety) {
         const scanResult = this.#safety.scanOutput(result.output);
         if (scanResult.findings.length > 0) {
           result = { ...result, output: scanResult.content };
@@ -1779,7 +1779,7 @@ export class ClawserAgent {
       agent_state: 'Idle',
       history_len: this.#history.length,
       goals: this.#goals,
-      memory_count: this.#memory.size,
+      memory_count: this.#memory?.size ?? 0,
       scheduler_jobs: this.#schedulerJobs.length,
     };
   }

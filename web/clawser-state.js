@@ -425,13 +425,13 @@ export function emit(event, ...args) {
   if (typeof localStorage !== 'undefined' && localStorage.getItem('clawser_debug')) {
     console.debug(`[event] ${event}`, ...args);
   }
-  for (const fn of _listeners[event] || []) {
+  for (const fn of [...(_listeners[event] || [])]) {
     try { fn(...args); } catch (e) { console.error(`[event:${event}]`, e); }
   }
   if (event !== '*') {
     const wildcardListeners = _listeners['*'];
     if (wildcardListeners) {
-      for (const fn of wildcardListeners) {
+      for (const fn of [...wildcardListeners]) {
         try { fn(event, ...args); } catch(e) { console.error('Wildcard listener error:', e); }
       }
     }

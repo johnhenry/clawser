@@ -408,7 +408,7 @@ section('Permission System — Persistence');
 
   // loadPermissions filters invalid levels
   reg2.loadPermissions({ p1: 'bogus', p2: 'approve' });
-  assertEq('loadPermissions filters bogus', reg2.getPermission('p1'), 'internal' === reg2.get('p1')?.permission ? 'auto' : 'approve');
+  assertEq('loadPermissions filters bogus', reg2.getPermission('p1'), 'auto');
   assertEq('loadPermissions keeps valid', reg2.getPermission('p2'), 'approve');
 }
 

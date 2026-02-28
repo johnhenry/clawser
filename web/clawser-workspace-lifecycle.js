@@ -122,6 +122,9 @@ export async function switchWorkspace(newId, convId) {
   setStatus('busy', 'switching workspace...');
   history.replaceState(null, '', '#workspace/' + newId);
 
+  // Clear update interval to prevent stale timer stacking
+  if (state._updateInterval) { clearInterval(state._updateInterval); state._updateInterval = null; }
+
   // Stop daemon and routine engine before saving
   state.routineEngine.stop();
   await state.daemonController.stop().catch(() => {});

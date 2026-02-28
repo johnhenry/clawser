@@ -104,7 +104,7 @@ requires:
 
 When a skill has unmet dependencies:
 - A **"Missing deps"** warning badge appears in the Skills panel
-- Activation is blocked — the agent will log which tools or permissions are missing
+- Activation is blocked — the agent reports which dependencies are unmet (distinct from "skill not found" errors)
 - Use `force: true` in the `activate_skill` tool call to bypass the check
 
 ## 7. Checking for Updates

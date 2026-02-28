@@ -123,7 +123,7 @@ export declare class ActivateSkillTool extends BrowserTool {
   get description(): string;
   get parameters(): object;
   get permission(): string;
-  execute(params: { name: string; arguments?: string }): Promise<ToolResult>;
+  execute(params: { name: string; arguments?: string; force?: boolean }): Promise<ToolResult>;
 }
 
 export declare class DeactivateSkillTool extends BrowserTool {

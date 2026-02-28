@@ -502,7 +502,7 @@ export class FsWriteTool extends BrowserTool {
 
     const resolved = this.#ws.resolve(path);
     const root = await navigator.storage.getDirectory();
-    const parts = resolved.split('/');
+    const parts = resolved.split('/').filter(Boolean);
     let dir = root;
     for (const part of parts.slice(0, -1)) {
       dir = await dir.getDirectoryHandle(part, { create: true });

@@ -462,7 +462,8 @@ export class SkillStorage {
         if (allUnderPrefix) {
           const normalized = new Map();
           for (const [p, content] of files) {
-            normalized.set(p.slice(prefix.length), content);
+            const rel = p.slice(prefix.length);
+            if (rel) normalized.set(rel, content);
           }
           return normalized;
         }
@@ -1079,13 +1080,20 @@ export class ActivateSkillTool extends BrowserTool {
   get permission() { return 'internal'; }
 
   async execute({ name, arguments: args = '', force = false }) {
-    const activation = await this.#registry.activate(name, args, { force });
-    if (!activation) {
+    if (!this.#registry.skills.has(name)) {
       const available = [...this.#registry.skills.keys()].join(', ');
       return {
         success: false,
         output: '',
         error: `Skill "${name}" not found. Available: ${available || 'none'}`,
+      };
+    }
+    const activation = await this.#registry.activate(name, args, { force });
+    if (!activation) {
+      return {
+        success: false,
+        output: '',
+        error: `Skill "${name}" could not be activated (unmet dependencies or unsafe patterns). Use force: true to bypass.`,
       };
     }
 
