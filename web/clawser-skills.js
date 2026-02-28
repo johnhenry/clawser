@@ -932,6 +932,15 @@ export class SkillRegistry {
       .map(s => s.name);
   }
 
+  /**
+   * Build requirements context from available browser tools and MCP tools.
+   * Public API for UI components to validate requirements consistently.
+   * @returns {{ tools: string[], permissions: string[] }}
+   */
+  buildRequirementsContext() {
+    return this.#buildRequirementsContext();
+  }
+
   // ── Private helpers ──────────────────────────────────────────
 
   /**
@@ -1373,13 +1382,14 @@ export class SkillRegistryClient {
     try {
       const index = await this.fetchIndex();
       const entry = index.find(s => s.name === name);
-      if (!entry) return { available: false, latest: null };
+      if (!entry) return { available: false, latest: null, error: null };
       return {
         available: semverGt(entry.version, currentVersion),
         latest: entry.version,
+        error: null,
       };
-    } catch {
-      return { available: false, latest: null };
+    } catch (e) {
+      return { available: false, latest: null, error: e.message || 'Registry unreachable' };
     }
   }
 

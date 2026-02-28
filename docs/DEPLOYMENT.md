@@ -52,7 +52,7 @@ Clawser includes a `manifest.json` for PWA installation. When served over HTTPS,
 
 ## Demo Mode
 
-Append `?demo=true` to the URL to start Clawser in demo mode:
+Append `?demo` or `?demo=true` to the URL to start Clawser in demo mode:
 
 ```
 http://localhost:8080/web/?demo=true
@@ -63,7 +63,7 @@ Demo mode:
 - Forces the **Echo** provider (no LLM or API key required)
 - Shows a blue banner indicating demo mode is active
 
-This is useful for live demos, screenshots, and letting users explore the UI without configuring an API key. The Echo provider mirrors back user messages, so tool calling and streaming are not exercised.
+Use `?demo=false` to explicitly disable demo mode. This is useful for live demos, screenshots, and letting users explore the UI without configuring an API key. The Echo provider mirrors back user messages, so tool calling and streaming are not exercised.
 
 ## Service Worker
 

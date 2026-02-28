@@ -96,6 +96,7 @@ export declare class SkillRegistry {
   discover(wsId: string): Promise<void>;
   activate(name: string, args?: string, opts?: ActivateOpts): Promise<SkillActivation | null>;
   deactivate(name: string): void;
+  buildRequirementsContext(): RequirementsContext;
   setEnabled(name: string, enabled: boolean): void;
   persistEnabledState(wsId: string): void;
   buildMetadataPrompt(): string;
@@ -209,6 +210,7 @@ export interface FetchedSkill {
 export interface UpdateCheckResult {
   available: boolean;
   latest: string | null;
+  error: string | null;
 }
 
 export declare class SkillRegistryClient {

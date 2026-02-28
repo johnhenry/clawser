@@ -17,7 +17,7 @@ import { modal } from './clawser-modal.js';
 import { addMsg, addErrorMsg, updateState, resetToolAndEventState } from './clawser-ui-chat.js';
 import { loadWorkspaces, getActiveWorkspaceId, renameWorkspace, deleteWorkspace, createWorkspace, getWorkspaceName } from './clawser-workspaces.js';
 import { navigate } from './clawser-router.js';
-import { SkillStorage, SKILL_TEMPLATES, simpleDiff, validateRequirements } from './clawser-skills.js';
+import { SkillParser, SkillStorage, SKILL_TEMPLATES, simpleDiff, validateRequirements } from './clawser-skills.js';
 import { createItemBar, _relativeTime } from './clawser-item-bar.js';
 import { CLAWSER_SUBCOMMAND_META } from './clawser-cli.js';
 
@@ -149,14 +149,11 @@ export function renderSkills() {
     const tokenEst = skill.bodyLength > 0 ? Math.ceil(skill.bodyLength / 4) : 0;
     const tokenWarn = tokenEst > 2000 ? `<div class="skill-token-warn">~${tokenEst} tokens — may use significant context</div>` : '';
 
-    // Check dependency requirements
+    // Check dependency requirements (uses same context as SkillRegistry.activate)
     let depWarnHtml = '';
     if (skill.metadata?.requires) {
-      const toolNames = state.browserTools ? state.browserTools.allSpecs().map(s => s.name) : [];
-      const mcpTools = state.mcpManager?.allToolSpecs?.() || [];
-      const allTools = [...toolNames, ...mcpTools.map(t => t.name || t)];
-      const permLevels = state.browserTools ? [...new Set(state.browserTools.allSpecs().map(s => state.browserTools.getPermission(s.name)).filter(Boolean))] : [];
-      const reqCheck = validateRequirements(skill.metadata, { tools: allTools, permissions: permLevels });
+      const ctx = state.skillRegistry.buildRequirementsContext();
+      const reqCheck = validateRequirements(skill.metadata, ctx);
       if (!reqCheck.satisfied) {
         const missing = [...reqCheck.missing.tools, ...reqCheck.missing.permissions.map(p => `perm:${p}`)].join(', ');
         depWarnHtml = `<div class="skill-dep-warn" title="Missing: ${esc(missing)}">Missing deps</div>`;
@@ -225,6 +222,12 @@ export function renderSkills() {
       try {
         const version = skill.metadata?.version || '0.0.0';
         const check = await state.skillRegistryClient.checkUpdate(skill.name, version);
+        if (check.error) {
+          addErrorMsg(`Update check failed: ${check.error}`);
+          btn.textContent = '\u21BB';
+          btn.disabled = false;
+          return;
+        }
         if (!check.available) {
           addMsg('system', `Skill "${skill.name}" is up to date (v${version}).`);
           btn.textContent = '\u21BB';
@@ -270,7 +273,17 @@ export async function showTemplatePickerModal() {
     card.innerHTML = `<div style="font-weight:600;color:var(--accent);font-size:13px;">${esc(tmpl.name)}</div><div style="font-size:11px;color:var(--muted);margin-top:2px;">${esc(tmpl.description)}</div>`;
     card.addEventListener('click', async () => {
       try {
-        await state.skillRegistry.install('workspace', wsId, tmpl.files());
+        const files = tmpl.files();
+        // Check for name collision before install
+        const skillMd = files.get('SKILL.md');
+        if (skillMd) {
+          const { metadata } = SkillParser.parseFrontmatter(skillMd);
+          if (metadata.name && state.skillRegistry.skills.has(metadata.name)) {
+            const ok = await modal.confirm(`Skill "${metadata.name}" already exists. Overwrite it?`, { danger: true });
+            if (!ok) { dialog.close(); dialog.remove(); return; }
+          }
+        }
+        await state.skillRegistry.install('workspace', wsId, files);
         await state.skillRegistry.discover(wsId);
         renderSkills();
         addMsg('system', `Skill created from "${tmpl.name}" template.`);
@@ -284,6 +297,7 @@ export async function showTemplatePickerModal() {
   }
 
   const dialog = document.createElement('dialog');
+  dialog.className = 'skill-dialog';
   dialog.style.cssText = 'border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);padding:16px;max-width:400px;';
   dialog.innerHTML = '<div style="font-weight:700;margin-bottom:12px;font-size:14px;">New Skill from Template</div>';
   dialog.appendChild(container);
@@ -302,6 +316,7 @@ export async function showTemplatePickerModal() {
 export async function showSkillDiffModal(skillName, oldText, newText, onApply) {
   const diff = simpleDiff(oldText, newText);
   const dialog = document.createElement('dialog');
+  dialog.className = 'skill-dialog';
   dialog.style.cssText = 'border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);padding:16px;max-width:600px;width:90vw;';
   dialog.innerHTML = `<div style="font-weight:700;margin-bottom:12px;font-size:14px;">Update: ${esc(skillName)}</div>`;
 

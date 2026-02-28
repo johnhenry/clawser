@@ -195,8 +195,11 @@ export const state = {
   // ── Remaining flat fields (not namespaced) ─────────────────────
   agentInitialized: false,
   shuttingDown: false,
-  /** Demo mode — activated via ?demo=true URL param */
-  demoMode: new URLSearchParams(location.search).has('demo'),
+  /** Demo mode — activated via ?demo or ?demo=true URL param (not ?demo=false) */
+  demoMode: (() => {
+    const p = new URLSearchParams(location.search);
+    return p.has('demo') && p.get('demo') !== 'false';
+  })(),
   // Block 36: Tool usage tracking
   toolUsageStats: {},
   toolLastUsed: {},
