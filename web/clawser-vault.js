@@ -330,7 +330,10 @@ export class SecretVault {
 
       // Verify canary decrypts correctly
       const decrypted = await this.retrieve(CANARY_KEY);
-      return decrypted === CANARY_VALUE;
+      if (decrypted === CANARY_VALUE) return true;
+      // Wrong passphrase — restore previous key state
+      this.#derivedKey = prevKey;
+      return false;
     } catch {
       // Decryption failed — wrong passphrase
       this.#derivedKey = prevKey;

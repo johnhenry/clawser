@@ -9,10 +9,10 @@
 | Severity | Count | Fixed | Documented |
 |----------|-------|-------|------------|
 | Critical | 8 | 8 | 0 |
-| High | 27 | 26 | 1 (by-design) |
+| High | 28 | 27 | 1 (by-design) |
 | Medium | 26 | 22 | 4 (by-design/mitigated/not-an-issue) |
 | Low | 15 | 15 | 0 |
-| **Total** | **76** | **71** | **5** |
+| **Total** | **77** | **72** | **5** |
 
 ---
 
@@ -263,6 +263,13 @@ ShellTool used `'internal'` permission, making it invisible to users and bypassi
 **Status:** FIX APPLIED
 
 `SkillScriptTool` used `'internal'` permission level, making it invisible to permission UI. Changed to `'approve'`.
+
+### H27. verify() leaves vault unlocked with wrong key on canary mismatch
+**File:** `web/clawser-vault.js`
+**Source:** Bug hunt round 8
+**Status:** FIX APPLIED
+
+`verify()` saved previous `#derivedKey` but only restored it in the `catch` path. If `unlock()` succeeded but canary decryption returned wrong data (wrong passphrase), the method returned `false` without restoring the previous key, leaving the vault "unlocked" with a bad derived key. Subsequent `store()`/`retrieve()` calls would corrupt or fail to decrypt data.
 
 ### M26. persistConfig overwrites full config object
 **File:** `web/clawser-agent.js`
@@ -621,4 +628,5 @@ Added `CheckpointManager.deleteCheckpoint(id)` method that removes stored data v
 | H24 | clawser-workspaces.js | deleteWorkspace cleans up all per-workspace localStorage keys |
 | H25 | clawser-providers.js | ResponseCache cacheKey includes tool_call_id and tool_calls |
 | H26 | clawser-skills.js | SkillScriptTool permission changed from 'internal' to 'approve' |
+| H27 | clawser-vault.js | verify() restores previous key when canary check fails |
 | M26 | clawser-agent.js | persistConfig uses read-merge-write, strips apiKey |
