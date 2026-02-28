@@ -224,6 +224,7 @@ state.sandboxManager = new SandboxManager({ onLog: _onLog });
 state.peripheralManager = new PeripheralManager({ onLog: _onLog });
 state.pairingManager = new PairingManager({ onLog: _onLog });
 state.bridgeManager = new BridgeManager({});
+state.bridgeManager.detect().catch(() => {}); // auto-detect bridge on startup
 state.goalManager = new GoalManager();
 state.skillRegistryClient = new SkillRegistryClient();
 

@@ -99,6 +99,31 @@ Clawser is a **beta-quality** browser-native AI agent platform. The core runtime
 - [x] **Glob expansion** — *, ?, [] with POSIX fallback
 - [ ] ~~Stderr redirect~~ — Tokenizer parses 2>, 2>&1 but executor routing incomplete (low priority)
 
+### Shell Emulation Layer (Block 1) -- MOSTLY COMPLETE
+**Done:**
+- [x] Shell parser — recursive descent, full AST (pipes, &&, ||, ;, quotes, redirects)
+- [x] Web Streams execution engine with pipe/redirect support and pipefail
+- [x] 59 built-in commands (22 core + 37 extended in clawser-shell-builtins.js)
+- [x] ShellState (cwd, env, history, $?, aliases) — per-conversation scoping
+- [x] Shell session lifecycle — create on conversation start, discard on end
+- [x] .clawserrc sourcing on shell init (per-workspace)
+- [x] ShellTool — agent-facing tool (single command string)
+- [x] Variable expansion ($VAR, ${VAR}, $?)
+- [x] Glob expansion (*, ?, [abc])
+- [x] Terminal UI panel with interactive input, modes, history, CWD display
+- [x] Terminal sessions — OPFS persistence + restore via TerminalSessionManager
+- [x] External bridge fallback for unknown commands
+- [x] Command registry with metadata, categories, help system
+
+**Remaining:**
+- [ ] **Command substitution** — $(cmd) syntax parsing and recursive execution
+- [ ] **Background jobs** — & operator, jobs/bg/fg commands, job tracking
+- [ ] **jq implementation** — jq-web WASM (lazy-loaded) with JS subset fallback
+- [ ] **Tool CLI wrappers** — Auto-generate CLI wrappers for BrowserTools (curl→FetchTool, search→WebSearchTool)
+- [ ] **Installable CLI packages** — JS module loader for shell commands (CDN/URL install)
+- [ ] **Advanced globs** — ** recursive, {a,b} brace expansion, !(pattern) negation
+- [ ] **Skills → CLI registration** — Skills register CLI commands on activation
+
 ### Security Hardening -- COMPLETE
 - [x] **Skill validation** — validateScript() scans for dangerous patterns before activation
 - [x] **eval_js permission** — Defaults to 'approve' with warning in description
@@ -154,15 +179,491 @@ Priority: Resilience, observability, and production readiness.
 
 ---
 
-## Phase 5: Ecosystem (Future)
+## Phase 5: Remote Execution (wsh) -- COMPLETE
+
+Priority: Browser-native remote shell, reverse relay, session management, and MCP bridging.
+
+### Phase 5.0: Protocol & Transport — COMPLETE
+- [x] CBOR control channel with BE32 framing
+- [x] Ed25519 pubkey auth (authorized_keys)
+- [x] WebTransport + WebSocket fallback
+- [x] 50+ message types (codegen from YAML spec)
+- [x] Ping/pong keepalive
+- [x] JS client library (connect, auth, sessions, file transfer, MCP)
+- [x] Rust CLI (connect, keygen, copy-id, scp, sessions, attach)
+- [x] Browser wsh tools (9 tools)
+- [x] Pairing system (6-digit codes, tokens)
+
+### Phase 5.1: Gateway & Networking — COMPLETE
+- [x] TCP/UDP proxy, DNS resolution, bidirectional relay
+- [x] Reverse TCP listeners, gateway policy enforcement
+- [x] Netway virtual networking (StreamSocket, DatagramSocket, Listener)
+- [x] Leak fixes, timeout enforcement, error handling
+
+### Phase 5.2: "wsh into Browser" Relay — COMPLETE
+- [x] ReverseRegister/ReverseList/ReverseConnect server dispatch
+- [x] Browser auto-register, incoming session handler, relay message routing
+- [x] Rust CLI: reverse, peers, connect commands
+
+### Phase 5.3: Session Management (Server) — COMPLETE
+- [x] Attach/Resume/Open/Resize/Signal/Close dispatch
+- [x] Session metadata (Rename, Snapshot, Presence, ControlChanged, Metrics, IdleWarning, Shutdown)
+
+### Phase 5.4: MCP Dispatch — COMPLETE
+- [x] McpDiscover/McpCall server dispatch + HTTP proxy
+
+### Phase 5.5: Protocol Improvements — COMPLETE
+- [x] Dynamic capability negotiation, clipboard sync, per-key permissions
+- [x] Auth/attach rate limiting, password auth, protocol version negotiation
+
+### Phase 5.6: Client Enhancements — COMPLETE
+- [x] URL read-only attach, session list/attach/scp/connect commands
+
+### Phase 5.7: Protocol Extensions — COMPLETE
+- [x] Recording export, snapshots, command journal, device labels
+- [x] Background jobs, metrics, idle suspend, PTY restart, ghostty-web
+- [x] Guest sessions, multi-attach, compression, rate control
+- [x] Cross-session linking, copilot mode, E2E encryption
+- [x] Predictive echo, diff-based sync, horizontal scaling, shared sessions
+- [x] Structured file channel, policy engine
+
+### Phase 5.8–5.12: Audit Fixes — COMPLETE
+See [AUDIT.md](AUDIT.md) for detailed security audit fix log (5 rounds, all resolved).
+
+---
+
+## Phase 6: Ecosystem (Future)
 
 Priority: Integrations, API, and community.
+
+### External Tool Integration (Block 0)
+
+**Phase 6a: Bridge Interface + Local Server**
+- [x] `ExternalBridge` abstract class in `web/clawser-bridge.js`
+- [x] `LocalServerBridge` implementation (HTTP client w/ Bearer auth)
+- [x] `ExtensionBridge` implementation (postMessage RPC)
+- [x] `BridgeManager` (detection, lifecycle, extension→server fallback)
+- [x] 3 bridge agent tools: `bridge_status`, `bridge_list_tools`, `bridge_fetch`
+- [x] Auto-detect bridge on page load (`.detect()` called at startup)
+- [ ] Build `clawser-bridge` local server (Node.js, `npx clawser-bridge`)
+  - [ ] CORS proxy endpoint
+  - [ ] MCP hub (connect to multiple upstream MCP servers)
+  - [ ] System tools (file system, shell, git as MCP tools)
+  - [ ] `--generate-key` first-run flow (auth token in `~/.clawser/bridge.toml`)
+  - [ ] `--serve <dir>` optional flag for static file serving
+  - [ ] Health endpoint at `/health`
+- [ ] Bridge status indicator in UI + API key settings field
+
+**Phase 6b: Browser Extension**
+- [ ] Scaffold Chrome extension (Manifest V3, background service worker)
+- [ ] Content script: message relay to/from Clawser page (`__clawser_ext__` marker injection)
+- [ ] CORS-free fetch proxy via background worker
+- [ ] Firefox compatibility (WebExtension APIs, `webextension-polyfill`)
+- [ ] Basic WebMCP discovery (scan `<meta name="webmcp">` / `.well-known/mcp`)
+- [ ] "Discovered Tools" UI panel with per-tool enable/disable (approval required)
+
+**Phase 6c: WebMCP + BrowserMCP**
+- [ ] Deep WebMCP integration — auto-register discovered tools (with user approval)
+- [ ] Evaluate BrowserMCP fork vs standalone
+- [ ] Cross-tab tool invocation
+- [ ] Native messaging for system tools (optional, extension + local binary)
+
+### Local Filesystem Mounting (Block 2) -- MOSTLY COMPLETE
+**Done:**
+- [x] `MountableFs` class extending WorkspaceFs with mount table (`web/clawser-mount.js`, 355 LOC)
+- [x] `showDirectoryPicker()` integration with `/mnt/<name>` mount point assignment
+- [x] Handle persistence in IndexedDB + re-permission on reload
+- [x] Mount list UI in sidebar (renderMountList with unmount buttons)
+- [x] `mount_list` agent tool (registered in workspace init)
+- [x] `mount_resolve` agent tool (registered in workspace init)
+- [x] Read-only mount option (opts.readOnly, persisted)
+- [x] Individual file mounting via `showOpenFilePicker()`
+
+**Remaining:**
+- [ ] **System prompt mount table injection** — Auto-inject mount table into agent context
+- [ ] **Shell transparent mount routing** — WorkspaceFs.resolve() updated to use resolveMount()
+- [ ] **mount/umount/df shell built-ins** — Shell commands for mount visibility
+- [ ] **isomorphic-git integration** — Pure JS git ops on mounted repos (~300KB, lazy-load)
+- [ ] **FileSystemObserver** — Watch mounted dirs for external changes (Chrome 129+)
+- [ ] **Auto-indexing** — Recursive dir tree summary injected into agent context (opt-in)
+- [ ] **Drag-and-drop folder mounting** — Drop folder onto Clawser UI to mount
+- [ ] **Mount presets per workspace** — Persist mount config, auto-prompt on workspace open
+
+### Daemon Mode (Block 3) -- PARTIALLY COMPLETE
+**Done:**
+- [x] ClawserAgent DOM-free (pure JS, no window/document deps)
+- [x] Checkpoint serialization — getCheckpointJSON(), EventLog toJSONL/fromJSONL
+- [x] DaemonState state machine (7 states: stopped→starting→running→checkpointing→paused→recovering→error)
+- [x] CheckpointManager with full CRUD (create/restore/list/delete via OPFS)
+- [x] TabCoordinator with BroadcastChannel (heartbeat, tab discovery, join/leave)
+- [x] DaemonController (lifecycle orchestration + checkpoint + coordination)
+- [x] Checkpoint migration (v1→v2 via migrateV1ToEvents)
+- [x] NotifyTool (browser Notification API wrapper)
+- [x] Service Worker app caching (sw.js, cache-first, 64 entries)
+- [x] URL-hash routing (clawser-router.js parseHash)
+- [x] DaemonStatusTool + DaemonCheckpointTool (agent tools)
+
+**Phase 1 remaining — SharedWorker + messaging:**
+- [ ] **SharedWorker host** — shared-worker.js hosting ClawserAgent instance
+- [ ] **Tab ↔ SharedWorker message protocol** — user_message, stream_chunk, state, shell_exec
+- [ ] **Web Locks for input arbitration** — navigator.locks.request("clawser-input")
+
+**Phase 2 remaining — Service Worker daemon:**
+- [ ] **Heartbeat loop in SW** — Periodic wake-up for scheduled job checking
+- [ ] **Headless agent execution** — SW reads checkpoint, runs agent, saves new checkpoint
+- [ ] **Background activity log** — OPFS JSONL for events while no tabs open
+- [ ] **"While you were away" summary** — Card shown on tab open after background work
+
+**Phase 3 remaining — Multi-tab + polish:**
+- [ ] **Multiple tab views** — chat, terminal, activity, workspace, goals as separate views
+- [ ] **"Agent is busy" cross-tab indicator** — Broadcast agent state to all tabs
+- [ ] **Interrupted tool call handling** — Retry idempotent tools, fail non-idempotent on crash recovery
+- [ ] **Checkpoint rollback UI** — Browse checkpoint history, restore to previous state
+
+**Notifications remaining:**
+- [ ] **NotificationManager** — Centralized manager with permission request flow
+- [ ] **In-app notification center** — Toast popups + badge count + notification panel
+- [ ] **Notification batching** — 30s window, summary for multiple completions
+- [ ] **Notification preferences** — Per-type toggles, quiet hours, per-job overrides
+
+### Semantic Memory Embedding Providers (Block 4)
+**Done (pure JS BM25 + cosine hybrid):**
+- [x] BM25 keyword search with Porter stemmer
+- [x] Cosine similarity, EmbeddingProvider interface, NoopEmbedder
+- [x] Hybrid search (BM25 0.3 + cosine 0.7 weighted merge)
+- [x] EmbeddingCache (LRU, 500 entries)
+- [x] Memory hygiene, export/import, browser UI, comprehensive tests
+
+**Remaining — real embedding providers:**
+- [ ] **OpenAI embedding provider** — Concrete EmbeddingProvider using text-embedding-3-small API
+- [ ] **Chrome AI embedding provider** — Local embeddings via Chrome AI API (if available)
+- [ ] **transformers.js local embeddings** — all-MiniLM-L6-v2 via ONNX runtime (~100MB, lazy-load)
+- [ ] **Embedding backfill** — Backfill existing memories when provider first configured
+
+### API Key Encryption (Block 5) -- MOSTLY COMPLETE
+**Done:**
+- [x] SecretVault with PBKDF2 (600K iterations) + AES-GCM (256-bit)
+- [x] OPFS vault storage backend
+- [x] Vault lock/unlock lifecycle with 30-min idle auto-lock
+- [x] Canary-based passphrase verification
+- [x] Migration from plaintext localStorage keys
+- [x] Passphrase modal on app init
+
+**Remaining:**
+- [ ] **Passphrase strength indicator** — Entropy/complexity meter in setup UI
+- [ ] **Vault rekeying UI** — Change passphrase without re-encrypting from scratch
+
+### Autonomy & Cost Limiting (Block 6) -- MOSTLY COMPLETE
+**Done:**
+- [x] AutonomyController with 3 levels (readonly/supervised/full)
+- [x] Rate limiting (maxActionsPerHour) + cost limiting (maxCostPerDayCents)
+- [x] MODEL_PRICING table + estimateCost() for all providers
+- [x] Cost meter UI (progress bar, danger/warn colors)
+- [x] Autonomy badge in header
+- [x] Per-workspace autonomy config in settings panel
+
+**Remaining:**
+- [ ] **AgentHaltedError exception** — Structured error class when limits exceeded (currently returns tool error)
+- [ ] **Detailed cost dashboard** — Per-model breakdown, time series, cost trends
+- [ ] **Pause/resume on limit hit** — Agent pauses when limits exceeded, resumes when reset
+
+### Identity System (Block 7) -- MOSTLY COMPLETE
+**Done:**
+- [x] Three identity formats: plain, AIEOS v1.1, OpenClaw (detected)
+- [x] AIEOS JSON schema validator with defaults
+- [x] System prompt compiler (identity + memories + goals + skills)
+- [x] IdentityManager per-workspace with localStorage persistence
+- [x] Default Clawser persona (INTJ, pragmatic utilitarian)
+- [x] Settings UI: format selector, plain editor, AIEOS fields, preview
+
+**Remaining:**
+- [ ] **OpenClaw markdown loading** — Load IDENTITY.md/SOUL.md/USER.md from workspace OPFS
+- [ ] **Avatar display in chat UI** — Show avatar_url from identity in message bubbles
+- [ ] **Dedicated identity editor** — Full-featured editor panel (not just settings fields)
+- [ ] **Identity templates/presets** — Starter personas for common use cases
+
+### Goals & Sub-goals (Block 8) -- MOSTLY COMPLETE
+**Done:**
+- [x] Goal class with parentId, subGoalIds, artifacts, progressLog, priority
+- [x] GoalManager with tree ops (add, cascading completion, progress calc)
+- [x] 4 goal tools: add, update, add-artifact, list
+- [x] System prompt injection with sub-goal checklist
+- [x] Tree UI with indentation, expand/collapse, progress bars, artifact links
+- [x] Comprehensive tests
+
+**Remaining:**
+- [ ] **Goal file format** — Persist goals as .goal or GOALS.md files in workspace OPFS
+- [ ] **Goal editing UI** — Rename, change priority, edit description inline
+- [ ] **Deadline/due date fields** — Temporal tracking for goal completion
+- [ ] **Goal dependency/blocking** — Cross-goal dependencies beyond parent-child
+- [ ] **Auto-decompose from natural language** — Agent auto-creates sub-goals from description
+
+### Sub-agent Delegation (Block 9) -- MOSTLY COMPLETE
+**Done:**
+- [x] SubAgent class with isolated history, goal-focused execution, tool allowlisting
+- [x] DelegateManager with concurrent lifecycle management + concurrency limits
+- [x] DelegateTool (`agent_delegate`) registered
+- [x] MAX_DELEGATION_DEPTH=2
+- [x] Event callbacks (delegate_start/complete/error/timeout)
+
+**Remaining:**
+- [ ] **Streaming from sub-agent** — Stream sub-agent output back to parent UI
+- [ ] **Sub-agent cancellation** — Cancel mid-execution from parent
+- [ ] **Sub-agent cost attribution** — Track and attribute costs to parent goal
+- [ ] **ConsultAgentTool** — Read-only sub-agent for consultation without delegation
+- [ ] **Sub-agent memory scoping** — Read parent memory, write to sub-context only
+- [ ] **Sub-agent UI** — Inline collapsible display of sub-agent execution in chat
+
+### Observability Dashboard (Block 10) -- PARTIALLY COMPLETE
+**Done:**
+- [x] MetricsCollector (counters, gauges, histograms, snapshot, percentile)
+- [x] RingBufferLog (1000 entries, level+source filtering)
+- [x] OTLP export + JSON dump
+- [x] Basic dashboard UI (request/token/error counters, latency, log viewer)
+
+**Remaining:**
+- [ ] **Active agent instrumentation** — Hook MetricsCollector into agent.run(), provider.chat(), tool.execute()
+- [ ] **Per-provider/model cost breakdown** — Cost tracking integrated with metrics
+- [ ] **Charts/visualization** — CSS bar charts for cost, tokens, latency over time
+- [ ] **Historical time-series storage** — Daily metric rollups persisted to OPFS
+- [ ] **Per-conversation and per-goal stats** — Scoped metric views
+- [ ] **Cost over time chart** — Last 7/30 day trends
+
+### Provider Fallback Chains (Block 11) -- MOSTLY COMPLETE
+**Done:**
+- [x] FallbackChain + FallbackEntry data structures
+- [x] FallbackExecutor with retry + chain traversal + exponential backoff
+- [x] ProviderHealth circuit breaker (failure tracking, cooldown, auto-reorder)
+- [x] ModelRouter with 5 hint categories (smart/fast/code/cheap/local)
+- [x] costAwareSort() within quality tiers
+
+**Remaining:**
+- [ ] **Wire to agent chat execution** — FallbackExecutor wrapping actual provider.chat/chatStream calls
+- [ ] **Dynamic hint selection** — Agent selects hint based on task complexity (not static)
+- [ ] **Adaptive model selection** — Learn from past responses which models work best for which tasks
+- [ ] **Chain editor UI** — Visual fallback chain configuration in workspace settings
+- [ ] **Fallback effectiveness metrics** — Track which entries get used, failure rates
+
+### Git as Agent Behavior (Block 12) -- MOSTLY COMPLETE
+**Done:**
+- [x] GitBehavior with goal-boundary commits, experiment branching, micro-commits
+- [x] GitEpisodicMemory (recallByTopic, recallByGoal, recallExperiments, findHotspots)
+- [x] Structured commit message format with parser/formatter
+- [x] 6 agent tools: git_status, git_diff, git_log, git_commit, git_branch, git_recall
+
+**Remaining:**
+- [ ] **isomorphic-git backend** — Wire GitBehavior to actual isomorphic-git (~300KB, lazy-load)
+- [ ] **Auto-commit on goal completion** — Hook commitGoalCheckpoint into agent lifecycle events
+- [ ] **Repository auto-init** — Init .git on first file write if none exists
+- [ ] **Branch merge conflict resolution** — Strategy for experiment merge conflicts
+- [ ] **FTS5 integration** — Index commit messages in memory system (Block 4 cross-ref)
+
+### Web Hardware Peripherals (Block 13) -- MOSTLY COMPLETE
+**Done:** SerialPeripheral, BluetoothPeripheral, USBPeripheral, PeripheralManager, 6 tools (hw_list/connect/send/read/disconnect/info) — 961 LOC
+**Remaining:**
+- [ ] **hw_monitor tool** — Real-time device data streaming to agent
+- [ ] **Hardware event forwarding** — Auto-trigger agent on device data arrival
+- [ ] **Peripheral state persistence** — Survive page reloads for granted devices
+
+### Multi-Channel Input (Block 14) -- MOSTLY COMPLETE
+**Done:** ChannelManager, InboundMessage normalization, allowlists, formatForChannel, 3 tools (channel_list/send/history), 7 channel types defined — 465 LOC
+**Remaining:**
+- [ ] **Backend bridge server** — WebSocket relay + generic webhook receiver (server-side)
+- [ ] **Telegram bot plugin** — Polling mode implementation
+- [ ] **Discord/Slack/Matrix plugins** — Gateway/Events API implementations
+- [ ] **Email plugin** — IMAP polling + SMTP send
+- [ ] **IRC client** — Protocol implementation
+- [ ] **Attachment handling** — Images/files → agent context injection
+
+### Remote Access Gateway (Block 15) -- MOSTLY COMPLETE
+**Done:** PairingManager (6-digit codes, token exchange, expiry), RateLimiter (60/min), GatewayClient, 3 tools (remote_status/pair/revoke) — 482 LOC
+**Remaining:**
+- [ ] **Backend gateway server** — POST /message + GET /stream (SSE) endpoints
+- [ ] **Tunnel integration** — Cloudflare tunnel + ngrok provider abstraction
+- [ ] **Tunnel URL display** — QR code for mobile scanning
+- [ ] **Mobile-friendly /remote/ pages** — Static remote UI
+
+### OAuth App Integrations (Block 16) -- MOSTLY COMPLETE
+**Done:** OAuthManager (popup flow, CSRF state, vault storage, auto-refresh), 5 providers (Google/GitHub/Notion/Slack/Linear), 4 tools, AuthProfileManager — 911 LOC
+**Remaining:**
+- [ ] **Popup auth handler wiring** — Connect injectable handler to real window.open
+- [ ] **Code exchange via bridge** — Server-side OAuth code→token exchange
+- [ ] **Google Calendar/Gmail/Drive operations** — Read/write tools for Google APIs
+- [ ] **Notion/Slack/Linear read-write tools** — Platform-specific operations
+- [ ] **"Connected Apps" UI panel** — Settings section showing connected services
+- [ ] **Auth profile management UI** — Profile switching, account management
 
 ### Integrations
 - [ ] GitHub integration — PR review, issue management, code search
 - [ ] Calendar integration — Schedule awareness, meeting prep
 - [ ] Email integration — Draft, summarize, triage
 - [ ] Slack/Discord — Channel monitoring, response drafting
+
+### Skill Package Registry (Block 17) -- MOSTLY COMPLETE
+**Done:** SkillParser, SkillStorage (OPFS), SkillRegistry, SkillRegistryClient (remote search/fetch), 8 tools, metadata extraction, workspace+global discovery — 1770 LOC
+**Remaining:**
+- [ ] **Skill browser UI panel** — Full browseable UI for discovering/installing skills
+- [ ] **Skill dependency resolution** — Resolve and install required skills automatically
+- [ ] **Skill verification/signing** — Validate skill authenticity beyond YAML parsing
+
+### Browser Automation (Block 18) -- PARTIALLY COMPLETE
+**Done:** PageSnapshot, AutomationSession (rate limit, selector resolution), AutomationManager (domain allowlist), 8 tools (browser_open/read_page/click/fill/wait/evaluate/list_tabs/close_tab), sensitive field detection — 736 LOC
+**Remaining:**
+- [ ] **browser_select tool** — Select dropdown/radio values
+- [ ] **browser_screenshot tool** — Capture page screenshots for agent vision
+- [ ] **browser_scroll tool** — Scroll page/element
+- [ ] **Content script integration** — Real browser automation via extension (not mock)
+- [ ] **Multi-step workflow chaining** — Record and replay automation sequences
+- [ ] **Automation recipes as skills** — Package automations as installable skills
+
+### Auth Profiles (Block 19) -- MOSTLY COMPLETE
+**Done:** AuthProfile + AuthProfileManager, vault-encrypted credentials, CRUD + workspace binding, 3 tools (auth_status/list_profiles/switch_profile) — 353 LOC
+**Remaining:**
+- [ ] **Profile management UI** — Settings panel for add/edit/remove/switch profiles
+- [ ] **OAuth token refresh wiring** — Connect refresh flow to real OAuth providers
+- [ ] **Profile import/export** — Encrypted backup/restore
+- [ ] **Usage tracking per profile** — Cost attribution to specific API keys
+
+### Lifecycle Hooks (Block 20) -- PARTIALLY COMPLETE
+**Done:** HookPipeline with priority + fail-open, register/unregister/enable, 2 of 6 points wired (beforeInbound, beforeToolCall), audit logger hook — ~120 LOC
+**Remaining:**
+- [ ] **Wire beforeOutbound hook** — Trigger before agent response sent
+- [ ] **Wire transformResponse hook** — Mutate agent response before rendering
+- [ ] **Wire onSessionStart/onSessionEnd** — Lifecycle hooks for conversation boundaries
+- [ ] **hooks.json persistence** — Load/save hook config per workspace
+- [ ] **Skill hook registration** — Skills register hooks via SKILL.md frontmatter
+- [ ] **Hook management UI** — Enable/disable/configure hooks in settings
+
+### Routines Engine (Block 21) -- MOSTLY COMPLETE
+**Done:** RoutineEngine (cron/event/webhook), guardrails, auto-disable on failures, cron matching, event glob filtering, history tracking, 4 tools, serialization — 598 LOC
+**Remaining:**
+- [ ] **HMAC webhook signature verification** — Validate webhook authenticity
+- [ ] **Event bus integration** — Subscribe routines to agent event bus
+- [ ] **routine_history tool** — Expose execution history to agent
+
+### Self-Repair (Block 22) -- MOSTLY COMPLETE
+**Done:** StuckDetector (6 issue types), SelfRepairEngine with recovery strategies, loop detection, configurable thresholds, repair log, 2 tools — 425 LOC
+**Remaining:**
+- [ ] **Wire into agent run loop** — Auto-invoke .check() between turns
+- [ ] **Emergency compaction trigger** — Wire context pressure handler
+- [ ] **Tool timeout cancellation** — Actually cancel timed-out tool calls
+- [ ] **Fallback provider switching** — Switch provider on consecutive failures
+
+### Safety Pipeline (Block 23) -- MOSTLY COMPLETE
+**Done:** InputSanitizer (8 injection patterns), ToolCallValidator (path traversal, shell injection, URL scheme blocking), LeakDetector (8 secret patterns), SafetyPipeline orchestrator — 259 LOC
+**Remaining:**
+- [ ] **Wire sanitizeInput to inbound messages** — Apply on user input in agent loop
+- [ ] **Wire ToolCallValidator to tool execution** — Enforce validation before every tool call
+- [ ] **Wire scanOutput to LLM responses** — Check outbound for leaked secrets
+- [ ] **PolicyEngine** — Custom configurable rules beyond hardcoded patterns
+- [ ] **Safety audit logging** — Log blocked/flagged events to observability
+
+### Tool Builder (Block 24) -- MOSTLY COMPLETE
+**Done:** DynamicTool, ToolBuilder (build/test/edit/remove/list), version history + rollback, dry-run testing, import/export, 5 tools, trusted flag — 542 LOC
+**Remaining:**
+- [ ] **Wire sandbox executor** — Connect to andbox Worker sandbox for safe execution
+- [ ] **OPFS persistence** — Persist dynamic tools across sessions
+- [ ] **tool_promote** — Mark tool as trusted after user review
+- [ ] **Version diff/comparison UI** — Show changes between tool versions
+
+### Undo/Redo System (Block 25) -- COMPLETE
+- [x] UndoManager with turn checkpoint stack (beginTurn, undo, redo)
+- [x] TurnCheckpoint — snapshot per turn (history, memory ops, file ops, goal ops)
+- [x] recordMemoryOp/recordFileOp/recordGoalOp change tracking
+- [x] previewUndo/previewRedo human-readable summaries
+- [x] 3 agent tools: UndoTool, RedoTool, UndoStatusTool
+- [x] Integration with agent run loop (clawser-agent.js)
+
+### Response Cache (Block 26) -- COMPLETE
+- [x] ResponseCache with LRU eviction (500 entries, 30min TTL)
+- [x] FNV-1a hash for cache key generation
+- [x] Smart skip for tool-call responses (no caching side effects)
+- [x] Token/cost savings tracking with stats (hits, misses, hit rate)
+- [x] Provider integration in agent chat execution
+- [x] Cache config in settings panel (TTL, max entries)
+
+### Intent Router (Block 27) -- COMPLETE
+- [x] IntentRouter with pattern-based + heuristic classification
+- [x] MessageIntent enum: COMMAND, QUERY, TASK, CHAT, SYSTEM
+- [x] PIPELINE_CONFIG per intent (useMemory, useTools, modelHint, maxTokens)
+- [x] classifyWithLLM() fallback for ambiguous messages
+- [x] addPattern/addOverride/stripOverride extensibility
+- [x] 2 agent tools: IntentClassifyTool, IntentOverrideTool
+
+### WASM Tool Sandbox (Block 28) -- COMPLETE
+- [x] 3-tier sandbox hierarchy: TRUSTED (main thread), WORKER (Web Worker), WASM (metered)
+- [x] WorkerSandbox with timeout + auto-respawn
+- [x] WasmSandbox with fuel metering + memory caps
+- [x] CapabilityGate with capability-based permission checking
+- [x] SandboxManager — unified lifecycle (create/get/execute/terminate)
+- [x] SANDBOX_LIMITS per tier (timeout, memory, fuel, output size)
+- [x] Integration with ToolBuilder for dynamic tool execution
+- [x] 2 agent tools: SandboxRunTool, SandboxStatusTool
+
+### Heartbeat Checklist (Block 29) -- COMPLETE
+- [x] HeartbeatRunner with interval scheduling and wake triggers
+- [x] Markdown checklist parser (HEARTBEAT.md format)
+- [x] Check evaluation with agent context
+- [x] Silent-when-healthy alerting (only reports failures)
+- [x] Consecutive failure tracking
+- [x] Default checklist (context capacity, scheduler, cost, storage, provider reachability)
+- [x] Daemon integration via clawser-daemon.js
+- [x] 2 agent tools: HeartbeatStatusTool, HeartbeatRunTool
+
+### AI-Integrated Terminal / clawser CLI (Blocks 30-32) -- COMPLETE
+- [x] registerClawserCli(registry, getAgent, getShell) in clawser-cli.js
+- [x] parseFlags() — full flag parser (short/long flags, booleans, defaults)
+- [x] Subcommands: chat, exit, do, config, status, history, clear, tools, model, cost, compact, memory, mcp, session
+- [x] One-shot prompting via -p "prompt"
+- [x] Global flags: -m (model), --system, --no-stream, --continue, --resume, --tools, --max-turns
+- [x] REPL mode entry/exit via __enterAgentMode / __exitAgentMode flags
+- [x] Help text with usage examples
+
+### AskUserQuestion Tool (Block 33) -- COMPLETE
+- [x] AskUserQuestionTool class in clawser-tools.js (browser_ask_user)
+- [x] Structured questions (1-4 per call, 2-4 options each)
+- [x] Multi-select support, free-text "Other" option
+- [x] Full validation of question structure
+- [x] Permission: auto (always allowed — asking, not acting)
+
+### Additional Shell Builtins (Block 34) -- COMPLETE
+All 37 new commands implemented in clawser-shell-builtins.js:
+- [x] File Operations (8): touch, stat, find, du, basename, dirname, realpath, tree
+- [x] Text Processing (9): tr, cut, paste, rev, nl, fold, column, diff, sed
+- [x] Generators (6): seq, yes, printf, date, sleep, time
+- [x] Shell Session (7): clear, history, alias, unalias, set, unset, read
+- [x] Data & Conversion (4): xxd, base64, sha256sum, md5sum
+- [x] Process-Like (3): xargs, test, [
+
+### Terminal Sessions (Block 35) -- COMPLETE
+- [x] TerminalSessionManager in clawser-terminal-sessions.js
+- [x] Session naming, creation, switching, renaming, deletion
+- [x] OPFS persistence (meta.json, events.jsonl, state.json)
+- [x] Event recording: commands, results, agent prompts/responses, state snapshots
+- [x] Session fork (full + from specific event)
+- [x] Export: script (.sh), log (text/JSON/JSONL), markdown
+- [x] Session replay from event log
+- [x] CLI integration: clawser session [list|new|switch|rename|delete|fork|export]
+
+### Tool Management Panel (Block 36) -- COMPLETE
+- [x] Dedicated #panelToolMgmt sidebar panel
+- [x] Auto-categorization by prefix/source (20+ categories)
+- [x] Real-time search with result count
+- [x] Filter buttons: All, Enabled, Disabled, Needs Approval
+- [x] Per-tool: checkbox, permission badge, description, usage stats
+- [x] Per-category: Enable All / Disable All bulk toggles
+- [x] Tool detail expansion: full description, parameters, source, radio permission controls
+- [x] Global bulk actions: Enable All, Disable All, Reset to Defaults
+
+### Agents as First-Class Entities (Block 37) -- COMPLETE
+- [x] AgentStorage class in clawser-agent-storage.js
+- [x] Agent definition schema (id, name, provider, model, systemPrompt, tools, guardrails, etc.)
+- [x] 5 built-in starter agents (Echo, Chrome AI, Claude Sonnet, Claude Haiku, GPT-4o)
+- [x] Storage layers: built-in + global (OPFS) + workspace-scoped (OPFS)
+- [x] Active agent per workspace (localStorage)
+- [x] Full CRUD: listAll, listGlobal, listWorkspace, load, save, delete, setActive
+- [x] SwitchAgentTool + ConsultAgentTool (agent tools)
+- [x] @agent-name inline references via clawser-agent-ref.js (MAX_DEPTH=3)
 
 ### Developer API
 - [ ] Plugin API — Formal extension point for third-party tools
@@ -180,249 +681,6 @@ Priority: Integrations, API, and community.
 - [ ] Skills registry — Launch public skills registry
 - [ ] Documentation site — Hosted docs with tutorials
 - [x] Demo site — Live demo with Echo provider (no API key)
-
----
-
-## Phase 6: Remote Execution (wsh)
-
-Priority: Complete the wsh protocol implementation — browser-native remote shell, reverse relay, session management, and MCP bridging.
-
-### Phase 6.0: Protocol & Transport — COMPLETE
-- [x] CBOR control channel with BE32 framing
-- [x] Ed25519 pubkey auth (authorized_keys)
-- [x] WebTransport + WebSocket fallback
-- [x] 50+ message types (codegen from YAML spec)
-- [x] Ping/pong keepalive
-- [x] JS client library (connect, auth, sessions, file transfer, MCP)
-- [x] Rust CLI (connect, keygen, copy-id, scp, sessions, attach)
-- [x] Browser wsh tools (9 tools)
-- [x] Pairing system (6-digit codes, tokens)
-
-### Phase 6.1: Gateway & Networking — COMPLETE
-- [x] TCP proxy (outbound)
-- [x] UDP proxy (outbound)
-- [x] DNS resolution
-- [x] Bidirectional data relay (GatewayData 0x7e)
-- [x] Reverse TCP listeners (server-side bind)
-- [x] Gateway policy enforcement (allowlist, limits)
-- [x] Netway virtual networking (StreamSocket, DatagramSocket, Listener)
-- [x] InboundReject handler (TcpStream leak fix)
-- [x] UDP idle timeout (60s)
-- [x] Operation timeouts (30s default)
-- [x] write_channels leak fix on relay end
-- [x] Data pump error handling (close socket on transport error)
-
-### Phase 6.2: "wsh into Browser" Relay
-- [x] Server dispatch: ReverseRegister (0x50)
-- [x] Server dispatch: ReverseList (0x51) → ReversePeers (0x52)
-- [x] Server dispatch: ReverseConnect (0x53) with transport bridging
-- [x] Server: peer_transports map + cleanup on disconnect
-- [x] Browser: auto ReverseRegister on wsh connect
-- [x] Browser: onReverseConnect callback wiring in WshClient
-- [x] Browser: incoming session handler (clawser-wsh-incoming.js)
-- [x] Browser CLI: `wsh reverse` implementation (replace stub)
-- [x] Browser CLI: `wsh peers` implementation (replace stub)
-- [x] Rust CLI: wire `run_reverse()` (connect + register + hold)
-- [x] Rust CLI: wire `run_peers()` (connect + list + display)
-- [x] Rust CLI: `wsh connect <fingerprint>` reverse connect mode
-- [x] WshClient: `onRelayMessage` callback for relay-forwarded messages
-- [x] WshClient: `_isRelayForwardable()` — route Open/McpCall/McpDiscover/Close/Resize/Signal
-- [x] WshClient: `_transport` getter for relay reply sending
-- [x] IncomingSession: `startListening()` — wire onRelayMessage on connect
-- [x] IncomingSession: `handleRelayMessage()` — dispatch Open/McpDiscover/McpCall/Close
-- [x] IncomingSession: `_sendReply()` — send responses back through relay bridge
-- [x] IncomingSession: stale session replacement on re-connect
-
-### Phase 6.3: Session Management (Server)
-- [x] Server dispatch: Attach (0x30) — token validation + ring buffer replay
-- [x] Server dispatch: Resume (0x31) — token + last_seq replay
-- [x] Server dispatch: Open (0x10) — PTY/exec/meta channel creation
-- [x] Server dispatch: Resize (0x13) — PTY resize
-- [x] Server dispatch: Signal (0x14) — send to process group
-- [x] Server dispatch: Close (0x16) — channel teardown + session GC
-- [x] Session metadata: Rename (0x32)
-- [x] Session metadata: Snapshot (0x35) — mark position in recording
-- [x] Session metadata: Presence (0x36) — broadcast to attached clients
-- [x] Session metadata: ControlChanged (0x37)
-- [x] Session metadata: Metrics (0x38)
-- [x] Session metadata: IdleWarning (0x33) — server idle timer
-- [x] Session metadata: Shutdown (0x34) — on server SIGTERM
-
-### Phase 6.4: MCP Dispatch
-- [x] Server dispatch: McpDiscover (0x40) → McpTools (0x41)
-- [x] Server dispatch: McpCall (0x42) → McpResult (0x43)
-- [x] MCP HTTP proxy: discovery against remote servers
-- [x] MCP HTTP proxy: forwarding calls to remote servers
-
-### Phase 6.5: Protocol Improvements
-- [x] Dynamic capability negotiation (replace hardcoded features)
-- [x] Clipboard sync (OSC 52): add Clipboard message to spec + codegen
-- [x] Clipboard sync: server-side OSC 52 detection in PTY output
-- [x] Clipboard sync: client-side navigator.clipboard.writeText
-- [x] Per-key permission enforcement (parse authorized_keys options)
-- [x] Permission checks in dispatch (pty, exec, mcp, file-transfer, relay)
-- [x] Auth rate limiting (5/min per IP)
-- [x] Attach rate limiting (10/min per principal)
-- [x] Password auth implementation (PAM or config hash)
-- [x] Protocol version negotiation (version/min_version/max_version)
-
-### Phase 6.6: Client Enhancements
-- [x] URL read-only attach (#/wsh/session/<id>?token=X&mode=read)
-- [x] Browser CLI: `wsh sessions` (list active)
-- [x] Browser CLI: `wsh attach <session_id>` (reattach)
-- [x] Browser CLI: `wsh scp <src> <dst>` (file transfer)
-- [x] Browser CLI: `wsh connect <fingerprint>` (reverse connect)
-
-### Phase 6.7: Protocol Extensions & Future
-- [x] Session recording export (download JSONL/asciicast)
-- [x] Session snapshots (time-travel markers)
-- [x] Command journal (structured shell history with exit codes)
-- [x] Device labels on attach (browser/cli/platform metadata)
-- [x] Background jobs channel (kind: "job")
-- [x] Server metrics channel (CPU/memory/sessions)
-- [x] Idle suspend (SIGSTOP/SIGCONT instead of kill)
-- [x] Graceful PTY restart (restart shell without killing session)
-- [x] ghostty-web terminal frontend integration
-- [x] Ephemeral guest sessions (short-lived share links)
-- [x] Multi-attach read-only URL sharing
-- [x] Stream compression negotiation (zstd)
-- [x] Per-attachment rate control (slow consumer policy)
-- [x] Cross-session linking (jump host support)
-- [x] AI co-pilot attachment mode (read-only AI observer)
-- [x] E2E encrypted session mode
-- [x] Predictive local echo (mosh-style)
-- [x] Terminal diff-based sync (true mosh replacement)
-- [x] Horizontal scaling (stateless tokens, shared secret)
-- [x] Shared sessions across principals
-- [x] Structured file channel (SFTP replacement)
-- [x] Policy engine (OPA-like enterprise control)
-
-### Phase 6.8: Bug Fixes & Hardening — COMPLETE
-**Critical:**
-- [x] Guest token store — GuestInvite generates token but discards it; add HashMap store + return token
-- [x] GuestJoin validation — always rejects because no token store exists; wire to token store
-- [x] Session ownership checks — 12+ handlers lack caller ownership verification
-- [x] Path traversal — sanitize session_id in RecordingExport/CommandJournal file paths
-
-**High:**
-- [x] PolicyEval default-deny — currently always returns allowed:true; change to default-deny
-- [x] E2E relay to peer — KeyExchange/EncryptedFrame silently dropped; relay to target peer
-- [x] CompressAck codec — claims accepted for zstd but never installs codec; reject until implemented
-
-**Medium:**
-- [x] RateControl handler — stub; needs per-channel rate state tracking
-- [x] CopilotAttach handler — stub; needs session attachment in read-only mode
-- [x] CopilotSuggest handler — stub; needs relay to attached copilot clients
-- [x] CopilotDetach handler — stub; needs copilot session cleanup
-- [x] SessionGrant handler — stub; needs principal ACL update
-- [x] SessionRevoke handler — stub; needs principal ACL removal
-- [x] PolicyUpdate handler — stub; needs policy store update
-- [x] NodeAnnounce handler — stub; needs cluster node registry
-- [x] TerminalConfig handler — stub; needs per-session terminal config store
-
-**Low:**
-- [x] EchoAck handler — stub; needs RTT measurement storage
-- [x] EchoState handler — stub; needs echo state tracking
-
-**Spec:**
-- [x] Fix GatewayOk/GatewayFail descriptions (incorrectly reference ListenRequest)
-- [x] Fix GuestInvite description (claims echo-back but no token field in response)
-- [x] Add missing descriptions to 34 protocol messages
-
-**Tests:**
-- [x] Import 6 missing constructors (clipboard, recordingExport, commandJournal, metricsRequest, suspendSession, restartPty)
-- [x] Add tests for 15 imported-but-untested constructors (authMethods, openFail, error, resume, rename, idleWarning, shutdown, snapshot, presence, controlChanged, mcpCall, mcpResult, reverseList, reversePeers, reverseConnect)
-
-### Phase 6.9: Second Audit Fixes — COMPLETE
-**Critical:**
-- [x] E2E cross-session leak — KeyExchange/EncryptedFrame broadcast to ALL peers; scope to session participants only, exclude sender
-
-**High:**
-- [x] CopilotSuggest global broadcast — scoped to session participants only via conn_session_map
-- [x] ACL escalation — check_session_access allows grantees to call Grant/Revoke/GuestInvite/ShareSession; add check_session_owner for privileged operations
-- [x] GuestRevoke missing auth — anyone could revoke any token; add session ownership check
-- [x] PolicyUpdate missing auth — anyone could update policy; add session ownership check
-
-**Medium:**
-- [x] NodeAnnounce missing auth — anyone could inject cluster nodes; add session ownership check
-- [x] WS port overflow — port + 1 on u16 could overflow at 65535; use checked_add
-- [x] Guest token low entropy — used u32 random (4B); upgraded to u128 (16B)
-- [x] SuspendSession false success — no-op stub returned Ok(None); now returns honest error
-- [x] Channel ID collision — used first 4 bytes of session_id; use full DefaultHasher
-- [x] GuestJoin single-use — tokens not consumed after use; mark as revoked on join
-- [x] ShareSession storage — generated share_id but never stored; add ShareEntry store with GC
-
-**Low:**
-- [x] RateWarning missing session check — added check_session_access
-- [x] Rename missing ownership check — added check_session_access
-- [x] RestartPty missing ownership check — added check_session_access
-
-**Codegen:**
-- [x] 8 Rust serde(default) mismatches — codegen now emits named default functions for non-trivial defaults (RecordingExport.format, ResolveDns.record_type, ListenRequest.bind_addr, ShareSession.mode, CompressBegin.level, RateControl.policy, GuestInvite.permissions, SessionGrant.permissions)
-
-**Spec:**
-- [x] ChannelKind 'job' missing description — added "Background automation job channel"
-
-**Tests:**
-- [x] 35 MSG opcode explicit value assertions (handshake, channel, transport, session, MCP, reverse, framing)
-- [x] 8 untested default tests (hello.features, serverHello.features/fingerprints, authMethods.methods, openOk.streamIds, attach.mode, reverseRegister.capabilities, fileResult.metadata)
-- [x] 16 optional field tests (open.env/cols/rows, metrics.memory/sessions/rtt/all-omitted, attach.device_label, fileResult.error_message)
-
-### Phase 6.12: Final Non-Critical Fixes — COMPLETE
-- [x] channel_id collision — replaced hash-based channel_id with atomic counter (AtomicU32), collision-free
-- [x] Close/Resize wrong session — added channel_sessions map (channel_id → session_id) for correct routing
-- [x] SessionManager TOCTOU — re-check count under write lock after PTY spawn to prevent max_sessions+N race
-- [x] GuestRevoke silent response — now returns GuestRevoke confirmation or Error on not-found
-- [x] ShareRevoke silent response — now returns ShareRevoke confirmation or Error on not-found
-- [x] next_conn_id wrap-around — alloc_conn_id() skips 0 (reserved sentinel) on u64 wrap
-- [x] WS frame size limit — added MAX_WS_FRAME_SIZE (1 MiB) consistent with QUIC transport limit
-- [x] channel_sessions GC — added to periodic GC task, cleaned against active session IDs
-
-### Phase 6.11: Fourth Audit Fixes — COMPLETE
-**Critical:**
-- [x] Password auth bypass — `auth.password = None` silently skipped validation; now rejects with "password required"
-
-**High:**
-- [x] ReverseConnect ID space mismatch — PeerRegistry used its own conn_id counter; now uses server-assigned conn_id via `register_with_conn_id()`
-- [x] Open handler missing conn_session_map — newly created sessions not registered for E2E relay; now updates conn_session_map on successful Open
-- [x] CopilotSuggest missing auth — anyone could inject suggestions into any session; added check_session_access
-- [x] Close handler detaches from wrong session — unconditionally uses ctx.session_id; noted (channel_id→session mapping needed for full fix)
-
-**Medium:**
-- [x] SessionUnlink missing auth — defense-in-depth check_session_access added
-- [x] EchoAck/EchoState missing auth — defense-in-depth check_session_access added
-- [x] TermSync/TermDiff missing auth — defense-in-depth check_session_access added
-- [x] terminal_configs/echo_trackers crude GC — changed from "clear all" to evict-half strategy
-
-**Low:**
-- [x] Snapshot missing auth — defense-in-depth check_session_access added
-- [x] FileChunk missing auth — defense-in-depth check_session_access added
-- [x] NodeRedirect accepted from clients — now rejected as server-to-client only
-- [x] FileResult/PolicyResult accepted from clients — now rejected as server-to-client only
-
-### Phase 6.10: Third Audit Fixes — COMPLETE
-**Critical:**
-- [x] Attach/Resume missing session-access check — any authenticated user with a valid token could attach to any session; added check_session_access + conn_session_map update
-- [x] ShareRevoke was a no-op — logged and returned None without removing entries; now validates ownership and removes from share_entries
-- [x] conn_session_map not populated on Attach/Resume/GuestJoin — only ReverseRegister populated it; now all session-joining paths update it
-
-**High:**
-- [x] RecordingExport missing auth — anyone could export any session's recording; added check_session_access
-- [x] CommandJournal missing auth — anyone could write journal entries for any session; added check_session_access
-- [x] CopilotAttach missing auth — anyone could attach copilot to any session; added check_session_access
-- [x] CopilotDetach wrong removal — used pop() removing last copilot instead of matching; added conn_id to CopilotSession and match by conn_id
-- [x] KeyExchange/EncryptedFrame missing auth on session_id — anyone could relay E2E to any session; added check_session_access
-- [x] Idle warning broadcast to ALL peers — scoped to session participants via conn_session_map
-
-**Medium:**
-- [x] GC missing for 6 maps — session_acls, rate_control_state, copilot_sessions, terminal_configs, echo_trackers, conn_session_map now GC'd periodically
-- [x] GuestToken TTL uncapped — u64::MAX ttl creates permanent tokens; capped at 86400 (24h)
-- [x] PolicyUpdate auth always true — check_session_owner on own session always passes; use admin fingerprint check (first authorized key)
-- [x] UTF-8 panic in GuestInvite/ShareSession — byte slicing `[..8]` on multi-byte session_id panics; use chars().take(8)
-
-**Low:**
-- [x] TerminalConfig missing auth — anyone could set config for any channel; added check_session_access
-- [x] ReverseRegister conn_id conflict — auth path now assigns conn_id, ReverseRegister no longer overrides
 
 ---
 
