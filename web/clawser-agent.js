@@ -1460,6 +1460,15 @@ export class ClawserAgent {
           return;
         }
 
+        // Record cost for non-streaming fallback
+        if (response.usage) {
+          try {
+            const { estimateCost } = await getProvidersModule();
+            const cost = estimateCost(response.model, response.usage);
+            this.#autonomy.recordCost(Math.round(cost * 100));
+          } catch { /* best-effort */ }
+        }
+
         // Codex path
         if (useCodex && (!response.tool_calls || response.tool_calls.length === 0)) {
           const codexResult = await this.#executeAndSummarize(response, request);
@@ -1575,6 +1584,15 @@ export class ClawserAgent {
 
       if (!fullResponse) {
         fullResponse = { content: fullContent, tool_calls: fullToolCalls, usage: { input_tokens: 0, output_tokens: 0 }, model: '' };
+      }
+
+      // Record cost for streaming response
+      if (fullResponse.usage && (fullResponse.usage.input_tokens > 0 || fullResponse.usage.output_tokens > 0)) {
+        try {
+          const { estimateCost } = await getProvidersModule();
+          const cost = estimateCost(fullResponse.model, fullResponse.usage);
+          this.#autonomy.recordCost(Math.round(cost * 100));
+        } catch { /* best-effort */ }
       }
 
       // Codex path for non-native providers
@@ -1826,12 +1844,19 @@ export class ClawserAgent {
   /**
    * Truncate conversation history to a given length (for undo).
    * @param {number} len - Target length
-   * @returns {number} Number of messages removed
+   * @returns {Array} Removed messages (for redo restoration)
    */
   truncateHistory(len) {
-    const removed = Math.max(0, this.#history.length - len);
-    if (removed > 0) this.#history.length = len;
-    return removed;
+    if (this.#history.length <= len) return [];
+    return this.#history.splice(len);
+  }
+
+  /**
+   * Append messages back to conversation history (for redo).
+   * @param {Array} messages - Messages to restore
+   */
+  restoreHistory(messages) {
+    if (Array.isArray(messages)) this.#history.push(...messages);
   }
 
   // ── Memory backend ──────────────────────────────────────────
@@ -2416,10 +2441,11 @@ export class ClawserAgent {
   /** Save provider and model preferences to localStorage (API keys go via vault) */
   persistConfig() {
     try {
-      const config = {
-        provider: this.#activeProvider,
-        model: this.#model,
-      };
+      const raw = localStorage.getItem(lsKey.config(this.#workspaceId));
+      const config = raw ? JSON.parse(raw) : {};
+      config.provider = this.#activeProvider;
+      config.model = this.#model;
+      delete config.apiKey; // never persist API keys in localStorage
       localStorage.setItem(lsKey.config(this.#workspaceId), JSON.stringify(config));
     } catch (e) { console.warn('[clawser] failed to persist config', e); }
   }

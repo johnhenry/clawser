@@ -1023,7 +1023,7 @@ class SkillScriptTool extends BrowserTool {
       },
     };
   }
-  get permission() { return 'internal'; }
+  get permission() { return 'approve'; }
 
   async execute({ input = '' }) {
     try {

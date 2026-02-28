@@ -37,10 +37,14 @@ export function saveAccounts(list) {
 export async function createAccount({ name, service, apiKey, model }) {
   const id = `${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 4)}`;
   const list = loadAccounts();
-  list.push({ id, name, service, apiKey, model });
+  // Store key in vault first if unlocked, never write plaintext to localStorage
+  if (state.vault && !state.vault.isLocked) {
+    await state.vault.store(`apikey-${id}`, apiKey);
+    list.push({ id, name, service, apiKey: '', model, vaultStored: true });
+  } else {
+    list.push({ id, name, service, apiKey, model });
+  }
   saveAccounts(list);
-  // Attempt to store in vault (async, best-effort)
-  await storeAccountKey(id, apiKey);
   return id;
 }
 

@@ -240,8 +240,8 @@ export class FetchTool extends BrowserTool {
     const hostname = parsed.hostname.toLowerCase();
 
     // Block private/reserved addresses (SSRF mitigation)
-    if (/^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|0\.|169\.254\.|fc|fd|fe80)/i.test(hostname) ||
-        hostname === 'localhost' || hostname === '[::1]' || parsed.protocol === 'file:') {
+    if (/^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|0\.|169\.254\.|fc|fd|fe80|::ffff:)/i.test(hostname) ||
+        hostname === 'localhost' || hostname === '::1' || hostname === '[::1]' || parsed.protocol === 'file:') {
       return { success: false, output: '', error: `Blocked: fetching private/reserved address "${hostname}" is not allowed` };
     }
 

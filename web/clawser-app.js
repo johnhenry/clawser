@@ -112,7 +112,12 @@ state.undoManager = new UndoManager({
       if (state.agent && typeof state.agent.truncateHistory === 'function') {
         return state.agent.truncateHistory(historyLength || 0);
       }
-      return 0;
+      return [];
+    },
+    restoreHistory: (messages) => {
+      if (state.agent && typeof state.agent.restoreHistory === 'function') {
+        state.agent.restoreHistory(messages);
+      }
     },
     revertMemory: async (op) => {
       const agent = state.agent;

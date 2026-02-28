@@ -104,7 +104,7 @@ export class ToolCallValidator {
     }
 
     return {
-      valid: issues.filter(i => i.severity === 'critical').length === 0,
+      valid: issues.filter(i => i.severity === 'critical' || i.severity === 'high').length === 0,
       issues,
     };
   }

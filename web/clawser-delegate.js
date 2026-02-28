@@ -287,7 +287,25 @@ export class DelegateManager {
    */
   async delegateAll(optsList) {
     const agents = optsList.map(opts => this.create(opts));
-    return Promise.all(agents.map(a => this.run(a.id)));
+    const results = [];
+    const running = new Set();
+    const queue = [...agents];
+
+    const runNext = async () => {
+      while (queue.length > 0 && running.size < this.#maxConcurrency) {
+        const agent = queue.shift();
+        const p = this.run(agent.id).then(r => { running.delete(p); return r; });
+        running.add(p);
+      }
+    };
+
+    await runNext();
+    while (running.size > 0) {
+      const result = await Promise.race(running);
+      results.push(result);
+      await runNext();
+    }
+    return results;
   }
 
   /**

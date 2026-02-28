@@ -292,6 +292,7 @@ export class ResponseCache {
    */
   static cacheKey(messages, model) {
     const significant = messages
+      .filter(m => m.role !== 'system')
       .map(m => `${m.role}:${m.content || ''}`)
       .join('|');
     return `${model}::${ResponseCache.hash(significant)}`;

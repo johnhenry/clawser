@@ -795,6 +795,8 @@ export async function sendMessage() {
       if (sanitized.flags?.length > 0) {
         addSafetyBanner(sanitized.flags.join(', '));
       }
+      // Use sanitized content (zero-width chars stripped) for the actual message
+      text = sanitized.content || text;
     } catch (e) { /* safety check is non-critical */ }
   }
 
