@@ -24,7 +24,8 @@ export interface UndoResult {
 }
 
 export interface UndoHandlers {
-  revertHistory?: (historyLength: number) => Promise<number>;
+  revertHistory?: (historyLength: number) => Promise<number | unknown[]>;
+  restoreHistory?: (messages: unknown[]) => Promise<void>;
   revertMemory?: (op: Record<string, unknown>) => Promise<void>;
   revertFile?: (op: Record<string, unknown>) => Promise<void>;
   revertGoal?: (op: Record<string, unknown>) => Promise<void>;

@@ -118,6 +118,10 @@ export class SubAgent {
     this.#emit('delegate_start', { goal: this.#goal, depth: this.#depth });
 
     for (let i = 0; i < this.#maxIterations; i++) {
+      if (this.#status === 'cancelled') {
+        this.#result = { success: false, summary: 'Cancelled.', iterations: i, toolCalls: this.#toolCallCount };
+        return this.#result;
+      }
       this.#iterations = i + 1;
 
       try {

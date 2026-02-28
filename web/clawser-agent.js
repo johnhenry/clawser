@@ -2275,6 +2275,14 @@ export class ClawserAgent {
         }
       }
 
+      // Sync schedulerNextId past any restored jobs
+      for (const j of this.#schedulerJobs) {
+        const num = parseInt((j.id || '').replace('job_', ''), 10);
+        if (!isNaN(num) && num >= this.#schedulerNextId) {
+          this.#schedulerNextId = num + 1;
+        }
+      }
+
       return 0;
     } catch (e) {
       this.#onLog(4, `restore failed: ${e.message}`);
@@ -2405,12 +2413,11 @@ export class ClawserAgent {
     }
   }
 
-  /** Save provider and API key preferences to localStorage */
+  /** Save provider and model preferences to localStorage (API keys go via vault) */
   persistConfig() {
     try {
       const config = {
         provider: this.#activeProvider,
-        apiKey: this.#apiKey,
         model: this.#model,
       };
       localStorage.setItem(lsKey.config(this.#workspaceId), JSON.stringify(config));

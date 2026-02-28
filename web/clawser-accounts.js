@@ -83,10 +83,9 @@ export async function storeAccountKey(acctId, apiKey) {
 }
 
 /**
- * Resolve an account's API key from the vault.
- * The vault is the sole source for API keys — no plaintext fallback.
+ * Resolve an account's API key: tries vault first, falls back to plaintext in localStorage.
  * @param {Object} acct - Account object
- * @returns {Promise<string>} API key (empty string if vault is locked or key not found)
+ * @returns {Promise<string>} API key (empty string if unavailable)
  */
 export async function resolveAccountKey(acct) {
   if (state.vault && !state.vault.isLocked) {
@@ -95,10 +94,11 @@ export async function resolveAccountKey(acct) {
       state.vault.resetIdleTimer();
       return key;
     } catch {
-      // Key not in vault
+      // Key not in vault — fall through to plaintext fallback
     }
   }
-  return '';
+  // Fallback: return plaintext key from localStorage if present
+  return acct.apiKey || '';
 }
 
 /**
@@ -180,9 +180,15 @@ export function showAccountEditForm(acct, parentEl) {
     const newName = form.querySelector('.edit-name').value.trim();
     const newKey = form.querySelector('.edit-key').value.trim();
     const newModel = form.querySelector('.edit-model').value.trim();
-    if (!newName || !newKey || !newModel) return;
-    updateAccount(acct.id, { name: newName, apiKey: newKey, model: newModel });
-    await storeAccountKey(acct.id, newKey);
+    if (!newName || !newModel) return;
+    // If vault-stored and no new key entered, keep existing key
+    if (!newKey && !acct.vaultStored) return;
+    const updates = { name: newName, model: newModel };
+    if (newKey) {
+      // Store key directly to vault, don't write plaintext to localStorage
+      await storeAccountKey(acct.id, newKey);
+    }
+    updateAccount(acct.id, updates);
     form.remove();
     rebuildProviderDropdown();
     renderAccountList();

@@ -374,6 +374,7 @@ export class GatewayClient {
   }
 
   #fetch(path, opts = {}) {
+    if (!this.#fetchFn) throw new Error('No fetch implementation available');
     const headers = { ...(opts.headers || {}) };
     if (this.#token) {
       headers['Authorization'] = `Bearer ${this.#token}`;

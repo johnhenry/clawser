@@ -140,10 +140,16 @@ export class UndoManager {
         goalOpsReverted: 0,
       };
 
-      // 1. Revert conversation history
+      // 1. Revert conversation history (save removed messages for redo)
       if (this.#handlers.revertHistory) {
         try {
-          details.messagesRemoved = await this.#handlers.revertHistory(cp.snapshot.historyLength);
+          const removed = await this.#handlers.revertHistory(cp.snapshot.historyLength);
+          if (typeof removed === 'number') {
+            details.messagesRemoved = removed;
+          } else if (Array.isArray(removed)) {
+            cp.snapshot._removedMessages = removed;
+            details.messagesRemoved = removed.length;
+          }
         } catch { /* ignore */ }
       }
 
@@ -283,6 +289,12 @@ export class UndoManager {
       const cp = this.#redoStack.pop();
       // Re-apply each operation forward
       if (cp.snapshot) {
+        // Restore conversation history removed during undo
+        if (cp.snapshot._removedMessages && this.#handlers.restoreHistory) {
+          try {
+            await this.#handlers.restoreHistory(cp.snapshot._removedMessages);
+          } catch { /* ignore */ }
+        }
         for (const op of cp.snapshot.memoryOps) {
           await this.#applyForward({ ...op, layer: 'memory' });
         }

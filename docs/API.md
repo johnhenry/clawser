@@ -102,7 +102,7 @@ static async create(opts) => ClawserAgent
 |--------|-----------|---------|-------------|
 | `persistCheckpoint` | `async persistCheckpoint()` | `void` | Save binary checkpoint to OPFS. |
 | `restoreCheckpoint` | `async restoreCheckpoint()` | `void` | Restore from OPFS checkpoint (v2 path, v1 fallback). |
-| `persistConfig` | `persistConfig()` | `void` | Save provider/key/model to localStorage. |
+| `persistConfig` | `persistConfig()` | `void` | Save provider/model to localStorage (API keys use vault). |
 | `restoreConfig` | `restoreConfig()` | `object\|null` | Load config from localStorage. |
 | `persistConversation` | `async persistConversation(convId, metadata?)` | `void` | Save conversation as OPFS directory (meta.json + events.jsonl). |
 | `restoreConversation` | `async restoreConversation(convId)` | `object\|null` | Restore conversation from OPFS. |

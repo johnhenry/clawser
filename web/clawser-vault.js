@@ -211,7 +211,10 @@ export class SecretVault {
   async unlock(passphrase) {
     // Load or create salt
     let saltPacked = await this.#storage.read(SALT_KEY);
-    if (!saltPacked || saltPacked.length !== SALT_BYTES) {
+    if (saltPacked && saltPacked.length !== SALT_BYTES) {
+      throw new Error('Vault salt is corrupted (unexpected length). Cannot derive key safely.');
+    }
+    if (!saltPacked) {
       saltPacked = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
       await this.#storage.write(SALT_KEY, saltPacked);
     }

@@ -34,7 +34,7 @@ docker run -p 8080:80 clawser
 
 ## API Keys
 
-API keys for external providers (OpenAI, Anthropic, etc.) are stored in the browser's `localStorage`. They never leave the client unless sent directly to the provider's API endpoint.
+API keys for external providers (OpenAI, Anthropic, etc.) are stored in the browser's encrypted vault (PBKDF2 + AES-GCM). Provider and model preferences are saved to `localStorage` without sensitive data. Keys never leave the client unless sent directly to the provider's API endpoint.
 
 ## OPFS Storage
 
