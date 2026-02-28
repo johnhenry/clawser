@@ -35,7 +35,7 @@ export function saveAccounts(list) {
  * @returns {Promise<string>} Account ID
  */
 export async function createAccount({ name, service, apiKey, model }) {
-  const id = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  const id = `${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 4)}`;
   const list = loadAccounts();
   list.push({ id, name, service, apiKey, model });
   saveAccounts(list);
@@ -83,21 +83,22 @@ export async function storeAccountKey(acctId, apiKey) {
 }
 
 /**
- * Resolve an account's API key from the vault (preferred) or localStorage fallback.
+ * Resolve an account's API key from the vault.
+ * The vault is the sole source for API keys — no plaintext fallback.
  * @param {Object} acct - Account object
- * @returns {Promise<string>} API key
+ * @returns {Promise<string>} API key (empty string if vault is locked or key not found)
  */
 export async function resolveAccountKey(acct) {
-  // Try vault first
   if (state.vault && !state.vault.isLocked) {
     try {
-      return await state.vault.retrieve(`apikey-${acct.id}`);
+      const key = await state.vault.retrieve(`apikey-${acct.id}`);
+      state.vault.resetIdleTimer();
+      return key;
     } catch {
-      // Key not in vault — fall through to plaintext
+      // Key not in vault
     }
   }
-  // Fallback to plaintext in account object
-  return acct.apiKey || '';
+  return '';
 }
 
 /**

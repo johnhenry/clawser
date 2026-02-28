@@ -952,6 +952,27 @@ export class ClawserAgent {
         continue;
       }
 
+      // Undo: capture previous state before destructive ops
+      let _undoPrev = undefined;
+      if (this.#undoManager) {
+        try {
+          if (call.name === 'agent_memory_forget' && params.id) {
+            const entry = this.#memory?.get(params.id);
+            if (entry) _undoPrev = { key: entry.key, content: entry.content, category: entry.category };
+          } else if ((call.name === 'browser_fs_write' || call.name === 'browser_fs_delete') && params.path) {
+            const tool = this.#browserTools?.get('browser_fs_read');
+            if (tool) {
+              const prev = await tool.execute({ path: params.path }).catch(() => null);
+              if (prev?.success) _undoPrev = { previousContent: prev.output };
+            }
+          } else if (call.name === 'goal_update' && (params.goal_id || params.id)) {
+            const goalId = params.goal_id || params.id;
+            const goal = this.#goals.find(g => g.id === goalId);
+            if (goal) _undoPrev = { previousStatus: goal.status };
+          }
+        } catch { /* best-effort */ }
+      }
+
       // 1. Check browser tools first
       if (this.#browserTools?.has(call.name)) {
         this.#onToolCall(call.name, params, null);
@@ -980,7 +1001,7 @@ export class ClawserAgent {
         }
       }
 
-      results.push({ id: call.id, name: call.name, result });
+      results.push({ id: call.id, name: call.name, result, args: params, _undoPrev });
     }
 
     return results;
@@ -1299,18 +1320,7 @@ export class ClawserAgent {
           result: tr.result,
         }, 'system');
 
-        // Undo: record file/memory ops for revert
-        if (this.#undoManager && tr.result.success) {
-          if (tr.name === 'fs_write' || tr.name === 'browser_fs_write') {
-            this.#undoManager.recordFileOp?.({ type: 'write', path: tr.name });
-          } else if (tr.name === 'fs_delete' || tr.name === 'browser_fs_delete') {
-            this.#undoManager.recordFileOp?.({ type: 'delete', path: tr.name });
-          } else if (tr.name === 'memory_store') {
-            this.#undoManager.recordMemoryOp?.({ type: 'store' });
-          } else if (tr.name === 'memory_forget') {
-            this.#undoManager.recordMemoryOp?.({ type: 'forget' });
-          }
-        }
+        this.#recordUndoOps(tr);
       }
 
       // Self-repair: stuck detection after tool loop iteration
@@ -1495,6 +1505,8 @@ export class ClawserAgent {
           });
           this.#eventLog.append('tool_result', { call_id: tr.id, name: tr.name, result: tr.result }, 'system');
           yield { type: 'tool_result', name: tr.name, result: tr.result };
+
+          this.#recordUndoOps(tr);
         }
 
         // Self-repair: stuck detection (non-streaming path)
@@ -1615,6 +1627,8 @@ export class ClawserAgent {
         });
         this.#eventLog.append('tool_result', { call_id: tr.id, name: tr.name, result: tr.result }, 'system');
         yield { type: 'tool_result', name: tr.name, result: tr.result };
+
+        this.#recordUndoOps(tr);
       }
 
       // Self-repair: stuck detection (streaming path)
@@ -1784,6 +1798,40 @@ export class ClawserAgent {
       scheduler_snapshot: this.#schedulerJobs,
       version: '1.0.0',
     };
+  }
+
+  /**
+   * Record undo ops for a completed tool result.
+   * @param {object} tr - { name, args, result, _undoPrev }
+   */
+  #recordUndoOps(tr) {
+    if (!this.#undoManager || !tr.result.success) return;
+    if (tr.name === 'browser_fs_write') {
+      this.#undoManager.recordFileOp?.({ action: 'write', path: tr.args?.path, content: tr.args?.content, previousContent: tr._undoPrev?.previousContent });
+    } else if (tr.name === 'browser_fs_delete') {
+      this.#undoManager.recordFileOp?.({ action: 'delete', path: tr.args?.path, previousContent: tr._undoPrev?.previousContent });
+    } else if (tr.name === 'agent_memory_store') {
+      const memId = tr.result?.output?.match?.(/mem_\w+/)?.[0];
+      this.#undoManager.recordMemoryOp?.({ action: 'store', id: memId, key: tr.args?.key, content: tr.args?.content, category: tr.args?.category || 'learned' });
+    } else if (tr.name === 'agent_memory_forget') {
+      this.#undoManager.recordMemoryOp?.({ action: 'forget', id: tr.args?.id, ...tr._undoPrev });
+    } else if (tr.name === 'goal_add') {
+      this.#undoManager.recordGoalOp?.({ action: 'add', goalId: tr.args?.id || tr.result?.output?.match?.(/goal_\w+/)?.[0] });
+    } else if (tr.name === 'goal_update') {
+      const goalId = tr.args?.goal_id || tr.args?.id;
+      this.#undoManager.recordGoalOp?.({ action: 'update', goalId, status: tr.args?.status, previousStatus: tr._undoPrev?.previousStatus });
+    }
+  }
+
+  /**
+   * Truncate conversation history to a given length (for undo).
+   * @param {number} len - Target length
+   * @returns {number} Number of messages removed
+   */
+  truncateHistory(len) {
+    const removed = Math.max(0, this.#history.length - len);
+    if (removed > 0) this.#history.length = len;
+    return removed;
   }
 
   // ── Memory backend ──────────────────────────────────────────

@@ -55,9 +55,7 @@ export class SubAgent {
    * @param {Function} [opts.onEvent] - Event callback
    */
   constructor(opts) {
-    this.#id = typeof crypto !== 'undefined' && crypto.randomUUID
-      ? crypto.randomUUID()
-      : `sub-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    this.#id = crypto.randomUUID();
     this.#goal = opts.goal;
     this.#chatFn = opts.chatFn;
     this.#executeFn = opts.executeFn;

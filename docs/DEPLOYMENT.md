@@ -50,6 +50,21 @@ Storage is scoped to the origin. Clearing browser data will remove all OPFS cont
 
 Clawser includes a `manifest.json` for PWA installation. When served over HTTPS, users can install it as a standalone app via Chrome's install prompt.
 
+## Demo Mode
+
+Append `?demo=true` to the URL to start Clawser in demo mode:
+
+```
+http://localhost:8080/web/?demo=true
+```
+
+Demo mode:
+- Skips the vault passphrase prompt on startup
+- Forces the **Echo** provider (no LLM or API key required)
+- Shows a blue banner indicating demo mode is active
+
+This is useful for live demos, screenshots, and letting users explore the UI without configuring an API key. The Echo provider mirrors back user messages, so tool calling and streaming are not exercised.
+
 ## Service Worker
 
 The included `web/sw.js` provides stale-while-revalidate caching for the app shell. Register it in production by uncommenting the SW registration in `index.html` or adding:

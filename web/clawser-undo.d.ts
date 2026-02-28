@@ -28,6 +28,9 @@ export interface UndoHandlers {
   revertMemory?: (op: Record<string, unknown>) => Promise<void>;
   revertFile?: (op: Record<string, unknown>) => Promise<void>;
   revertGoal?: (op: Record<string, unknown>) => Promise<void>;
+  applyMemory?: (op: Record<string, unknown>) => Promise<void>;
+  applyFile?: (op: Record<string, unknown>) => Promise<void>;
+  applyGoal?: (op: Record<string, unknown>) => Promise<void>;
 }
 
 export function resetTurnCounter(): void;
@@ -48,6 +51,10 @@ export class UndoManager {
   get maxHistory(): number;
   set maxHistory(n: number);
   previewUndo(turns?: number): string;
+  get canRedo(): boolean;
+  get redoDepth(): number;
+  previewRedo(): { id: string; ops: number } | null;
+  redo(turns?: number): Promise<TurnCheckpoint[]>;
 }
 
 export class UndoTool extends BrowserTool {
@@ -58,4 +65,9 @@ export class UndoTool extends BrowserTool {
 export class UndoStatusTool extends BrowserTool {
   constructor(manager: UndoManager);
   execute(params?: { preview_turns?: number }): Promise<ToolResult>;
+}
+
+export class RedoTool extends BrowserTool {
+  constructor(manager: UndoManager);
+  execute(params?: { turns?: number }): Promise<ToolResult>;
 }

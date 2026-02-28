@@ -1,2 +1,1 @@
-/** Side-effect module: no exports. Bootstraps the Clawser application. */
-export {};
+export declare function shutdown(): Promise<void>;

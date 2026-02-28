@@ -15,6 +15,92 @@ import { gateCapabilities } from './capability-gate.mjs';
 import { makeDeferred, makeTimeoutError, makeAbortError } from './deferred.mjs';
 import { DEFAULT_TIMEOUT_MS } from './constants.mjs';
 
+const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
+
+// ── Inline sandbox (same-thread, AsyncFunction-based) ──
+
+function createInlineSandbox(opts = {}) {
+  const globals = opts.globals || {};
+  return {
+    async execute(code, execOpts = {}) {
+      const timeout = execOpts.timeout || opts.defaultTimeoutMs || 30000;
+      const globalKeys = Object.keys(globals);
+      const globalValues = globalKeys.map(k => globals[k]);
+      const output = [];
+      const print = (...args) => {
+        output.push(args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' '));
+      };
+      const fn = new AsyncFunction(...globalKeys, 'print', `"use strict";\n${code}`);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeout);
+      try {
+        const result = await Promise.race([
+          fn(...globalValues, print),
+          new Promise((_, reject) => {
+            controller.signal.addEventListener('abort', () =>
+              reject(new Error('Execution timed out')));
+          }),
+        ]);
+        return { success: true, output: output.join('\n'), returnValue: result };
+      } catch (e) {
+        return { success: false, output: output.join('\n'), error: e.message || String(e) };
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    terminate() {},
+  };
+}
+
+// ── Data-URI sandbox (dynamic import-based isolation) ──
+
+function createDataUriSandbox(opts = {}) {
+  const globals = opts.globals || {};
+  return {
+    async execute(code, execOpts = {}) {
+      const timeout = execOpts.timeout || opts.defaultTimeoutMs || 30000;
+      const output = [];
+      const globalEntries = Object.entries(globals);
+      const preamble = globalEntries.length > 0
+        ? `const { ${globalEntries.map(([k]) => k).join(', ')} } = globalThis.__andbox_globals__;\n`
+        : '';
+      const wrappedCode = `
+const __globals__ = globalThis.__andbox_globals__;
+const print = globalThis.__andbox_print__;
+delete globalThis.__andbox_globals__;
+delete globalThis.__andbox_print__;
+${preamble}${code}`;
+      const blob = new Blob([wrappedCode], { type: 'text/javascript' });
+      const url = URL.createObjectURL(blob);
+      const print = (...args) => {
+        output.push(args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' '));
+      };
+      globalThis.__andbox_globals__ = globals;
+      globalThis.__andbox_print__ = print;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeout);
+      try {
+        const result = await Promise.race([
+          import(url),
+          new Promise((_, reject) => {
+            controller.signal.addEventListener('abort', () =>
+              reject(new Error('Execution timed out')));
+          }),
+        ]);
+        return { success: true, output: output.join('\n'), returnValue: result?.default };
+      } catch (e) {
+        return { success: false, output: output.join('\n'), error: e.message || String(e) };
+      } finally {
+        clearTimeout(timer);
+        URL.revokeObjectURL(url);
+        delete globalThis.__andbox_globals__;
+        delete globalThis.__andbox_print__;
+      }
+    },
+    terminate() {},
+  };
+}
+
 /**
  * @typedef {Object} SandboxOptions
  * @property {{ imports?: Record<string,string>, scopes?: Record<string,Record<string,string>> }} [importMap]
@@ -29,9 +115,16 @@ import { DEFAULT_TIMEOUT_MS } from './constants.mjs';
  * Create a new sandboxed runtime.
  *
  * @param {SandboxOptions} [options]
- * @returns {Promise<{ evaluate: Function, defineModule: Function, dispose: Function, isDisposed: () => boolean }>}
+ * @returns {{ execute: Function, terminate: Function } | Promise<{ evaluate: Function, defineModule: Function, dispose: Function, isDisposed: () => boolean }>}
  */
-export async function createSandbox(options = {}) {
+export function createSandbox(options = {}) {
+  const mode = options.mode || 'worker';
+  if (mode === 'inline') return createInlineSandbox(options);
+  if (mode === 'data-uri') return createDataUriSandbox(options);
+  return createWorkerSandbox(options);
+}
+
+async function createWorkerSandbox(options = {}) {
   const {
     importMap = { imports: {}, scopes: {} },
     capabilities = {},

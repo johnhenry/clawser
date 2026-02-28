@@ -105,8 +105,11 @@ export declare class CheckpointManager {
   /** Number of stored checkpoints. */
   get size(): number;
 
+  /** Delete a specific checkpoint by ID. */
+  deleteCheckpoint(id: string): Promise<boolean>;
+
   /** Clear all checkpoint metadata. */
-  clear(): void;
+  clear(): Promise<void>;
 }
 
 // ── TabCoordinator ───────────────────────────────────────────

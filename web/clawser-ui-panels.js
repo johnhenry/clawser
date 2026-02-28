@@ -17,7 +17,7 @@ import { modal } from './clawser-modal.js';
 import { addMsg, addErrorMsg, updateState, resetToolAndEventState } from './clawser-ui-chat.js';
 import { loadWorkspaces, getActiveWorkspaceId, renameWorkspace, deleteWorkspace, createWorkspace, getWorkspaceName } from './clawser-workspaces.js';
 import { navigate } from './clawser-router.js';
-import { SkillStorage } from './clawser-skills.js';
+import { SkillStorage, SKILL_TEMPLATES, simpleDiff, validateRequirements } from './clawser-skills.js';
 import { createItemBar, _relativeTime } from './clawser-item-bar.js';
 import { CLAWSER_SUBCOMMAND_META } from './clawser-cli.js';
 
@@ -149,12 +149,27 @@ export function renderSkills() {
     const tokenEst = skill.bodyLength > 0 ? Math.ceil(skill.bodyLength / 4) : 0;
     const tokenWarn = tokenEst > 2000 ? `<div class="skill-token-warn">~${tokenEst} tokens — may use significant context</div>` : '';
 
+    // Check dependency requirements
+    let depWarnHtml = '';
+    if (skill.metadata?.requires) {
+      const toolNames = state.browserTools ? state.browserTools.allSpecs().map(s => s.name) : [];
+      const mcpTools = state.mcpManager?.allToolSpecs?.() || [];
+      const allTools = [...toolNames, ...mcpTools.map(t => t.name || t)];
+      const permLevels = state.browserTools ? [...new Set(state.browserTools.allSpecs().map(s => state.browserTools.getPermission(s.name)).filter(Boolean))] : [];
+      const reqCheck = validateRequirements(skill.metadata, { tools: allTools, permissions: permLevels });
+      if (!reqCheck.satisfied) {
+        const missing = [...reqCheck.missing.tools, ...reqCheck.missing.permissions.map(p => `perm:${p}`)].join(', ');
+        depWarnHtml = `<div class="skill-dep-warn" title="Missing: ${esc(missing)}">Missing deps</div>`;
+      }
+    }
+
     d.innerHTML = `
       <div class="skill-header">
         <span class="skill-active-dot" title="Active"></span>
         <span class="skill-name">${esc(skill.name)}</span>
         <span class="skill-scope${scopeClass}">${esc(skill.scope)}</span>
         <span class="skill-actions">
+          <button class="skill-update-check" title="Check for update">&#x21BB;</button>
           <button class="skill-toggle${skill.enabled ? ' on' : ''}" title="${skill.enabled ? 'Disable' : 'Enable'}"></button>
           <button class="skill-export" title="Export">\u2193</button>
           <button class="skill-del" title="Delete">\u2715</button>
@@ -163,6 +178,7 @@ export function renderSkills() {
       <div class="skill-desc">${esc(skill.description || '(no description)')}</div>
       ${skill.metadata?.invoke ? `<div style="font-size:10px;color:var(--dim);margin-top:2px;">Invoke: /${esc(skill.name)}</div>` : ''}
       ${tokenWarn}
+      ${depWarnHtml}
     `;
 
     d.querySelector('.skill-toggle').addEventListener('click', (e) => {
@@ -201,8 +217,126 @@ export function renderSkills() {
       renderToolRegistry();
     });
 
+    d.querySelector('.skill-update-check').addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      btn.textContent = '...';
+      try {
+        const version = skill.metadata?.version || '0.0.0';
+        const check = await state.skillRegistryClient.checkUpdate(skill.name, version);
+        if (!check.available) {
+          addMsg('system', `Skill "${skill.name}" is up to date (v${version}).`);
+          btn.textContent = '\u21BB';
+          btn.disabled = false;
+          return;
+        }
+        // Fetch remote version and local version for diff
+        const remote = await state.skillRegistryClient.getSkill(skill.name);
+        const dirName = skill.dirName || skill.name;
+        const wsId = state.agent?.getWorkspace() || 'default';
+        const dir = skill.scope === 'global'
+          ? await (await SkillStorage.getGlobalSkillsDir()).getDirectoryHandle(dirName)
+          : await (await SkillStorage.getWorkspaceSkillsDir(wsId)).getDirectoryHandle(dirName);
+        const localContent = await SkillStorage.readFile(dir, 'SKILL.md');
+        showSkillDiffModal(skill.name, localContent, remote.content, async () => {
+          const files = new Map([['SKILL.md', remote.content]]);
+          await state.skillRegistry.install(skill.scope, wsId, files);
+          await state.skillRegistry.discover(wsId);
+          renderSkills();
+          addMsg('system', `Skill "${skill.name}" updated to v${check.latest}.`);
+        });
+      } catch (err) {
+        addErrorMsg(`Update check failed: ${err.message}`);
+      }
+      btn.textContent = '\u21BB';
+      btn.disabled = false;
+    });
+
     el.appendChild(d);
   }
+}
+
+// ── Skill Template Picker Modal ──────────────────────────────────
+/** Show a modal to pick a skill template and install it. */
+export async function showTemplatePickerModal() {
+  const wsId = state.agent?.getWorkspace() || 'default';
+  const container = document.createElement('div');
+  container.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
+
+  for (const tmpl of SKILL_TEMPLATES) {
+    const card = document.createElement('div');
+    card.className = 'template-option';
+    card.innerHTML = `<div style="font-weight:600;color:var(--accent);font-size:13px;">${esc(tmpl.name)}</div><div style="font-size:11px;color:var(--muted);margin-top:2px;">${esc(tmpl.description)}</div>`;
+    card.addEventListener('click', async () => {
+      try {
+        await state.skillRegistry.install('workspace', wsId, tmpl.files());
+        await state.skillRegistry.discover(wsId);
+        renderSkills();
+        addMsg('system', `Skill created from "${tmpl.name}" template.`);
+      } catch (e) {
+        addErrorMsg(`Template install failed: ${e.message}`);
+      }
+      dialog.close();
+      dialog.remove();
+    });
+    container.appendChild(card);
+  }
+
+  const dialog = document.createElement('dialog');
+  dialog.style.cssText = 'border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);padding:16px;max-width:400px;';
+  dialog.innerHTML = '<div style="font-weight:700;margin-bottom:12px;font-size:14px;">New Skill from Template</div>';
+  dialog.appendChild(container);
+  const closeBtn = document.createElement('button');
+  closeBtn.textContent = 'Cancel';
+  closeBtn.className = 'btn-sm';
+  closeBtn.style.cssText = 'margin-top:12px;';
+  closeBtn.addEventListener('click', () => { dialog.close(); dialog.remove(); });
+  dialog.appendChild(closeBtn);
+  document.body.appendChild(dialog);
+  dialog.showModal();
+}
+
+// ── Skill Diff Modal ────────────────────────────────────────────
+/** Show a diff modal for a skill update. */
+export async function showSkillDiffModal(skillName, oldText, newText, onApply) {
+  const diff = simpleDiff(oldText, newText);
+  const dialog = document.createElement('dialog');
+  dialog.style.cssText = 'border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);padding:16px;max-width:600px;width:90vw;';
+  dialog.innerHTML = `<div style="font-weight:700;margin-bottom:12px;font-size:14px;">Update: ${esc(skillName)}</div>`;
+
+  const body = document.createElement('div');
+  body.className = 'skill-diff-body';
+  for (const d of diff) {
+    const line = document.createElement('div');
+    line.className = d.type === 'add' ? 'diff-add' : d.type === 'remove' ? 'diff-remove' : 'diff-same';
+    const prefix = d.type === 'add' ? '+ ' : d.type === 'remove' ? '- ' : '  ';
+    line.textContent = prefix + d.line;
+    body.appendChild(line);
+  }
+  dialog.appendChild(body);
+
+  const btnRow = document.createElement('div');
+  btnRow.style.cssText = 'display:flex;gap:8px;margin-top:12px;justify-content:flex-end;';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.className = 'btn-sm';
+  cancelBtn.addEventListener('click', () => { dialog.close(); dialog.remove(); });
+  const applyBtn = document.createElement('button');
+  applyBtn.textContent = 'Apply Update';
+  applyBtn.className = 'btn-sm';
+  applyBtn.style.background = 'var(--green)';
+  applyBtn.addEventListener('click', async () => {
+    if (onApply) await onApply();
+    dialog.close();
+    dialog.remove();
+  });
+  btnRow.appendChild(cancelBtn);
+  btnRow.appendChild(applyBtn);
+  dialog.appendChild(btnRow);
+
+  document.body.appendChild(dialog);
+  dialog.showModal();
 }
 
 // ── Workspace dropdown ──────────────────────────────────────────
@@ -706,7 +840,7 @@ function categorize(toolName) {
   if (toolName.startsWith('remote_')) return 'Remote';
   if (toolName.startsWith('bridge_')) return 'Bridge';
   if (toolName.startsWith('daemon_') || toolName.startsWith('self_repair_')) return 'System';
-  if (toolName.startsWith('switch_agent') || toolName.startsWith('consult_agent')) return 'Agents';
+  if (toolName.startsWith('agent_switch') || toolName.startsWith('agent_consult')) return 'Agents';
   if (toolName.startsWith('skill_') || toolName.startsWith('activate_skill') || toolName.startsWith('deactivate_skill')) return 'Skills';
   return 'Other';
 }
@@ -1407,6 +1541,9 @@ export function initPanelListeners() {
 
     addMsg('system', `Data cleared for workspace "${wsName}". Refresh to start fresh.`);
   });
+
+  // Skills — New skill from template
+  $('skillNewBtn')?.addEventListener('click', () => showTemplatePickerModal());
 
   // Skills
   $('skillRefresh').addEventListener('click', async () => {

@@ -38,7 +38,6 @@ import { DelegateTool } from './clawser-delegate.js';
 import { GitStatusTool, GitDiffTool, GitLogTool, GitCommitTool, GitBranchTool, GitRecallTool } from './clawser-git.js';
 import { BrowserOpenTool, BrowserReadPageTool, BrowserClickTool, BrowserFillTool, BrowserWaitTool, BrowserEvaluateTool, BrowserListTabsTool, BrowserCloseTabTool } from './clawser-browser-auto.js';
 import { SandboxRunTool, SandboxStatusTool } from './clawser-sandbox.js';
-import { SandboxEvalTool } from './clawser-tools.js';
 import { registerAndboxCli } from './clawser-andbox-cli.js';
 import { registerWshCli } from './clawser-wsh-cli.js';
 import { registerWshTools } from './clawser-wsh-tools.js';
@@ -52,7 +51,7 @@ import { OAuthListTool, OAuthConnectTool, OAuthDisconnectTool, OAuthApiTool } fr
 import { AuthListProfilesTool, AuthSwitchProfileTool, AuthStatusTool } from './clawser-auth-profiles.js';
 import { RoutineCreateTool, RoutineListTool, RoutineDeleteTool, RoutineRunTool } from './clawser-routines.js';
 import { SelfRepairStatusTool, SelfRepairConfigureTool } from './clawser-self-repair.js';
-import { UndoTool, UndoStatusTool } from './clawser-undo.js';
+import { UndoTool, UndoStatusTool, RedoTool } from './clawser-undo.js';
 import { IntentClassifyTool, IntentOverrideTool } from './clawser-intent.js';
 import { HeartbeatStatusTool, HeartbeatRunTool } from './clawser-heartbeat.js';
 
@@ -201,6 +200,15 @@ export async function switchWorkspace(newId, convId) {
 
   await rebuildProviderDropdown();
   await applyRestoredConfig(savedConfig);
+
+  // Demo mode: force Echo provider
+  if (state.demoMode) {
+    const providerSelect = $('providerSelect');
+    if (providerSelect) {
+      providerSelect.value = 'echo';
+      providerSelect.dispatchEvent(new Event('change'));
+    }
+  }
 
   // Apply saved cache & limits config for the new workspace (Gap 11.2/11.3)
   renderLimitsSection();
@@ -419,10 +427,9 @@ export async function initWorkspace(wsId, convId) {
     state.browserTools.register(new BrowserListTabsTool(state.automationManager));
     state.browserTools.register(new BrowserCloseTabTool(state.automationManager));
 
-    // Sandbox (3)
+    // Sandbox (2)
     state.browserTools.register(new SandboxRunTool(state.sandboxManager));
     state.browserTools.register(new SandboxStatusTool(state.sandboxManager));
-    state.browserTools.register(new SandboxEvalTool(() => state.agent?.codex?._sandbox));
 
     // wsh — Web Shell (9 tools)
     registerWshTools(state.browserTools);
@@ -481,9 +488,10 @@ export async function initWorkspace(wsId, convId) {
     state.browserTools.register(new SelfRepairStatusTool(state.selfRepairEngine));
     state.browserTools.register(new SelfRepairConfigureTool(state.selfRepairEngine));
 
-    // Undo (2)
+    // Undo/Redo (3)
     state.browserTools.register(new UndoTool(state.undoManager));
     state.browserTools.register(new UndoStatusTool(state.undoManager));
+    state.browserTools.register(new RedoTool(state.undoManager));
 
     // Intent (2)
     state.browserTools.register(new IntentClassifyTool(state.intentRouter));
@@ -607,6 +615,15 @@ export async function initWorkspace(wsId, convId) {
     await setupProviders();
 
     await applyRestoredConfig(savedConfig);
+
+    // Demo mode: force Echo provider
+    if (state.demoMode) {
+      const providerSelect = $('providerSelect');
+      if (providerSelect) {
+        providerSelect.value = 'echo';
+        providerSelect.dispatchEvent(new Event('change'));
+      }
+    }
 
     // Restore conversation state
     let restored = false;

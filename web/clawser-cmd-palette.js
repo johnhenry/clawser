@@ -151,7 +151,7 @@ export async function runCmdTool() {
 
   closeCommandPalette();
 
-  const callId = `user_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  const callId = `user_${Date.now()}_${crypto.randomUUID().slice(0, 4)}`;
 
   state.agent.recordEvent('tool_call', { call_id: callId, name: spec.name, arguments: params }, 'user');
 

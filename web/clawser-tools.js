@@ -815,20 +815,26 @@ export class EvalJsTool extends BrowserTool {
   }
   get permission() { return 'approve'; }
 
-  async execute({ code }) {
-    try {
-      // Use indirect eval for global scope
-      const result = (0, eval)(code);
-      let output;
-      try {
-        output = result === undefined ? 'undefined' : JSON.stringify(result, null, 2) ?? String(result);
-      } catch {
-        output = String(result);
-      }
-      return { success: true, output };
-    } catch (e) {
-      return { success: false, output: '', error: `Eval error: ${e.message}` };
+  async execute(args) {
+    const code = args.code || args.script;
+    if (!this._sandbox) {
+      const { createSandbox } = await import('./packages-andbox.js');
+      this._sandbox = createSandbox({
+        mode: 'inline',
+        globals: { window, document, navigator, localStorage },
+      });
     }
+    const result = await this._sandbox.execute(code);
+    if (!result.success) {
+      return { success: false, output: '', error: result.error };
+    }
+    let output = result.output || '';
+    if (!output && result.returnValue !== undefined) {
+      output = typeof result.returnValue === 'string'
+        ? result.returnValue
+        : JSON.stringify(result.returnValue, null, 2);
+    }
+    return { success: true, output: output || '(executed successfully)' };
   }
 }
 
@@ -935,48 +941,6 @@ export class AgentMemoryForgetTool extends AgentTool {
       return { success: true, output: `Deleted memory ${params.id}` };
     }
     return { success: false, output: '', error: `Memory not found: ${params.id}` };
-  }
-}
-
-export class AgentGoalAddTool extends AgentTool {
-  get name() { return 'agent_goal_add'; }
-  get description() {
-    return 'Add a new goal to track. Goals appear in the sidebar and are included in your context.';
-  }
-  get parameters() {
-    return {
-      type: 'object',
-      properties: {
-        description: { type: 'string', description: 'What the goal is' },
-      },
-      required: ['description'],
-    };
-  }
-  async execute(params) {
-    const id = this._agent.addGoal(params.description);
-    return { success: true, output: `Created goal ${id}: ${params.description}` };
-  }
-}
-
-export class AgentGoalUpdateTool extends AgentTool {
-  get name() { return 'agent_goal_update'; }
-  get description() {
-    return 'Update the status of an existing goal. Use to mark goals as completed or failed.';
-  }
-  get parameters() {
-    return {
-      type: 'object',
-      properties: {
-        id: { type: 'string', description: 'Goal ID (e.g. "goal_1")' },
-        status: { type: 'string', enum: ['active', 'completed', 'failed'], description: 'New status' },
-      },
-      required: ['id', 'status'],
-    };
-  }
-  async execute(params) {
-    const ok = this._agent.updateGoal(params.id, params.status);
-    if (ok) return { success: true, output: `Goal ${params.id} → ${params.status}` };
-    return { success: false, output: '', error: `Goal not found: ${params.id}` };
   }
 }
 
@@ -1113,7 +1077,7 @@ export class ScreenshotTool extends BrowserTool {
     // Lazy-load html2canvas from CDN
     if (!_html2canvas) {
       try {
-        const mod = await import('https://esm.sh/html2canvas@1.4.1');
+        const mod = await import('html2canvas');
         _html2canvas = mod.default || mod;
       } catch (e) {
         // Fallback: return page metadata instead of a real screenshot
@@ -1167,8 +1131,6 @@ export function registerAgentTools(registry, agent) {
   registry.register(new AgentMemoryStoreTool(agent));
   registry.register(new AgentMemoryRecallTool(agent));
   registry.register(new AgentMemoryForgetTool(agent));
-  registry.register(new AgentGoalAddTool(agent));
-  registry.register(new AgentGoalUpdateTool(agent));
   registry.register(new AgentScheduleAddTool(agent));
   registry.register(new AgentScheduleListTool(agent));
   registry.register(new AgentScheduleRemoveTool(agent));
@@ -1200,7 +1162,7 @@ export class AskUserQuestionTool extends BrowserTool {
     this.#onAskUser = onAskUser;
   }
 
-  get name() { return 'ask_user_question'; }
+  get name() { return 'browser_ask_user'; }
   get description() {
     return 'Ask the user one or more questions with predefined options. Use this when you need user input to proceed. Each question can have 2-4 options. Users can also provide free-text via "Other".';
   }
@@ -1286,7 +1248,7 @@ export class AskUserQuestionTool extends BrowserTool {
 export class SwitchAgentTool extends BrowserTool {
   #storage; #engine;
   constructor(storage, engine) { super(); this.#storage = storage; this.#engine = engine; }
-  get name() { return 'switch_agent'; }
+  get name() { return 'agent_switch'; }
   get description() { return 'Switch to a different agent configuration. Omit agent param to list available agents.'; }
   get parameters() {
     return {
@@ -1326,7 +1288,7 @@ export class SwitchAgentTool extends BrowserTool {
 export class ConsultAgentTool extends BrowserTool {
   #storage; #opts;
   constructor(storage, opts) { super(); this.#storage = storage; this.#opts = opts; }
-  get name() { return 'consult_agent'; }
+  get name() { return 'agent_consult'; }
   get description() { return 'Send a message to another agent and get their response. Use for second opinions, subtask delegation, or escalation.'; }
   get parameters() {
     return {
@@ -1384,47 +1346,6 @@ export async function checkQuota() {
   } catch (e) {
     console.warn('[clawser] storage estimate failed', e);
     return { usage: 0, quota: 0, percent: 0, warning: false, critical: false };
-  }
-}
-
-/**
- * Sandbox eval tool — runs arbitrary JS in an andbox sandbox.
- * The sandbox instance is injected at registration time.
- */
-export class SandboxEvalTool extends BrowserTool {
-  #getSandbox;
-  constructor(getSandbox) { super(); this.#getSandbox = getSandbox; }
-
-  get name() { return 'browser_sandbox_eval'; }
-  get description() {
-    return 'Evaluate JavaScript code in an isolated sandbox with host capabilities. Returns the result or error.';
-  }
-  get parameters() {
-    return {
-      type: 'object',
-      properties: {
-        code: { type: 'string', description: 'JavaScript code to evaluate (top-level await supported)' },
-        timeout: { type: 'number', description: 'Timeout in ms (default: 30000)' },
-      },
-      required: ['code'],
-    };
-  }
-  get permission() { return 'approve'; }
-
-  async execute({ code, timeout }) {
-    const sandbox = this.#getSandbox();
-    if (!sandbox || sandbox.isDisposed()) {
-      return { success: false, output: '', error: 'No sandbox available' };
-    }
-    try {
-      const result = await sandbox.evaluate(code, { timeoutMs: timeout });
-      const output = result === undefined
-        ? '(no return value)'
-        : typeof result === 'string' ? result : JSON.stringify(result, null, 2);
-      return { success: true, output };
-    } catch (e) {
-      return { success: false, output: '', error: e.message || String(e) };
-    }
   }
 }
 

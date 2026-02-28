@@ -190,6 +190,8 @@ const SALT_KEY = '__vault_salt__';
 export class SecretVault {
   #derivedKey = null;
   #storage;
+  #idleTimer = null;
+  #idleTimeoutMs = 30 * 60 * 1000; // 30 min default
 
   /**
    * @param {MemoryVaultStorage|OPFSVaultStorage} storage - Storage backend
@@ -220,6 +222,33 @@ export class SecretVault {
   /** Lock the vault, discarding the derived key from memory. */
   lock() {
     this.#derivedKey = null;
+    clearTimeout(this.#idleTimer);
+    this.#idleTimer = null;
+  }
+
+  /** Reset the idle auto-lock timer. Call on user activity to keep vault open. */
+  resetIdleTimer() {
+    clearTimeout(this.#idleTimer);
+    this.#idleTimer = setTimeout(() => this.lock(), this.#idleTimeoutMs);
+  }
+
+  /**
+   * Migrate plaintext localStorage keys into the encrypted vault.
+   * @param {string[]} keys - localStorage keys to migrate
+   * @returns {Promise<number>} Number of keys migrated
+   */
+  async migrateKeysToVault(keys) {
+    if (this.isLocked) return 0;
+    let migrated = 0;
+    for (const key of keys) {
+      const value = localStorage.getItem(key);
+      if (value) {
+        await this.store(key, value);
+        localStorage.removeItem(key);
+        migrated++;
+      }
+    }
+    return migrated;
   }
 
   /**

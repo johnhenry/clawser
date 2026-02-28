@@ -85,9 +85,14 @@ export function migrateLocalStorageKeys() {
     'routines', 'terminal_sessions',
   ];
 
-  let migrated = 0;
+  // Collect keys first to avoid skipping when removing during iteration
+  const allKeys = [];
   for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
+    allKeys.push(localStorage.key(i));
+  }
+
+  let migrated = 0;
+  for (const key of allKeys) {
     if (!key || !key.startsWith('clawser_')) continue;
     // Skip already-versioned keys and non-workspace keys
     if (key.includes(`_${LS_VERSION}_`)) continue;
@@ -138,6 +143,23 @@ export const state = {
     responseCache: null,
     shell: null,
     skillRegistry: null,
+    intentRouter: null,
+    inputSanitizer: null,
+    toolCallValidator: null,
+    safetyPipeline: null,
+    providerHealth: null,
+    modelRouter: null,
+    stuckDetector: null,
+    selfRepairEngine: null,
+    undoManager: null,
+    heartbeatRunner: null,
+    authProfileManager: null,
+    metricsCollector: null,
+    ringBufferLog: null,
+    daemonController: null,
+    routineEngine: null,
+    oauthManager: null,
+    identityManager: null,
   },
 
   /** Feature module singletons (set by clawser-app.js) */
@@ -172,7 +194,9 @@ export const state = {
 
   // ── Remaining flat fields (not namespaced) ─────────────────────
   agentInitialized: false,
-  identityManager: null,
+  shuttingDown: false,
+  /** Demo mode — activated via ?demo=true URL param */
+  demoMode: new URLSearchParams(location.search).has('demo'),
   // Block 36: Tool usage tracking
   toolUsageStats: {},
   toolLastUsed: {},
@@ -181,7 +205,7 @@ export const state = {
 // ── Backward-compatible flat aliases (deprecated — use state.ui.X, state.services.X, etc.) ──
 for (const [ns, fields] of [
   ['ui', ['isSending', 'currentRoute', 'switchingViaRouter', 'slashSelectedIdx', 'pendingImportBlob', 'cmdSelectedSpec']],
-  ['services', ['agent', 'providers', 'browserTools', 'mcpManager', 'vault', 'workspaceFs', 'responseCache', 'shell', 'skillRegistry']],
+  ['services', ['agent', 'providers', 'browserTools', 'mcpManager', 'vault', 'workspaceFs', 'responseCache', 'shell', 'skillRegistry', 'intentRouter', 'inputSanitizer', 'toolCallValidator', 'safetyPipeline', 'providerHealth', 'modelRouter', 'stuckDetector', 'selfRepairEngine', 'undoManager', 'heartbeatRunner', 'authProfileManager', 'metricsCollector', 'ringBufferLog', 'daemonController', 'routineEngine', 'oauthManager', 'identityManager']],
   ['features', ['toolBuilder', 'channelManager', 'delegateManager', 'gitBehavior', 'gitMemory', 'automationManager', 'sandboxManager', 'peripheralManager', 'pairingManager', 'bridgeManager', 'goalManager', 'skillRegistryClient', 'terminalSessions', 'agentStorage']],
   ['session', ['sessionCost', 'activeConversationId', 'activeConversationName', 'activeSkillPrompts', 'toolCallLog', 'eventLog', 'eventCount', 'pendingInlineTools']],
 ]) {
@@ -395,7 +419,26 @@ export function off(event, fn) {
  * @param {...*} args - Arguments forwarded to every registered listener.
  */
 export function emit(event, ...args) {
+  if (typeof localStorage !== 'undefined' && localStorage.getItem('clawser_debug')) {
+    console.debug(`[event] ${event}`, ...args);
+  }
   for (const fn of _listeners[event] || []) {
     try { fn(...args); } catch (e) { console.error(`[event:${event}]`, e); }
   }
+  if (event !== '*') {
+    const wildcardListeners = _listeners['*'];
+    if (wildcardListeners) {
+      for (const fn of wildcardListeners) {
+        try { fn(event, ...args); } catch(e) { console.error('Wildcard listener error:', e); }
+      }
+    }
+  }
+}
+
+/**
+ * List all event bus topics that currently have at least one listener.
+ * @returns {string[]}
+ */
+export function listEvents() {
+  return Object.keys(_listeners).filter(k => _listeners[k] && _listeners[k].length > 0);
 }

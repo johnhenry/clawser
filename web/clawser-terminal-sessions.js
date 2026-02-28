@@ -23,7 +23,7 @@ import { ShellState } from './clawser-shell.js';
  * @returns {string}
  */
 export function createTerminalSessionId() {
-  return 'term_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+  return 'term_' + Date.now().toString(36) + '_' + crypto.randomUUID().slice(0, 4);
 }
 
 const STDOUT_CAP = 10_000;

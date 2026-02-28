@@ -4,6 +4,18 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>clawser — browser agent workspace</title>
+  <script type="importmap">
+  {
+    "imports": {
+      "ai.matey.core": "https://esm.sh/ai.matey.core",
+      "ai.matey.frontend": "https://esm.sh/ai.matey.frontend",
+      "ai.matey.backend": "https://esm.sh/ai.matey.backend",
+      "ai.matey.backend.browser": "https://esm.sh/ai.matey.backend.browser",
+      "fflate": "https://cdn.jsdelivr.net/npm/fflate@0.8.2/+esm",
+      "html2canvas": "https://esm.sh/html2canvas@1.4.1"
+    }
+  }
+  </script>
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="./icons/icon-192.png">
   <meta name="theme-color" content="#58a6ff">
@@ -77,6 +89,7 @@
 </div>
 
 <div id="viewWorkspace">
+<div id="demoBanner" class="demo-banner" style="display:none;">Demo mode &mdash; using Echo provider (no LLM)</div>
 <header>
   <span class="logo">clawser</span>
   <span class="sep">/</span>
@@ -205,6 +218,7 @@
       <div class="panel-header">
         Skills <span class="badge" id="skillCount">0</span>
         <span class="spacer"></span>
+        <button class="btn-sm" id="skillNewBtn">+ New</button>
         <button class="btn-sm" id="skillRefresh">Refresh</button>
         <label class="btn-sm skill-import-label">
           Import <input type="file" id="skillImportFile" accept=".zip" style="display:none;" />
@@ -621,6 +635,20 @@
   </div>
 </div>
 </div><!-- /viewWorkspace -->
+
+<!-- Vault Passphrase Modal -->
+<dialog id="vaultModal" class="vault-modal">
+  <form method="dialog" class="vault-form">
+    <h3 id="vaultModalTitle">Unlock Vault</h3>
+    <p id="vaultModalDesc">Enter your passphrase to unlock the vault.</p>
+    <input type="password" id="vaultPassphrase" placeholder="Passphrase" autocomplete="current-password" required>
+    <input type="password" id="vaultPassphraseConfirm" placeholder="Confirm passphrase" autocomplete="new-password" style="display:none">
+    <div class="vault-modal-actions">
+      <button type="submit" id="vaultSubmit">Unlock</button>
+    </div>
+    <p id="vaultError" class="vault-error" style="display:none"></p>
+  </form>
+</dialog>
 
 <script type="module" src="./clawser-app.js"></script>
 </body>

@@ -12,9 +12,7 @@ import { BrowserTool } from './clawser-tools.js';
  * @returns {string}
  */
 function nextProfileId() {
-  const rand = typeof crypto !== 'undefined' && crypto.randomUUID
-    ? crypto.randomUUID().slice(0, 8)
-    : Math.random().toString(36).slice(2, 10);
+  const rand = crypto.randomUUID().slice(0, 8);
   return `prof_${rand}`;
 }
 

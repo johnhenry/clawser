@@ -271,6 +271,7 @@ export declare class ClawserAgent {
 
   getState(): AgentState;
   getCheckpointJSON(): CheckpointJSON;
+  truncateHistory(len: number): number;
 
   memoryStore(entry: {
     key: string;

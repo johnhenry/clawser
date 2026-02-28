@@ -78,8 +78,13 @@ export interface SkillActivation {
 
 export interface SkillRegistryOptions {
   browserTools?: BrowserToolRegistry;
+  mcpManager?: unknown;
   onLog?: (level: number, msg: string) => void;
   onActivationChange?: (name: string, active: boolean, toolNames: string[]) => void;
+}
+
+export interface ActivateOpts {
+  force?: boolean;
 }
 
 export declare class SkillRegistry {
@@ -89,7 +94,7 @@ export declare class SkillRegistry {
   get activeSkills(): Map<string, SkillActivation>;
 
   discover(wsId: string): Promise<void>;
-  activate(name: string, args?: string): Promise<SkillActivation | null>;
+  activate(name: string, args?: string, opts?: ActivateOpts): Promise<SkillActivation | null>;
   deactivate(name: string): void;
   setEnabled(name: string, enabled: boolean): void;
   persistEnabledState(wsId: string): void;
@@ -153,6 +158,26 @@ export declare function validateRequirements(
   metadata: Record<string, unknown>,
   context?: RequirementsContext,
 ): RequirementsResult;
+
+// ── Skill Templates ────────────────────────────────────────────
+
+export interface SkillTemplate {
+  id: string;
+  name: string;
+  description: string;
+  files(): Map<string, string>;
+}
+
+export declare const SKILL_TEMPLATES: SkillTemplate[];
+
+// ── Simple Diff ────────────────────────────────────────────────
+
+export interface DiffLine {
+  type: 'same' | 'add' | 'remove';
+  line: string;
+}
+
+export declare function simpleDiff(oldText: string, newText: string): DiffLine[];
 
 // ── SkillRegistryClient ────────────────────────────────────────
 

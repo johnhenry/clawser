@@ -209,20 +209,6 @@ export declare class AgentMemoryForgetTool extends AgentTool {
   execute(params: { id: string }): Promise<ToolResult>;
 }
 
-export declare class AgentGoalAddTool extends AgentTool {
-  get name(): string;
-  get description(): string;
-  get parameters(): object;
-  execute(params: { description: string }): Promise<ToolResult>;
-}
-
-export declare class AgentGoalUpdateTool extends AgentTool {
-  get name(): string;
-  get description(): string;
-  get parameters(): object;
-  execute(params: { id: string; status: string }): Promise<ToolResult>;
-}
-
 export declare class AgentScheduleAddTool extends AgentTool {
   get name(): string;
   get description(): string;
@@ -321,17 +307,6 @@ export interface QuotaInfo {
 }
 
 export declare function checkQuota(): Promise<QuotaInfo>;
-
-// ── SandboxEvalTool ────────────────────────────────────────────
-
-export declare class SandboxEvalTool extends BrowserTool {
-  constructor(getSandbox: () => unknown);
-  get name(): string;
-  get description(): string;
-  get parameters(): object;
-  get permission(): string;
-  execute(params: { code: string; timeout?: number }): Promise<ToolResult>;
-}
 
 // ── createDefaultRegistry ──────────────────────────────────────
 

@@ -39,7 +39,7 @@ export function ensureDefaultWorkspace() {
 
 /** Create a new workspace and persist it. @param {string} [name] @returns {string} New workspace ID */
 export function createWorkspace(name) {
-  const id = `ws_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  const id = `ws_${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 4)}`;
   const list = loadWorkspaces();
   list.push({ id, name: name || `workspace ${list.length + 1}`, created: Date.now(), lastUsed: Date.now() });
   saveWorkspaces(list);

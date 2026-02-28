@@ -1414,7 +1414,7 @@ export class ShellTool extends BrowserTool {
     this.#getShell = getShell;
   }
 
-  get name() { return 'shell'; }
+  get name() { return 'browser_shell'; }
   get description() {
     return 'Execute shell commands in a virtual browser shell. Supports pipes (|), redirects (>, >>), stderr redirects (2>, 2>>, 2>&1, 2>/dev/null), logical operators (&&, ||), and semicolons (;). Built-in commands include: cd, ls, pwd, cat, mkdir, rm, cp, mv, echo, head, tail, grep, wc, sort, uniq, tee, env, export, which, help. All filesystem commands operate on the workspace OPFS.';
   }

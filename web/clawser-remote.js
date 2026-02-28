@@ -222,7 +222,7 @@ export class PairingManager {
   }
 
   #log(msg) {
-    if (this.#onLog) this.#onLog(msg);
+    if (this.#onLog) this.#onLog(1, msg);
   }
 }
 
@@ -278,6 +278,18 @@ export class RateLimiter {
 
   /** Max requests per minute. */
   get maxPerMinute() { return this.#maxPerMinute; }
+
+  /**
+   * Reset rate limit windows.
+   * @param {string} [token] - If provided, reset only that token. Otherwise clear all.
+   */
+  reset(token) {
+    if (token !== undefined) {
+      this.#windows.delete(token);
+    } else {
+      this.#windows.clear();
+    }
+  }
 }
 
 // ── GatewayClient ───────────────────────────────────────────────

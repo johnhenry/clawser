@@ -19,8 +19,6 @@
 
 import { createSandbox } from './packages-andbox.js';
 
-let _codexSeq = 0;
-
 /**
  * Extract fenced code blocks from LLM text output.
  * Matches any fenced code block: ```js, ```tool_code, ```python, bare ```, etc.
@@ -96,6 +94,7 @@ export class Codex {
   // Long timeout: user approval dialogs can add arbitrary time to tool calls
   static #EXEC_TIMEOUT_MS = 300_000;
 
+  #seq = 0;
   /** @type {import('./clawser-tools.js').BrowserToolRegistry} */
   #tools;
   /** @type {Function} */
@@ -285,7 +284,7 @@ export class Codex {
 
         results.push({ code: rawCode, output: output || '(no output)' });
         toolCalls.push({
-          id: `codex_${Date.now()}_${++_codexSeq}`,
+          id: `codex_${Date.now()}_${++this.#seq}`,
           name: '_codex_eval',
           arguments: JSON.stringify({ code: rawCode }),
           _result: { success: true, output: output || '(executed successfully)' },
@@ -295,7 +294,7 @@ export class Codex {
         this.#onLog(3, `codex: execution error: ${errMsg}`);
         results.push({ code: rawCode, output: '', error: errMsg });
         toolCalls.push({
-          id: `codex_${Date.now()}_${++_codexSeq}`,
+          id: `codex_${Date.now()}_${++this.#seq}`,
           name: '_codex_eval',
           arguments: JSON.stringify({ code: rawCode }),
           _result: { success: false, output: '', error: errMsg },
@@ -346,7 +345,7 @@ export class Codex {
     return lines.join('\n');
   }
 
-  /** Access the underlying andbox sandbox instance (for SandboxEvalTool). */
+  /** Access the underlying andbox sandbox instance. */
   get _sandbox() { return this.#sandbox; }
 
   /**

@@ -2,7 +2,7 @@
 //
 // TurnCheckpoint: snapshot of state at turn boundary
 // UndoManager: checkpoint stack with multi-layer undo
-// Agent tools: undo, undo_status
+// Agent tools: agent_undo, agent_undo_status
 
 import { BrowserTool } from './clawser-tools.js';
 
@@ -45,6 +45,9 @@ export class UndoManager {
   /** @type {object[]} Stack of TurnCheckpoints */
   #checkpoints = [];
 
+  /** @type {object[]} Stack of redoable checkpoints */
+  #redoStack = [];
+
   /** @type {number} Maximum retained checkpoints */
   #maxHistory;
 
@@ -71,6 +74,8 @@ export class UndoManager {
    * @returns {object} The checkpoint
    */
   beginTurn(opts = {}) {
+    this.#redoStack = [];
+
     const checkpoint = createCheckpoint({
       historyLength: opts.historyLength || 0,
     });
@@ -88,7 +93,7 @@ export class UndoManager {
 
   /**
    * Record a memory operation in the current turn.
-   * @param {object} op - { type: 'store'|'forget', id, key?, content?, category? }
+   * @param {object} op - { action: 'store'|'forget', id?, key?, content?, category? }
    */
   recordMemoryOp(op) {
     if (this.#current) {
@@ -98,7 +103,7 @@ export class UndoManager {
 
   /**
    * Record a file operation in the current turn.
-   * @param {object} op - { type: 'write'|'delete', path, previousContent? }
+   * @param {object} op - { action: 'write'|'delete', path, content?, previousContent? }
    */
   recordFileOp(op) {
     if (this.#current) {
@@ -108,7 +113,7 @@ export class UndoManager {
 
   /**
    * Record a goal operation in the current turn.
-   * @param {object} op - { type: 'status_change'|'sub_goal_added'|'goal_added', ... }
+   * @param {object} op - { action: 'add'|'update', goalId?, previousStatus?, status? }
    */
   recordGoalOp(op) {
     if (this.#current) {
@@ -180,6 +185,7 @@ export class UndoManager {
         ? this.#checkpoints[this.#checkpoints.length - 1]
         : null;
 
+      this.#redoStack.push(cp);
       results.push({ turnId: cp.turnId, reverted: true, details });
     }
 
@@ -209,6 +215,7 @@ export class UndoManager {
   /** Clear all checkpoints. */
   clear() {
     this.#checkpoints = [];
+    this.#redoStack = [];
     this.#current = null;
   }
 
@@ -247,6 +254,70 @@ export class UndoManager {
 
     return `Will revert ${count} turn(s):\n${parts.join('\n')}`;
   }
+
+  /** Whether redo is possible. */
+  get canRedo() { return this.#redoStack.length > 0; }
+
+  /** Number of redoable turns. */
+  get redoDepth() { return this.#redoStack.length; }
+
+  /**
+   * Preview what redo would re-apply.
+   * @returns {object|null}
+   */
+  previewRedo() {
+    if (this.#redoStack.length === 0) return null;
+    const cp = this.#redoStack[this.#redoStack.length - 1];
+    const s = cp.snapshot;
+    return { id: cp.turnId, ops: (s?.memoryOps?.length || 0) + (s?.fileOps?.length || 0) + (s?.goalOps?.length || 0) };
+  }
+
+  /**
+   * Redo previously undone turns.
+   * @param {number} [turns=1]
+   * @returns {Promise<object[]>}
+   */
+  async redo(turns = 1) {
+    const results = [];
+    for (let i = 0; i < turns && this.#redoStack.length > 0; i++) {
+      const cp = this.#redoStack.pop();
+      // Re-apply each operation forward
+      if (cp.snapshot) {
+        for (const op of cp.snapshot.memoryOps) {
+          await this.#applyForward({ ...op, layer: 'memory' });
+        }
+        for (const op of cp.snapshot.fileOps) {
+          await this.#applyForward({ ...op, layer: 'file' });
+        }
+        for (const op of cp.snapshot.goalOps) {
+          await this.#applyForward({ ...op, layer: 'goal' });
+        }
+      }
+      this.#checkpoints.push(cp);
+      this.#current = cp;
+      results.push(cp);
+    }
+    return results;
+  }
+
+  /**
+   * Apply a single operation forward (for redo).
+   * @param {object} op
+   */
+  async #applyForward(op) {
+    const handlers = this.#handlers;
+    try {
+      if (op.layer === 'memory' && handlers.applyMemory) {
+        await handlers.applyMemory(op);
+      } else if (op.layer === 'file' && handlers.applyFile) {
+        await handlers.applyFile(op);
+      } else if (op.layer === 'goal' && handlers.applyGoal) {
+        await handlers.applyGoal(op);
+      }
+    } catch (e) {
+      console.warn('applyForward failed:', e);
+    }
+  }
 }
 
 // ── Agent Tools ─────────────────────────────────────────────────
@@ -259,7 +330,7 @@ export class UndoTool extends BrowserTool {
     this.#manager = manager;
   }
 
-  get name() { return 'undo'; }
+  get name() { return 'agent_undo'; }
   get description() { return 'Undo the last N turns, reverting conversation, files, memory, and goals.'; }
   get parameters() {
     return {
@@ -296,6 +367,35 @@ export class UndoTool extends BrowserTool {
   }
 }
 
+export class RedoTool extends BrowserTool {
+  #undoManager;
+
+  constructor(undoManager) {
+    super();
+    this.#undoManager = undoManager;
+  }
+
+  get name() { return 'agent_redo'; }
+  get description() { return 'Redo previously undone operations'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        turns: { type: 'number', description: 'Number of turns to redo (default: 1)' },
+      },
+    };
+  }
+  get permission() { return 'approve'; }
+
+  async execute(args = {}) {
+    if (!this.#undoManager.canRedo) {
+      return { success: false, output: '', error: 'Nothing to redo' };
+    }
+    const results = await this.#undoManager.redo(args.turns || 1);
+    return { success: true, output: `Redid ${results.length} operation(s)` };
+  }
+}
+
 export class UndoStatusTool extends BrowserTool {
   #manager;
 
@@ -304,7 +404,7 @@ export class UndoStatusTool extends BrowserTool {
     this.#manager = manager;
   }
 
-  get name() { return 'undo_status'; }
+  get name() { return 'agent_undo_status'; }
   get description() { return 'Show undo history and preview what would be reverted.'; }
   get parameters() {
     return {
@@ -318,9 +418,12 @@ export class UndoStatusTool extends BrowserTool {
 
   async execute({ preview_turns } = {}) {
     const depth = this.#manager.undoDepth;
+    const redoDepth = this.#manager.redoDepth;
     const lines = [
       `Undo depth: ${depth} turn(s)`,
       `Can undo: ${this.#manager.canUndo}`,
+      `Redo depth: ${redoDepth} turn(s)`,
+      `Can redo: ${this.#manager.canRedo}`,
       '',
     ];
 
@@ -331,6 +434,13 @@ export class UndoStatusTool extends BrowserTool {
       for (const cp of this.#manager.checkpoints) {
         const ops = cp.memoryOps + cp.fileOps + cp.goalOps;
         lines.push(`  ${cp.turnId} (${ops} ops)`);
+      }
+    }
+
+    if (redoDepth > 0) {
+      const preview = this.#manager.previewRedo();
+      if (preview) {
+        lines.push('', `Redo preview: ${preview.id} (${preview.ops} ops)`);
       }
     }
 

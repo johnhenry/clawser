@@ -1350,10 +1350,10 @@ async function getMateyModules() {
   if (_mateyModules) return _mateyModules;
   try {
     const [coreModule, frontendModule, backendModule, browserModule] = await Promise.all([
-      import('https://esm.sh/ai.matey.core'),
-      import('https://esm.sh/ai.matey.frontend'),
-      import('https://esm.sh/ai.matey.backend'),
-      import('https://esm.sh/ai.matey.backend.browser'),
+      import('ai.matey.core'),
+      import('ai.matey.frontend'),
+      import('ai.matey.backend'),
+      import('ai.matey.backend.browser'),
     ]);
     _mateyModules = { core: coreModule, frontend: frontendModule, backend: backendModule, browser: browserModule };
     return _mateyModules;

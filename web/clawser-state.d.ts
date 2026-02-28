@@ -82,6 +82,23 @@ export declare const state: {
     responseCache: unknown | null;
     shell: unknown | null;
     skillRegistry: unknown | null;
+    intentRouter: unknown | null;
+    inputSanitizer: unknown | null;
+    toolCallValidator: unknown | null;
+    safetyPipeline: unknown | null;
+    providerHealth: unknown | null;
+    modelRouter: unknown | null;
+    stuckDetector: unknown | null;
+    selfRepairEngine: unknown | null;
+    undoManager: unknown | null;
+    heartbeatRunner: unknown | null;
+    authProfileManager: unknown | null;
+    metricsCollector: unknown | null;
+    ringBufferLog: unknown | null;
+    daemonController: unknown | null;
+    routineEngine: unknown | null;
+    oauthManager: unknown | null;
+    identityManager: unknown | null;
   };
   features: {
     toolBuilder: unknown | null;
@@ -109,8 +126,10 @@ export declare const state: {
     eventCount: number;
     pendingInlineTools: Map<string, unknown>;
   };
+  shuttingDown: boolean;
   agentInitialized: boolean;
-  identityManager: unknown | null;
+  /** Demo mode — activated via ?demo=true URL param */
+  demoMode: boolean;
   toolUsageStats: Record<string, unknown>;
   toolLastUsed: Record<string, unknown>;
   /** Backward-compatible flat aliases (deprecated) */
@@ -125,9 +144,15 @@ export declare function resetConversationState(): void;
 
 // ── Event bus ──────────────────────────────────────────────────
 
-export declare function on(event: string, fn: (...args: unknown[]) => void): void;
-export declare function off(event: string, fn: (...args: unknown[]) => void): void;
+/**
+ * Register a listener for an event bus topic.
+ * Pass `'*'` as the event to receive all events — the callback receives `(eventName, ...args)`.
+ */
+export declare function on(event: string | '*', fn: (...args: unknown[]) => void): void;
+export declare function off(event: string | '*', fn: (...args: unknown[]) => void): void;
 export declare function emit(event: string, ...args: unknown[]): void;
+/** List all event names that have registered listeners. */
+export declare function listEvents(): string[];
 
 // ── ConfigCache ────────────────────────────────────────────────
 

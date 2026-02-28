@@ -69,7 +69,11 @@ export interface ScanOutputResult {
 export declare class SafetyPipeline {
   constructor(opts?: SafetyPipelineOptions);
 
-  enabled: boolean;
+  /** Get whether the pipeline is enabled. */
+  get enabled(): boolean;
+  /** Set enabled state. Throws if disabling without calling confirmDisable() first. */
+  set enabled(v: boolean);
+  confirmDisable(): void;
   get sanitizer(): InputSanitizer;
   get validator(): ToolCallValidator;
   get leakDetector(): LeakDetector;

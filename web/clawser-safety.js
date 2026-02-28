@@ -72,7 +72,7 @@ export class ToolCallValidator {
     const issues = [];
 
     // Path traversal in file tools
-    if (['fs_read', 'fs_write', 'fs_list', 'fs_delete', 'browser_fs_read', 'browser_fs_write', 'browser_fs_list', 'browser_fs_delete'].includes(toolName)) {
+    if (['browser_fs_read', 'browser_fs_write', 'browser_fs_list', 'browser_fs_delete'].includes(toolName)) {
       const path = args.path || '';
       if (path.includes('..')) {
         issues.push({ severity: 'critical', msg: 'Path traversal detected' });
@@ -83,7 +83,7 @@ export class ToolCallValidator {
     }
 
     // Command injection in shell tool
-    if (toolName === 'shell') {
+    if (toolName === 'browser_shell') {
       const cmd = args.command || '';
       for (const { re, msg } of DANGEROUS_SHELL_PATTERNS) {
         if (re.test(cmd)) {
@@ -190,6 +190,7 @@ export class SafetyPipeline {
   #validator;
   #leakDetector;
   #enabled = true;
+  #disableConfirmed = false;
 
   constructor(opts = {}) {
     this.#sanitizer = opts.sanitizer || new InputSanitizer();
@@ -198,7 +199,19 @@ export class SafetyPipeline {
   }
 
   get enabled() { return this.#enabled; }
-  set enabled(v) { this.#enabled = !!v; }
+  set enabled(v) {
+    const val = !!v;
+    if (!val && !this.#disableConfirmed) {
+      throw new Error('Call confirmDisable() before disabling the safety pipeline');
+    }
+    this.#enabled = val;
+    if (val) this.#disableConfirmed = false;
+  }
+
+  /** Acknowledge intent to disable the safety pipeline. */
+  confirmDisable() {
+    this.#disableConfirmed = true;
+  }
 
   /** Get the input sanitizer instance. */
   get sanitizer() { return this.#sanitizer; }

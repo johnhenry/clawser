@@ -77,5 +77,5 @@ export async function updateConversationMeta(wsId, convId, updates) {
 
 /** Generate a unique conversation ID using timestamp + random suffix. @returns {string} */
 export function generateConvId() {
-  return `conv_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  return `conv_${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 4)}`;
 }

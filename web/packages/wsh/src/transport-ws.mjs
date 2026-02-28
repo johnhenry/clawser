@@ -292,6 +292,10 @@ export class WebSocketTransport extends WshTransport {
    * @param {ArrayBuffer} raw
    */
   #handleMessage(raw) {
+    if (typeof raw === 'string') {
+      this._emitError(new Error('Received text WebSocket frame; expected binary'));
+      return;
+    }
     const data = new Uint8Array(raw);
 
     let frame;

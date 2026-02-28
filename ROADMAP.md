@@ -171,15 +171,15 @@ Priority: Integrations, API, and community.
 - [ ] Embedding API — Drop Clawser into any web app
 
 ### Skill Ecosystem
-- [ ] Skill dependency enforcement — Validate requires field
-- [ ] Skill versioning UI — Show diffs before upgrade
+- [x] Skill dependency enforcement — Validate requires field
+- [x] Skill versioning UI — Show diffs before upgrade
 - [ ] Skill marketplace — Browseable catalog with ratings
-- [ ] Skill templates — Starter kits for common patterns
+- [x] Skill templates — Starter kits for common patterns
 
 ### Community
 - [ ] Skills registry — Launch public skills registry
 - [ ] Documentation site — Hosted docs with tutorials
-- [ ] Demo site — Live demo with Echo provider (no API key)
+- [x] Demo site — Live demo with Echo provider (no API key)
 
 ---
 

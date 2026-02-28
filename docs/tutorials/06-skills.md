@@ -38,7 +38,19 @@ Skills can be installed at two scopes:
 
 Workspace skills override global skills with the same name.
 
-## 3. Installing Skills
+## 3. Creating from Templates
+
+Click the **+ New** button in the Skills panel header to create a skill from a built-in template:
+
+| Template | Contents | Use Case |
+|----------|----------|----------|
+| **Basic Prompt** | `SKILL.md` with `$ARGUMENTS` substitution | Simple prompt-based skills |
+| **Tool Script** | `SKILL.md` + `scripts/helper.js` | Skills that need executable code |
+| **Multi-Reference** | `SKILL.md` + `references/guide.md` | Skills that inject reference docs into context |
+
+Select a template, and it will be installed to the current workspace. Edit the generated `SKILL.md` to customize it.
+
+## 4. Installing Skills
 
 **From the registry:**
 
@@ -62,7 +74,7 @@ The agent calls `skill_install` to download and register the skill.
 
 If you have a skill package as a ZIP, you can install it programmatically through the agent or by placing the files in the appropriate OPFS directory.
 
-## 4. Using Skills
+## 5. Using Skills
 
 Skills are invoked in two ways:
 
@@ -80,7 +92,26 @@ Active skills appear with a highlighted indicator in the Skills panel. Deactivat
 Deactivate the code-review skill
 ```
 
-## 5. Skill Validation
+## 6. Dependency Enforcement
+
+Skills can declare required tools and permissions in their YAML frontmatter:
+
+```yaml
+requires:
+  tools: [browser_fetch, web_search]
+  permissions: [network]
+```
+
+When a skill has unmet dependencies:
+- A **"Missing deps"** warning badge appears in the Skills panel
+- Activation is blocked — the agent will log which tools or permissions are missing
+- Use `force: true` in the `activate_skill` tool call to bypass the check
+
+## 7. Checking for Updates
+
+Each skill in the panel has a refresh button (**&#x21BB;**) that checks the remote registry for a newer version. If an update is available, a diff modal shows the line-by-line changes (green = added, red = removed). Click **Apply Update** to install the new version.
+
+## 8. Skill Validation
 
 Before activation, Clawser scans skill scripts for potentially dangerous patterns:
 - `eval`, `Function()`, `import()`
@@ -89,7 +120,7 @@ Before activation, Clawser scans skill scripts for potentially dangerous pattern
 
 If any are detected, you'll see a warning with the specific patterns found. You can choose to proceed or block the skill.
 
-## 6. Creating Your Own Skill
+## 9. Creating Your Own Skill
 
 Create a `SKILL.md` file with YAML frontmatter:
 
@@ -130,14 +161,16 @@ my-helper/
 
 Install your skill by asking the agent or placing the directory in OPFS.
 
-## 7. Managing Skills
+## 10. Managing Skills
 
 | Action | How |
 |--------|-----|
+| Create new | **+ New** button in Skills panel header |
 | Enable/disable | Toggle switch in Skills panel |
+| Check for update | Refresh button (&#x21BB;) per skill |
 | Delete | Click delete icon in Skills panel |
 | Export | Export as ZIP for sharing |
-| Update | `skill_update` tool or re-install |
+| Update | `skill_update` tool, re-install, or update-check button |
 | List | `skill_list` tool or Skills panel |
 
 ## Next Steps

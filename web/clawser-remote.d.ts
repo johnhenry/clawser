@@ -86,6 +86,9 @@ export declare class RateLimiter {
   /** Get remaining requests for a token. */
   remaining(token: string): number;
 
+  /** Clear rate limit windows for a specific token or all tokens. */
+  reset(token?: string): void;
+
   /** Max requests per minute. */
   get maxPerMinute(): number;
 }

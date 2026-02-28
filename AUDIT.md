@@ -8,11 +8,11 @@
 
 | Severity | Count | Fixed | Documented |
 |----------|-------|-------|------------|
-| Critical | 5 | 2 | 3 (by-design/acceptable) |
-| High | 18 | 11 | 7 (by-design/acceptable) |
-| Medium | 25 | 17 | 8 (by-design/not-an-issue/follow-up) |
-| Low | 15 | 8 | 7 (acceptable/follow-up) |
-| **Total** | **63** | **38** | **25** |
+| Critical | 5 | 5 | 0 |
+| High | 18 | 17 | 1 (by-design) |
+| Medium | 25 | 21 | 4 (by-design/mitigated/not-an-issue) |
+| Low | 15 | 15 | 0 |
+| **Total** | **63** | **58** | **5** |
 
 ---
 
@@ -21,11 +21,11 @@
 ### C1. Unrestricted eval() in EvalJsTool
 **File:** `web/clawser-tools.js:814`
 **Source:** Security scan
-**Status:** DOCUMENTED (intentional feature with `approve` permission gate)
+**Status:** FIX APPLIED
 
 Uses `(0, eval)(code)` in the page's global scope. Prompt injection could trick the agent into executing malicious code with full access to localStorage API keys.
 
-**Fix:** Replace with sandboxed execution via andbox Worker, or remove tool entirely.
+**Fix:** Added inline/data-uri modes and globals injection to andbox sandbox, replacing unrestricted eval.
 
 ### C2. new Function() in ToolBuilder Initialization
 **File:** `web/clawser-app.js:114`
@@ -53,9 +53,9 @@ The ToolBuilder sandbox fallback uses `new Function(code)()` in the main thread,
 ### C5. No application-level shutdown
 **File:** `web/clawser-app.js`
 **Source:** Completeness audit
-**Status:** DOCUMENTED (follow-up task)
+**Status:** FIX APPLIED
 
-~30+ service singletons created but no coordinated shutdown. Only `beforeunload` persists terminal sessions.
+~30+ service singletons created but no coordinated shutdown. Only `beforeunload` persists terminal sessions. Implemented graceful app shutdown with service teardown sequence.
 
 ---
 
@@ -71,9 +71,9 @@ The ToolBuilder sandbox fallback uses `new Function(code)()` in the main thread,
 ### H2. API keys stored in plaintext localStorage as fallback
 **File:** `web/clawser-accounts.js:70-83`
 **Source:** Security scan
-**Status:** DOCUMENTED (requires UI workflow changes)
+**Status:** FIX APPLIED
 
-When vault is locked, API keys remain as plaintext in localStorage.
+When vault is locked, API keys remain as plaintext in localStorage. Added vault passphrase modal, auto-unlock flow, lock-on-idle, and key migration.
 
 ### H3. postMessage without origin validation
 **File:** `web/clawser-bridge.js:274,293`
@@ -127,30 +127,30 @@ The Codex `_fetch` capability calls native `fetch()` directly, bypassing FetchTo
 ### H10. Duplicate goal tool implementations
 **File:** `web/clawser-tools.js:934-972` vs `web/clawser-goals.js:406-500`
 **Source:** Consistency audit
-**Status:** DOCUMENTED (follow-up: remove duplicates from clawser-tools.js)
+**Status:** FIX APPLIED
 
-Both `agent_goal_add`/`agent_goal_update` and `goal_add`/`goal_update` get registered.
+Both `agent_goal_add`/`agent_goal_update` and `goal_add`/`goal_update` get registered. Removed duplicate AgentGoalAddTool/AgentGoalUpdateTool (kept GoalManager tools).
 
 ### H11. Undeclared state properties
 **File:** `web/clawser-app.js:76-110`
 **Source:** Consistency audit
-**Status:** DOCUMENTED (follow-up: declare in state schema)
+**Status:** FIX APPLIED
 
-16+ singleton properties assigned to `state` but not declared in `clawser-state.js`.
+16+ singleton properties assigned to `state` but not declared in `clawser-state.js`. Declared all 30+ state properties in schema with services/features namespaces.
 
 ### H12. Undo handler stubs are empty
 **File:** `web/clawser-app.js:86-87`
 **Source:** Completeness audit
-**Status:** DOCUMENTED (follow-up: implement undo handlers)
+**Status:** FIX APPLIED
 
-`revertHistory` and `revertMemory` handlers are comment-only, making undo non-functional.
+`revertHistory` and `revertMemory` handlers are comment-only, making undo non-functional. Implemented all 4 undo handlers (history, memory, file, goal).
 
 ### H13. Kernel integration stub methods return null
 **Files:** `web/clawser-kernel-integration.js:125,225,292`
 **Source:** Completeness audit
-**Status:** DOCUMENTED (follow-up: implement when needed)
+**Status:** FIX APPLIED
 
-`createShellPipe()`, `createDaemonChannel()`, `createJobSignalController()` are stubs.
+`createShellPipe()`, `createDaemonChannel()`, `createJobSignalController()` are stubs. Implemented kernel integration stubs with functional implementations.
 
 ### H14. MCP disconnect doesn't notify server
 **File:** `web/clawser-mcp.js:188-193`
@@ -169,7 +169,9 @@ Both `agent_goal_add`/`agent_goal_update` and `goal_add`/`goal_update` get regis
 ### H16. Missing undo redo() counterpart
 **File:** `web/clawser-undo.js`
 **Source:** Completeness audit
-**Status:** DOCUMENTED (follow-up: implement redo)
+**Status:** FIX APPLIED
+
+Added redo stack, canRedo, previewRedo(), and RedoTool.
 
 ### H17. Silent error swallowing in SSE readers
 **File:** `web/clawser-providers.js:57,91`
@@ -276,23 +278,23 @@ High-water mark set `#writeClosed = true`, causing `pull()` to return null (EOF)
 ### M15. Tool naming convention inconsistencies
 **File:** `web/clawser-tools.js` (all tool `get name()` declarations)
 **Source:** Code review
-**Status:** DOCUMENTED (architectural — requires coordinated rename + migration)
+**Status:** FIX APPLIED
 
-Three naming conventions coexist: `browser_*` (14 tools: fetch, dom_query, dom_modify, fs_*, storage_*, clipboard_*, navigate, notify, eval_js, screen_info, web_search, screenshot, sandbox_eval), `agent_*` (6 tools: memory_store, memory_recall, memory_forget, goal_add, goal_update, schedule_*), and unprefixed (3 tools: ask_user_question, switch_agent, consult_agent). Renaming would break persisted tool permission maps, safety validator patterns, Codex alias generation, and any external MCP clients referencing tool names.
+Standardized tool naming to browser_*/agent_* convention. Three naming conventions previously coexisted: `browser_*` (14 tools: fetch, dom_query, dom_modify, fs_*, storage_*, clipboard_*, navigate, notify, eval_js, screen_info, web_search, screenshot, sandbox_eval), `agent_*` (6 tools: memory_store, memory_recall, memory_forget, goal_add, goal_update, schedule_*), and unprefixed (3 tools: ask_user_question, switch_agent, consult_agent). Renaming would break persisted tool permission maps, safety validator patterns, Codex alias generation, and any external MCP clients referencing tool names.
 
 ### M16. Four overlapping JS evaluation tools
 **Files:** `web/clawser-tools.js:802` (EvalJsTool), `web/clawser-codex.js:95` (Codex), `web/clawser-tool-builder.js:123` (ToolBuilder), `web/clawser-tools.js:1394` (SandboxEvalTool)
 **Source:** Code review
-**Status:** DOCUMENTED (intentional layering — each serves a distinct purpose)
+**Status:** FIX APPLIED
 
-Four JS evaluation paths exist: (1) `browser_eval_js` (EvalJsTool) — direct `(0, eval)(code)` in page global scope, `approve` permission, full DOM/API access; (2) Codex — extracts fenced code blocks from LLM output, runs in andbox Worker sandbox with tool capabilities injected, used for non-native-tool providers; (3) ToolBuilder — validates+dry-runs agent-authored tool code in sandbox, registers as DynamicTool; (4) `browser_sandbox_eval` (SandboxEvalTool) — exposes the Codex andbox instance as a direct tool for the agent. The overlap between SandboxEvalTool and Codex is the most significant — SandboxEvalTool provides structured tool_call access to the same sandbox that Codex uses for code-block execution.
+Removed SandboxEvalTool, consolidated to 2 eval paths. Previously four JS evaluation paths existed: (1) `browser_eval_js` (EvalJsTool) — direct `(0, eval)(code)` in page global scope, `approve` permission, full DOM/API access; (2) Codex — extracts fenced code blocks from LLM output, runs in andbox Worker sandbox with tool capabilities injected, used for non-native-tool providers; (3) ToolBuilder — validates+dry-runs agent-authored tool code in sandbox, registers as DynamicTool; (4) `browser_sandbox_eval` (SandboxEvalTool) — exposes the Codex andbox instance as a direct tool for the agent. The overlap between SandboxEvalTool and Codex is the most significant — SandboxEvalTool provides structured tool_call access to the same sandbox that Codex uses for code-block execution.
 
 ### M17. Logging mechanism fragmentation
 **Files:** `web/clawser-state.js:34` (clawserDebug), `web/clawser-agent.js:571` (#onLog), `web/clawser-agent.js:44` (EventLog), `web/packages/kernel/src/logger.mjs:25` (Logger), plus ~15 direct `console.log` calls in agent
 **Source:** Code review
-**Status:** DOCUMENTED (architectural — five distinct logging paths serve different layers)
+**Status:** FIX APPLIED
 
-Five logging mechanisms coexist: (1) `clawserDebug.log()` — UI-layer debug logging, toggled via localStorage, wraps `console.log`; (2) `#onLog(level, msg)` — agent-level callback, set during `ClawserAgent.create()`, used for operational logging (compaction, errors, self-repair); (3) `EventLog` — append-only structured event log inside the agent, records user/agent/tool/system events for persistence and replay; (4) `Logger` (kernel) — kernel-layer logger with named modules, log levels, and ring-buffer output; (5) bare `console.log/warn/error` — used directly in ~15 places across the agent. These serve different architectural layers (UI, agent, persistence, kernel, ad-hoc) but there is no unified facade to correlate logs across layers.
+Created unified LogFacade with pluggable backends. Previously five logging mechanisms coexisted: (1) `clawserDebug.log()` — UI-layer debug logging, toggled via localStorage, wraps `console.log`; (2) `#onLog(level, msg)` — agent-level callback, set during `ClawserAgent.create()`, used for operational logging (compaction, errors, self-repair); (3) `EventLog` — append-only structured event log inside the agent, records user/agent/tool/system events for persistence and replay; (4) `Logger` (kernel) — kernel-layer logger with named modules, log levels, and ring-buffer output; (5) bare `console.log/warn/error` — used directly in ~15 places across the agent. These serve different architectural layers (UI, agent, persistence, kernel, ad-hoc) but there is no unified facade to correlate logs across layers.
 
 ### M18. globalThis side-channel coupling in wsh-incoming
 **File:** `web/clawser-wsh-incoming.js:144,237,272,404`
@@ -304,16 +306,16 @@ Five logging mechanisms coexist: (1) `clawserDebug.log()` — UI-layer debug log
 ### M19. Dual sandbox runtimes (vimble vs andbox)
 **Files:** `web/packages/andbox/` (Worker-based sandbox), `web/clawser-codex.js` (uses andbox), `web/clawser-skills.js` (references vimble), `web/clawser-tool-builder.js` (references vimble)
 **Source:** Code review
-**Status:** DOCUMENTED (intentional — two runtimes serve different isolation models)
+**Status:** FIX APPLIED
 
-Two sandbox runtimes exist: (1) andbox — Worker-based sandbox (`web/packages/andbox/`), used by Codex and SandboxEvalTool for agent code execution, provides host-capability RPC via `postMessage`, timeout enforcement, and disposal; (2) vimble — CDN-imported package (`esm.sh/vimble`), uses `data:` URI imports for isolation, referenced in skills system and tool builder for lightweight eval. andbox provides stronger isolation (separate Worker thread, no shared memory) while vimble provides lighter-weight eval suitable for simple skill scripts. Both are active in production with no consolidation plan.
+Replaced vimble with andbox data-uri mode in SkillScriptTool. Previously two sandbox runtimes existed: (1) andbox — Worker-based sandbox (`web/packages/andbox/`), used by Codex and SandboxEvalTool for agent code execution, provides host-capability RPC via `postMessage`, timeout enforcement, and disposal; (2) vimble — CDN-imported package (`esm.sh/vimble`), uses `data:` URI imports for isolation, referenced in skills system and tool builder for lightweight eval. andbox provides stronger isolation (separate Worker thread, no shared memory) while vimble provides lighter-weight eval suitable for simple skill scripts. Both are active in production with no consolidation plan.
 
 ### M20. Event emission path duplication
 **File:** `web/clawser-state.js:362-401` (event bus emit/on/off) vs DOM events in `web/clawser-accounts.js:374`, `web/clawser-ui-panels.js:1077`, `web/clawser-router.js:143`
 **Source:** Code review
-**Status:** DOCUMENTED (architectural — two event systems serve different scopes)
+**Status:** FIX APPLIED
 
-Two event emission patterns coexist: (1) the `emit()`/`on()`/`off()` event bus in `clawser-state.js` — module-level pub/sub for cross-module coordination (conversationChanged, refreshFiles, renderGoals, etc.), listeners registered via function references; (2) native DOM events via `dispatchEvent(new CustomEvent(...))` — used for UI-specific events (agent-edit, panel:firstrender, form change events). The state event bus has no wildcard/debug listener, making it hard to trace event flow. DOM events are used in 3 locations for UI interactions that need to bubble through the DOM tree. The duplication is low-risk but adds cognitive overhead when tracing event-driven behavior.
+Added wildcard listeners, debug tracing, and listEvents() to event system. Previously two event emission patterns coexisted: (1) the `emit()`/`on()`/`off()` event bus in `clawser-state.js` — module-level pub/sub for cross-module coordination (conversationChanged, refreshFiles, renderGoals, etc.), listeners registered via function references; (2) native DOM events via `dispatchEvent(new CustomEvent(...))` — used for UI-specific events (agent-edit, panel:firstrender, form change events). The state event bus has no wildcard/debug listener, making it hard to trace event flow. DOM events are used in 3 locations for UI interactions that need to bubble through the DOM tree. The duplication is low-risk but adds cognitive overhead when tracing event-driven behavior.
 
 ### M21. onReverseConnect callback overwrite (no chaining)
 **Files:** `web/clawser-wsh-tools.js:78-80`, `web/clawser-wsh-cli.js:395-397`
@@ -357,23 +359,23 @@ In `runStream()`, when a provider does not support streaming, the fallback calls
 ### L1. Math.random() for non-security identifiers
 **Files:** `web/clawser-conversations.js:80`, `web/clawser-daemon.js:119,232`, `web/clawser-workspaces.js:42`, `web/clawser-agent-storage.js:21`, `web/clawser-accounts.js:38`, `web/clawser-delegate.js:60`, `web/clawser-terminal-sessions.js:26`, `web/clawser-fallback.js:138`
 **Source:** Security scan
-**Status:** ACCEPTABLE
+**Status:** FIX APPLIED
 
-`Math.random()` is used for non-security identifiers (conversation IDs, tab IDs, checkpoint IDs, workspace IDs, retry jitter). These are not security-sensitive — they serve as locally unique suffixes combined with timestamps. Security-sensitive tokens (pairing codes, bearer tokens) were fixed in H1 to use `crypto.getRandomValues()`.
+`Math.random()` was used for non-security identifiers (conversation IDs, tab IDs, checkpoint IDs, workspace IDs, retry jitter). Replaced with `crypto.randomUUID()` for ID generation across all affected files.
 
 ### L2. Safety pipeline can be disabled
 **File:** `web/clawser-safety.js:192,200-201`
 **Source:** Code review
-**Status:** DOCUMENTED (by design)
+**Status:** FIX APPLIED
 
-`SafetyPipeline` exposes an `enabled` setter (`set enabled(v) { this.#enabled = !!v; }`) that allows disabling all safety checks (input sanitization, tool validation, leak detection). When disabled, `sanitizeInput()`, `validateToolCall()`, and `scanOutput()` return pass-through results. This is intentional — it allows advanced users to disable the pipeline for performance or when running trusted workloads. The pipeline defaults to enabled.
+`SafetyPipeline` exposed an unguarded `enabled` setter. Added `confirmDisable()` guard to `SafetyPipeline.enabled` setter requiring explicit confirmation before disabling safety checks.
 
 ### L3. No dependency lock file
 **File:** `web/package.json`
 **Source:** Completeness audit
-**Status:** ACCEPTABLE (by design)
+**Status:** FIX APPLIED
 
-The project uses zero-build CDN imports (esm.sh, jsdelivr, unpkg) at runtime with version-pinned URLs. The `package.json` exists only for development metadata, not for `npm install`. A lock file is unnecessary since there are no installed `node_modules` dependencies.
+Created centralized import map in index.html, consolidating all CDN import URLs into a single declaration for version management and consistency.
 
 ### L4. Stale WASM comments in tools/agent
 **Files:** `web/clawser-tools.js:6,162`, `web/clawser-agent.js:4,1120`
@@ -413,9 +415,9 @@ Comments referencing the old Rust/WASM architecture remain in the codebase despi
 ### L9. Codex sequence counter is module-global
 **File:** `web/clawser-codex.js:22`
 **Source:** Code review
-**Status:** DOCUMENTED (acceptable)
+**Status:** FIX APPLIED
 
-`let _codexSeq = 0` is a module-level counter incremented in `extractCodeBlocks()`. Since all Codex instances share it, code block IDs are unique across instances but the counter never resets. This is harmless — it serves only as an internal sequence number for code block identification during a single page session. Making it per-instance would not improve behavior.
+Moved Codex sequence counter from module-level `_codexSeq` to an instance field, ensuring per-instance isolation.
 
 ### L10. Missing PeripheralHandle offData/offDisconnect
 **File:** `web/clawser-hardware.js:76-82`
@@ -427,16 +429,16 @@ Comments referencing the old Rust/WASM architecture remain in the codebase despi
 ### L11. No RateLimiter.reset() method
 **File:** `web/clawser-remote.js:234-277`
 **Source:** Completeness audit
-**Status:** DOCUMENTED (follow-up)
+**Status:** FIX APPLIED
 
-`RateLimiter` tracks per-token sliding windows but has no `reset()` or `clear()` method. Stale entries are naturally expired by the 60-second window check in `allow()` and `remaining()`. A `reset()` method would only be needed for testing or admin override scenarios. Low priority.
+Added `RateLimiter.reset(token?)` method to clear sliding windows for a specific token or all tokens.
 
 ### L12. No CheckpointManager.deleteCheckpoint()
 **File:** `web/clawser-daemon.js:87-209`
 **Source:** Completeness audit
-**Status:** DOCUMENTED (follow-up)
+**Status:** FIX APPLIED
 
-`CheckpointManager` can create, restore, list, and clear all checkpoints, but cannot delete a single checkpoint by ID. The `clear()` method wipes the index without deleting stored data (also noted in M25). A `deleteCheckpoint(id)` method would require calling the `writeFn` to remove the stored data and splicing the index. Low priority — old checkpoints are auto-trimmed by `#maxCheckpoints`.
+Added `CheckpointManager.deleteCheckpoint(id)` method that removes stored data via `writeFn` and splices the index.
 
 ### L13. Skill regex patterns have unnecessary `g` flag
 **File:** `web/clawser-skills.js:253-258`
@@ -455,9 +457,9 @@ Comments referencing the old Rust/WASM architecture remain in the codebase despi
 ### L15. WebSocketTransport doesn't handle text frames
 **File:** `web/packages/wsh/src/transport-ws.mjs:218-237`
 **Source:** Code review
-**Status:** DOCUMENTED (by design)
+**Status:** FIX APPLIED
 
-`WebSocketTransport._doConnect()` sets `ws.binaryType = 'arraybuffer'` and `#handleMessage()` casts `ev.data` directly to `Uint8Array`. If a server sends a text frame (string), `new Uint8Array(stringData)` would fail silently or produce garbage. This is by design — the wsh wire protocol is strictly binary (CBOR + custom framing). Servers must not send text frames. If interop with text-frame servers is needed, a guard could be added: `if (typeof raw === 'string') { this._emitError(...); return; }`.
+`WebSocketTransport._doConnect()` sets `ws.binaryType = 'arraybuffer'` and `#handleMessage()` casts `ev.data` directly to `Uint8Array`. Added text WebSocket frame guard (`if (typeof raw === 'string')`) that emits an error and returns early instead of producing garbage from string-to-Uint8Array cast.
 
 ---
 
@@ -504,3 +506,23 @@ Comments referencing the old Rust/WASM architecture remain in the codebase despi
 | M23 | clawser-providers.js | Wrapped chatStream() fetch calls in withRetry() for OpenAI, Anthropic, OpenAICompatible |
 | M24 | clawser-agent.js | Added try/catch around non-streaming fallback chat() in runStream() |
 | M25 | clawser-daemon.js | CheckpointManager.clear() now deletes stored data via writeFn |
+| L1 | clawser-conversations.js, clawser-daemon.js, clawser-workspaces.js, +5 | Replaced Math.random() with crypto.randomUUID() for ID generation |
+| L2 | clawser-safety.js | Added confirmDisable() guard to SafetyPipeline.enabled setter |
+| L9 | clawser-codex.js | Moved Codex sequence counter from module-level to instance field |
+| L11 | clawser-remote.js | Added RateLimiter.reset(token?) method |
+| L12 | clawser-daemon.js | Added CheckpointManager.deleteCheckpoint(id) method |
+| L15 | packages/wsh/src/transport-ws.mjs | Added text WebSocket frame guard in #handleMessage() |
+| M15 | clawser-tools.js | Standardized tool naming to browser_*/agent_* convention |
+| H10 | clawser-tools.js | Removed duplicate AgentGoalAddTool/AgentGoalUpdateTool (kept GoalManager tools) |
+| H11 | clawser-state.js | Declared all 30+ state properties in schema with services/features namespaces |
+| H13 | clawser-kernel-integration.js | Implemented createShellPipe, createDaemonChannel, createJobSignalController |
+| M17 | clawser-log-facade.js | Created unified LogFacade with pluggable backends |
+| M20 | clawser-state.js | Added wildcard listeners, debug tracing, listEvents() to event system |
+| L3 | index.html | Created centralized import map for all CDN imports |
+| C1 | packages/andbox/src/sandbox.mjs | Added inline/data-uri modes and globals injection to andbox |
+| M19 | clawser-skills.js | Replaced vimble with andbox data-uri mode in SkillScriptTool |
+| M16 | clawser-tools.js | Removed SandboxEvalTool, consolidated to 2 eval paths |
+| C5 | clawser-app.js | Implemented graceful app shutdown with service teardown sequence |
+| H2 | clawser-accounts.js | Added vault passphrase modal, auto-unlock flow, lock-on-idle, key migration |
+| H12 | clawser-app.js, clawser-undo.js | Implemented all 4 undo handlers (history, memory, file, goal) |
+| H16 | clawser-undo.js | Added redo stack, canRedo, previewRedo(), RedoTool |

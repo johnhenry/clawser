@@ -120,7 +120,7 @@ export class CheckpointManager {
    * @returns {Promise<object>} Checkpoint metadata
    */
   async createCheckpoint(agentState, reason = 'manual') {
-    const id = `cp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const id = `cp_${Date.now()}_${crypto.randomUUID().slice(0, 4)}`;
     const meta = {
       id,
       timestamp: Date.now(),
@@ -209,6 +209,25 @@ export class CheckpointManager {
   get size() { return this.#index.length; }
 
   /**
+   * Delete a specific checkpoint by ID.
+   * @param {string} id
+   * @returns {Promise<boolean>} true if found and deleted
+   */
+  async deleteCheckpoint(id) {
+    const idx = this.#index.findIndex(m => m.id === id);
+    if (idx === -1) return false;
+
+    this.#index.splice(idx, 1);
+
+    if (this.#writeFn) {
+      try { await this.#writeFn(`checkpoint_${id}`, null); } catch { /* best-effort */ }
+      await this.#writeFn('checkpoint_index', this.#index);
+    }
+
+    return true;
+  }
+
+  /**
    * Clear all checkpoint metadata and delete stored data via writeFn.
    * @returns {Promise<void>}
    */
@@ -245,7 +264,7 @@ export class TabCoordinator {
    * @param {Function} [opts.onMessage] - (msg) callback for non-system messages
    */
   constructor(opts = {}) {
-    this.#tabId = `tab_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    this.#tabId = `tab_${Date.now()}_${crypto.randomUUID().slice(0, 4)}`;
     this.#heartbeatMs = opts.heartbeatMs ?? 5000;
     this.#onMessage = opts.onMessage || null;
 

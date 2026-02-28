@@ -3,13 +3,6 @@
  * Encrypted secret storage using Web Crypto API
  */
 
-// ── Crypto Constants ───────────────────────────────────────────
-
-export declare const PBKDF2_ITERATIONS: 600000;
-export declare const AES_KEY_LENGTH: 256;
-export declare const IV_BYTES: 12;
-export declare const SALT_BYTES: 16;
-
 // ── Crypto Primitives ──────────────────────────────────────────
 
 export declare function deriveKey(passphrase: string, salt: Uint8Array): Promise<CryptoKey>;
@@ -63,4 +56,6 @@ export declare class SecretVault {
   list(): Promise<string[]>;
   exists(): Promise<boolean>;
   verify(passphrase: string): Promise<boolean>;
+  resetIdleTimer(): void;
+  migrateKeysToVault(keys: Array<{ name: string; value: string }>): Promise<number>;
 }

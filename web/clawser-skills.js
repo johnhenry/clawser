@@ -441,7 +441,7 @@ export class SkillStorage {
    * @returns {Promise<Map<string,string>>} Map of path → content
    */
   static async importFromZip(blob) {
-    const { unzipSync, strFromU8 } = await import('https://cdn.jsdelivr.net/npm/fflate@0.8.2/+esm');
+    const { unzipSync, strFromU8 } = await import('fflate');
     const buffer = new Uint8Array(await blob.arrayBuffer());
     const unzipped = unzipSync(buffer);
 
@@ -478,7 +478,7 @@ export class SkillStorage {
    * @returns {Promise<Blob>}
    */
   static async exportToZip(dirHandle) {
-    const fflate = await import('https://cdn.jsdelivr.net/npm/fflate@0.8.2/+esm');
+    const fflate = await import('fflate');
 
     const entries = {};
     await SkillStorage.#collectFiles(dirHandle, '', entries, fflate.strToU8);
@@ -545,6 +545,9 @@ export class SkillRegistry {
   /** @type {import('./clawser-tools.js').BrowserToolRegistry|null} */
   #browserTools = null;
 
+  /** @type {object|null} MCP manager for requirements context */
+  #mcpManager = null;
+
   /** @type {string} */
   #wsId = 'default';
 
@@ -560,11 +563,13 @@ export class SkillRegistry {
   /**
    * @param {object} opts
    * @param {import('./clawser-tools.js').BrowserToolRegistry} [opts.browserTools]
+   * @param {object} [opts.mcpManager] - MCP manager for tool discovery
    * @param {Function} [opts.onLog]
    * @param {Function} [opts.onActivationChange]
    */
   constructor(opts = {}) {
     this.#browserTools = opts.browserTools || null;
+    this.#mcpManager = opts.mcpManager || null;
     this.#onLog = opts.onLog || (() => {});
     this.#onActivationChange = opts.onActivationChange || (() => {});
   }
@@ -657,18 +662,20 @@ export class SkillRegistry {
    * Serializes concurrent activations of the same skill to prevent TOCTOU races.
    * @param {string} name
    * @param {string} [args] - Arguments for $ARGUMENTS substitution
+   * @param {object} [opts]
+   * @param {boolean} [opts.force=false] - Skip dependency requirement checks
    * @returns {Promise<SkillActivation|null>}
    */
-  async activate(name, args = '') {
+  async activate(name, args = '', opts = {}) {
     const pending = this.#activationLocks.get(name);
     if (pending) await pending;
-    const promise = this.#doActivate(name, args);
+    const promise = this.#doActivate(name, args, opts);
     this.#activationLocks.set(name, promise);
     try { return await promise; }
     finally { this.#activationLocks.delete(name); }
   }
 
-  async #doActivate(name, args = '') {
+  async #doActivate(name, args = '', opts = {}) {
     const entry = this.#skills.get(name);
     if (!entry) {
       this.#onLog(3, `Skill not found: ${name}`);
@@ -692,6 +699,19 @@ export class SkillRegistry {
       const dir = await this.#getSkillDir(entry);
       const skillMd = await SkillStorage.readFile(dir, 'SKILL.md');
       const { metadata, body } = SkillParser.parseFrontmatter(skillMd);
+
+      // Dependency requirement enforcement
+      if (!opts.force && metadata.requires) {
+        const ctx = this.#buildRequirementsContext();
+        const reqCheck = validateRequirements(metadata, ctx);
+        if (!reqCheck.satisfied) {
+          const missingParts = [];
+          if (reqCheck.missing.tools.length > 0) missingParts.push(`tools: ${reqCheck.missing.tools.join(', ')}`);
+          if (reqCheck.missing.permissions.length > 0) missingParts.push(`permissions: ${reqCheck.missing.permissions.join(', ')}`);
+          this.#onLog(3, `Skill "${name}" has unmet dependencies: ${missingParts.join('; ')}`);
+          return null;
+        }
+      }
 
       // Validate skill body for dangerous patterns
       const bodyCheck = SkillParser.validateScript(body);
@@ -914,6 +934,31 @@ export class SkillRegistry {
 
   // ── Private helpers ──────────────────────────────────────────
 
+  /**
+   * Build requirements context from available browser tools and MCP tools.
+   * @returns {{ tools: string[], permissions: string[] }}
+   */
+  #buildRequirementsContext() {
+    const toolNames = [];
+    const permLevels = new Set();
+
+    if (this.#browserTools) {
+      for (const spec of this.#browserTools.allSpecs()) {
+        toolNames.push(spec.name);
+        const perm = this.#browserTools.getPermission(spec.name);
+        if (perm) permLevels.add(perm);
+      }
+    }
+
+    if (this.#mcpManager?.allToolSpecs) {
+      for (const spec of this.#mcpManager.allToolSpecs()) {
+        toolNames.push(spec.name || spec);
+      }
+    }
+
+    return { tools: toolNames, permissions: [...permLevels] };
+  }
+
   #loadEnabledState(wsId) {
     this.#enabledState.clear();
     try {
@@ -941,17 +986,8 @@ export class SkillRegistry {
 
 // ── SkillScriptTool ──────────────────────────────────────────────
 
-/** Lazily cached vimble import */
-let _vimblePromise = null;
-function getVimble() {
-  if (!_vimblePromise) {
-    _vimblePromise = import('https://ga.jspm.io/npm:vimble@0.0.1/src/index.mjs');
-  }
-  return _vimblePromise;
-}
-
 /**
- * A BrowserTool that executes a skill's JS script in a vimble sandbox.
+ * A BrowserTool that executes a skill's JS script in an andbox sandbox.
  */
 class SkillScriptTool extends BrowserTool {
   #toolName;
@@ -981,10 +1017,13 @@ class SkillScriptTool extends BrowserTool {
 
   async execute({ input = '' }) {
     try {
-      const { run } = await getVimble();
+      if (!this._sandbox) {
+        const { createSandbox } = await import('./packages-andbox.js');
+        this._sandbox = await createSandbox();
+      }
       // Wrap script to expose `input` variable and capture return value
       const wrapper = `const input = ${JSON.stringify(input)};\n${this.#scriptContent}`;
-      const result = await run(wrapper);
+      const result = await this._sandbox.evaluate(wrapper);
       return {
         success: true,
         output: result == null ? '' : (typeof result === 'string' ? result : JSON.stringify(result)),
@@ -1023,14 +1062,15 @@ export class ActivateSkillTool extends BrowserTool {
       properties: {
         name: { type: 'string', description: 'Skill name to activate' },
         arguments: { type: 'string', description: 'Optional arguments to pass to the skill' },
+        force: { type: 'boolean', description: 'Skip dependency checks (default: false)' },
       },
       required: ['name'],
     };
   }
   get permission() { return 'internal'; }
 
-  async execute({ name, arguments: args = '' }) {
-    const activation = await this.#registry.activate(name, args);
+  async execute({ name, arguments: args = '', force = false }) {
+    const activation = await this.#registry.activate(name, args, { force });
     if (!activation) {
       const available = [...this.#registry.skills.keys()].join(', ');
       return {
@@ -1348,6 +1388,139 @@ export class SkillRegistryClient {
     this.#indexCache = null;
     this.#indexCacheTime = 0;
   }
+}
+
+// ── Skill Templates ─────────────────────────────────────────────
+
+/**
+ * Built-in skill templates for the "New Skill" flow.
+ * Each template returns a Map<path, content> compatible with SkillRegistry.install().
+ */
+export const SKILL_TEMPLATES = [
+  {
+    id: 'basic-prompt',
+    name: 'Basic Prompt',
+    description: 'A simple skill with prompt instructions and argument substitution.',
+    files() {
+      return new Map([
+        ['SKILL.md', `---
+name: my-skill
+version: 1.0.0
+description: A custom prompt skill
+invoke: true
+---
+
+# My Skill
+
+You are a helpful assistant for this task.
+
+User input: $ARGUMENTS
+`],
+      ]);
+    },
+  },
+  {
+    id: 'tool-script',
+    name: 'Tool Script',
+    description: 'A skill with a JavaScript helper tool executed in a sandbox.',
+    files() {
+      return new Map([
+        ['SKILL.md', `---
+name: my-tool-skill
+version: 1.0.0
+description: A skill with a custom tool script
+invoke: true
+---
+
+# My Tool Skill
+
+This skill provides a custom tool. Use the tool to process input.
+`],
+        ['scripts/helper.js', `// Skill script — receives \`input\` variable, return value becomes tool output
+const result = input ? input.toUpperCase() : 'No input provided';
+result;
+`],
+      ]);
+    },
+  },
+  {
+    id: 'multi-reference',
+    name: 'Multi-Reference',
+    description: 'A skill with reference documents loaded into context.',
+    files() {
+      return new Map([
+        ['SKILL.md', `---
+name: my-reference-skill
+version: 1.0.0
+description: A skill with reference materials
+invoke: true
+---
+
+# My Reference Skill
+
+Use the reference materials below to answer questions accurately.
+`],
+        ['references/guide.md', `# Reference Guide
+
+Add your reference content here. This will be included in the skill's context
+when activated.
+
+## Section 1
+
+Details go here.
+
+## Section 2
+
+More details.
+`],
+      ]);
+    },
+  },
+];
+
+// ── Simple Diff (LCS-based) ────────────────────────────────────
+
+/**
+ * Compute a line-level diff between two texts using LCS.
+ * @param {string} oldText
+ * @param {string} newText
+ * @returns {Array<{type: 'same'|'add'|'remove', line: string}>}
+ */
+export function simpleDiff(oldText, newText) {
+  const oldLines = (oldText || '').split('\n');
+  const newLines = (newText || '').split('\n');
+
+  // Build LCS table
+  const m = oldLines.length;
+  const n = newLines.length;
+  const dp = Array.from({ length: m + 1 }, () => new Uint16Array(n + 1));
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (oldLines[i - 1] === newLines[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+  }
+
+  // Backtrack to produce diff
+  const result = [];
+  let i = m, j = n;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
+      result.push({ type: 'same', line: oldLines[i - 1] });
+      i--; j--;
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      result.push({ type: 'add', line: newLines[j - 1] });
+      j--;
+    } else {
+      result.push({ type: 'remove', line: oldLines[i - 1] });
+      i--;
+    }
+  }
+
+  return result.reverse();
 }
 
 // ── Skill Registry Agent Tools ──────────────────────────────────

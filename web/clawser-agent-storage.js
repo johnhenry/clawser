@@ -18,7 +18,7 @@
 // ── Helpers ─────────────────────────────────────────────────────
 
 function generateAgentId() {
-  return 'agt_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+  return 'agt_' + Date.now().toString(36) + '_' + crypto.randomUUID().slice(0, 4);
 }
 
 // ── Built-in Starter Agents ──────────────────────────────────────

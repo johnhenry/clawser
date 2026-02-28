@@ -23,7 +23,7 @@
  * @module clawser-kernel-integration
  */
 
-import { KERNEL_CAP } from './packages-kernel.js';
+import { KERNEL_CAP, createPipe, createChannel, SignalController } from './packages-kernel.js';
 
 /**
  * Centralized kernel integration adapter.
@@ -120,13 +120,11 @@ export class KernelIntegration {
    * Create a ByteStream pipe pair for shell pipeline use.
    * Shell commands can use these for `|`, `>`, `<` redirects.
    *
-   * @returns {[Object, Object]|null} [reader, writer] or null if inactive.
+   * @returns {[import('./packages-kernel.js').ByteStream, import('./packages-kernel.js').ByteStream]|null} [reader, writer] or null if inactive.
    */
   createShellPipe() {
     if (!this.#kernel) return null;
-    // Dynamic import would be needed for createPipe, but we can return
-    // a reference to the kernel's byte-stream createPipe
-    return null; // Actual implementation hooks into ClawserShell
+    return createPipe();
   }
 
   // ── Step 25: MCP servers as svc:// services ────────────────────
@@ -220,12 +218,11 @@ export class KernelIntegration {
   /**
    * Create a kernel MessagePort pair for tab-to-daemon communication.
    *
-   * @returns {[Object, Object]|null} [tabPort, daemonPort] or null.
+   * @returns {[import('./packages-kernel.js').KernelMessagePort, import('./packages-kernel.js').KernelMessagePort]|null} [tabPort, daemonPort] or null.
    */
   createDaemonChannel() {
     if (!this.#kernel) return null;
-    // The actual createChannel is in the kernel package
-    return null; // Actual implementation hooks into DaemonController
+    return createChannel();
   }
 
   // ── Step 29: EventLog + Tracer unification ─────────────────────
@@ -287,14 +284,11 @@ export class KernelIntegration {
    * Create a SignalController for a scheduler job.
    * The job can check for TERM signal for cooperative cancellation.
    *
-   * @returns {Object|null} SignalController or null if inactive.
+   * @returns {import('./packages-kernel.js').SignalController|null} SignalController or null if inactive.
    */
   createJobSignalController() {
     if (!this.#kernel) return null;
-    // Each job gets its own SignalController from the kernel's signal module
-    const { SignalController } = this.#kernel.constructor;
-    // Actually, we import from the module directly
-    return null; // Will be connected via kernel.signals per-job
+    return new SignalController();
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────
