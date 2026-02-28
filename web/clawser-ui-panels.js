@@ -342,9 +342,14 @@ export async function showSkillDiffModal(skillName, oldText, newText, onApply) {
   applyBtn.className = 'btn-sm';
   applyBtn.style.background = 'var(--green)';
   applyBtn.addEventListener('click', async () => {
-    if (onApply) await onApply();
-    dialog.close();
-    dialog.remove();
+    try {
+      if (onApply) await onApply();
+    } catch (err) {
+      addErrorMsg(`Update failed: ${err.message}`);
+    } finally {
+      dialog.close();
+      dialog.remove();
+    }
   });
   btnRow.appendChild(cancelBtn);
   btnRow.appendChild(applyBtn);

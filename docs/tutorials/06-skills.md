@@ -116,6 +116,7 @@ Each skill in the panel has a refresh button (**&#x21BB;**) that checks the remo
 Before activation, Clawser scans skill scripts for potentially dangerous patterns:
 - `eval`, `Function()`, `import()`
 - `document.cookie`, `localStorage`
+- `XMLHttpRequest` — direct XHR network access
 - Network access patterns
 
 If any are detected, you'll see a warning with the specific patterns found. You can choose to proceed or block the skill.

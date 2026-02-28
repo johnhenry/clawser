@@ -4908,10 +4908,23 @@ section('simpleDiff');
   // Content to empty
   const d4 = simpleDiff('old\ndata', '');
   assert('content-to-empty — has removes', d4.filter(l => l.type === 'remove').length >= 1);
+
+  // Canonical ordering: removes before adds for replaced lines
+  const d5 = simpleDiff('a\nb\nc', 'a\nx\nc');
+  const ordered = d5.filter(l => l.type !== 'same');
+  assert('canonical — remove before add', ordered.length === 2 && ordered[0].type === 'remove' && ordered[1].type === 'add');
+
+  // Large file: >65535 lines should not overflow
+  const bigOld = Array.from({ length: 70000 }, (_, i) => `line ${i}`).join('\n');
+  const bigNew = bigOld.replace('line 50000', 'CHANGED');
+  const d6 = simpleDiff(bigOld, bigNew);
+  assert('large file — has remove', d6.some(l => l.type === 'remove' && l.line === 'line 50000'));
+  assert('large file — has add', d6.some(l => l.type === 'add' && l.line === 'CHANGED'));
+  assertEq('large file — total lines', d6.length, 70000 + 1);
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  SKILL DEPENDENCY ENFORCEMENT
+//  SKILL DEPENDENCY ENFORCEMENT — extended
 // ═══════════════════════════════════════════════════════════════
 
 section('Skill Dependency Enforcement — activate');
@@ -4939,6 +4952,28 @@ section('Skill Dependency Enforcement — activate');
   const ctx2 = { tools: ['browser_fetch', 'web_search'], permissions: ['network'] };
   const check2 = validateRequirements(meta, ctx2);
   assert('dep enforcement — satisfied', check2.satisfied);
+
+  // No requires metadata — always satisfied
+  const metaNoReqs = { name: 'simple-skill', version: '1.0.0' };
+  const check3 = validateRequirements(metaNoReqs, ctx);
+  assert('no requires — satisfied', check3.satisfied);
+
+  // buildRequirementsContext returns tools from browserTools
+  const reqCtx = reg.buildRequirementsContext();
+  assert('buildReqCtx — has tools', Array.isArray(reqCtx.tools));
+  assert('buildReqCtx — includes browser_fetch', reqCtx.tools.includes('browser_fetch'));
+  assert('buildReqCtx — includes dom_query', reqCtx.tools.includes('dom_query'));
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SKILL VALIDATION — XMLHttpRequest detection
+// ═══════════════════════════════════════════════════════════════
+
+section('SkillParser — validateScript XMLHttpRequest');
+
+{
+  const xhr = SkillParser.validateScript('const x = new XMLHttpRequest();');
+  assert('XMLHttpRequest flagged', !xhr.safe || xhr.warnings.length > 0);
 }
 
 // ═══════════════════════════════════════════════════════════════

@@ -886,7 +886,7 @@ input[type="range"] { width:100%; accent-color:var(--accent); }
 .skill-dep-warn { font-size:9px; color:var(--orange); margin-top:2px; background:rgba(210,153,34,.1); padding:1px 5px; border-radius:3px; display:inline-block; }
 
 /* ── Skill Update Check ────────────────────────────────────── */
-.skill-actions .skill-update-check { font-size:13px; }
+.skill-actions button.skill-update-check { font-size:13px; }
 
 /* ── Skill Diff Modal ──────────────────────────────────────── */
 .skill-diff-body { max-height:50vh; overflow-y:auto; font-family:var(--mono); font-size:11px; line-height:1.5; border:1px solid var(--border); border-radius:4px; padding:8px; background:var(--bg); }
