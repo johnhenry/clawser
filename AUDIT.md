@@ -6,13 +6,13 @@
 
 ## Summary Statistics
 
-| Severity | Count |
-|----------|-------|
-| Critical | 5 |
-| High | 18 |
-| Medium | 25 |
-| Low | 15 |
-| **Total** | **63** |
+| Severity | Count | Fixed | Documented |
+|----------|-------|-------|------------|
+| Critical | 5 | 2 | 3 (by-design/acceptable) |
+| High | 18 | 11 | 7 (by-design/acceptable) |
+| Medium | 25 | 17 | 8 (by-design/not-an-issue/follow-up) |
+| Low | 15 | 8 | 7 (acceptable/follow-up) |
+| **Total** | **63** | **38** | **25** |
 
 ---
 
@@ -478,6 +478,17 @@ Comments referencing the old Rust/WASM architecture remain in the codebase despi
 | H15 | clawser-hardware.js | Store and remove disconnect listener |
 | H17 | clawser-providers.js | Added debug logging in SSE catch blocks |
 | H18 | clawser-agent.js | Added token check + auto-compact in run loop |
+| M1 | clawser-tools.js | Added `<math>` to element denylist, broadened `data:text/html` to all `data:` URL block |
+| M2 | clawser-tools.js | Added SSRF blocklist blocking private/reserved IPs (127.x, 10.x, 172.16-31.x, 192.168.x, etc.) |
+| M3 | clawser-remote.js | Added sliding-window rate limit (5 attempts/60s) on pairing code exchange |
+| M4 | index.html | Added Content-Security-Policy meta tag |
+| M5 | clawser-oauth.js | Added 128-bit random state parameter generation and validation |
+| M7 | clawser-mcp.js | Moved JSON-RPC ID counter from module-level to per-instance `#nextId` |
+| M8 | clawser-providers.js | Added `options` param to chatStream(), signal.aborted check in ChromeAI/Matey loops |
+| M9 | clawser-providers.js | Wrapped chat()/chatStream() in try/finally for session.destroy() cleanup |
+| M12 | clawser-providers.js | Removed system message filter from ResponseCache.cacheKey() |
+| M13 | packages/kernel/src/byte-stream.mjs | compose() write path now uses untransform() when available |
+| M14 | packages/kernel/src/byte-stream.mjs | Separated backpressure (#paused) from close (#writeClosed), auto-resume on drain |
 | Bridge | packages-netway.js + index.mjs | Added missing re-exports (ServiceBackend, etc.) |
 | L4 | clawser-tools.js | Removed stale WASM references from comments |
 | L5 | clawser-daemon.js | Added #maxHistory=1000 cap to DaemonState transition history |
