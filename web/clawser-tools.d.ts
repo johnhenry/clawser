@@ -133,6 +133,14 @@ export declare class StorageSetTool extends BrowserTool {
   execute(params: { key: string; value: string }): Promise<ToolResult>;
 }
 
+export declare class StorageDeleteTool extends BrowserTool {
+  get name(): string;
+  get description(): string;
+  get parameters(): object;
+  get permission(): string;
+  execute(params: { key: string }): Promise<ToolResult>;
+}
+
 export declare class StorageListTool extends BrowserTool {
   get name(): string;
   get description(): string;

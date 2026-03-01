@@ -394,6 +394,15 @@ export class WebMCPDiscovery {
   }
 
   /**
+   * Remove a single discovered tool by name.
+   * @param {string} name
+   * @returns {boolean}
+   */
+  removeDiscovered(name) {
+    return this.#discovered.delete(name);
+  }
+
+  /**
    * Clear all discovered tools.
    */
   clearDiscovered() {

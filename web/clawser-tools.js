@@ -767,6 +767,31 @@ export class StorageSetTool extends BrowserTool {
   }
 }
 
+export class StorageDeleteTool extends BrowserTool {
+  get name() { return 'browser_storage_delete'; }
+  get description() {
+    return 'Delete a key from localStorage.';
+  }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        key: { type: 'string', description: 'Storage key to delete' },
+      },
+      required: ['key'],
+    };
+  }
+  get permission() { return 'write'; }
+
+  async execute({ key }) {
+    if (key.startsWith('clawser_')) {
+      return { success: false, output: '', error: `Cannot delete reserved key: "${key}" (clawser_ prefix is reserved)` };
+    }
+    localStorage.removeItem(key);
+    return { success: true, output: `Deleted key "${key}"` };
+  }
+}
+
 export class StorageListTool extends BrowserTool {
   get name() { return 'browser_storage_list'; }
   get description() {

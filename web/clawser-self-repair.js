@@ -325,6 +325,17 @@ export class SelfRepairEngine {
   }
 
   /**
+   * Unregister a recovery handler by action name.
+   * @param {string} action
+   * @returns {boolean}
+   */
+  unregisterHandler(action) {
+    if (!(action in this.#handlers)) return false;
+    delete this.#handlers[action];
+    return true;
+  }
+
+  /**
    * Get summary of repair activity.
    * @returns {{ totalDetections: number, totalRecoveries: number, successRate: number, byType: object }}
    */

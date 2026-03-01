@@ -151,6 +151,15 @@ export declare class GoalListTool extends BrowserTool {
   execute(params?: { status?: GoalStatus | 'all'; parent_id?: string }): Promise<ToolResult>;
 }
 
+export declare class GoalRemoveTool extends BrowserTool {
+  constructor(manager: GoalManager);
+  get name(): string;
+  get description(): string;
+  get parameters(): object;
+  get permission(): string;
+  execute(params: { goal_id: string }): Promise<ToolResult>;
+}
+
 export declare class GoalDecomposeTool extends BrowserTool {
   constructor(manager: GoalManager);
   get name(): string;

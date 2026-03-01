@@ -59,6 +59,8 @@ export class SelfRepairEngine {
   get repairLog(): Array<{ issue: DetectedIssue; strategy: unknown; success: boolean; timestamp: number }>;
   clearLog(): void;
   registerHandler(action: string, handler: (strategy: unknown, issue: DetectedIssue, jobState: JobState) => Promise<boolean>): void;
+  hasHandler(action: string): boolean;
+  unregisterHandler(action: string): boolean;
   getSummary(): { totalDetections: number; totalRecoveries: number; successRate: number; byType: Record<string, { detected: number; recovered: number }> };
 }
 

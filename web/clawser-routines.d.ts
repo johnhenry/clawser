@@ -48,6 +48,7 @@ export class RoutineEngine {
   tickCron(now?: Date): Promise<Array<{ routineId: string; result: string }>>;
   connectEventBus(bus: EventTarget): void;
   disconnectEventBus(): void;
+  updateRoutine(id: string, updates: Partial<Pick<RoutineDefinition, 'name' | 'trigger' | 'action' | 'enabled' | 'guardrails'>>): boolean;
   toJSON(): RoutineDefinition[];
   fromJSON(data: RoutineDefinition[]): void;
 }
@@ -80,4 +81,9 @@ export class RoutineRunTool extends BrowserTool {
 export class RoutineToggleTool extends BrowserTool {
   constructor(engine: RoutineEngine);
   execute(params: { routine_id: string; enabled: boolean }): Promise<ToolResult>;
+}
+
+export class RoutineUpdateTool extends BrowserTool {
+  constructor(engine: RoutineEngine);
+  execute(params: { routine_id: string; name?: string; trigger?: object; action?: object }): Promise<ToolResult>;
 }

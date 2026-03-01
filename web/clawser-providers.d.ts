@@ -62,6 +62,7 @@ export declare class ProfileCostLedger {
   setProfileThreshold(profileId: string, usd: number): void;
   isProfileOverThreshold(profileId: string): boolean;
   allProfileSummaries(): Record<string, CostSummary>;
+  clear(profileId?: string): void;
 }
 
 // ── Error Classification ───────────────────────────────────────

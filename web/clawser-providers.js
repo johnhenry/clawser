@@ -360,6 +360,19 @@ export class ProfileCostLedger {
     }
     return result;
   }
+
+  /**
+   * Clear cost entries. If profileId is given, clear only that profile.
+   * If omitted, clear all profiles.
+   * @param {string} [profileId]
+   */
+  clear(profileId) {
+    if (profileId != null) {
+      this.#entries.delete(profileId);
+    } else {
+      this.#entries.clear();
+    }
+  }
 }
 
 // ── Error classification ───────────────────────────────────────────

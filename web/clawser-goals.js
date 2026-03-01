@@ -720,6 +720,31 @@ export class GoalRemoveArtifactTool extends BrowserTool {
   }
 }
 
+export class GoalRemoveTool extends BrowserTool {
+  #manager;
+  constructor(manager) { super(); this.#manager = manager; }
+
+  get name() { return 'goal_remove'; }
+  get description() { return 'Remove a goal and all its descendants.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        goal_id: { type: 'string', description: 'Goal ID to remove' },
+      },
+      required: ['goal_id'],
+    };
+  }
+  get permission() { return 'approve'; }
+
+  async execute({ goal_id }) {
+    const goal = this.#manager.get(goal_id);
+    if (!goal) return { success: false, output: '', error: `Goal not found: ${goal_id}` };
+    this.#manager.remove(goal_id);
+    return { success: true, output: `Removed goal ${goal_id}: ${goal.description}` };
+  }
+}
+
 export class GoalListTool extends BrowserTool {
   #manager;
   constructor(manager) { super(); this.#manager = manager; }

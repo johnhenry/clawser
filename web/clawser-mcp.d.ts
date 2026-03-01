@@ -80,6 +80,7 @@ export declare class WebMCPDiscovery {
   isValidTool(tool: unknown): boolean;
   addDiscovered(tools: WebMCPToolDescriptor[]): void;
   listDiscovered(): WebMCPToolDescriptor[];
+  removeDiscovered(name: string): boolean;
   clearDiscovered(): void;
   get size(): number;
 }

@@ -220,6 +220,22 @@ export class RoutineEngine {
   }
 
   /**
+   * Update a routine's configuration.
+   * @param {string} id
+   * @param {object} updates - Fields to update (name, trigger, action, enabled, guardrails)
+   * @returns {boolean}
+   */
+  updateRoutine(id, updates) {
+    const routine = this.#routines.get(id);
+    if (!routine) return false;
+    for (const key of ['name', 'trigger', 'action', 'enabled', 'guardrails']) {
+      if (updates[key] !== undefined) routine[key] = updates[key];
+    }
+    this.#log(`Routine updated: ${id}`);
+    return true;
+  }
+
+  /**
    * Remove a routine.
    * @param {string} id
    * @returns {boolean}
@@ -785,6 +801,38 @@ export class RoutineToggleTool extends BrowserTool {
     if (this.#engine.setEnabled(routine_id, enabled)) {
       const state = enabled ? 'enabled' : 'disabled';
       return { success: true, output: `Routine ${routine_id}: ${state}` };
+    }
+    return { success: false, output: '', error: `Routine not found: ${routine_id}` };
+  }
+}
+
+export class RoutineUpdateTool extends BrowserTool {
+  #engine;
+
+  constructor(engine) {
+    super();
+    this.#engine = engine;
+  }
+
+  get name() { return 'routine_update'; }
+  get description() { return 'Update a routine\'s configuration (name, trigger, action).'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        routine_id: { type: 'string', description: 'Routine ID to update' },
+        name: { type: 'string', description: 'New routine name' },
+        trigger: { type: 'object', description: 'New trigger configuration' },
+        action: { type: 'object', description: 'New action configuration' },
+      },
+      required: ['routine_id'],
+    };
+  }
+  get permission() { return 'approve'; }
+
+  async execute({ routine_id, ...updates }) {
+    if (this.#engine.updateRoutine(routine_id, updates)) {
+      return { success: true, output: `Routine ${routine_id} updated` };
     }
     return { success: false, output: '', error: `Routine not found: ${routine_id}` };
   }

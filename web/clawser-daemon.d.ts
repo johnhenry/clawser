@@ -239,3 +239,12 @@ export declare class DaemonResumeTool {
   get permission(): 'approve';
   execute(): Promise<ToolResult>;
 }
+
+export declare class DaemonRestoreTool {
+  constructor(controller: DaemonController);
+  get name(): 'daemon_restore';
+  get description(): string;
+  get parameters(): object;
+  get permission(): 'approve';
+  execute(): Promise<ToolResult>;
+}

@@ -654,6 +654,28 @@ export class DaemonResumeTool extends BrowserTool {
   }
 }
 
+export class DaemonRestoreTool extends BrowserTool {
+  #controller;
+
+  constructor(controller) {
+    super();
+    this.#controller = controller;
+  }
+
+  get name() { return 'daemon_restore'; }
+  get description() { return 'Restore agent state from the latest checkpoint.'; }
+  get parameters() { return { type: 'object', properties: {} }; }
+  get permission() { return 'approve'; }
+
+  async execute() {
+    const meta = await this.#controller.restore();
+    if (!meta) {
+      return { success: false, output: '', error: 'No checkpoint available to restore' };
+    }
+    return { success: true, output: `Restored from checkpoint ${meta.id} (reason: ${meta.reason})` };
+  }
+}
+
 // ── Input Lock Manager ──────────────────────────────────────────
 
 /**
