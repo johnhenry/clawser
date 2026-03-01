@@ -45,6 +45,11 @@ export declare class SkillStorage {
     name: string,
     files: Map<string, string>,
   ): Promise<void>;
+  static readSkill(
+    scope: 'global' | 'workspace',
+    wsId: string | null,
+    name: string,
+  ): Promise<Map<string, string>>;
   static deleteSkill(
     scope: 'global' | 'workspace',
     wsId: string | null,
@@ -99,6 +104,7 @@ export declare class SkillRegistry {
   deactivate(name: string): void;
   buildRequirementsContext(): RequirementsContext;
   setEnabled(name: string, enabled: boolean): void;
+  isEnabled(name: string): boolean | undefined;
   persistEnabledState(wsId: string): void;
   buildMetadataPrompt(): string;
   buildActivationPrompt(name: string): string;

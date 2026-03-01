@@ -73,6 +73,7 @@ export declare class SafetyPipeline {
   get enabled(): boolean;
   /** Set enabled state. Throws if disabling without calling confirmDisable() first. */
   set enabled(v: boolean);
+  get isDisableConfirmed(): boolean;
   confirmDisable(): void;
   confirmEnable(): void;
   get sanitizer(): InputSanitizer;

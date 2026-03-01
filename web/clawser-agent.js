@@ -679,6 +679,15 @@ export class ClawserAgent {
   // ── Pause flag (set by self-repair cost runaway) ────────────
   #paused = false;
 
+  /** Whether the agent is currently paused. */
+  get isPaused() { return this.#paused; }
+
+  /** Pause the agent (prevents run/runStream from executing). */
+  pauseAgent() { this.#paused = true; }
+
+  /** Resume the agent from paused state. */
+  resumeAgent() { this.#paused = false; }
+
   // ── Callbacks ────────────────────────────────────────────────
   #onEvent = () => {};
   #onLog = () => {};
@@ -2524,6 +2533,20 @@ export class ClawserAgent {
   }
 
   /**
+   * Remove a goal by ID.
+   * @param {string} id
+   * @returns {boolean} true if found and removed
+   */
+  removeGoal(id) {
+    const idx = this.#goals.findIndex(g => g.id === id);
+    if (idx < 0) return false;
+    this.#goals.splice(idx, 1);
+    this.#onEvent('goal.removed', id);
+    this.#eventLog.append('goal_removed', { id }, 'system');
+    return true;
+  }
+
+  /**
    * Update a goal's status.
    * @param {string} id
    * @param {'active'|'completed'|'failed'} status
@@ -2696,6 +2719,30 @@ export class ClawserAgent {
       cron_expr: j.cron_expr || null,
       interval_ms: j.interval_ms || null,
     }));
+  }
+
+  /**
+   * Pause a scheduled job by ID.
+   * @param {string} id
+   * @returns {boolean}
+   */
+  pauseSchedulerJob(id) {
+    const job = this.#schedulerJobs.find(j => j.id === id);
+    if (!job) return false;
+    job.paused = true;
+    return true;
+  }
+
+  /**
+   * Resume a paused scheduled job by ID.
+   * @param {string} id
+   * @returns {boolean}
+   */
+  resumeSchedulerJob(id) {
+    const job = this.#schedulerJobs.find(j => j.id === id);
+    if (!job) return false;
+    job.paused = false;
+    return true;
   }
 
   /**

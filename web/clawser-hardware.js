@@ -661,6 +661,25 @@ export class PeripheralManager {
     return handles;
   }
 
+  /**
+   * Reconnect to previously-paired Bluetooth devices.
+   * @returns {Promise<BluetoothPeripheral[]>}
+   */
+  async reconnectBluetooth() {
+    if (!this.#apis.bluetooth?.getDevices) return [];
+    const devices = await this.#apis.bluetooth.getDevices();
+    const handles = [];
+    for (const device of devices) {
+      const handle = new BluetoothPeripheral(device);
+      this.#devices.set(handle.id, handle);
+      handles.push(handle);
+    }
+    if (handles.length > 0) {
+      this.#log(`Reconnected ${handles.length} Bluetooth device(s)`);
+    }
+    return handles;
+  }
+
   // ── Lifecycle ────────────────────────────────────────────
 
   /**

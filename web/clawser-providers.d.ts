@@ -60,6 +60,7 @@ export declare class ProfileCostLedger {
   record(profileId: string, entry: CostEntry): void;
   profileSummary(profileId: string): CostSummary;
   setProfileThreshold(profileId: string, usd: number): void;
+  getProfileThreshold(profileId: string): number | undefined;
   isProfileOverThreshold(profileId: string): boolean;
   allProfileSummaries(): Record<string, CostSummary>;
   clear(profileId?: string): void;

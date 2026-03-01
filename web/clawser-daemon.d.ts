@@ -256,6 +256,7 @@ export declare class InputLockManager {
   release(resource: string): void;
   isHeld(resource: string): boolean;
   heldLocks(): string[];
+  releaseAll(): void;
 }
 
 // ── NotificationCenter ──────────────────────────────────────

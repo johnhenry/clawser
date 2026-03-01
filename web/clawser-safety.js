@@ -209,6 +209,9 @@ export class SafetyPipeline {
     if (val) this.#disableConfirmed = false;
   }
 
+  /** Whether disable has been confirmed (via confirmDisable()). */
+  get isDisableConfirmed() { return this.#disableConfirmed; }
+
   /** Acknowledge intent to disable the safety pipeline. */
   confirmDisable() {
     this.#disableConfirmed = true;

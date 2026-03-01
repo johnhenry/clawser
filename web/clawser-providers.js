@@ -338,6 +338,15 @@ export class ProfileCostLedger {
   }
 
   /**
+   * Get threshold for a specific profile.
+   * @param {string} profileId
+   * @returns {number|undefined}
+   */
+  getProfileThreshold(profileId) {
+    return this.#thresholds.get(profileId);
+  }
+
+  /**
    * Check if a profile is over its threshold.
    * @param {string} profileId
    * @returns {boolean}

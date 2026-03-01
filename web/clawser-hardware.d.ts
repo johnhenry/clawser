@@ -41,6 +41,12 @@ export class PeripheralManager {
   read(id: string): Promise<string>;
   get(id: string): PeripheralHandle | undefined;
   list(): Array<{ id: string; type: string; name: string; connected: boolean }>;
+  requestSerial(opts?: Record<string, unknown>): Promise<PeripheralHandle>;
+  requestBluetooth(filters?: Array<Record<string, unknown>>): Promise<PeripheralHandle>;
+  requestUSB(filters?: Array<Record<string, unknown>>): Promise<PeripheralHandle>;
+  reconnectSerial(): Promise<PeripheralHandle[]>;
+  reconnectUSB(): Promise<PeripheralHandle[]>;
+  reconnectBluetooth(): Promise<PeripheralHandle[]>;
   disconnectAll(): Promise<void>;
 }
 

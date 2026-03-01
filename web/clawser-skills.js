@@ -475,6 +475,34 @@ export class SkillStorage {
   }
 
   /**
+   * Read a skill directory from OPFS and return its files as a Map.
+   * @param {'global'|'workspace'} scope
+   * @param {string|null} wsId
+   * @param {string} name - Skill directory name
+   * @returns {Promise<Map<string,string>>} Map of relative path → content
+   */
+  static async readSkill(scope, wsId, name) {
+    const parentDir = scope === 'global'
+      ? await SkillStorage.getGlobalSkillsDir()
+      : await SkillStorage.getWorkspaceSkillsDir(wsId);
+    const skillDir = await parentDir.getDirectoryHandle(name);
+    const files = new Map();
+    async function walk(dir, prefix) {
+      for await (const [entryName, handle] of dir) {
+        const path = prefix ? `${prefix}/${entryName}` : entryName;
+        if (handle.kind === 'file') {
+          const file = await handle.getFile();
+          files.set(path, await file.text());
+        } else {
+          await walk(handle, path);
+        }
+      }
+    }
+    await walk(skillDir, '');
+    return files;
+  }
+
+  /**
    * Delete a skill directory.
    * @param {'global'|'workspace'} scope
    * @param {string|null} wsId
@@ -884,6 +912,17 @@ export class SkillRegistry {
       entry.enabled = enabled;
       this.#enabledState.set(name, enabled);
     }
+  }
+
+  /**
+   * Query whether a skill is currently enabled.
+   * @param {string} name
+   * @returns {boolean|undefined} true/false if skill exists, undefined otherwise
+   */
+  isEnabled(name) {
+    const entry = this.#skills.get(name);
+    if (!entry) return undefined;
+    return this.#enabledState.get(name) ?? entry.enabled ?? true;
   }
 
   /**

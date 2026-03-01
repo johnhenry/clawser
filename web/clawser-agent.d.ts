@@ -289,6 +289,10 @@ export declare class ClawserAgent {
   getCodexPrompt(): string | null;
   isToolExternal(name: string): boolean;
 
+  get isPaused(): boolean;
+  pauseAgent(): void;
+  resumeAgent(): void;
+
   run(): Promise<AgentRunResult>;
   runStream(options?: {
     max_tokens?: number;
@@ -316,12 +320,15 @@ export declare class ClawserAgent {
   memoryHygiene(opts?: { maxAge?: number; maxEntries?: number }): number;
 
   addGoal(description: string): string;
+  removeGoal(id: string): boolean;
   completeGoal(id: string): boolean;
   updateGoal(id: string, status: 'active' | 'completed' | 'failed'): boolean;
 
   tick(nowMs?: number): number;
   addSchedulerJob(spec: SchedulerJobSpec): string;
   listSchedulerJobs(): SchedulerJobInfo[];
+  pauseSchedulerJob(id: string): boolean;
+  resumeSchedulerJob(id: string): boolean;
   removeSchedulerJob(id: string): boolean;
 
   recordEvent(type: string, data: unknown, source?: string): unknown;

@@ -737,6 +737,13 @@ export class InputLockManager {
   heldLocks() {
     return [...this.#held.keys()];
   }
+
+  /**
+   * Release all currently held locks.
+   */
+  releaseAll() {
+    this.#held.clear();
+  }
 }
 
 // ── Agent Busy Indicator ────────────────────────────────────────
