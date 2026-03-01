@@ -38,7 +38,7 @@ Clawser is a browser-native AI agent platform built as pure ES modules with no b
 
 ## Core Agent
 
-**File**: `clawser-agent.js` (2,447 LOC)
+**File**: `clawser-agent.js` (3,234 LOC)
 
 The agent core contains four classes:
 
@@ -56,7 +56,7 @@ Key operations:
 - `deriveToolCallLog()` — Build tool audit trail
 - `toJSONL()` / `fromJSONL()` — Serialize to/from JSONL format
 
-Event types: `user_message`, `agent_message`, `tool_call`, `tool_result`, `goal_added`, `goal_updated`, `memory_stored`, `memory_forgotten`, `scheduler_added`, `scheduler_fired`, `context_compacted`, `error`, `autonomy_blocked`, `cache_hit`
+Event types: `user_message`, `agent_message`, `tool_call`, `tool_result`, `tool_result_truncated`, `error`, `autonomy_blocked`, `cache_hit`, `context_compacted`, `memory_stored`, `memory_forgotten`, `goal_added`, `goal_updated`, `scheduler_added`, `scheduler_fired`, `scheduler_removed`, `safety_input_flag`, `safety_tool_blocked`, `safety_output_blocked`, `safety_output_redacted`, `provider_error`, `stream_error`
 
 ### HookPipeline
 
@@ -149,7 +149,7 @@ Plus 36 tools from feature modules (tool builder, channels, delegate, git, brows
 
 ## Codex (Code Execution)
 
-**File**: `clawser-codex.js` (292 LOC)
+**File**: `clawser-codex.js` (365 LOC)
 
 For providers that don't support native tool calling (Chrome AI, Perplexity), the Codex executes JavaScript code blocks from LLM responses in a sandboxed environment.
 

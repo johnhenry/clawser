@@ -73,10 +73,25 @@ describe('lsKey', () => {
   it('all key builders return strings', () => {
     const fns = [lsKey.memories, lsKey.config, lsKey.toolPerms, lsKey.security,
                  lsKey.skillsEnabled, lsKey.autonomy, lsKey.identity, lsKey.selfRepair,
-                 lsKey.sandbox, lsKey.heartbeat, lsKey.routines, lsKey.termSessions];
+                 lsKey.sandbox, lsKey.heartbeat, lsKey.routines, lsKey.termSessions,
+                 lsKey.hooks, lsKey.peripherals];
     for (const fn of fns) {
       assert.equal(typeof fn('test'), 'string');
     }
+  });
+
+  it('hooks returns versioned workspace-scoped key', () => {
+    const key = lsKey.hooks('ws42');
+    assert.ok(key.includes('v1'), 'should include version prefix');
+    assert.ok(key.includes('hooks'), 'should include hooks');
+    assert.ok(key.includes('ws42'), 'should include workspace id');
+  });
+
+  it('peripherals returns versioned workspace-scoped key', () => {
+    const key = lsKey.peripherals('ws99');
+    assert.ok(key.includes('v1'), 'should include version prefix');
+    assert.ok(key.includes('peripherals'), 'should include peripherals');
+    assert.ok(key.includes('ws99'), 'should include workspace id');
   });
 });
 

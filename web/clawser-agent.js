@@ -966,6 +966,22 @@ export class ClawserAgent {
   get safety() { return this.#safety; }
 
   /**
+   * Sanitize an inbound user message through the safety pipeline.
+   * Shared by both run() and runStream() to avoid code duplication.
+   * @param {{ role: string, content: string }} msg - The user message object (mutated in-place)
+   */
+  #sanitizeInbound(msg) {
+    if (this.#safety && typeof msg.content === 'string') {
+      const sanitized = this.#safety.sanitizeInput(msg.content);
+      if (sanitized.flags.length > 0) {
+        this.#eventLog.append('safety_input_flag', { flags: sanitized.flags, warning: sanitized.warning }, 'system');
+        this.#metrics?.increment('safety.input_flags');
+      }
+      msg.content = sanitized.content;
+    }
+  }
+
+  /**
    * Apply autonomy config to the internal AutonomyController.
    * @param {object} cfg
    * @param {'readonly'|'supervised'|'full'} [cfg.level]
@@ -1402,14 +1418,7 @@ export class ClawserAgent {
       }
 
       // Safety: sanitize inbound user message
-      if (this.#safety && typeof lastUserMsg.content === 'string') {
-        const sanitized = this.#safety.sanitizeInput(lastUserMsg.content);
-        if (sanitized.flags.length > 0) {
-          this.#eventLog.append('safety_input_flag', { flags: sanitized.flags, warning: sanitized.warning }, 'system');
-          this.#metrics?.increment('safety.input_flags');
-        }
-        lastUserMsg.content = sanitized.content;
-      }
+      this.#sanitizeInbound(lastUserMsg);
     }
 
     // Undo checkpoint is created by the UI layer (clawser-ui-chat.js)
@@ -1702,14 +1711,7 @@ export class ClawserAgent {
       }
 
       // Safety: sanitize inbound user message
-      if (this.#safety && typeof lastUserMsg.content === 'string') {
-        const sanitized = this.#safety.sanitizeInput(lastUserMsg.content);
-        if (sanitized.flags.length > 0) {
-          this.#eventLog.append('safety_input_flag', { flags: sanitized.flags, warning: sanitized.warning }, 'system');
-          this.#metrics?.increment('safety.input_flags');
-        }
-        lastUserMsg.content = sanitized.content;
-      }
+      this.#sanitizeInbound(lastUserMsg);
     }
 
     // Undo checkpoint is created by the UI layer (clawser-ui-chat.js)
@@ -2843,13 +2845,13 @@ export class ClawserAgent {
   persistHooks() {
     if (typeof localStorage === 'undefined') return;
     const data = this.#hooks.serialize();
-    localStorage.setItem(`clawser_hooks_${this.#workspaceId}`, JSON.stringify(data));
+    localStorage.setItem(lsKey.hooks(this.#workspaceId), JSON.stringify(data));
   }
 
   /** Restore hooks from localStorage using factory functions. */
   restoreHooks(factories) {
     if (typeof localStorage === 'undefined') return;
-    const raw = localStorage.getItem(`clawser_hooks_${this.#workspaceId}`);
+    const raw = localStorage.getItem(lsKey.hooks(this.#workspaceId));
     if (!raw) return;
     try {
       const data = JSON.parse(raw);

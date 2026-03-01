@@ -139,6 +139,7 @@ describe('tool_promote tool', () => {
     const result = await tool.execute({ name: 'ghost_tool' });
     assert.equal(result.success, false);
     assert.ok(result.error);
+    assert.ok('output' in result, 'error result must include output field');
   });
 
   it('returns error for non-dynamic tool', async () => {
@@ -151,6 +152,7 @@ describe('tool_promote tool', () => {
     const result = await tool.execute({ name: 'browser_echo' });
     assert.equal(result.success, false);
     assert.ok(result.error.includes('not found') || result.error.includes('Dynamic'));
+    assert.ok('output' in result, 'error result must include output field');
   });
 
   it('has correct tool metadata', async () => {
@@ -162,5 +164,101 @@ describe('tool_promote tool', () => {
     assert.ok(tool.description.toLowerCase().includes('trust'));
     assert.equal(tool.parameters.required[0], 'name');
     assert.equal(tool.permission, 'approve');
+  });
+});
+
+// ── ToolBuilder error returns include output field ──────────────
+
+describe('ToolBuilder error returns include output field', () => {
+  let builder;
+  let registry;
+
+  beforeEach(() => {
+    registry = makeRegistry();
+    builder = new ToolBuilder(registry, makeSandbox());
+  });
+
+  it('buildTool — missing name', async () => {
+    const r = await builder.buildTool({ code: 'function execute(){}' });
+    assert.equal(r.success, false);
+    assert.ok('output' in r, 'buildTool missing-name error must include output');
+  });
+
+  it('buildTool — missing code', async () => {
+    const r = await builder.buildTool({ name: 'test_tool' });
+    assert.equal(r.success, false);
+    assert.ok('output' in r, 'buildTool missing-code error must include output');
+  });
+
+  it('buildTool — unsafe code', async () => {
+    const r = await builder.buildTool({ name: 'bad', code: 'fetch("http://evil.com")' });
+    assert.equal(r.success, false);
+    assert.ok('output' in r, 'buildTool unsafe-code error must include output');
+  });
+
+  it('buildTool — sandbox test failure', async () => {
+    const failSandbox = async () => { throw new Error('boom'); };
+    const b = new ToolBuilder(registry, failSandbox);
+    const r = await b.buildTool({ name: 'fail_tool', code: 'function execute(){}' });
+    assert.equal(r.success, false);
+    assert.ok('output' in r, 'buildTool sandbox-failure error must include output');
+  });
+
+  it('testTool — no code', async () => {
+    const r = await builder.testTool({});
+    assert.equal(r.success, false);
+    assert.ok('output' in r, 'testTool no-code error must include output');
+  });
+
+  it('testTool — unsafe code', async () => {
+    const r = await builder.testTool({ code: 'eval("1+1")' });
+    assert.equal(r.success, false);
+    assert.ok('output' in r, 'testTool unsafe-code error must include output');
+  });
+
+  it('testTool — no sandbox', async () => {
+    const b = new ToolBuilder(registry, null);
+    const r = await b.testTool({ code: 'function execute(){}' });
+    assert.equal(r.success, false);
+    assert.ok('output' in r, 'testTool no-sandbox error must include output');
+  });
+
+  it('testTool — sandbox throws', async () => {
+    const failSandbox = async () => { throw new Error('oops'); };
+    const b = new ToolBuilder(registry, failSandbox);
+    const r = await b.testTool({ code: 'function execute(){}' });
+    assert.equal(r.success, false);
+    assert.ok('output' in r, 'testTool sandbox-throws error must include output');
+  });
+
+  it('editTool — non-existent tool', async () => {
+    const r = await builder.editTool('ghost', { code: 'function execute(){}' });
+    assert.equal(r.success, false);
+    assert.ok('output' in r, 'editTool not-found error must include output');
+  });
+
+  it('removeTool — non-existent tool', () => {
+    const r = builder.removeTool('ghost');
+    assert.equal(r.success, false);
+    assert.ok('output' in r, 'removeTool not-found error must include output');
+  });
+
+  it('rollback — version not found', () => {
+    const r = builder.rollback('ghost', 1);
+    assert.equal(r.success, false);
+    assert.ok('output' in r, 'rollback not-found error must include output');
+  });
+
+  it('promoteTool — no registry', () => {
+    const b = new ToolBuilder(null, makeSandbox());
+    const r = b.promoteTool('anything');
+    assert.equal(r.success, false);
+    assert.ok('output' in r, 'promoteTool no-registry error must include output');
+  });
+
+  it('promoteTool — non-dynamic tool', () => {
+    const r = builder.promoteTool('browser_echo');
+    assert.equal(r.success, false);
+    assert.ok('output' in r, 'promoteTool non-dynamic error must include output');
   });
 });

@@ -15,6 +15,7 @@ if (typeof globalThis.localStorage === 'undefined') {
 }
 
 import { ClawserAgent, AutonomyController } from '../clawser-agent.js';
+import { lsKey } from '../clawser-state.js';
 import { MetricsCollector } from '../clawser-metrics.js';
 
 // ── Minimal stubs ─────────────────────────────────────────────────
@@ -248,7 +249,7 @@ describe('Hooks localStorage persistence', () => {
     agent.persistHooks();
 
     // Verify localStorage contains the hooks
-    const stored = localStorage.getItem('clawser_hooks_test-ws');
+    const stored = localStorage.getItem(lsKey.hooks('test-ws'));
     assert.ok(stored, 'hooks should be stored in localStorage');
     const data = JSON.parse(stored);
     assert.equal(data.hooks.length, 1);
@@ -262,7 +263,7 @@ describe('Hooks localStorage persistence', () => {
         { name: 'restored-hook', point: 'beforeInbound', priority: 3, enabled: true, factoryName: 'test-factory' },
       ],
     };
-    localStorage.setItem('clawser_hooks_restore-ws', JSON.stringify(hookData));
+    localStorage.setItem(lsKey.hooks('restore-ws'), JSON.stringify(hookData));
 
     const factories = {
       'test-factory': () => ({
@@ -289,7 +290,7 @@ describe('Hooks localStorage persistence', () => {
     assert.equal(hooks[0].priority, 3);
 
     // Cleanup
-    localStorage.removeItem('clawser_hooks_restore-ws');
+    localStorage.removeItem(lsKey.hooks('restore-ws'));
   });
 });
 

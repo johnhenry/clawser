@@ -80,16 +80,11 @@ state.providerHealth = new ProviderHealth();
 state.modelRouter = new ModelRouter();
 state.stuckDetector = new StuckDetector();
 state.selfRepairEngine = new SelfRepairEngine({ detector: state.stuckDetector });
-// OPFS path helper — walks directory segments like FsWriteTool/FsDeleteTool
+// OPFS path helper — delegates to shared utility (clawser-opfs.js)
 async function opfsGetFile(path, create = false) {
+  const { opfsWalk } = await import('./clawser-opfs.js');
   const resolved = state.workspaceFs ? state.workspaceFs.resolve(path) : path;
-  const parts = resolved.split('/').filter(Boolean);
-  const root = await navigator.storage.getDirectory();
-  let dir = root;
-  for (const part of parts.slice(0, -1)) {
-    dir = await dir.getDirectoryHandle(part, { create });
-  }
-  return { dir, name: parts[parts.length - 1] };
+  return opfsWalk(resolved, { create });
 }
 
 async function opfsWriteFile(path, content) {

@@ -31,7 +31,7 @@ Browser Tab              Service Worker              IndexedDB
 | `function` | Inline JS module (Blob URL import) | `page`, `sw` |
 | `static` | Serves files from OPFS | `page`, `sw` |
 | `proxy` | Forwards to external URL with optional rewrite | `page` |
-| `skill` | Routes to a registered skill | `page` |
+| `skill` | Routes to a registered skill (static API only, not via SW fetch) | `page` |
 
 ## Key Classes
 
@@ -117,7 +117,7 @@ Routes are scoped to workspaces or global (`_global`). Per-workspace routes take
 
 ## MIME Types
 
-Static serving auto-detects MIME from file extension: `html`, `css`, `js`, `json`, `xml`, `txt`, `csv`, `svg`, `png`, `jpg`, `gif`, `webp`, `ico`, `woff`, `woff2`, `ttf`, `pdf`, `zip`, `wasm`.
+Static serving auto-detects MIME from file extension: `html`, `htm`, `css`, `js`, `mjs`, `json`, `xml`, `txt`, `md`, `csv`, `svg`, `png`, `jpg`, `jpeg`, `gif`, `webp`, `ico`, `woff`, `woff2`, `ttf`, `pdf`, `zip`, `wasm`.
 
 ## Related Files
 

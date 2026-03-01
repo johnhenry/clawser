@@ -9,7 +9,7 @@ import { BrowserTool } from './clawser-tools.js';
 
 // ── RPC Client ────────────────────────────────────────────────────
 
-const MARKER = '__clawser_ext__';
+export const MARKER = '__clawser_ext__';
 const RPC_TIMEOUT_MS = 30_000;
 
 /**
@@ -205,7 +205,7 @@ export function initExtensionBadge() {
  *   cookies   → chrome.cookies
  *   network   → chrome.webRequest
  */
-const CAPABILITY_HINTS = {
+export const CAPABILITY_HINTS = {
   tabs: 'Ensure the Clawser extension has the "tabs" permission.',
   scripting: 'Ensure the Clawser extension has the "scripting" permission. For full page access, enable "Allow User Scripts" in extension settings.',
   cookies: 'Ensure the Clawser extension has the "cookies" permission.',

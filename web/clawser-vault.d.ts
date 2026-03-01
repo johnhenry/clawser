@@ -57,5 +57,34 @@ export declare class SecretVault {
   exists(): Promise<boolean>;
   verify(passphrase: string): Promise<boolean>;
   resetIdleTimer(): void;
-  migrateKeysToVault(keys: Array<{ name: string; value: string }>): Promise<number>;
+  migrateKeysToVault(keys: string[]): Promise<number>;
+}
+
+// ── Passphrase Strength ───────────────────────────────────────
+
+export interface PassphraseStrength {
+  score: number;
+  entropy: number;
+  label: string;
+}
+
+export declare function measurePassphraseStrength(passphrase: string): PassphraseStrength;
+
+// ── VaultRekeyer ──────────────────────────────────────────────
+
+export interface RekeyPlan {
+  secretCount: number;
+  secrets: string[];
+}
+
+export interface RekeyResult {
+  success: boolean;
+  rekeyed: number;
+  error?: string;
+}
+
+export declare class VaultRekeyer {
+  constructor(vault: SecretVault);
+  plan(): Promise<RekeyPlan>;
+  execute(oldPassphrase: string, newPassphrase: string): Promise<RekeyResult>;
 }

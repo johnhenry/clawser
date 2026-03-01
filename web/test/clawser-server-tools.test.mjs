@@ -252,7 +252,7 @@ describe('registerServerTools', () => {
     for (const tool of registered) {
       assert.ok(typeof tool.name === 'string' && tool.name.length > 0, `${tool.name} has name`);
       assert.ok(typeof tool.description === 'string' && tool.description.length > 0, `${tool.name} has description`);
-      assert.ok(['read', 'approve', 'denied', 'auto'].includes(tool.permission), `${tool.name} has valid permission`);
+      assert.ok(['read', 'approve', 'denied', 'auto', 'internal', 'write', 'browser', 'network'].includes(tool.permission), `${tool.name} has valid permission`);
       assert.ok(tool.parameters && tool.parameters.type === 'object', `${tool.name} has object parameters`);
     }
   });

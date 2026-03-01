@@ -18,6 +18,51 @@ export declare const MODEL_PRICING: Record<string, ModelPricing>;
 
 export declare function estimateCost(model: string, usage: TokenUsage | undefined): number;
 
+// ── Cost Ledger ─────────────────────────────────────────────────
+
+export interface CostEntry {
+  model: string;
+  provider: string;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  timestamp?: number;
+}
+
+export interface CostGroupSummary {
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+}
+
+export interface CostSummary {
+  totalCalls: number;
+  totalCostUsd: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+}
+
+export declare class CostLedger {
+  constructor(opts?: { thresholdUsd?: number });
+  get thresholdUsd(): number;
+  setThreshold(usd: number): void;
+  isOverThreshold(): boolean;
+  record(entry: CostEntry): void;
+  get entries(): CostEntry[];
+  totalByModel(): Record<string, CostGroupSummary>;
+  totalByProvider(): Record<string, CostGroupSummary>;
+  summary(): CostSummary;
+}
+
+export declare class ProfileCostLedger {
+  record(profileId: string, entry: CostEntry): void;
+  profileSummary(profileId: string): CostSummary;
+  setProfileThreshold(profileId: string, usd: number): void;
+  isProfileOverThreshold(profileId: string): boolean;
+  allProfileSummaries(): Record<string, CostSummary>;
+}
+
 // ── Error Classification ───────────────────────────────────────
 
 export type ErrorCategory = 'rate_limit' | 'server' | 'auth' | 'network' | 'client' | 'unknown';

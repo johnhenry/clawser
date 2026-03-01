@@ -55,7 +55,7 @@ export function esc(s) {
 // ── localStorage key builders (centralized to avoid scattered string literals) ──
 // Keys include version prefix (v1) for forward compatibility. See migrateLocalStorageKeys().
 const LS_VERSION = 'v1';
-/** @type {{ memories(wsId: string): string, config(wsId: string): string, toolPerms(wsId: string): string, security(wsId: string): string, skillsEnabled(wsId: string): string }} */
+/** @type {{ memories(wsId: string): string, config(wsId: string): string, toolPerms(wsId: string): string, security(wsId: string): string, skillsEnabled(wsId: string): string, hooks(wsId: string): string, peripherals(wsId: string): string }} */
 export const lsKey = {
   memories:      wsId => `clawser_${LS_VERSION}_memories_${wsId}`,
   config:        wsId => `clawser_${LS_VERSION}_config_${wsId}`,
@@ -69,6 +69,8 @@ export const lsKey = {
   heartbeat:     wsId => `clawser_${LS_VERSION}_heartbeat_${wsId}`,
   routines:      wsId => `clawser_${LS_VERSION}_routines_${wsId}`,
   termSessions:  wsId => `clawser_${LS_VERSION}_terminal_sessions_${wsId}`,
+  hooks:         wsId => `clawser_${LS_VERSION}_hooks_${wsId}`,
+  peripherals:   wsId => `clawser_${LS_VERSION}_peripherals_${wsId}`,
 };
 
 /**
@@ -83,7 +85,7 @@ export function migrateLocalStorageKeys() {
   const keyPatterns = [
     'memories', 'config', 'tool_perms', 'security', 'skills_enabled',
     'autonomy', 'identity', 'selfrepair', 'sandbox', 'heartbeat',
-    'routines', 'terminal_sessions',
+    'routines', 'terminal_sessions', 'hooks', 'peripherals',
   ];
 
   // Collect keys first to avoid skipping when removing during iteration

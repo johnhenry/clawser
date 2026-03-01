@@ -64,3 +64,22 @@ export declare class McpManager {
   get serverCount(): number;
   getClient(name: string): McpClient | undefined;
 }
+
+// ── WebMCPDiscovery ─────────────────────────────────────────────
+
+export interface WebMCPToolDescriptor {
+  name: string;
+  description: string;
+  parameters?: object;
+  source?: string;
+  discoveredAt?: number;
+}
+
+export declare class WebMCPDiscovery {
+  parseToolDescriptors(metadata: { tools: WebMCPToolDescriptor[] }): WebMCPToolDescriptor[];
+  isValidTool(tool: unknown): boolean;
+  addDiscovered(tools: WebMCPToolDescriptor[]): void;
+  listDiscovered(): WebMCPToolDescriptor[];
+  clearDiscovered(): void;
+  get size(): number;
+}

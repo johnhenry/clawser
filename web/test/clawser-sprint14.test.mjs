@@ -153,7 +153,7 @@ describe('Goal auto-decompose', () => {
     assert.equal(tool.name, 'goal_decompose');
     assert.ok(tool.parameters.properties.goal_id);
     assert.ok(tool.parameters.properties.subtasks);
-    assert.equal(tool.permission, 'auto');
+    assert.equal(tool.permission, 'approve');
   });
 });
 

@@ -142,6 +142,46 @@ export declare class ServerManager {
   }): Promise<TestResult>;
 
   onChange(fn: () => void): () => void;
+
+  // Static helpers
+  static createSkillHandler(
+    skillName: string,
+    opts?: { execution?: ExecutionMode },
+  ): ServerHandler;
+
+  static createSSEResponse(
+    events: Array<{ data: string; event?: string; id?: string }>,
+  ): Response;
+
+  static createSSEResponseFromGenerator(
+    generator: AsyncIterable<{ data: string; event?: string; id?: string }>,
+  ): Promise<Response>;
+
+  static executeSkillHandler(
+    skillName: string,
+    request: { method: string; url: string; headers: Record<string, string>; body?: string },
+    registry: { get(name: string): { body?: string; metadata?: Record<string, unknown> } | null },
+  ): Promise<Response>;
+}
+
+// ── SSEChannel ───────────────────────────────────────────────
+
+export interface SSEMessage {
+  type: string;
+  data: string;
+  timestamp?: number;
+  [key: string]: unknown;
+}
+
+export declare class SSEChannel {
+  constructor(id: string);
+  get id(): string;
+  get closed(): boolean;
+  send(message: SSEMessage): void;
+  drain(): SSEMessage[];
+  onMessage(fn: (message: SSEMessage) => void): void;
+  receive(message: SSEMessage): void;
+  close(): void;
 }
 
 export declare function getServerManager(): ServerManager;

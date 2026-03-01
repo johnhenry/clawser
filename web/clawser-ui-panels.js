@@ -833,7 +833,7 @@ const TOOL_CATEGORIES = {
   browser_fetch: 'Network', web_search: 'Network', browser_navigate: 'Network', screenshot: 'Network',
   browser_dom_query: 'DOM', browser_dom_modify: 'DOM', browser_eval_js: 'DOM', browser_screen_info: 'DOM',
   shell: 'Shell', delegate: 'Delegation', ask_user_question: 'Agent',
-  activate_skill: 'Skills', deactivate_skill: 'Skills',
+  skill_activate: 'Skills', skill_deactivate: 'Skills',
 };
 
 function categorize(toolName) {
@@ -861,7 +861,7 @@ function categorize(toolName) {
   if (toolName.startsWith('wsh_')) return 'Remote (wsh)';
   if (toolName.startsWith('daemon_') || toolName.startsWith('self_repair_')) return 'System';
   if (toolName.startsWith('agent_switch') || toolName.startsWith('agent_consult')) return 'Agents';
-  if (toolName.startsWith('skill_') || toolName.startsWith('activate_skill') || toolName.startsWith('deactivate_skill')) return 'Skills';
+  if (toolName.startsWith('skill_')) return 'Skills';
   return 'Other';
 }
 
@@ -1231,7 +1231,7 @@ function renderAgentPickerDropdown(agents, activeId) {
     closeAgentPicker();
     const btn = document.querySelector('nav.sidebar button[data-panel="agents"]');
     if (btn) btn.click();
-    setTimeout(() => document.dispatchEvent(new CustomEvent('agent-edit', { detail: { new: true } })), 100);
+    setTimeout(() => document.dispatchEvent(new CustomEvent('agent:edit', { detail: { new: true } })), 100);
   });
   picker.querySelector('.agent-pick-manage')?.addEventListener('click', () => {
     closeAgentPicker();
@@ -1325,7 +1325,7 @@ export async function renderAgentPanel() {
   });
 
   // Listen for new-agent event from picker
-  document.addEventListener('agent-edit', (e) => {
+  document.addEventListener('agent:edit', (e) => {
     if (e.detail?.new) { agentEditingId = '__new__'; renderAgentPanel(); }
   }, { once: true });
 }

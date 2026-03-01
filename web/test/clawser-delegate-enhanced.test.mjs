@@ -3,82 +3,20 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 // ── ConsultAgentTool (Block 9) ───────────────────────────────────
+// NOTE: The dead ConsultAgentTool copy was removed from clawser-delegate.js.
+// The active version lives in clawser-tools.js with a different API (agent-ref based).
+// These tests now verify the delegate module no longer exports the dead copy.
 
-describe('ConsultAgentTool', () => {
-  it('exports ConsultAgentTool class', async () => {
-    const { ConsultAgentTool } = await import('../clawser-delegate.js');
-    assert.ok(ConsultAgentTool, 'should export ConsultAgentTool');
+describe('ConsultAgentTool removal from delegate', () => {
+  it('no longer exports ConsultAgentTool from clawser-delegate.js', async () => {
+    const mod = await import('../clawser-delegate.js');
+    assert.equal(mod.ConsultAgentTool, undefined, 'dead copy should be removed');
   });
 
-  it('has correct tool metadata', async () => {
-    const { ConsultAgentTool, DelegateManager } = await import('../clawser-delegate.js');
-    const mgr = new DelegateManager();
-    const tool = new ConsultAgentTool({
-      manager: mgr,
-      chatFn: async () => ({ content: '', tool_calls: [], usage: {}, model: 'test' }),
-      executeFn: async () => ({ success: true, output: '' }),
-      toolSpecs: [],
-    });
-
-    assert.equal(tool.name, 'agent_consult');
-    assert.ok(tool.description.toLowerCase().includes('consult') || tool.description.toLowerCase().includes('read-only'));
-    assert.equal(tool.permission, 'auto');
-    assert.ok(tool.parameters.properties.question);
-  });
-
-  it('executes with read-only tools only', async () => {
-    const { ConsultAgentTool, DelegateManager } = await import('../clawser-delegate.js');
-    const mgr = new DelegateManager();
-
-    let usedTools = [];
-    const tool = new ConsultAgentTool({
-      manager: mgr,
-      chatFn: async () => ({ content: 'The answer is 42.', tool_calls: [], usage: { input_tokens: 10, output_tokens: 5 }, model: 'test' }),
-      executeFn: async (name) => { usedTools.push(name); return { success: true, output: '' }; },
-      toolSpecs: [
-        { name: 'memory_recall', required_permission: 'read' },
-        { name: 'fs_write', required_permission: 'approve' },
-      ],
-    });
-
-    const result = await tool.execute({ question: 'What is the meaning of life?' });
-    assert.equal(result.success, true);
-    assert.ok(result.output.includes('42'));
-  });
-
-  it('does not modify state (read-only)', async () => {
-    const { ConsultAgentTool, DelegateManager } = await import('../clawser-delegate.js');
-    const mgr = new DelegateManager();
-
-    const tool = new ConsultAgentTool({
-      manager: mgr,
-      chatFn: async () => ({ content: 'Advice given.', tool_calls: [], usage: {}, model: 'test' }),
-      executeFn: async () => ({ success: true, output: '' }),
-      toolSpecs: [],
-    });
-
-    const result = await tool.execute({ question: 'Should I refactor this code?' });
-    assert.equal(result.success, true);
-  });
-
-  it('accepts optional context parameter', async () => {
-    const { ConsultAgentTool, DelegateManager } = await import('../clawser-delegate.js');
-    const mgr = new DelegateManager();
-
-    const tool = new ConsultAgentTool({
-      manager: mgr,
-      chatFn: async (messages) => {
-        // Check that context was passed
-        const userMsg = messages.find(m => m.role === 'user');
-        return { content: userMsg.content, tool_calls: [], usage: {}, model: 'test' };
-      },
-      executeFn: async () => ({ success: true, output: '' }),
-      toolSpecs: [],
-    });
-
-    assert.ok(tool.parameters.properties.context, 'should accept context parameter');
-    const result = await tool.execute({ question: 'Review this', context: 'function add(a,b) { return a + b; }' });
-    assert.equal(result.success, true);
+  it('active ConsultAgentTool still exists in clawser-tools.js', async () => {
+    const { ConsultAgentTool } = await import('../clawser-tools.js');
+    assert.ok(ConsultAgentTool, 'active version should exist in tools');
+    assert.equal(new ConsultAgentTool({}, {}).name, 'agent_consult');
   });
 });
 

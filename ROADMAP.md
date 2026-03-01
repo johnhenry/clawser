@@ -2,7 +2,7 @@
 
 ## Current Status (Feb 2026)
 
-Clawser is a **beta-quality** browser-native AI agent platform. The core runtime is functionally complete with 57 JS modules (~31K LOC), 70+ tools, and 38+ LLM provider backends. The project transitioned from a Rust/WASM architecture to pure JavaScript.
+Clawser is a **beta-quality** browser-native AI agent platform. The core runtime is functionally complete with 72 JS modules (~31K LOC), 70+ tools, and 38+ LLM provider backends. The project transitioned from a Rust/WASM architecture to pure JavaScript.
 
 ### What Works
 - Full agent loop with streaming, tool calling, and context compaction
@@ -15,7 +15,7 @@ Clawser is a **beta-quality** browser-native AI agent platform. The core runtime
 - Autonomy controls with rate and cost limiting
 - Memory system with hybrid BM25+vector recall
 - Goal tracking, scheduler (cron), hook pipeline, response cache
-- Daemon mode with SharedWorker tab coordination and BroadcastChannel
+- Daemon mode with BroadcastChannel tab coordination
 - Remote tool integration via wsh protocol (shell exec, file transfer, MCP bridging, CORS proxy)
 - Local filesystem mounting via FileSystemAccess API
 - Delegation, self-repair, undo, routines, heartbeat, auth profiles
@@ -56,7 +56,7 @@ Clawser is a **beta-quality** browser-native AI agent platform. The core runtime
 - [x] .github/ templates — PR template + bug/feature issue templates
 
 ### Critical Fixes -- COMPLETE
-- [x] **Execution timeout** — Promise.race() with 30s timeout on Codex/vimble sandbox
+- [x] **Execution timeout** — Promise.race() with 300s timeout on Codex/andbox sandbox
 - [x] **MCP tool wiring** — McpClient/McpManager integrated into agent run loop
 - [x] **Skill activation lock cleanup** — try/finally ensures lock deletion on error
 

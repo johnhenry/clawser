@@ -576,7 +576,7 @@ Get device info (board type, firmware version).
 
 **File**: `web/clawser-skills.js`
 
-### activate_skill
+### skill_activate
 
 Activate an available skill to get its instructions and tools.
 
@@ -587,7 +587,7 @@ Activate an available skill to get its instructions and tools.
 
 **Permission**: `internal`
 
-### deactivate_skill
+### skill_deactivate
 
 Deactivate a currently active skill.
 

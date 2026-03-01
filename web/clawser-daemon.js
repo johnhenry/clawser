@@ -120,7 +120,7 @@ export class CheckpointManager {
    * @returns {Promise<object>} Checkpoint metadata
    */
   async createCheckpoint(agentState, reason = 'manual') {
-    const id = `cp_${Date.now()}_${crypto.randomUUID().slice(0, 4)}`;
+    const id = `cp_${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 4)}`;
     const meta = {
       id,
       timestamp: Date.now(),
@@ -264,7 +264,7 @@ export class TabCoordinator {
    * @param {Function} [opts.onMessage] - (msg) callback for non-system messages
    */
   constructor(opts = {}) {
-    this.#tabId = `tab_${Date.now()}_${crypto.randomUUID().slice(0, 4)}`;
+    this.#tabId = `tab_${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 4)}`;
     this.#heartbeatMs = opts.heartbeatMs ?? 5000;
     this.#onMessage = opts.onMessage || null;
 

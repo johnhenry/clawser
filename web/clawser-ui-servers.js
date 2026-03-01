@@ -4,13 +4,7 @@
 
 import { getServerManager } from './clawser-server.js';
 import { getActiveWorkspaceId } from './clawser-workspaces.js';
-
-const $ = (id) => document.getElementById(id);
-
-/** Escape HTML special characters to prevent XSS. */
-function escHtml(str) {
-  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
+import { $, esc } from './clawser-state.js';
 
 /** Render the server list in the Servers panel. */
 export async function renderServerList() {
@@ -30,9 +24,9 @@ export async function renderServerList() {
     const portStr = r.port !== 80 ? `:${r.port}` : '';
     const statusCls = r.enabled ? 'on' : 'off';
     const scopeLabel = r.scope === '_global' ? 'global' : 'ws';
-    const safeId = escHtml(r.id);
-    const safeHost = escHtml(r.hostname);
-    const safeType = escHtml(r.handler?.type || '?');
+    const safeId = esc(r.id);
+    const safeHost = esc(r.hostname);
+    const safeType = esc(r.handler?.type || '?');
     return `<div class="srv-item" data-id="${safeId}">
       <span class="srv-status ${statusCls}" title="${r.enabled ? 'Running' : 'Stopped'}"></span>
       <span class="srv-host">${safeHost}${portStr}</span>
@@ -173,6 +167,6 @@ async function showServerLogs(routeId) {
   viewer.innerHTML = logs.map(l => {
     const ts = new Date(l.ts).toISOString().slice(11, 23);
     const sCls = l.status < 300 ? 's2xx' : l.status < 500 ? 's4xx' : 's5xx';
-    return `<div class="srv-log-entry"><span class="log-time">${ts}</span> <span class="log-status ${sCls}">${l.status}</span> ${escHtml(l.method)} ${escHtml(l.path)} <span style="color:var(--dim)">${l.ms}ms</span></div>`;
+    return `<div class="srv-log-entry"><span class="log-time">${ts}</span> <span class="log-status ${sCls}">${l.status}</span> ${esc(l.method)} ${esc(l.path)} <span style="color:var(--dim)">${l.ms}ms</span></div>`;
   }).join('');
 }

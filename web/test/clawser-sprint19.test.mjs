@@ -31,43 +31,37 @@ if (!globalThis.crypto?.randomUUID) {
 }
 
 // ── 1. Browser screenshot tool (5 tests) ────────────────────────
+// NOTE: Dead BrowserScreenshotTool was removed from clawser-browser-auto.js.
+// The active version (ScreenshotTool) lives in clawser-tools.js.
+// These tests now verify the removal and the active tool.
 
 describe('Browser screenshot tool', () => {
-  let BrowserScreenshotTool;
-
-  before(async () => {
+  it('BrowserScreenshotTool removed from browser-auto module', async () => {
     const mod = await import('../clawser-browser-auto.js');
-    BrowserScreenshotTool = mod.BrowserScreenshotTool;
+    assert.equal(mod.BrowserScreenshotTool, undefined, 'dead copy should be removed');
   });
 
-  it('BrowserScreenshotTool class exists', () => {
-    assert.ok(BrowserScreenshotTool);
+  it('ScreenshotTool exists in clawser-tools.js', async () => {
+    const { ScreenshotTool } = await import('../clawser-tools.js');
+    assert.ok(ScreenshotTool, 'active ScreenshotTool should exist');
   });
 
-  it('has correct name', () => {
-    const mockManager = { getSession: () => null };
-    const tool = new BrowserScreenshotTool(mockManager);
+  it('ScreenshotTool has correct name', async () => {
+    const { ScreenshotTool } = await import('../clawser-tools.js');
+    const tool = new ScreenshotTool();
     assert.equal(tool.name, 'browser_screenshot');
   });
 
-  it('requires session_id', () => {
-    const mockManager = { getSession: () => null };
-    const tool = new BrowserScreenshotTool(mockManager);
-    assert.ok(tool.parameters.required.includes('session_id'));
+  it('ScreenshotTool has selector parameter', async () => {
+    const { ScreenshotTool } = await import('../clawser-tools.js');
+    const tool = new ScreenshotTool();
+    assert.ok(tool.parameters.properties.selector);
   });
 
-  it('supports format parameter', () => {
-    const mockManager = { getSession: () => null };
-    const tool = new BrowserScreenshotTool(mockManager);
-    assert.ok(tool.parameters.properties.format);
-  });
-
-  it('returns error when session not found', async () => {
-    const mockManager = { getSession: () => null };
-    const tool = new BrowserScreenshotTool(mockManager);
-    const result = await tool.execute({ session_id: 'bad' });
-    assert.equal(result.success, false);
-    assert.ok(result.error.includes('Session not found'));
+  it('ScreenshotTool has browser permission', async () => {
+    const { ScreenshotTool } = await import('../clawser-tools.js');
+    const tool = new ScreenshotTool();
+    assert.equal(tool.permission, 'browser');
   });
 });
 

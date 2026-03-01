@@ -4,6 +4,11 @@
 // RECOVERY_STRATEGIES: per-issue recovery action lists
 // SelfRepairEngine: watchdog that detects and applies recovery
 // Agent tools: self_repair_status, self_repair_configure
+//
+// Naming convention (3-way):
+//   Module name:  clawser-self-repair   (kebab-case file name, used in imports)
+//   Class name:   SelfRepairEngine      (PascalCase, used in code)
+//   Tool prefix:  self_repair_          (snake_case, used in agent tool names)
 
 import { BrowserTool } from './clawser-tools.js';
 

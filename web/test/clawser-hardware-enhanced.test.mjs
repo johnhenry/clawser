@@ -14,6 +14,8 @@ if (typeof globalThis.localStorage === 'undefined') {
   };
 }
 
+import { lsKey } from '../clawser-state.js';
+
 // ── hw_monitor Tool (Block 13) ──────────────────────────────────
 
 describe('HwMonitorTool', () => {
@@ -65,7 +67,7 @@ describe('PeripheralManager persistence', () => {
 
     // Can't add real devices in test, but saveState should work with empty state
     mgr.saveState();
-    const stored = localStorage.getItem('clawser_peripherals');
+    const stored = localStorage.getItem(lsKey.peripherals('default'));
     assert.ok(stored, 'should save to localStorage');
     const data = JSON.parse(stored);
     assert.ok(Array.isArray(data.devices), 'should have devices array');
@@ -73,7 +75,7 @@ describe('PeripheralManager persistence', () => {
 
   it('restoreState loads metadata from localStorage', async () => {
     const { PeripheralManager } = await import('../clawser-hardware.js');
-    localStorage.setItem('clawser_peripherals', JSON.stringify({
+    localStorage.setItem(lsKey.peripherals('default'), JSON.stringify({
       devices: [
         { id: 'dev_1', name: 'Arduino', type: 'serial', config: { baudRate: 9600 } },
       ],
@@ -85,12 +87,12 @@ describe('PeripheralManager persistence', () => {
     assert.equal(state.devices.length, 1);
     assert.equal(state.devices[0].name, 'Arduino');
 
-    localStorage.removeItem('clawser_peripherals');
+    localStorage.removeItem(lsKey.peripherals('default'));
   });
 
   it('restoreState returns null for missing localStorage', async () => {
     const { PeripheralManager } = await import('../clawser-hardware.js');
-    localStorage.removeItem('clawser_peripherals');
+    localStorage.removeItem(lsKey.peripherals('default'));
 
     const mgr = new PeripheralManager();
     const state = mgr.restoreState();

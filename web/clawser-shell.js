@@ -18,6 +18,7 @@
  */
 
 import { BrowserTool } from './clawser-tools.js';
+import { opfsWalk, opfsWalkDir } from './clawser-opfs.js';
 import { registerExtendedBuiltins, registerJqBuiltin } from './clawser-shell-builtins.js';
 
 // ── Token Types ─────────────────────────────────────────────────
@@ -1031,20 +1032,10 @@ export class ShellFs {
     this.#ws = ws;
   }
 
-  async #root() {
-    return navigator.storage.getDirectory();
-  }
-
   /** Navigate to a directory handle from a shell path */
   async #getDir(shellPath) {
     const opfsPath = this.#ws.resolve(shellPath.replace(/^\//, ''));
-    const root = await this.#root();
-    const parts = opfsPath.split('/').filter(Boolean);
-    let dir = root;
-    for (const part of parts) {
-      dir = await dir.getDirectoryHandle(part);
-    }
-    return dir;
+    return opfsWalkDir(opfsPath);
   }
 
   /** Get [parentHandle, filename] for a shell path */
@@ -1052,12 +1043,8 @@ export class ShellFs {
     const opfsPath = this.#ws.resolve(shellPath.replace(/^\//, ''));
     const parts = opfsPath.split('/').filter(Boolean);
     if (parts.length === 0) throw new Error('Invalid path');
-    const root = await this.#root();
-    let dir = root;
-    for (const part of parts.slice(0, -1)) {
-      dir = await dir.getDirectoryHandle(part);
-    }
-    return [dir, parts[parts.length - 1]];
+    const { dir, name } = await opfsWalk(opfsPath);
+    return [dir, name];
   }
 
   async readFile(path) {
@@ -1069,13 +1056,8 @@ export class ShellFs {
 
   async writeFile(path, content) {
     const opfsPath = this.#ws.resolve(path.replace(/^\//, ''));
-    const root = await this.#root();
-    const parts = opfsPath.split('/').filter(Boolean);
-    let dir = root;
-    for (const part of parts.slice(0, -1)) {
-      dir = await dir.getDirectoryHandle(part, { create: true });
-    }
-    const fh = await dir.getFileHandle(parts[parts.length - 1], { create: true });
+    const { dir, name } = await opfsWalk(opfsPath, { create: true });
+    const fh = await dir.getFileHandle(name, { create: true });
     const writable = await fh.createWritable();
     await writable.write(content);
     await writable.close();
@@ -1092,12 +1074,7 @@ export class ShellFs {
 
   async mkdir(path) {
     const opfsPath = this.#ws.resolve(path.replace(/^\//, ''));
-    const root = await this.#root();
-    const parts = opfsPath.split('/').filter(Boolean);
-    let dir = root;
-    for (const part of parts) {
-      dir = await dir.getDirectoryHandle(part, { create: true });
-    }
+    await opfsWalkDir(opfsPath, { create: true });
   }
 
   async delete(path, recursive = false) {

@@ -8,18 +8,17 @@ Feature modules extend the core agent with specialized capabilities. Each module
 |--------|------|-------|-------------|
 | Tool Builder | `clawser-tool-builder.js` | `tool_create`, `tool_edit`, `tool_delete`, `tool_list` | Dynamic tool creation at runtime |
 | Multi-Channel | `clawser-channels.js` | `channel_create`, `channel_list`, `channel_send`, `channel_receive` | Cross-tab and WebSocket messaging |
-| Delegation | `clawser-delegation.js` | `delegate_task`, `delegate_status`, `delegate_cancel` | Sub-agent task delegation |
-| Git Behavior | `clawser-git-behavior.js` | `git_status`, `git_diff`, `git_commit`, `git_log` | Git-aware operations via OPFS |
-| Git Memory | `clawser-git-memory.js` | `git_memory_store`, `git_memory_recall` | Version-controlled memory |
-| Automation | `clawser-automation.js` | `routine_create`, `routine_list`, `routine_run`, `routine_delete` | Scheduled and triggered routines |
+| Delegation | `clawser-delegate.js` | `agent_delegate` | Sub-agent task delegation |
+| Git | `clawser-git.js` | `git_status`, `git_diff`, `git_commit`, `git_log`, `git_recall` | Git-aware operations via OPFS |
+| Routines | `clawser-routines.js` | `routine_create`, `routine_list`, `routine_run`, `routine_delete` | Scheduled and triggered routines |
 | Sandbox | `clawser-sandbox.js` | `sandbox_exec`, `sandbox_status` | Sandboxed code execution (uses andbox Worker sandbox) |
-| Peripherals | `clawser-peripherals.js` | `peripheral_list`, `peripheral_connect`, `peripheral_send` | Hardware device integration |
-| Pairing | `clawser-pairing.js` | `pair_request`, `pair_accept`, `pair_list` | Agent-to-agent pairing |
+| Hardware | `clawser-hardware.js` | `hw_list`, `hw_connect`, `hw_send`, `hw_read`, `hw_disconnect`, `hw_info`, `hw_monitor` | Hardware device integration |
 | wsh Tools | `clawser-wsh-tools.js` | `wsh_connect`, `wsh_exec`, `wsh_fetch`, `wsh_upload`, `wsh_download`, `wsh_pty_open`, `wsh_pty_write`, `wsh_disconnect`, `wsh_sessions`, `wsh_mcp_call` | Remote shell, file transfer, CORS proxy |
-| Goals | `clawser-goals.js` | `goal_add`, `goal_update`, `goal_complete`, `goal_list` | Hierarchical goal tracking |
-| Skill Registry | `clawser-skill-registry-client.js` | `skill_search`, `skill_install`, `skill_rate` | Community skill discovery |
+| Goals | `clawser-goals.js` | `goal_add`, `goal_update`, `goal_add_artifact`, `goal_decompose`, `goal_list` | Hierarchical goal tracking |
+| Skills | `clawser-skills.js` | `skill_activate`, `skill_deactivate`, `skill_search`, `skill_install` | Skill management and community registry |
 | Terminal Sessions | `clawser-terminal-sessions.js` | `session_create`, `session_switch`, `session_list` | Multiple terminal sessions |
 | Agent Storage | `clawser-agent-storage.js` | — | Agent definition persistence |
+| OPFS Utility | `clawser-opfs.js` | — | Shared OPFS path traversal (`opfsWalk`, `opfsWalkDir`) |
 
 ## Internal Packages
 

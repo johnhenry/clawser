@@ -601,7 +601,7 @@ export class GoalAddTool extends BrowserTool {
       required: ['description'],
     };
   }
-  get permission() { return 'auto'; }
+  get permission() { return 'approve'; }
 
   async execute({ description, parent_id, priority }) {
     const goal = parent_id
@@ -629,7 +629,7 @@ export class GoalUpdateTool extends BrowserTool {
       required: ['goal_id', 'status'],
     };
   }
-  get permission() { return 'auto'; }
+  get permission() { return 'approve'; }
 
   async execute({ goal_id, status, progress_note }) {
     const goal = this.#manager.updateStatus(goal_id, status, progress_note);
@@ -654,7 +654,7 @@ export class GoalAddArtifactTool extends BrowserTool {
       required: ['goal_id', 'file_path'],
     };
   }
-  get permission() { return 'auto'; }
+  get permission() { return 'approve'; }
 
   async execute({ goal_id, file_path }) {
     const ok = this.#manager.addArtifact(goal_id, file_path);
@@ -714,7 +714,7 @@ export class GoalDecomposeTool extends BrowserTool {
       required: ['goal_id', 'subtasks'],
     };
   }
-  get permission() { return 'auto'; }
+  get permission() { return 'approve'; }
 
   async execute({ goal_id, subtasks }) {
     if (!subtasks || subtasks.length === 0) {

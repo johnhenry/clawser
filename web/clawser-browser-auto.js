@@ -812,44 +812,7 @@ export class BrowserCloseTabTool extends BrowserTool {
   }
 }
 
-export class BrowserScreenshotTool extends BrowserTool {
-  #manager;
-
-  constructor(manager) {
-    super();
-    this.#manager = manager;
-  }
-
-  get name() { return 'browser_screenshot'; }
-  get description() { return 'Capture a screenshot of the current page for agent vision.'; }
-  get parameters() {
-    return {
-      type: 'object',
-      properties: {
-        session_id: { type: 'string', description: 'Session ID' },
-        format: { type: 'string', description: 'Image format: png or jpeg', enum: ['png', 'jpeg'] },
-        fullPage: { type: 'boolean', description: 'Capture full scrollable page' },
-      },
-      required: ['session_id'],
-    };
-  }
-  get permission() { return 'auto'; }
-
-  async execute({ session_id, format, fullPage }) {
-    const session = this.#manager.getSession(session_id);
-    if (!session) return { success: false, output: '', error: 'Session not found' };
-
-    try {
-      const result = await session.execute('screenshot', {
-        format: format || 'png',
-        fullPage: fullPage || false,
-      });
-      return { success: true, output: result?.dataUrl || 'Screenshot captured' };
-    } catch (e) {
-      return { success: false, output: '', error: e.message };
-    }
-  }
-}
+// NOTE: BrowserScreenshotTool was removed — the active version (ScreenshotTool) lives in clawser-tools.js
 
 // ── Workflow Recorder ──────────────────────────────────────────
 

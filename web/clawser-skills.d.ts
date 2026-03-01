@@ -160,6 +160,21 @@ export declare function validateRequirements(
   context?: RequirementsContext,
 ): RequirementsResult;
 
+// ── Skill Integrity & Dependencies ─────────────────────────────
+
+export declare function computeSkillHash(content: string): string;
+export declare function verifySkillIntegrity(content: string, expectedHash: string): boolean;
+
+export interface DependencyResolution {
+  resolved: boolean;
+  missing: string[];
+}
+
+export declare function resolveDependencies(
+  metadata: Record<string, unknown>,
+  available?: { skills?: string[]; tools?: string[] },
+): DependencyResolution;
+
 // ── Skill Templates ────────────────────────────────────────────
 
 export interface SkillTemplate {

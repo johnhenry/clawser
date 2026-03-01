@@ -33,6 +33,39 @@ export declare class NoopEmbedder extends EmbeddingProvider {
   embed(text: string): Promise<null>;
 }
 
+export interface OpenAIEmbeddingOpts {
+  apiKey?: string;
+  model?: string;
+  dimensions?: number;
+  baseUrl?: string;
+}
+
+export declare class OpenAIEmbeddingProvider extends EmbeddingProvider {
+  constructor(opts?: OpenAIEmbeddingOpts);
+  get name(): string;
+  get dimensions(): number;
+  embed(text: string): Promise<Float32Array | null>;
+}
+
+export interface ChromeAIEmbeddingOpts {
+  dimensions?: number;
+}
+
+export declare class ChromeAIEmbeddingProvider extends EmbeddingProvider {
+  constructor(opts?: ChromeAIEmbeddingOpts);
+  get name(): string;
+  get dimensions(): number;
+  isAvailable(): Promise<boolean>;
+  embed(text: string): Promise<Float32Array | null>;
+}
+
+export declare class TransformersEmbeddingProvider extends EmbeddingProvider {
+  get name(): string;
+  get dimensions(): number;
+  isAvailable(): Promise<boolean>;
+  embed(text: string): Promise<Float32Array | null>;
+}
+
 // ── Memory Entry Shapes ────────────────────────────────────────
 
 export interface MemoryRecord {

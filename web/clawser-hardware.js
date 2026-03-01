@@ -8,6 +8,7 @@
 // Agent tools: hw_list, hw_connect, hw_send, hw_read, hw_disconnect, hw_info
 
 import { BrowserTool } from './clawser-tools.js';
+import { lsKey } from './clawser-state.js';
 
 // ── Constants ───────────────────────────────────────────────────
 
@@ -529,6 +530,8 @@ export class PeripheralManager {
   /** @type {Function[]} Device data callbacks */
   #dataCallbacks = [];
 
+  /** @type {string} Workspace ID for scoped persistence */
+  #wsId;
 
   /**
    * @param {object} [opts]
@@ -536,9 +539,11 @@ export class PeripheralManager {
    * @param {object} [opts.serialApi] - navigator.serial replacement
    * @param {object} [opts.bluetoothApi] - navigator.bluetooth replacement
    * @param {object} [opts.usbApi] - navigator.usb replacement
+   * @param {string} [opts.wsId='default'] - Workspace ID for scoped persistence
    */
   constructor(opts = {}) {
     this.#onLog = opts.onLog || null;
+    this.#wsId = opts.wsId || 'default';
     this.#apis = {
       serial: opts.serialApi || (typeof navigator !== 'undefined' ? navigator.serial : null),
       bluetooth: opts.bluetoothApi || (typeof navigator !== 'undefined' ? navigator.bluetooth : null),
@@ -747,12 +752,20 @@ export class PeripheralManager {
   // ── State Persistence ────────────────────────────────────
 
   /**
+   * Set the workspace ID for scoped persistence.
+   * @param {string} wsId
+   */
+  setWorkspace(wsId) {
+    this.#wsId = wsId;
+  }
+
+  /**
    * Save device metadata to localStorage for reconnection.
    */
   saveState() {
     if (typeof localStorage === 'undefined') return;
     const devices = this.listDevices().map(d => d.toJSON());
-    localStorage.setItem('clawser_peripherals', JSON.stringify({ devices }));
+    localStorage.setItem(lsKey.peripherals(this.#wsId), JSON.stringify({ devices }));
   }
 
   /**
@@ -761,7 +774,7 @@ export class PeripheralManager {
    */
   restoreState() {
     if (typeof localStorage === 'undefined') return null;
-    const raw = localStorage.getItem('clawser_peripherals');
+    const raw = localStorage.getItem(lsKey.peripherals(this.#wsId));
     if (!raw) return null;
     try {
       return JSON.parse(raw);

@@ -883,7 +883,7 @@ export class SkillRegistry {
     if (enabled.length === 0) return '';
 
     const lines = enabled.map(s => `<skill name="${SkillParser.escAttr(s.name)}" description="${SkillParser.escAttr(s.description)}" />`);
-    return `\n<available-skills>\n${lines.join('\n')}\n</available-skills>\nYou can activate a skill by calling the activate_skill tool with the skill name.`;
+    return `\n<available-skills>\n${lines.join('\n')}\n</available-skills>\nYou can activate a skill by calling the skill_activate tool with the skill name.`;
   }
 
   /**
@@ -1185,7 +1185,7 @@ export class ActivateSkillTool extends BrowserTool {
     this.#onActivate = onActivate;
   }
 
-  get name() { return 'activate_skill'; }
+  get name() { return 'skill_activate'; }
   get description() {
     return 'Activate an available skill to get its detailed instructions and tools. Check <available-skills> in your context for skill names.';
   }
@@ -1250,7 +1250,7 @@ export class DeactivateSkillTool extends BrowserTool {
     this.#onDeactivate = onDeactivate;
   }
 
-  get name() { return 'deactivate_skill'; }
+  get name() { return 'skill_deactivate'; }
   get description() {
     return 'Deactivate a currently active skill, removing its instructions and tools from your context.';
   }

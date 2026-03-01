@@ -147,16 +147,16 @@ export class ToolBuilder {
    */
   async buildTool(spec) {
     if (!spec.name || typeof spec.name !== 'string') {
-      return { success: false, error: 'Tool name is required' };
+      return { success: false, output: '', error: 'Tool name is required' };
     }
     if (!spec.code || typeof spec.code !== 'string') {
-      return { success: false, error: 'Tool code is required' };
+      return { success: false, output: '', error: 'Tool code is required' };
     }
 
     // 1. Validate code safety
     const validation = validateToolCode(spec.code);
     if (!validation.safe) {
-      return { success: false, error: `Unsafe code: ${validation.issues.join('; ')}` };
+      return { success: false, output: '', error: `Unsafe code: ${validation.issues.join('; ')}` };
     }
 
     // 2. Dry-run test
@@ -164,7 +164,7 @@ export class ToolBuilder {
       try {
         await this.#sandbox(spec.code, spec.testInput || {});
       } catch (e) {
-        return { success: false, error: `Test failed: ${e.message}` };
+        return { success: false, output: '', error: `Test failed: ${e.message}` };
       }
     }
 
@@ -202,15 +202,15 @@ export class ToolBuilder {
    * @returns {Promise<{success: boolean, output?: string, error?: string}>}
    */
   async testTool(spec) {
-    if (!spec.code) return { success: false, error: 'No code provided' };
+    if (!spec.code) return { success: false, output: '', error: 'No code provided' };
 
     const validation = validateToolCode(spec.code);
     if (!validation.safe) {
-      return { success: false, error: `Unsafe code: ${validation.issues.join('; ')}` };
+      return { success: false, output: '', error: `Unsafe code: ${validation.issues.join('; ')}` };
     }
 
     if (!this.#sandbox) {
-      return { success: false, error: 'No sandbox available' };
+      return { success: false, output: '', error: 'No sandbox available' };
     }
 
     const testParams = spec.testInput || {};
@@ -219,7 +219,7 @@ export class ToolBuilder {
       const output = result == null ? '' : (typeof result === 'string' ? result : JSON.stringify(result));
       return { success: true, output };
     } catch (e) {
-      return { success: false, error: e.message };
+      return { success: false, output: '', error: e.message };
     }
   }
 
@@ -232,7 +232,7 @@ export class ToolBuilder {
   async editTool(name, updates) {
     const existing = this.#registry?.get(name);
     if (!(existing instanceof DynamicTool)) {
-      return { success: false, error: `Dynamic tool "${name}" not found` };
+      return { success: false, output: '', error: `Dynamic tool "${name}" not found` };
     }
 
     const newSpec = {
@@ -252,7 +252,7 @@ export class ToolBuilder {
   removeTool(name) {
     const existing = this.#registry?.get(name);
     if (!(existing instanceof DynamicTool)) {
-      return { success: false, error: `Dynamic tool "${name}" not found` };
+      return { success: false, output: '', error: `Dynamic tool "${name}" not found` };
     }
 
     this.#registry.unregister(name);
@@ -301,7 +301,7 @@ export class ToolBuilder {
     const hist = this.#history.get(name) || [];
     const target = hist.find(s => s.version === targetVersion);
     if (!target) {
-      return { success: false, error: `Version ${targetVersion} not found for "${name}"` };
+      return { success: false, output: '', error: `Version ${targetVersion} not found for "${name}"` };
     }
 
     // Determine next version number from current tool
@@ -352,10 +352,10 @@ export class ToolBuilder {
    * @returns {{ success: boolean, error?: string }}
    */
   promoteTool(name) {
-    if (!this.#registry) return { success: false, error: 'No registry' };
+    if (!this.#registry) return { success: false, output: '', error: 'No registry' };
     const tool = this.#registry.get(name);
     if (!(tool instanceof DynamicTool)) {
-      return { success: false, error: `Dynamic tool "${name}" not found` };
+      return { success: false, output: '', error: `Dynamic tool "${name}" not found` };
     }
     tool.trusted = true;
     return { success: true };

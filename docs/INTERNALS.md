@@ -8,7 +8,7 @@ Append-only JSONL event log for conversation persistence.
 
 **Storage:** OPFS at `clawser_workspaces/{wsId}/.conversations/{convId}/events.jsonl`
 
-**Event types:** `user_message`, `assistant_message`, `tool_call`, `tool_result`, `system`, `error`, `state_snapshot`
+**Event types:** `user_message`, `agent_message`, `tool_call`, `tool_result`, `tool_result_truncated`, `error`, `autonomy_blocked`, `cache_hit`, `context_compacted`, `memory_stored`, `memory_forgotten`, `goal_added`, `goal_updated`, `scheduler_added`, `scheduler_fired`, `scheduler_removed`, `safety_input_flag`, `safety_tool_blocked`, `safety_output_blocked`, `safety_output_redacted`, `provider_error`, `stream_error`
 
 **Compaction:** When token count exceeds ~12K tokens, older messages are summarized into a single `system` event containing the conversation summary. This keeps context manageable while preserving essential history.
 
@@ -19,8 +19,10 @@ Append-only JSONL event log for conversation persistence.
 Hooks execute in a defined order around agent operations:
 
 ```
-beforeOutbound → [LLM call] → afterInbound → beforeToolCall → [tool exec] → afterToolResult
+beforeInbound → beforeToolCall → beforeOutbound → [LLM call] → transformResponse
 ```
+
+Session lifecycle hooks: `onSessionStart`, `onSessionEnd`
 
 **Error isolation:** Each hook runs in a try/catch. A failing hook logs but doesn't block the pipeline.
 
@@ -32,23 +34,23 @@ Triggered automatically when conversation token count exceeds a threshold (~12K 
 
 **Algorithm:**
 1. Count approximate tokens in `#history` (chars / 4 heuristic)
-2. If over threshold, take all messages except the most recent 4
+2. If over threshold, take all messages except the most recent 10
 3. Concatenate old messages into a summary prompt
 4. Send summary prompt to LLM with instruction: "Summarize this conversation concisely"
-5. Replace old messages with a single `system` message containing the summary
+5. Replace old messages with a single `user` message containing the summary (followed by assistant acknowledgment)
 6. Emit `context_compacted` event
 
 ## Codex (clawser-codex.js)
 
-Sandboxed JavaScript execution engine using `vimble`.
+Sandboxed JavaScript execution engine using `andbox`.
 
 **Execution flow:**
 1. Parse model output for `` ```js `` code blocks
-2. Create a `data:` URI module from the code
-3. Execute via dynamic `import()` (vimble sandbox)
+2. Create an andbox Worker sandbox with browser tools injected as host capabilities
+3. Execute via `sandbox.evaluate()` with a 300s timeout
 4. Capture return value as tool result
 
-**Security:** Code runs in a separate module scope. No access to the parent page's variables. DOM access blocked in worker contexts.
+**Security:** Code runs in an isolated Worker sandbox (andbox). No access to the parent page's variables. DOM access blocked in worker contexts.
 
 ## Provider Tier System (clawser-providers.js)
 
@@ -124,7 +126,7 @@ Each workspace gets:
 
 ## Daemon Mode (clawser-daemon.js)
 
-**State machine phases:** `STOPPED → STARTING → RUNNING → CHECKPOINTING → PAUSED → ERROR`
+**State machine phases:** `STOPPED → STARTING → RUNNING → CHECKPOINTING → RECOVERING → PAUSED → ERROR`
 
 Valid transitions are enforced. Invalid transitions silently fail (return `false`).
 
@@ -140,9 +142,9 @@ Stack-based undo/redo with per-turn checkpoints.
 
 **Operations tracked:** Memory writes/deletes, file operations, goal changes.
 
-**Revert:** Each operation stores a revert handler. Undo pops the latest checkpoint and invokes all revert handlers in reverse order.
+**Revert:** Category-specific revert handlers (`revertHistory`, `revertMemory`, `revertFile`, `revertGoal`) are invoked per checkpoint. Undo pops the latest checkpoint and dispatches each operation to its category handler.
 
-**Limits:** Configurable `maxHistory` (default 50). Oldest checkpoints discarded when exceeded.
+**Limits:** Configurable `maxHistory` (default 20). Oldest checkpoints discarded when exceeded.
 
 ## Related Files
 

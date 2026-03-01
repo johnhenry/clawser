@@ -7,6 +7,11 @@
 
 /**
  * Manages third-party plugin registration and lifecycle.
+ *
+ * This is an intentional extension point for future plugins. Third-party code
+ * can register tools, hooks, and providers through this loader without
+ * modifying core agent source. The class is deliberately minimal today —
+ * it will grow as the plugin API stabilises.
  */
 export class PluginLoader {
   /** @type {Map<string, object>} name → plugin descriptor */

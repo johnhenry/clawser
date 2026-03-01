@@ -67,12 +67,12 @@ Plugins can register callbacks for these hooks:
 
 | Hook | Signature | When |
 |------|-----------|------|
+| `beforeInbound` | `(message) => message` | Before processing an inbound user message |
 | `beforeOutbound` | `(message) => message` | Before sending a message to the LLM |
-| `afterInbound` | `(response) => response` | After receiving an LLM response |
+| `transformResponse` | `(response) => response` | After receiving an LLM response |
+| `beforeToolCall` | `(toolName, args) => args` | Before a tool is invoked |
 | `onSessionStart` | `() => void` | When a new conversation session begins |
 | `onSessionEnd` | `() => void` | When a session ends |
-| `onToolCall` | `(toolName, args) => void` | When a tool is invoked |
-| `onToolResult` | `(toolName, result) => void` | After a tool returns |
 
 ## Tool Registration
 

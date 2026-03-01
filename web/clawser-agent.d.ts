@@ -19,6 +19,35 @@ import type {
   ScheduleType,
 } from './types.d.ts';
 
+// ── EventLog ──────────────────────────────────────────────────
+
+export interface EventLogEvent {
+  id: string;
+  type: string;
+  timestamp: number;
+  data: Record<string, unknown>;
+  source: string;
+}
+
+export interface EventLogQueryOptions {
+  type?: string;
+  source?: string;
+  limit?: number;
+}
+
+export declare class EventLog {
+  constructor(opts?: { maxSize?: number });
+  append(type: string, data: Record<string, unknown>, source?: string): EventLogEvent;
+  query(opts?: EventLogQueryOptions): EventLogEvent[];
+  summary(): Record<string, number>;
+  get events(): EventLogEvent[];
+  clear(): void;
+  load(events: EventLogEvent[]): void;
+  toJSONL(): string;
+  static fromJSONL(text: string): EventLog;
+  deriveSessionHistory(systemPrompt?: string): ChatMessage[];
+}
+
 // ── HookPipeline ──────────────────────────────────────────────
 
 export type HookAction = 'continue' | 'block' | 'modify' | 'skip';

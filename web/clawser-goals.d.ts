@@ -82,6 +82,8 @@ export declare class GoalManager {
   get(id: string): Goal | null;
   updateStatus(id: string, status: GoalStatus, progressNote?: string): Goal | null;
   addSubGoal(parentId: string, description: string, opts?: { priority?: GoalPriority }): Goal | null;
+  decompose(goalId: string, subtasks: string[]): Goal[];
+  onCompletion(fn: (goal: Goal) => void): () => void;
   addArtifact(goalId: string, filePath: string): boolean;
   logProgress(goalId: string, note: string): boolean;
   progress(goalId: string): number;
@@ -132,4 +134,13 @@ export declare class GoalListTool extends BrowserTool {
   get parameters(): object;
   get permission(): string;
   execute(params?: { status?: GoalStatus | 'all'; parent_id?: string }): Promise<ToolResult>;
+}
+
+export declare class GoalDecomposeTool extends BrowserTool {
+  constructor(manager: GoalManager);
+  get name(): string;
+  get description(): string;
+  get parameters(): object;
+  get permission(): string;
+  execute(params: { goal_id: string; subtasks: string[] }): Promise<ToolResult>;
 }

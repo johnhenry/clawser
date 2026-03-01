@@ -84,7 +84,7 @@ Skills are invoked in two ways:
 /code-review Check this function for bugs
 ```
 
-**Auto-activation** — The agent can activate skills automatically when it determines they're relevant. It uses the `activate_skill` tool based on the skill's trigger patterns defined in the YAML metadata.
+**Auto-activation** — The agent can activate skills automatically when it determines they're relevant. It uses the `skill_activate` tool based on the skill's trigger patterns defined in the YAML metadata.
 
 Active skills appear with a highlighted indicator in the Skills panel. Deactivate them with:
 
@@ -105,7 +105,7 @@ requires:
 When a skill has unmet dependencies:
 - A **"Missing deps"** warning badge appears in the Skills panel
 - Activation is blocked — the agent reports which dependencies are unmet (distinct from "skill not found" errors)
-- Use `force: true` in the `activate_skill` tool call to bypass the check
+- Use `force: true` in the `skill_activate` tool call to bypass the check
 
 ## 7. Checking for Updates
 

@@ -1,7 +1,10 @@
 // Run with: node --import ./web/test/_setup-globals.mjs --test web/test/clawser-goals-enhanced.test.mjs
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { Goal, GoalManager, resetGoalIdCounter } from '../clawser-goals.js';
+import {
+  Goal, GoalManager, resetGoalIdCounter,
+  GoalAddTool, GoalUpdateTool, GoalAddArtifactTool, GoalDecomposeTool, GoalListTool,
+} from '../clawser-goals.js';
 
 // ── Deadline/Due Date Field (Block 8) ───────────────────────────
 
@@ -200,5 +203,36 @@ describe('Goal dependency/blocking', () => {
     const goal = new Goal({ description: 'Test', blockedBy: ['goal-001', 'goal-002'] });
     const json = goal.toJSON();
     assert.deepEqual(json.blockedBy, ['goal-001', 'goal-002']);
+  });
+});
+
+// ── Goal Tool Permission Levels ──────────────────────────────────
+
+describe('Goal tool permission levels', () => {
+  const mgr = new GoalManager();
+
+  it('GoalAddTool requires approve permission', () => {
+    const tool = new GoalAddTool(mgr);
+    assert.equal(tool.permission, 'approve');
+  });
+
+  it('GoalUpdateTool requires approve permission', () => {
+    const tool = new GoalUpdateTool(mgr);
+    assert.equal(tool.permission, 'approve');
+  });
+
+  it('GoalAddArtifactTool requires approve permission', () => {
+    const tool = new GoalAddArtifactTool(mgr);
+    assert.equal(tool.permission, 'approve');
+  });
+
+  it('GoalDecomposeTool requires approve permission', () => {
+    const tool = new GoalDecomposeTool(mgr);
+    assert.equal(tool.permission, 'approve');
+  });
+
+  it('GoalListTool has read permission', () => {
+    const tool = new GoalListTool(mgr);
+    assert.equal(tool.permission, 'read');
   });
 });

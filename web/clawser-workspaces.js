@@ -72,6 +72,8 @@ export async function deleteWorkspace(id) {
   localStorage.removeItem(lsKey.heartbeat(id));
   localStorage.removeItem(lsKey.routines(id));
   localStorage.removeItem(lsKey.termSessions(id));
+  localStorage.removeItem(lsKey.hooks(id));
+  localStorage.removeItem(lsKey.peripherals(id));
   // Clean up legacy unversioned keys
   localStorage.removeItem(`clawser_conversations_${id}`);
   localStorage.removeItem(`clawser_tool_perms_${id}`);

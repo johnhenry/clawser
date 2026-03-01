@@ -9,6 +9,8 @@
  * @module clawser-server
  */
 
+import { opfsWalk, opfsWalkDir } from './clawser-opfs.js';
+
 // ── Constants ────────────────────────────────────────────────────
 
 const DB_NAME = 'clawser-server-routes';
@@ -44,7 +46,12 @@ function guessMime(filename) {
   return MIME_TYPES[ext] || 'application/octet-stream';
 }
 
-/** Escape HTML special characters to prevent XSS. */
+/**
+ * Escape HTML special characters to prevent XSS.
+ * NOTE: Intentionally local — this module is a headless server manager that
+ * must remain free of UI imports (clawser-state.js). Other UI modules should
+ * import `esc` from clawser-state.js instead of duplicating this function.
+ */
 function escHtml(str) {
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
@@ -414,14 +421,11 @@ export class ServerManager {
 
   async #readOPFS(path) {
     try {
-      const root = await navigator.storage.getDirectory();
-      const parts = path.replace(/^\//, '').split('/').filter(Boolean);
+      const cleaned = path.replace(/^\//, '');
+      const parts = cleaned.split('/').filter(Boolean);
       if (parts.length === 0) return null;
-      let dir = root;
-      for (let i = 0; i < parts.length - 1; i++) {
-        dir = await dir.getDirectoryHandle(parts[i]);
-      }
-      const fileHandle = await dir.getFileHandle(parts[parts.length - 1]);
+      const { dir, name } = await opfsWalk(cleaned);
+      const fileHandle = await dir.getFileHandle(name);
       const file = await fileHandle.getFile();
       return await file.text();
     } catch {
@@ -431,13 +435,9 @@ export class ServerManager {
 
   async #readOPFSBinary(path) {
     try {
-      const root = await navigator.storage.getDirectory();
-      const parts = path.replace(/^\//, '').split('/').filter(Boolean);
-      let dir = root;
-      for (let i = 0; i < parts.length - 1; i++) {
-        dir = await dir.getDirectoryHandle(parts[i]);
-      }
-      const fileHandle = await dir.getFileHandle(parts[parts.length - 1]);
+      const cleaned = path.replace(/^\//, '');
+      const { dir, name } = await opfsWalk(cleaned);
+      const fileHandle = await dir.getFileHandle(name);
       const file = await fileHandle.getFile();
       return await file.arrayBuffer();
     } catch {
@@ -447,12 +447,8 @@ export class ServerManager {
 
   async #listOPFSDirectory(path) {
     try {
-      const root = await navigator.storage.getDirectory();
-      const parts = path.replace(/^\//, '').split('/').filter(Boolean);
-      let dir = root;
-      for (const p of parts) {
-        dir = await dir.getDirectoryHandle(p);
-      }
+      const cleaned = path.replace(/^\//, '');
+      const dir = await opfsWalkDir(cleaned);
       const entries = [];
       for await (const [name, handle] of dir) {
         entries.push({ name, kind: handle.kind });

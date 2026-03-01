@@ -59,9 +59,17 @@ export interface ShellResult {
 export declare function tokenize(input: string): ShellToken[];
 export declare function parse(input: string | ShellToken[]): ASTNode | null;
 
-// ── Variable & Glob Expansion ──────────────────────────────────
+// ── Variable, Command Sub, Brace & Glob Expansion ──────────────
 
 export declare function expandVariables(token: string, env: Map<string, string> | Record<string, string>): string;
+
+export declare function expandCommandSubs(
+  token: string,
+  executor: (cmd: string) => Promise<{ stdout: string; stderr: string; exitCode: number }>,
+): Promise<string>;
+
+export declare function expandBraces(token: string): string[];
+
 export declare function expandGlobs(
   token: string,
   fs: { listDir(path: string): Promise<Array<{ name: string }>> },

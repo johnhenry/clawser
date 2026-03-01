@@ -115,6 +115,7 @@ export declare class ExtensionRpcClient {
   get connected(): boolean;
   get version(): string | null;
   get capabilities(): string[];
+  set onStatusChange(fn: ((connected: boolean) => void) | null);
   call(action: string, params?: Record<string, unknown>): Promise<unknown>;
   destroy(): void;
 }
@@ -123,6 +124,11 @@ export declare class ExtensionRpcClient {
 export declare function getExtensionClient(): ExtensionRpcClient;
 /** Destroy the shared RPC client singleton. */
 export declare function destroyExtensionClient(): void;
+
+/** Update the extension status badge in the header. */
+export declare function updateExtensionBadge(connected: boolean): void;
+/** Initialize the extension badge — wire the RPC client's status callback. */
+export declare function initExtensionBadge(): void;
 
 /**
  * Coarse capability names:

@@ -11,6 +11,8 @@
  *   3. Individual tools — fetch, DOM, OPFS, storage, clipboard, etc.
  */
 
+import { opfsWalk, opfsWalkDir } from './clawser-opfs.js';
+
 // ── WorkspaceFs — scopes OPFS paths to workspace home ────────────
 
 export class WorkspaceFs {
@@ -72,11 +74,16 @@ export class BrowserTool {
 
 /**
  * Tool permission levels:
- *   'auto'     — always allowed (default for 'internal' and 'read' permissions)
- *   'approve'  — requires user approval before execution
- *   'denied'   — blocked entirely
+ *   'auto'     — always allowed, no user prompt
+ *   'approve'  — requires explicit user approval before execution
+ *   'denied'   — blocked entirely, tool cannot run
+ *   'internal' — system-only tools, hidden from user-facing permission UI
+ *   'read'     — read-only tools, auto-allowed by default
+ *   'write'    — tools that mutate state (files, memory, goals)
+ *   'browser'  — tools that interact with the browser DOM / navigation
+ *   'network'  — tools that make network requests (fetch, web search)
  */
-export const TOOL_PERMISSION_LEVELS = ['auto', 'approve', 'denied'];
+export const TOOL_PERMISSION_LEVELS = ['auto', 'approve', 'denied', 'internal', 'read', 'write', 'browser', 'network'];
 
 export class BrowserToolRegistry {
   /** @type {Map<string, BrowserTool>} */
@@ -528,13 +535,8 @@ export class FsReadTool extends BrowserTool {
 
   async execute({ path }) {
     const resolved = this.#ws.resolve(path);
-    const root = await navigator.storage.getDirectory();
-    const parts = resolved.split('/').filter(Boolean);
-    let dir = root;
-    for (const part of parts.slice(0, -1)) {
-      dir = await dir.getDirectoryHandle(part);
-    }
-    const fileHandle = await dir.getFileHandle(parts[parts.length - 1]);
+    const { dir, name } = await opfsWalk(resolved);
+    const fileHandle = await dir.getFileHandle(name);
     const file = await fileHandle.getFile();
     // Limit read size to prevent memory issues (50MB)
     const MAX_READ = 50 * 1024 * 1024;
@@ -591,13 +593,8 @@ export class FsWriteTool extends BrowserTool {
     }
 
     const resolved = this.#ws.resolve(path);
-    const root = await navigator.storage.getDirectory();
-    const parts = resolved.split('/').filter(Boolean);
-    let dir = root;
-    for (const part of parts.slice(0, -1)) {
-      dir = await dir.getDirectoryHandle(part, { create: true });
-    }
-    const fileHandle = await dir.getFileHandle(parts[parts.length - 1], { create: true });
+    const { dir, name: fileName } = await opfsWalk(resolved, { create: true });
+    const fileHandle = await dir.getFileHandle(fileName, { create: true });
     const writable = await fileHandle.createWritable();
     try {
       await writable.write(content);
@@ -632,12 +629,7 @@ export class FsListTool extends BrowserTool {
 
   async execute({ path = '/' }) {
     const resolved = this.#ws.resolve(path);
-    const root = await navigator.storage.getDirectory();
-    const parts = resolved.split('/').filter(Boolean);
-    let dir = root;
-    for (const part of parts) {
-      dir = await dir.getDirectoryHandle(part);
-    }
+    const dir = await opfsWalkDir(resolved);
     const isRoot = (path === '/' || path === '');
     const entries = [];
     for await (const [name, handle] of dir) {
@@ -684,12 +676,8 @@ export class FsDeleteTool extends BrowserTool {
     if (parts.length <= 2 && parts[0] === 'clawser_workspaces') {
       return { success: false, output: '', error: 'Cannot delete workspace home directory' };
     }
-    const root = await navigator.storage.getDirectory();
-    let dir = root;
-    for (const part of parts.slice(0, -1)) {
-      dir = await dir.getDirectoryHandle(part);
-    }
-    await dir.removeEntry(parts[parts.length - 1], { recursive });
+    const { dir, name } = await opfsWalk(resolved);
+    await dir.removeEntry(name, { recursive });
     return { success: true, output: `Deleted ${path}` };
   }
 }
