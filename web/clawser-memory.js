@@ -519,6 +519,32 @@ export class SemanticMemory {
   }
 
   /**
+   * Update a memory entry in place.
+   * @param {string} id
+   * @param {object} updates - Fields to update (key, content, category, meta)
+   * @returns {boolean} true if updated
+   */
+  update(id, updates) {
+    const entry = this.#entries.find(e => e.id === id);
+    if (!entry) return false;
+    for (const key of ['key', 'content', 'category', 'meta']) {
+      if (updates[key] !== undefined) entry[key] = updates[key];
+    }
+    entry.timestamp = Date.now();
+    if (updates.key !== undefined || updates.content !== undefined) {
+      this.#updateTokenIndex(entry);
+    }
+    return true;
+  }
+
+  /**
+   * Clear the embedding cache.
+   */
+  clearEmbeddingCache() {
+    this.#embeddingCache.clear();
+  }
+
+  /**
    * Delete a memory entry by ID.
    * @param {string} id
    * @returns {boolean} true if deleted

@@ -196,6 +196,13 @@ export class StuckDetector {
   setThresholds(updates) {
     Object.assign(this.#thresholds, updates);
   }
+
+  /**
+   * Reset all thresholds to defaults.
+   */
+  resetThresholds() {
+    this.#thresholds = { ...DEFAULT_THRESHOLDS };
+  }
 }
 
 // ── SelfRepairEngine ────────────────────────────────────────────

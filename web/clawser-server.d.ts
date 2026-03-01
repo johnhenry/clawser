@@ -135,6 +135,7 @@ export declare class ServerManager {
   getHandler(route: ServerRoute): Promise<Record<string, unknown> | null>;
 
   getLogs(routeId: string, limit?: number): ServerLogEntry[];
+  clearLogs(routeId?: string): void;
   testRequest(hostname: string, port?: number, path?: string, opts?: {
     method?: string;
     headers?: Record<string, string>;
@@ -180,6 +181,7 @@ export declare class SSEChannel {
   send(message: SSEMessage): void;
   drain(): SSEMessage[];
   onMessage(fn: (message: SSEMessage) => void): void;
+  offMessage(fn: (message: SSEMessage) => void): void;
   receive(message: SSEMessage): void;
   close(): void;
 }

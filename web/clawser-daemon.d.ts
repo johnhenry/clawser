@@ -248,3 +248,35 @@ export declare class DaemonRestoreTool {
   get permission(): 'approve';
   execute(): Promise<ToolResult>;
 }
+
+// ── InputLockManager ────────────────────────────────────────
+
+export declare class InputLockManager {
+  tryAcquire(resource: string): Promise<{ acquired: boolean }>;
+  release(resource: string): void;
+  isHeld(resource: string): boolean;
+  heldLocks(): string[];
+}
+
+// ── NotificationCenter ──────────────────────────────────────
+
+export interface Notification {
+  id: number;
+  type: string;
+  title: string;
+  message: string;
+  read: boolean;
+  timestamp: number;
+}
+
+export declare class NotificationCenter {
+  add(opts: { type?: string; title: string; message: string }): number;
+  get(id: number): Notification | null;
+  markRead(id: number): void;
+  markAllRead(): void;
+  list(opts?: { limit?: number }): Notification[];
+  get count(): number;
+  get unreadCount(): number;
+  remove(id: number): void;
+  clear(): void;
+}

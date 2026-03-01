@@ -852,6 +852,14 @@ export class WorkflowRecorder {
   }
 
   /**
+   * Import steps from a previously exported workflow.
+   * @param {{ name: string, steps: Array }} data
+   */
+  fromJSON(data) {
+    this.#steps = (data && Array.isArray(data.steps)) ? [...data.steps] : [];
+  }
+
+  /**
    * Export the recorded workflow as a SKILL.md file for the skills system.
    * @param {string} name - Skill name
    * @param {string} description - Skill description

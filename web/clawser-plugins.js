@@ -38,6 +38,7 @@ export class PluginLoader {
       tools: plugin.tools || [],
       hooks: plugin.hooks || {},
       metadata: plugin.metadata || {},
+      enabled: true,
       registeredAt: Date.now(),
     });
   }
@@ -79,6 +80,7 @@ export class PluginLoader {
   getTools() {
     const tools = [];
     for (const plugin of this.#plugins.values()) {
+      if (plugin.enabled === false) continue;
       for (const tool of plugin.tools) {
         tools.push({ ...tool, _plugin: plugin.name });
       }
@@ -93,12 +95,37 @@ export class PluginLoader {
   getHooks() {
     const hooks = {};
     for (const plugin of this.#plugins.values()) {
+      if (plugin.enabled === false) continue;
       for (const [hookName, fn] of Object.entries(plugin.hooks)) {
         if (!hooks[hookName]) hooks[hookName] = [];
         hooks[hookName].push(fn);
       }
     }
     return hooks;
+  }
+
+  /**
+   * Enable a plugin by name.
+   * @param {string} name
+   * @returns {boolean} True if the plugin was found
+   */
+  enable(name) {
+    const plugin = this.#plugins.get(name);
+    if (!plugin) return false;
+    plugin.enabled = true;
+    return true;
+  }
+
+  /**
+   * Disable a plugin by name (keeps it registered but excludes from getTools/getHooks).
+   * @param {string} name
+   * @returns {boolean} True if the plugin was found
+   */
+  disable(name) {
+    const plugin = this.#plugins.get(name);
+    if (!plugin) return false;
+    plugin.enabled = false;
+    return true;
   }
 
   /** Number of registered plugins */

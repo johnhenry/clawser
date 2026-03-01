@@ -36,6 +36,8 @@ export class ToolBuilder {
   listTools(): Array<{ name: string; description: string; version: number; author: string; trusted: boolean }>;
   getHistory(name: string): DynamicToolSpec[];
   rollback(name: string, targetVersion: number): { success: boolean; version?: number; error?: string };
+  promoteTool(name: string): { success: boolean; error?: string };
+  demoteTool(name: string): { success: boolean; error?: string };
   exportAll(): DynamicToolSpec[];
   importAll(data: DynamicToolSpec[]): number;
 }

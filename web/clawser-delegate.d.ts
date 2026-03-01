@@ -52,6 +52,8 @@ export class DelegateManager {
   delegateAll(optsList: Array<ConstructorParameters<typeof SubAgent>[0]>): Promise<SubAgentResult[]>;
   get(id: string): SubAgent | null;
   list(): SubAgentSummary[];
+  cancel(id: string): boolean;
+  cancelAll(): number;
   get running(): number;
   get size(): number;
   cleanup(): void;

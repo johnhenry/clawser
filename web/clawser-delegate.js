@@ -506,6 +506,21 @@ export class DelegateManager {
     return true;
   }
 
+  /**
+   * Cancel all running sub-agents.
+   * @returns {number} Number of agents cancelled
+   */
+  cancelAll() {
+    let count = 0;
+    for (const agent of this.#agents.values()) {
+      if (agent.status === 'running' || agent.status === 'pending') {
+        agent.cancel();
+        count++;
+      }
+    }
+    return count;
+  }
+
   /** Currently running sub-agents */
   get running() { return this.#running; }
 

@@ -389,6 +389,22 @@ export class BluetoothPeripheral extends PeripheralHandle {
     });
   }
 
+  /**
+   * Unsubscribe from notifications on a BLE characteristic.
+   * @param {string} serviceUUID
+   * @param {string} charUUID
+   */
+  async unsubscribe(serviceUUID, charUUID) {
+    if (!this.#connected || !this.#server) {
+      throw new Error('Bluetooth not connected');
+    }
+    const service = await this.#server.getPrimaryService(serviceUUID);
+    const char = await service.getCharacteristic(charUUID);
+    await char.stopNotifications();
+    const idx = this.#subscribedChars.indexOf(char);
+    if (idx >= 0) this.#subscribedChars.splice(idx, 1);
+  }
+
   onData(callback) {
     this.#dataCallbacks.push(callback);
   }

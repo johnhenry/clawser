@@ -729,6 +729,14 @@ export class InputLockManager {
   isHeld(resource) {
     return this.#held.has(resource);
   }
+
+  /**
+   * List all currently held lock names.
+   * @returns {string[]}
+   */
+  heldLocks() {
+    return [...this.#held.keys()];
+  }
 }
 
 // ── Agent Busy Indicator ────────────────────────────────────────
@@ -1098,6 +1106,15 @@ export class NotificationCenter {
 
   get count() { return this.#notifications.length; }
   get unreadCount() { return this.#notifications.filter(n => !n.read).length; }
+
+  /**
+   * Get a notification by ID.
+   * @param {number} id
+   * @returns {object|null}
+   */
+  get(id) {
+    return this.#notifications.find(n => n.id === id) || null;
+  }
 
   /** Remove a notification by ID. */
   remove(id) {

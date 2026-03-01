@@ -362,6 +362,21 @@ export class ToolBuilder {
   }
 
   /**
+   * Demote a trusted dynamic tool back to untrusted.
+   * @param {string} name
+   * @returns {{ success: boolean, error?: string }}
+   */
+  demoteTool(name) {
+    if (!this.#registry) return { success: false, output: '', error: 'No registry' };
+    const tool = this.#registry.get(name);
+    if (!(tool instanceof DynamicTool)) {
+      return { success: false, output: '', error: `Dynamic tool "${name}" not found` };
+    }
+    tool.trusted = false;
+    return { success: true };
+  }
+
+  /**
    * Serialize all dynamic tools for persistence.
    * @returns {object[]}
    */

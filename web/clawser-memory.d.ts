@@ -136,6 +136,8 @@ export declare class SemanticMemory {
 
   store(entry: MemoryStoreInput): string;
   get(id: string): MemoryRecord | null;
+  update(id: string, updates: Partial<Pick<MemoryRecord, 'key' | 'content' | 'category' | 'meta'>>): boolean;
+  clearEmbeddingCache(): void;
   delete(id: string): boolean;
   all(category?: string): MemoryRecord[];
   clear(): void;

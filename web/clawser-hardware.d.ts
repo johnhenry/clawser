@@ -24,6 +24,8 @@ export class SerialPeripheral extends PeripheralHandle {
 
 export class BluetoothPeripheral extends PeripheralHandle {
   constructor(opts?: { serviceUuid?: string; requestDeviceFn?: () => Promise<unknown> });
+  subscribe(serviceUUID: string, charUUID: string): Promise<void>;
+  unsubscribe(serviceUUID: string, charUUID: string): Promise<void>;
 }
 
 export class USBPeripheral extends PeripheralHandle {

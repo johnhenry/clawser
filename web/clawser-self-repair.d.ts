@@ -44,6 +44,7 @@ export class StuckDetector {
   detect(jobState: JobState): DetectedIssue[];
   get thresholds(): Record<string, number>;
   setThresholds(updates: Partial<typeof DEFAULT_THRESHOLDS>): void;
+  resetThresholds(): void;
 }
 
 export class SelfRepairEngine {

@@ -90,6 +90,15 @@ export class BrowserListTabsTool extends BrowserTool {
   execute(): Promise<ToolResult>;
 }
 
+export class WorkflowRecorder {
+  get steps(): Array<{ action: string; timestamp: number; [key: string]: unknown }>;
+  addStep(step: { action: string; [key: string]: unknown }): void;
+  clear(): void;
+  export(name: string): { name: string; steps: Array<unknown>; createdAt: number };
+  fromJSON(data: { name: string; steps: Array<unknown> }): void;
+  exportAsSkill(name: string, description: string, opts?: { version?: string }): string;
+}
+
 export class BrowserCloseTabTool extends BrowserTool {
   constructor(manager: AutomationManager);
   execute(params: { tab_id: string }): Promise<ToolResult>;

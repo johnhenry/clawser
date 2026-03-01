@@ -493,6 +493,18 @@ ${rows}</ul></body></html>`;
     return log.slice(-limit);
   }
 
+  /**
+   * Clear logs for a specific route, or all logs if no routeId given.
+   * @param {string} [routeId]
+   */
+  clearLogs(routeId) {
+    if (routeId != null) {
+      this.#logs.delete(routeId);
+    } else {
+      this.#logs.clear();
+    }
+  }
+
   #createLogger(routeId) {
     return {
       log: (...args) => console.log(`[server:${routeId}]`, ...args),
@@ -655,6 +667,15 @@ export class SSEChannel {
    */
   onMessage(fn) {
     this.#onMessageCallbacks.push(fn);
+  }
+
+  /**
+   * Unregister a callback for incoming messages.
+   * @param {Function} fn
+   */
+  offMessage(fn) {
+    const idx = this.#onMessageCallbacks.indexOf(fn);
+    if (idx >= 0) this.#onMessageCallbacks.splice(idx, 1);
   }
 
   /**
