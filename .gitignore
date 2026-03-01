@@ -1,3 +1,6 @@
 /target
 .reference/
 node_modules/
+.DS_Store
+extracted_conversations/
+package-lock.json
