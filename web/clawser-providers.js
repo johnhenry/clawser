@@ -283,6 +283,11 @@ export class CostLedger {
       totalOutputTokens,
     };
   }
+
+  /** Clear all recorded entries. */
+  clear() {
+    this.#entries = [];
+  }
 }
 
 // ── Per-profile cost ledger ────────────────────────────────────────
@@ -1688,6 +1693,15 @@ export class ProviderRegistry {
 
   has(name) {
     return this.#providers.has(name);
+  }
+
+  /**
+   * Remove a provider by name.
+   * @param {string} name
+   * @returns {boolean} true if the provider was found and removed
+   */
+  remove(name) {
+    return this.#providers.delete(name);
   }
 
   names() {

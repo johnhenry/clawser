@@ -563,6 +563,31 @@ export class SkillStorage {
       }
     }
   }
+
+  /**
+   * Export all skills under a scope as a single ZIP blob.
+   * Each skill directory becomes a top-level folder in the archive.
+   * @param {'global'|'workspace'} scope
+   * @param {string} [wsId] - Required when scope is 'workspace'
+   * @returns {Promise<Blob>}
+   */
+  static async exportZip(scope, wsId) {
+    const fflate = await import('fflate');
+
+    const parentDir = scope === 'global'
+      ? await SkillStorage.getGlobalSkillsDir()
+      : await SkillStorage.getWorkspaceSkillsDir(wsId);
+
+    const entries = {};
+    for await (const [name, handle] of parentDir) {
+      if (handle.kind === 'directory') {
+        await SkillStorage.#collectFiles(handle, name, entries, fflate.strToU8);
+      }
+    }
+
+    const zipped = fflate.zipSync(entries, { level: 6 });
+    return new Blob([zipped], { type: 'application/zip' });
+  }
 }
 
 // ── SkillEntry / SkillActivation types ───────────────────────────

@@ -85,6 +85,7 @@ export declare class GoalManager {
   decompose(goalId: string, subtasks: string[]): Goal[];
   onCompletion(fn: (goal: Goal) => void): () => void;
   addArtifact(goalId: string, filePath: string): boolean;
+  removeArtifact(goalId: string, filePath: string): boolean;
   logProgress(goalId: string, note: string): boolean;
   progress(goalId: string): number;
   depth(goalId: string): number;
@@ -92,6 +93,11 @@ export declare class GoalManager {
   remove(id: string): boolean;
   get size(): number;
   buildPrompt(): string;
+  addDependency(goalId: string, dependsOnId: string): boolean;
+  removeDependency(goalId: string, dependsOnId: string): boolean;
+  isBlocked(goalId: string): boolean;
+  toMarkdown(): string;
+  static fromMarkdown(md: string): GoalManager;
   toJSON(): GoalJSON[];
   fromJSON(data: GoalJSON[]): void;
 }
@@ -119,6 +125,15 @@ export declare class GoalUpdateTool extends BrowserTool {
 }
 
 export declare class GoalAddArtifactTool extends BrowserTool {
+  constructor(manager: GoalManager);
+  get name(): string;
+  get description(): string;
+  get parameters(): object;
+  get permission(): string;
+  execute(params: { goal_id: string; file_path: string }): Promise<ToolResult>;
+}
+
+export declare class GoalRemoveArtifactTool extends BrowserTool {
   constructor(manager: GoalManager);
   get name(): string;
   get description(): string;

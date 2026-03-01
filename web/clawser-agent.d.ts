@@ -86,6 +86,7 @@ export declare class HookPipeline {
   setEnabled(name: string, enabled: boolean): void;
   run(point: HookPoint, ctx: Record<string, unknown>): Promise<HookRunResult>;
   list(): HookEntry[];
+  clearAll(): void;
   get size(): number;
 }
 

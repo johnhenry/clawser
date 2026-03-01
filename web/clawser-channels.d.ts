@@ -198,3 +198,29 @@ export declare class ChannelHistoryTool {
     limit?: number;
   }): Promise<ToolResult>;
 }
+
+export declare class ChannelCreateTool {
+  constructor(manager: ChannelManager);
+  get name(): 'channel_create';
+  get description(): string;
+  get parameters(): object;
+  get permission(): 'approve';
+  execute(params: {
+    name: string;
+    enabled?: boolean;
+    allowed_users?: string[];
+    allowed_channels?: string[];
+    secret?: string;
+  }): Promise<ToolResult>;
+}
+
+export declare class ChannelDeleteTool {
+  constructor(manager: ChannelManager);
+  get name(): 'channel_delete';
+  get description(): string;
+  get parameters(): object;
+  get permission(): 'approve';
+  execute(params: {
+    channel_id: string;
+  }): Promise<ToolResult>;
+}

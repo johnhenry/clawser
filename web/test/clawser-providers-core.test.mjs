@@ -104,6 +104,16 @@ describe('CostLedger', () => {
     ledger.record({ model: 'a', provider: 'p', inputTokens: 0, outputTokens: 0, costUsd: 0.06 });
     assert.equal(ledger.isOverThreshold(), true);
   });
+
+  it('clear() removes all entries', () => {
+    const ledger = new CostLedger();
+    ledger.record({ model: 'a', provider: 'p', inputTokens: 100, outputTokens: 50, costUsd: 0.05 });
+    ledger.record({ model: 'b', provider: 'p', inputTokens: 200, outputTokens: 100, costUsd: 0.10 });
+    assert.equal(ledger.summary().totalCalls, 2);
+    ledger.clear();
+    assert.equal(ledger.summary().totalCalls, 0);
+    assert.equal(ledger.summary().totalCostUsd, 0);
+  });
 });
 
 // ── 3. validateChatResponse (5 tests) ──────────────────────────
@@ -298,5 +308,18 @@ describe('ProviderRegistry', () => {
     reg.register(new EchoProvider());
     const n = reg.names();
     assert.ok(n.includes('echo'));
+  });
+
+  it('remove() deletes a registered provider', () => {
+    const reg = new ProviderRegistry();
+    reg.register(new EchoProvider());
+    assert.ok(reg.get('echo'));
+    assert.equal(reg.remove('echo'), true);
+    assert.equal(reg.get('echo'), null);
+  });
+
+  it('remove() returns false for unregistered name', () => {
+    const reg = new ProviderRegistry();
+    assert.equal(reg.remove('nonexistent'), false);
   });
 });

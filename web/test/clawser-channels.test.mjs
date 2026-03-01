@@ -13,6 +13,8 @@ import {
   formatForChannel,
   ChannelManager,
   resetMessageCounter,
+  ChannelCreateTool,
+  ChannelDeleteTool,
 } from '../clawser-channels.js';
 
 // ── CHANNEL_TYPES ───────────────────────────────────────────────
@@ -240,5 +242,126 @@ describe('ChannelManager', () => {
     assert.ok(prompt.includes('telegram'));
     assert.ok(prompt.includes('enabled'));
     assert.ok(prompt.includes('disabled'));
+  });
+});
+
+// ── ChannelCreateTool ────────────────────────────────────────────
+
+describe('ChannelCreateTool', () => {
+  let mgr;
+  let tool;
+
+  beforeEach(() => {
+    resetMessageCounter();
+    mgr = new ChannelManager();
+    tool = new ChannelCreateTool(mgr);
+  });
+
+  it('has correct name and permission', () => {
+    assert.equal(tool.name, 'channel_create');
+    assert.equal(tool.permission, 'approve');
+  });
+
+  it('has description', () => {
+    assert.ok(tool.description.length > 0);
+  });
+
+  it('parameters require name', () => {
+    const params = tool.parameters;
+    assert.deepEqual(params.required, ['name']);
+    assert.ok(params.properties.name);
+  });
+
+  it('creates a channel with just a name', async () => {
+    const result = await tool.execute({ name: 'telegram' });
+    assert.equal(result.success, true);
+    assert.ok(result.output.includes('telegram'));
+    assert.equal(mgr.channelCount, 1);
+    const cfg = mgr.getChannel('telegram');
+    assert.ok(cfg);
+    assert.equal(cfg.enabled, true);
+  });
+
+  it('creates a channel with all options', async () => {
+    const result = await tool.execute({
+      name: 'slack',
+      enabled: false,
+      allowed_users: ['alice', 'bob'],
+      allowed_channels: ['general'],
+      secret: 'mysecret',
+    });
+    assert.equal(result.success, true);
+    const cfg = mgr.getChannel('slack');
+    assert.equal(cfg.enabled, false);
+    assert.deepEqual(cfg.allowedUsers, ['alice', 'bob']);
+    assert.deepEqual(cfg.allowedChannels, ['general']);
+    assert.equal(cfg.secret, 'mysecret');
+  });
+
+  it('returns error when name is missing', async () => {
+    const result = await tool.execute({});
+    assert.equal(result.success, false);
+    assert.ok(result.error.includes('required'));
+  });
+
+  it('defaults enabled to true', async () => {
+    await tool.execute({ name: 'test' });
+    assert.equal(mgr.getChannel('test').enabled, true);
+  });
+
+  it('defaults allowed_users and allowed_channels to empty arrays', async () => {
+    await tool.execute({ name: 'test' });
+    const cfg = mgr.getChannel('test');
+    assert.deepEqual(cfg.allowedUsers, []);
+    assert.deepEqual(cfg.allowedChannels, []);
+  });
+});
+
+// ── ChannelDeleteTool ────────────────────────────────────────────
+
+describe('ChannelDeleteTool', () => {
+  let mgr;
+  let tool;
+
+  beforeEach(() => {
+    resetMessageCounter();
+    mgr = new ChannelManager();
+    tool = new ChannelDeleteTool(mgr);
+  });
+
+  it('has correct name and permission', () => {
+    assert.equal(tool.name, 'channel_delete');
+    assert.equal(tool.permission, 'approve');
+  });
+
+  it('has description', () => {
+    assert.ok(tool.description.length > 0);
+  });
+
+  it('parameters require channel_id', () => {
+    const params = tool.parameters;
+    assert.deepEqual(params.required, ['channel_id']);
+    assert.ok(params.properties.channel_id);
+  });
+
+  it('deletes an existing channel', async () => {
+    mgr.addChannel({ name: 'telegram' });
+    assert.equal(mgr.channelCount, 1);
+    const result = await tool.execute({ channel_id: 'telegram' });
+    assert.equal(result.success, true);
+    assert.ok(result.output.includes('telegram'));
+    assert.equal(mgr.channelCount, 0);
+  });
+
+  it('returns error for non-existent channel', async () => {
+    const result = await tool.execute({ channel_id: 'nonexistent' });
+    assert.equal(result.success, false);
+    assert.ok(result.error.includes('not found'));
+  });
+
+  it('returns error when channel_id is missing', async () => {
+    const result = await tool.execute({});
+    assert.equal(result.success, false);
+    assert.ok(result.error.includes('required'));
   });
 });

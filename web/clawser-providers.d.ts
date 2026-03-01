@@ -53,6 +53,7 @@ export declare class CostLedger {
   totalByModel(): Record<string, CostGroupSummary>;
   totalByProvider(): Record<string, CostGroupSummary>;
   summary(): CostSummary;
+  clear(): void;
 }
 
 export declare class ProfileCostLedger {
@@ -318,6 +319,7 @@ export declare class ProviderRegistry {
   get(name: string): LLMProvider | null;
   has(name: string): boolean;
   names(): string[];
+  remove(name: string): boolean;
   listWithAvailability(): Promise<ProviderAvailabilityInfo[]>;
 }
 

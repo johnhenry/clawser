@@ -165,11 +165,11 @@ export declare class DaemonController {
   /** Stop the daemon. */
   stop(): Promise<boolean>;
 
-  /** Pause the daemon. */
-  pause(): boolean;
+  /** Pause the daemon. Stops processing but preserves state. */
+  pause(): Promise<boolean>;
 
-  /** Resume from paused state. */
-  resume(): boolean;
+  /** Resume from paused state. Restarts the run loop. */
+  resume(): Promise<boolean>;
 
   /**
    * Create a checkpoint.
@@ -220,4 +220,22 @@ export declare class DaemonCheckpointTool {
   get parameters(): object;
   get permission(): 'approve';
   execute(params?: { reason?: string }): Promise<ToolResult>;
+}
+
+export declare class DaemonPauseTool {
+  constructor(controller: DaemonController);
+  get name(): 'daemon_pause';
+  get description(): string;
+  get parameters(): object;
+  get permission(): 'approve';
+  execute(): Promise<ToolResult>;
+}
+
+export declare class DaemonResumeTool {
+  constructor(controller: DaemonController);
+  get name(): 'daemon_resume';
+  get description(): string;
+  get parameters(): object;
+  get permission(): 'approve';
+  execute(): Promise<ToolResult>;
 }

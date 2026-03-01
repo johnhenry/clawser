@@ -214,6 +214,15 @@ export class SafetyPipeline {
     this.#disableConfirmed = true;
   }
 
+  /**
+   * Acknowledge intent to re-enable the safety pipeline.
+   * Logs re-activation for audit purposes and resets internal state.
+   */
+  confirmEnable() {
+    this.#enabled = true;
+    this.#disableConfirmed = false;
+  }
+
   /** Get the input sanitizer instance. */
   get sanitizer() { return this.#sanitizer; }
 

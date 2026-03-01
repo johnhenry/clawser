@@ -3,7 +3,8 @@ import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   Goal, GoalManager, resetGoalIdCounter,
-  GoalAddTool, GoalUpdateTool, GoalAddArtifactTool, GoalDecomposeTool, GoalListTool,
+  GoalAddTool, GoalUpdateTool, GoalAddArtifactTool, GoalRemoveArtifactTool,
+  GoalDecomposeTool, GoalListTool,
 } from '../clawser-goals.js';
 
 // ── Deadline/Due Date Field (Block 8) ───────────────────────────
@@ -234,5 +235,144 @@ describe('Goal tool permission levels', () => {
   it('GoalListTool has read permission', () => {
     const tool = new GoalListTool(mgr);
     assert.equal(tool.permission, 'read');
+  });
+});
+
+// ── GoalManager.removeArtifact ──────────────────────────────────
+
+describe('GoalManager.removeArtifact', () => {
+  beforeEach(() => resetGoalIdCounter());
+
+  it('removes an existing artifact and returns true', () => {
+    const mgr = new GoalManager();
+    const goal = mgr.addGoal('Build feature');
+    mgr.addArtifact(goal.id, '/src/feature.js');
+    mgr.addArtifact(goal.id, '/src/feature.test.js');
+
+    const result = mgr.removeArtifact(goal.id, '/src/feature.js');
+    assert.equal(result, true);
+    assert.deepEqual(mgr.get(goal.id).artifacts, ['/src/feature.test.js']);
+  });
+
+  it('returns false for non-existent artifact', () => {
+    const mgr = new GoalManager();
+    const goal = mgr.addGoal('Build feature');
+    mgr.addArtifact(goal.id, '/src/feature.js');
+
+    const result = mgr.removeArtifact(goal.id, '/src/missing.js');
+    assert.equal(result, false);
+  });
+
+  it('returns false for non-existent goal', () => {
+    const mgr = new GoalManager();
+
+    const result = mgr.removeArtifact('goal-999', '/src/feature.js');
+    assert.equal(result, false);
+  });
+
+  it('updates the goal updatedAt timestamp', () => {
+    const mgr = new GoalManager();
+    const goal = mgr.addGoal('Build feature');
+    mgr.addArtifact(goal.id, '/src/feature.js');
+    const before = mgr.get(goal.id).updatedAt;
+
+    // Small delay to ensure timestamp differs
+    mgr.removeArtifact(goal.id, '/src/feature.js');
+    assert.ok(mgr.get(goal.id).updatedAt >= before);
+  });
+});
+
+// ── GoalManager.removeDependency ────────────────────────────────
+
+describe('GoalManager.removeDependency', () => {
+  beforeEach(() => resetGoalIdCounter());
+
+  it('removes an existing dependency and returns true', () => {
+    const mgr = new GoalManager();
+    const a = mgr.addGoal('Goal A');
+    const b = mgr.addGoal('Goal B');
+    const c = mgr.addGoal('Goal C');
+    mgr.addDependency(c.id, a.id);
+    mgr.addDependency(c.id, b.id);
+
+    const result = mgr.removeDependency(c.id, a.id);
+    assert.equal(result, true);
+    assert.deepEqual(mgr.get(c.id).blockedBy, [b.id]);
+  });
+
+  it('returns false for non-existent dependency', () => {
+    const mgr = new GoalManager();
+    const a = mgr.addGoal('Goal A');
+    const b = mgr.addGoal('Goal B');
+    mgr.addDependency(b.id, a.id);
+
+    const result = mgr.removeDependency(b.id, 'goal-999');
+    assert.equal(result, false);
+  });
+
+  it('returns false for non-existent goal', () => {
+    const mgr = new GoalManager();
+
+    const result = mgr.removeDependency('goal-999', 'goal-001');
+    assert.equal(result, false);
+  });
+
+  it('updates the goal updatedAt timestamp', () => {
+    const mgr = new GoalManager();
+    const a = mgr.addGoal('Goal A');
+    const b = mgr.addGoal('Goal B');
+    mgr.addDependency(b.id, a.id);
+    const before = mgr.get(b.id).updatedAt;
+
+    mgr.removeDependency(b.id, a.id);
+    assert.ok(mgr.get(b.id).updatedAt >= before);
+  });
+});
+
+// ── GoalRemoveArtifactTool ──────────────────────────────────────
+
+describe('GoalRemoveArtifactTool', () => {
+  beforeEach(() => resetGoalIdCounter());
+
+  it('has approve permission', () => {
+    const mgr = new GoalManager();
+    const tool = new GoalRemoveArtifactTool(mgr);
+    assert.equal(tool.permission, 'approve');
+  });
+
+  it('has correct name', () => {
+    const mgr = new GoalManager();
+    const tool = new GoalRemoveArtifactTool(mgr);
+    assert.equal(tool.name, 'goal_remove_artifact');
+  });
+
+  it('successfully removes an artifact', async () => {
+    const mgr = new GoalManager();
+    const goal = mgr.addGoal('Build feature');
+    mgr.addArtifact(goal.id, '/src/feature.js');
+
+    const tool = new GoalRemoveArtifactTool(mgr);
+    const result = await tool.execute({ goal_id: goal.id, file_path: '/src/feature.js' });
+    assert.equal(result.success, true);
+    assert.ok(result.output.includes('/src/feature.js'));
+    assert.deepEqual(mgr.get(goal.id).artifacts, []);
+  });
+
+  it('returns failure for non-existent goal', async () => {
+    const mgr = new GoalManager();
+    const tool = new GoalRemoveArtifactTool(mgr);
+    const result = await tool.execute({ goal_id: 'goal-999', file_path: '/src/feature.js' });
+    assert.equal(result.success, false);
+    assert.ok(result.error);
+  });
+
+  it('returns failure for non-existent artifact', async () => {
+    const mgr = new GoalManager();
+    const goal = mgr.addGoal('Build feature');
+
+    const tool = new GoalRemoveArtifactTool(mgr);
+    const result = await tool.execute({ goal_id: goal.id, file_path: '/src/missing.js' });
+    assert.equal(result.success, false);
+    assert.ok(result.error);
   });
 });

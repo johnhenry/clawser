@@ -1,0 +1,11 @@
+{
+  "name": "clawser",
+  "private": true,
+  "description": "Browser-native AI agent workspace with tools, memory, and goals.",
+  "scripts": {
+    "test": "node --import ./web/test/_setup-globals.mjs --test web/test/*.test.mjs"
+  },
+  "devDependencies": {
+    "fflate": "^0.8.2"
+  }
+}

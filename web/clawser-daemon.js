@@ -4,7 +4,7 @@
 // CheckpointManager: serialize/restore agent state
 // TabCoordinator: multi-tab message coordination via BroadcastChannel
 // DaemonController: orchestrates lifecycle, checkpoint, coordination
-// Agent tools: daemon_status, daemon_checkpoint
+// Agent tools: daemon_status, daemon_checkpoint, daemon_pause, daemon_resume
 
 import { BrowserTool } from './clawser-tools.js';
 
@@ -468,18 +468,37 @@ export class DaemonController {
 
   /**
    * Pause the daemon (keeps state but stops processing).
-   * @returns {boolean}
+   * Stops the auto-checkpoint interval but preserves all state.
+   * @returns {Promise<boolean>}
    */
-  pause() {
-    return this.#state.transition(DaemonPhase.PAUSED);
+  async pause() {
+    if (!this.#state.transition(DaemonPhase.PAUSED)) return false;
+
+    // Stop auto-checkpoint timer while paused
+    if (this.#autoCheckpointInterval) {
+      clearInterval(this.#autoCheckpointInterval);
+      this.#autoCheckpointInterval = null;
+    }
+
+    return true;
   }
 
   /**
    * Resume from paused state.
-   * @returns {boolean}
+   * Restarts the auto-checkpoint interval.
+   * @returns {Promise<boolean>}
    */
-  resume() {
-    return this.#state.transition(DaemonPhase.RUNNING);
+  async resume() {
+    if (!this.#state.transition(DaemonPhase.RUNNING)) return false;
+
+    // Restart auto-checkpoint timer
+    if (this.#autoCheckpointMs > 0 && this.#getStateFn && !this.#autoCheckpointInterval) {
+      this.#autoCheckpointInterval = setInterval(async () => {
+        await this.checkpoint('auto');
+      }, this.#autoCheckpointMs);
+    }
+
+    return true;
   }
 
   /**
@@ -588,6 +607,50 @@ export class DaemonCheckpointTool extends BrowserTool {
       return { success: false, output: '', error: 'Failed to create checkpoint' };
     }
     return { success: true, output: `Checkpoint ${meta.id} created (${meta.size} bytes, reason: ${meta.reason})` };
+  }
+}
+
+export class DaemonPauseTool extends BrowserTool {
+  #controller;
+
+  constructor(controller) {
+    super();
+    this.#controller = controller;
+  }
+
+  get name() { return 'daemon_pause'; }
+  get description() { return 'Pause the daemon. Stops processing but preserves state.'; }
+  get parameters() { return { type: 'object', properties: {} }; }
+  get permission() { return 'approve'; }
+
+  async execute() {
+    const ok = await this.#controller.pause();
+    if (ok) {
+      return { success: true, output: 'Daemon paused.' };
+    }
+    return { success: false, output: '', error: `Cannot pause from current phase: ${this.#controller.phase}` };
+  }
+}
+
+export class DaemonResumeTool extends BrowserTool {
+  #controller;
+
+  constructor(controller) {
+    super();
+    this.#controller = controller;
+  }
+
+  get name() { return 'daemon_resume'; }
+  get description() { return 'Resume the daemon from paused state.'; }
+  get parameters() { return { type: 'object', properties: {} }; }
+  get permission() { return 'approve'; }
+
+  async execute() {
+    const ok = await this.#controller.resume();
+    if (ok) {
+      return { success: true, output: 'Daemon resumed.' };
+    }
+    return { success: false, output: '', error: `Cannot resume from current phase: ${this.#controller.phase}` };
   }
 }
 

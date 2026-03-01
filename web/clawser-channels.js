@@ -3,7 +3,7 @@
 // InboundMessage: normalized message format from any channel
 // ChannelConfig: per-channel allowlist configuration
 // ChannelManager: browser-side channel management via bridge WebSocket
-// Agent tools: channel_list, channel_send, channel_history
+// Agent tools: channel_list, channel_send, channel_history, channel_create, channel_delete
 
 import { BrowserTool } from './clawser-tools.js';
 
@@ -460,5 +460,86 @@ export class ChannelHistoryTool extends BrowserTool {
       `[${new Date(m.timestamp).toISOString().slice(11, 19)}] ${m.channel}/${m.sender.name}: ${m.content}`
     );
     return { success: true, output: lines.join('\n') };
+  }
+}
+
+export class ChannelCreateTool extends BrowserTool {
+  #manager;
+
+  constructor(manager) {
+    super();
+    this.#manager = manager;
+  }
+
+  get name() { return 'channel_create'; }
+  get description() { return 'Create a new communication channel.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Channel name (e.g. telegram, slack, webhook)' },
+        enabled: { type: 'boolean', description: 'Whether channel is enabled (default true)' },
+        allowed_users: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'List of allowed user IDs or usernames (empty = allow all)',
+        },
+        allowed_channels: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'List of allowed channel/conversation IDs (empty = allow all)',
+        },
+        secret: { type: 'string', description: 'Channel secret/token (optional)' },
+      },
+      required: ['name'],
+    };
+  }
+  get permission() { return 'approve'; }
+
+  async execute({ name, enabled, allowed_users, allowed_channels, secret } = {}) {
+    if (!name) {
+      return { success: false, output: '', error: 'Channel name is required' };
+    }
+    this.#manager.addChannel({
+      name,
+      enabled: enabled !== false,
+      allowedUsers: allowed_users || [],
+      allowedChannels: allowed_channels || [],
+      secret: secret || null,
+    });
+    return { success: true, output: `Channel "${name}" created.` };
+  }
+}
+
+export class ChannelDeleteTool extends BrowserTool {
+  #manager;
+
+  constructor(manager) {
+    super();
+    this.#manager = manager;
+  }
+
+  get name() { return 'channel_delete'; }
+  get description() { return 'Delete a communication channel.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        channel_id: { type: 'string', description: 'Channel name to delete' },
+      },
+      required: ['channel_id'],
+    };
+  }
+  get permission() { return 'approve'; }
+
+  async execute({ channel_id } = {}) {
+    if (!channel_id) {
+      return { success: false, output: '', error: 'channel_id is required' };
+    }
+    const removed = this.#manager.removeChannel(channel_id);
+    if (removed) {
+      return { success: true, output: `Channel "${channel_id}" deleted.` };
+    }
+    return { success: false, output: '', error: `Channel "${channel_id}" not found` };
   }
 }

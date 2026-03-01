@@ -108,6 +108,15 @@ export declare class FsDeleteTool extends BrowserTool {
   execute(params: { path: string; recursive?: boolean }): Promise<ToolResult>;
 }
 
+export declare class FsMkdirTool extends BrowserTool {
+  constructor(ws: WorkspaceFs);
+  get name(): string;
+  get description(): string;
+  get parameters(): object;
+  get permission(): string;
+  execute(params: { path: string }): Promise<ToolResult>;
+}
+
 export declare class StorageGetTool extends BrowserTool {
   get name(): string;
   get description(): string;

@@ -682,6 +682,33 @@ export class FsDeleteTool extends BrowserTool {
   }
 }
 
+export class FsMkdirTool extends BrowserTool {
+  /** @type {WorkspaceFs} */
+  #ws;
+  constructor(ws) { super(); this.#ws = ws; }
+
+  get name() { return 'browser_fs_mkdir'; }
+  get description() {
+    return 'Create a directory in OPFS. Intermediate directories are created automatically.';
+  }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Directory path to create' },
+      },
+      required: ['path'],
+    };
+  }
+  get permission() { return 'write'; }
+
+  async execute({ path }) {
+    const resolved = this.#ws.resolve(path);
+    await opfsWalkDir(resolved, { create: true });
+    return { success: true, output: `Created directory ${path}` };
+  }
+}
+
 // ── browser_storage_get / browser_storage_set ─────────────────────
 
 export class StorageGetTool extends BrowserTool {

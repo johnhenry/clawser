@@ -38,12 +38,16 @@ export class RoutineEngine {
   listRoutines(): RoutineDefinition[];
   removeRoutine(id: string): boolean;
   setEnabled(id: string, enabled: boolean): boolean;
+  enableRoutine(id: string): boolean;
+  disableRoutine(id: string): boolean;
   start(): void;
   stop(): void;
   handleEvent(eventType: string, payload?: Record<string, unknown>): Promise<Array<{ routineId: string; result: string }>>;
   handleWebhook(path: string, payload?: Record<string, unknown>): Promise<{ routineId: string; result: string } | null>;
   triggerManual(id: string): Promise<string>;
   tickCron(now?: Date): Promise<Array<{ routineId: string; result: string }>>;
+  connectEventBus(bus: EventTarget): void;
+  disconnectEventBus(): void;
   toJSON(): RoutineDefinition[];
   fromJSON(data: RoutineDefinition[]): void;
 }
@@ -63,7 +67,17 @@ export class RoutineDeleteTool extends BrowserTool {
   execute(params: { id: string }): Promise<ToolResult>;
 }
 
+export class RoutineHistoryTool extends BrowserTool {
+  constructor(engine: RoutineEngine);
+  execute(params: { id: string; limit?: number }): Promise<ToolResult>;
+}
+
 export class RoutineRunTool extends BrowserTool {
   constructor(engine: RoutineEngine);
   execute(params: { id: string }): Promise<ToolResult>;
+}
+
+export class RoutineToggleTool extends BrowserTool {
+  constructor(engine: RoutineEngine);
+  execute(params: { routine_id: string; enabled: boolean }): Promise<ToolResult>;
 }

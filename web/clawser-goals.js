@@ -277,6 +277,22 @@ export class GoalManager {
   }
 
   /**
+   * Remove an artifact from a goal.
+   * @param {string} goalId
+   * @param {string} filePath
+   * @returns {boolean} true if found and removed, false otherwise
+   */
+  removeArtifact(goalId, filePath) {
+    const goal = this.#goals.get(goalId);
+    if (!goal) return false;
+    const idx = goal.artifacts.indexOf(filePath);
+    if (idx === -1) return false;
+    goal.artifacts.splice(idx, 1);
+    goal.updatedAt = Date.now();
+    return true;
+  }
+
+  /**
    * Log a progress entry.
    * @param {string} goalId
    * @param {string} note
@@ -422,6 +438,22 @@ export class GoalManager {
       goal.blockedBy.push(dependsOnId);
       goal.updatedAt = Date.now();
     }
+    return true;
+  }
+
+  /**
+   * Remove a dependency from a goal.
+   * @param {string} goalId - Goal to remove dependency from
+   * @param {string} dependsOnId - Dependency to remove
+   * @returns {boolean} true if found and removed, false otherwise
+   */
+  removeDependency(goalId, dependsOnId) {
+    const goal = this.#goals.get(goalId);
+    if (!goal) return false;
+    const idx = goal.blockedBy.indexOf(dependsOnId);
+    if (idx === -1) return false;
+    goal.blockedBy.splice(idx, 1);
+    goal.updatedAt = Date.now();
     return true;
   }
 
@@ -660,6 +692,31 @@ export class GoalAddArtifactTool extends BrowserTool {
     const ok = this.#manager.addArtifact(goal_id, file_path);
     if (!ok) return { success: false, output: '', error: `Goal "${goal_id}" not found` };
     return { success: true, output: `Artifact "${file_path}" added to goal ${goal_id}` };
+  }
+}
+
+export class GoalRemoveArtifactTool extends BrowserTool {
+  #manager;
+  constructor(manager) { super(); this.#manager = manager; }
+
+  get name() { return 'goal_remove_artifact'; }
+  get description() { return 'Remove a linked artifact from a goal.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        goal_id: { type: 'string', description: 'Goal ID' },
+        file_path: { type: 'string', description: 'Workspace path to the artifact' },
+      },
+      required: ['goal_id', 'file_path'],
+    };
+  }
+  get permission() { return 'approve'; }
+
+  async execute({ goal_id, file_path }) {
+    const ok = this.#manager.removeArtifact(goal_id, file_path);
+    if (!ok) return { success: false, output: '', error: `Artifact "${file_path}" not found in goal "${goal_id}"` };
+    return { success: true, output: `Artifact "${file_path}" removed from goal ${goal_id}` };
   }
 }
 

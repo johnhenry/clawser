@@ -7,6 +7,7 @@ globalThis.BrowserTool = class { constructor() {} };
 import {
   DaemonPhase,
   DaemonState,
+  DaemonController,
   CheckpointManager,
   TabCoordinator,
   InputLockManager,
@@ -19,6 +20,8 @@ import {
   NativeMessageCodec,
   DaemonStatusTool,
   DaemonCheckpointTool,
+  DaemonPauseTool,
+  DaemonResumeTool,
 } from '../clawser-daemon.js';
 
 // ── DaemonPhase ─────────────────────────────────────────────────
@@ -527,5 +530,200 @@ describe('NativeMessageCodec', () => {
   it('decode throws for too-short data', () => {
     assert.throws(() => NativeMessageCodec.decode(new Uint8Array([1, 2])), /too short/);
     assert.throws(() => NativeMessageCodec.decode(null), /too short/);
+  });
+});
+
+// ── DaemonController pause/resume ────────────────────────────────
+
+describe('DaemonController pause/resume', () => {
+  /** Helper: create a started controller. */
+  async function makeRunning(opts = {}) {
+    const state = new DaemonState();
+    const ctrl = new DaemonController({
+      state,
+      checkpoints: new CheckpointManager(),
+      autoCheckpointMs: opts.autoCheckpointMs ?? 0,
+      getStateFn: opts.getStateFn || (() => ({ test: true })),
+    });
+    await ctrl.start();
+    return ctrl;
+  }
+
+  it('pause transitions RUNNING → PAUSED', async () => {
+    const ctrl = await makeRunning();
+    const ok = await ctrl.pause();
+    assert.equal(ok, true);
+    assert.equal(ctrl.phase, DaemonPhase.PAUSED);
+  });
+
+  it('pause fails from STOPPED', async () => {
+    const ctrl = new DaemonController();
+    const ok = await ctrl.pause();
+    assert.equal(ok, false);
+    assert.equal(ctrl.phase, DaemonPhase.STOPPED);
+  });
+
+  it('resume transitions PAUSED → RUNNING', async () => {
+    const ctrl = await makeRunning();
+    await ctrl.pause();
+    assert.equal(ctrl.phase, DaemonPhase.PAUSED);
+    const ok = await ctrl.resume();
+    assert.equal(ok, true);
+    assert.equal(ctrl.phase, DaemonPhase.RUNNING);
+  });
+
+  it('resume fails from STOPPED', async () => {
+    const ctrl = new DaemonController();
+    const ok = await ctrl.resume();
+    assert.equal(ok, false);
+    assert.equal(ctrl.phase, DaemonPhase.STOPPED);
+  });
+
+  it('resume fails from RUNNING (already running)', async () => {
+    const ctrl = await makeRunning();
+    const ok = await ctrl.resume();
+    assert.equal(ok, false);
+    assert.equal(ctrl.phase, DaemonPhase.RUNNING);
+  });
+
+  it('pause → resume round-trip preserves state', async () => {
+    const ctrl = await makeRunning();
+    assert.equal(ctrl.isRunning, true);
+    await ctrl.pause();
+    assert.equal(ctrl.isRunning, false);
+    await ctrl.resume();
+    assert.equal(ctrl.isRunning, true);
+  });
+
+  it('pause stops auto-checkpoint interval', async () => {
+    let checkpointCount = 0;
+    const ctrl = await makeRunning({
+      autoCheckpointMs: 50,
+      getStateFn: () => {
+        checkpointCount++;
+        return {};
+      },
+    });
+    await ctrl.pause();
+    const countAtPause = checkpointCount;
+    // Wait to ensure no more auto-checkpoints fire
+    await new Promise(r => setTimeout(r, 120));
+    assert.equal(checkpointCount, countAtPause);
+    await ctrl.stop();
+  });
+
+  it('stop works from PAUSED state', async () => {
+    const ctrl = await makeRunning();
+    await ctrl.pause();
+    const ok = await ctrl.stop();
+    assert.equal(ok, true);
+    assert.equal(ctrl.phase, DaemonPhase.STOPPED);
+  });
+
+  it('onChange callback fires for pause and resume transitions', async () => {
+    const transitions = [];
+    const state = new DaemonState({
+      onChange: (newP, oldP) => transitions.push({ from: oldP, to: newP }),
+    });
+    const ctrl = new DaemonController({
+      state,
+      checkpoints: new CheckpointManager(),
+      autoCheckpointMs: 0,
+    });
+    await ctrl.start();
+    await ctrl.pause();
+    await ctrl.resume();
+
+    // Expect: STOPPED→STARTING, STARTING→RUNNING, RUNNING→PAUSED, PAUSED→RUNNING
+    assert.equal(transitions.length, 4);
+    assert.equal(transitions[2].from, DaemonPhase.RUNNING);
+    assert.equal(transitions[2].to, DaemonPhase.PAUSED);
+    assert.equal(transitions[3].from, DaemonPhase.PAUSED);
+    assert.equal(transitions[3].to, DaemonPhase.RUNNING);
+  });
+});
+
+// ── DaemonPauseTool ─────────────────────────────────────────────
+
+describe('DaemonPauseTool', () => {
+  async function makeRunningController() {
+    const ctrl = new DaemonController({
+      state: new DaemonState(),
+      checkpoints: new CheckpointManager(),
+      autoCheckpointMs: 0,
+    });
+    await ctrl.start();
+    return ctrl;
+  }
+
+  it('has correct name and permission', () => {
+    const tool = new DaemonPauseTool(new DaemonController());
+    assert.equal(tool.name, 'daemon_pause');
+    assert.equal(tool.permission, 'approve');
+  });
+
+  it('has description', () => {
+    const tool = new DaemonPauseTool(new DaemonController());
+    assert.ok(tool.description.length > 0);
+  });
+
+  it('pauses a running daemon', async () => {
+    const ctrl = await makeRunningController();
+    const tool = new DaemonPauseTool(ctrl);
+    const result = await tool.execute();
+    assert.equal(result.success, true);
+    assert.ok(result.output.includes('paused'));
+    assert.equal(ctrl.phase, DaemonPhase.PAUSED);
+  });
+
+  it('returns error when not in RUNNING phase', async () => {
+    const ctrl = new DaemonController();
+    const tool = new DaemonPauseTool(ctrl);
+    const result = await tool.execute();
+    assert.equal(result.success, false);
+    assert.ok(result.error.includes('Cannot pause'));
+  });
+});
+
+// ── DaemonResumeTool ────────────────────────────────────────────
+
+describe('DaemonResumeTool', () => {
+  async function makeRunningController() {
+    const ctrl = new DaemonController({
+      state: new DaemonState(),
+      checkpoints: new CheckpointManager(),
+      autoCheckpointMs: 0,
+    });
+    await ctrl.start();
+    return ctrl;
+  }
+
+  it('has correct name and permission', () => {
+    const tool = new DaemonResumeTool(new DaemonController());
+    assert.equal(tool.name, 'daemon_resume');
+    assert.equal(tool.permission, 'approve');
+  });
+
+  it('has description', () => {
+    const tool = new DaemonResumeTool(new DaemonController());
+    assert.ok(tool.description.length > 0);
+  });
+
+  it('resumes a paused daemon', async () => {
+    const ctrl = await makeRunningController();
+    await ctrl.pause();
+    const tool = new DaemonResumeTool(ctrl);
+    const result = await tool.execute();
+    assert.equal(result.success, true);
+    assert.ok(result.output.includes('resumed'));
+    assert.equal(ctrl.phase, DaemonPhase.RUNNING);
+  });
+
+  it('returns error when not in PAUSED phase', async () => {
+    const ctrl = new DaemonController();
+    const tool = new DaemonResumeTool(ctrl);
+    const result = await tool.execute();
+    assert.equal(result.success, false);
+    assert.ok(result.error.includes('Cannot resume'));
   });
 });

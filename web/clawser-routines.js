@@ -243,6 +243,24 @@ export class RoutineEngine {
     return true;
   }
 
+  /**
+   * Enable a routine.
+   * @param {string} id
+   * @returns {boolean}
+   */
+  enableRoutine(id) {
+    return this.setEnabled(id, true);
+  }
+
+  /**
+   * Disable a routine.
+   * @param {string} id
+   * @returns {boolean}
+   */
+  disableRoutine(id) {
+    return this.setEnabled(id, false);
+  }
+
   // ── Lifecycle ──────────────────────────────────────────
 
   /**
@@ -321,12 +339,17 @@ export class RoutineEngine {
 
   /**
    * Manually trigger a routine (bypass schedule).
+   * Skips execution if the routine is disabled.
    * @param {string} id
    * @returns {Promise<string>}
    */
   async triggerManual(id) {
     const routine = this.#routines.get(id);
     if (!routine) throw new Error(`Routine not found: ${id}`);
+    if (!routine.enabled) {
+      this.#log(`Skipped disabled routine: ${routine.name}`);
+      return 'skipped_disabled';
+    }
     return this.#enqueue(routine, { type: 'manual.trigger' });
   }
 
@@ -733,5 +756,36 @@ export class RoutineRunTool extends BrowserTool {
     } catch (e) {
       return { success: false, output: '', error: e.message };
     }
+  }
+}
+
+export class RoutineToggleTool extends BrowserTool {
+  #engine;
+
+  constructor(engine) {
+    super();
+    this.#engine = engine;
+  }
+
+  get name() { return 'routine_toggle'; }
+  get description() { return 'Enable or disable a routine.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        routine_id: { type: 'string', description: 'Routine ID to toggle' },
+        enabled: { type: 'boolean', description: 'Whether to enable (true) or disable (false)' },
+      },
+      required: ['routine_id', 'enabled'],
+    };
+  }
+  get permission() { return 'approve'; }
+
+  async execute({ routine_id, enabled }) {
+    if (this.#engine.setEnabled(routine_id, enabled)) {
+      const state = enabled ? 'enabled' : 'disabled';
+      return { success: true, output: `Routine ${routine_id}: ${state}` };
+    }
+    return { success: false, output: '', error: `Routine not found: ${routine_id}` };
   }
 }

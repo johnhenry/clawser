@@ -389,6 +389,11 @@ export class HookPipeline {
     return result;
   }
 
+  /** Remove all registered hooks across all points. */
+  clearAll() {
+    this.#hooks.clear();
+  }
+
   /** Get count of registered hooks across all points. */
   get size() {
     let total = 0;

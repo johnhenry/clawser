@@ -52,6 +52,7 @@ export declare class SkillStorage {
   ): Promise<void>;
   static importFromZip(blob: Blob): Promise<Map<string, string>>;
   static exportToZip(dirHandle: FileSystemDirectoryHandle): Promise<Blob>;
+  static exportZip(scope: 'global' | 'workspace', wsId?: string): Promise<Blob>;
 }
 
 // ── Skill Entry / Activation Types ─────────────────────────────

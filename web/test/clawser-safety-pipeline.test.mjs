@@ -255,5 +255,15 @@ describe('SafetyPipeline', () => {
       pipeline.enabled = true;
       assert.throws(() => { pipeline.enabled = false; }, /confirmDisable/);
     });
+
+    it('confirmEnable() re-enables and resets state', () => {
+      pipeline.confirmDisable();
+      pipeline.enabled = false;
+      assert.equal(pipeline.enabled, false);
+      pipeline.confirmEnable();
+      assert.equal(pipeline.enabled, true);
+      // Should require confirmDisable again
+      assert.throws(() => { pipeline.enabled = false; }, /confirmDisable/);
+    });
   });
 });

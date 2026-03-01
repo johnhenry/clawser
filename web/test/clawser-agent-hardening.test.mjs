@@ -14,7 +14,7 @@ if (typeof globalThis.localStorage === 'undefined') {
   };
 }
 
-import { ClawserAgent, AutonomyController } from '../clawser-agent.js';
+import { ClawserAgent, AutonomyController, HookPipeline } from '../clawser-agent.js';
 import { lsKey } from '../clawser-state.js';
 import { MetricsCollector } from '../clawser-metrics.js';
 
@@ -330,5 +330,34 @@ describe('Fallback effectiveness metrics', () => {
     });
 
     assert.ok(metrics.counter('fallback.failures.bad-p') >= 1, 'should track per-provider failures');
+  });
+});
+
+// ── HookPipeline.clearAll ─────────────────────────────────────────
+
+describe('HookPipeline.clearAll', () => {
+  it('removes all hooks from all points', () => {
+    const hp = new HookPipeline();
+    hp.register({ name: 'h1', point: 'beforeInbound', execute: () => {} });
+    hp.register({ name: 'h2', point: 'beforeToolCall', execute: () => {} });
+    assert.equal(hp.size, 2);
+    hp.clearAll();
+    assert.equal(hp.size, 0);
+    assert.deepEqual(hp.list(), []);
+  });
+
+  it('is idempotent on empty pipeline', () => {
+    const hp = new HookPipeline();
+    hp.clearAll();
+    assert.equal(hp.size, 0);
+  });
+
+  it('allows re-registration after clearAll', () => {
+    const hp = new HookPipeline();
+    hp.register({ name: 'h1', point: 'beforeInbound', execute: () => {} });
+    hp.clearAll();
+    hp.register({ name: 'h2', point: 'beforeOutbound', execute: () => {} });
+    assert.equal(hp.size, 1);
+    assert.equal(hp.list()[0].name, 'h2');
   });
 });
