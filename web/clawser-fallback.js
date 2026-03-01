@@ -76,10 +76,13 @@ export class FallbackChain {
       .sort((a, b) => a.priority - b.priority);
   }
 
-  /** Add an entry */
+  /** Add an entry (normalizes defaults) */
   add(entry) {
-    this.#entries.push(entry);
+    this.#entries.push(createFallbackEntry(entry));
   }
+
+  /** Alias for add() */
+  addEntry(entry) { this.add(entry); }
 
   /** Remove an entry by providerId + model */
   remove(providerId, model) {
@@ -163,16 +166,21 @@ export class FallbackExecutor {
   /** @type {Function|null} */
   #onLog;
 
+  /** @type {import('./clawser-metrics.js').MetricsCollector|null} */
+  #metrics;
+
   /**
    * @param {FallbackChain} chain
    * @param {object} [opts]
    * @param {ProviderHealth} [opts.health]
    * @param {Function} [opts.onLog] - (level, message) callback
+   * @param {import('./clawser-metrics.js').MetricsCollector} [opts.metricsCollector]
    */
   constructor(chain, opts = {}) {
     this.#chain = chain;
     this.#health = opts.health || null;
     this.#onLog = opts.onLog || null;
+    this.#metrics = opts.metricsCollector || null;
   }
 
   /**
@@ -198,16 +206,22 @@ export class FallbackExecutor {
       }
 
       for (let attempt = 0; attempt <= this.#chain.maxRetries; attempt++) {
+        this.#metrics?.increment('fallback.attempts');
+        this.#metrics?.increment(`fallback.attempts.${entry.providerId}`);
         const start = performance.now();
         try {
           const result = await fn(entry.providerId, entry.model, entry.maxTokens);
           const duration = performance.now() - start;
           this.#health?.recordSuccess(entry.providerId, entry.model, duration);
+          this.#metrics?.increment('fallback.successes');
+          this.#metrics?.increment(`fallback.successes.${entry.providerId}`);
           return { result, providerId: entry.providerId, model: entry.model };
         } catch (err) {
           const duration = performance.now() - start;
           lastError = err;
           this.#health?.recordFailure(entry.providerId, entry.model, duration);
+          this.#metrics?.increment('fallback.failures');
+          this.#metrics?.increment(`fallback.failures.${entry.providerId}`);
 
           if (!this.#chain.isRetryable(err)) {
             this.#log(2, `Non-retryable error from ${entry.providerId}/${entry.model}: ${err.message}`);
@@ -460,6 +474,9 @@ export class ModelRouter {
   /** @type {FallbackChain|null} Default chain */
   #defaultChain = null;
 
+  /** @type {Map<string, {successes: number, failures: number, totalDuration: number}>} model:hint → stats */
+  #outcomes = new Map();
+
   /**
    * Register a fallback chain for a hint.
    * @param {string} hint - e.g. 'smart', 'fast', 'code', 'cheap', 'local'
@@ -508,6 +525,77 @@ export class ModelRouter {
 
     // Set 'smart' as default if available, else first available
     this.#defaultChain = this.#chains.get('smart') || this.#chains.values().next().value || null;
+  }
+
+  // ── Dynamic Hint Selection ─────────────────────────────────────
+
+  /**
+   * Select a hint based on task complexity analysis.
+   * @param {object} context
+   * @param {string} context.text - User message text
+   * @param {number} [context.toolCount=0] - Number of tools requested/likely
+   * @param {boolean} [context.hasCode=false] - Whether task involves code
+   * @returns {string} Hint: 'fast', 'smart', 'code', 'cheap'
+   */
+  selectHint({ text = '', toolCount = 0, hasCode = false } = {}) {
+    const wordCount = text.split(/\s+/).length;
+    const hasMultipleTasks = /\band\b.*\band\b|,.*,/i.test(text);
+    const codeKeywords = /\b(function|implement|refactor|debug|code|class|algorithm|test|API)\b/i;
+
+    // Code-heavy tasks
+    if (hasCode || codeKeywords.test(text)) {
+      if (wordCount > 50 || toolCount > 3) return 'smart';
+      return 'code';
+    }
+
+    // Complex multi-step tasks
+    if (toolCount > 3 || (wordCount > 50 && hasMultipleTasks)) return 'smart';
+
+    // Medium complexity
+    if (wordCount > 20 || toolCount > 1) return 'smart';
+
+    // Simple queries
+    return 'fast';
+  }
+
+  // ── Adaptive Model Selection ──────────────────────────────────
+
+  /**
+   * Record the outcome of a model invocation for learning.
+   * @param {object} outcome
+   * @param {string} outcome.model - Model ID
+   * @param {string} outcome.hint - Hint used
+   * @param {boolean} outcome.success - Whether invocation succeeded
+   * @param {number} [outcome.durationMs=0] - Response time
+   */
+  recordOutcome({ model, hint, success, durationMs = 0 }) {
+    const key = `${model}:${hint}`;
+    let stats = this.#outcomes.get(key);
+    if (!stats) {
+      stats = { successes: 0, failures: 0, totalDuration: 0 };
+      this.#outcomes.set(key, stats);
+    }
+    if (success) stats.successes++;
+    else stats.failures++;
+    stats.totalDuration += durationMs;
+  }
+
+  /**
+   * Get performance stats for a model+hint combination.
+   * @param {string} model
+   * @param {string} hint
+   * @returns {{successes: number, failures: number, avgDuration: number}|null}
+   */
+  modelStats(model, hint) {
+    const key = `${model}:${hint}`;
+    const stats = this.#outcomes.get(key);
+    if (!stats) return null;
+    const total = stats.successes + stats.failures;
+    return {
+      successes: stats.successes,
+      failures: stats.failures,
+      avgDuration: total > 0 ? Math.round(stats.totalDuration / total) : 0,
+    };
   }
 
   /**

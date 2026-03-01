@@ -163,11 +163,198 @@ export function estimateCost(model, usage) {
   if (!usage) return 0;
   const pricing = MODEL_PRICING[model];
   if (!pricing) return 0;
-  const cachedTokens = usage.cache_read_input_tokens || 0;
-  const regularInputTokens = Math.max(0, (usage.input_tokens || 0) - cachedTokens);
+
+  const cachedReadTokens = usage.cache_read_input_tokens || 0;
+  const cacheWriteTokens = usage.cache_creation_input_tokens || 0;
+  const totalInput = usage.input_tokens || 0;
+  // Regular input = total minus cache reads minus cache writes
+  const regularInputTokens = Math.max(0, totalInput - cachedReadTokens - cacheWriteTokens);
+
+  // Cache write price: typically 1.25× input price (Anthropic) or same as input
+  const cacheWritePrice = pricing.cache_write || (pricing.input * 1.25);
+
   return ((regularInputTokens / 1000) * pricing.input) +
-         ((cachedTokens / 1000) * (pricing.cached_input || pricing.input)) +
+         ((cachedReadTokens / 1000) * (pricing.cached_input || pricing.input)) +
+         ((cacheWriteTokens / 1000) * cacheWritePrice) +
          (((usage.output_tokens || 0) / 1000) * pricing.output);
+}
+
+// ── Cost Ledger ────────────────────────────────────────────────────
+
+/**
+ * Tracks per-call cost entries with model and provider attribution.
+ */
+export class CostLedger {
+  #entries = [];
+  #thresholdUsd;
+
+  /**
+   * @param {object} [opts]
+   * @param {number} [opts.thresholdUsd=Infinity] - Cost runaway threshold in USD
+   */
+  constructor(opts = {}) {
+    this.#thresholdUsd = opts.thresholdUsd ?? Infinity;
+  }
+
+  /** @returns {number} Current cost threshold in USD */
+  get thresholdUsd() { return this.#thresholdUsd; }
+
+  /**
+   * Update the cost threshold.
+   * @param {number} usd
+   */
+  setThreshold(usd) { this.#thresholdUsd = usd; }
+
+  /**
+   * Check if total cost exceeds threshold.
+   * @returns {boolean}
+   */
+  isOverThreshold() {
+    if (this.#thresholdUsd === Infinity) return false;
+    const total = this.#entries.reduce((sum, e) => sum + (e.costUsd || 0), 0);
+    return total > this.#thresholdUsd;
+  }
+
+  /**
+   * Record a cost entry.
+   * @param {{ model: string, provider: string, inputTokens: number, outputTokens: number, costUsd: number }} entry
+   */
+  record(entry) {
+    this.#entries.push({
+      ...entry,
+      timestamp: Date.now(),
+    });
+  }
+
+  /** @returns {Array} All recorded entries */
+  get entries() { return [...this.#entries]; }
+
+  /**
+   * Get total cost grouped by model.
+   * @returns {Object<string, {calls: number, inputTokens: number, outputTokens: number, costUsd: number}>}
+   */
+  totalByModel() {
+    const result = {};
+    for (const e of this.#entries) {
+      if (!result[e.model]) {
+        result[e.model] = { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 };
+      }
+      result[e.model].calls++;
+      result[e.model].inputTokens += e.inputTokens || 0;
+      result[e.model].outputTokens += e.outputTokens || 0;
+      result[e.model].costUsd += e.costUsd || 0;
+    }
+    return result;
+  }
+
+  /**
+   * Get total cost grouped by provider.
+   * @returns {Object<string, {calls: number, inputTokens: number, outputTokens: number, costUsd: number}>}
+   */
+  totalByProvider() {
+    const result = {};
+    for (const e of this.#entries) {
+      if (!result[e.provider]) {
+        result[e.provider] = { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 };
+      }
+      result[e.provider].calls++;
+      result[e.provider].inputTokens += e.inputTokens || 0;
+      result[e.provider].outputTokens += e.outputTokens || 0;
+      result[e.provider].costUsd += e.costUsd || 0;
+    }
+    return result;
+  }
+
+  /**
+   * Get summary statistics.
+   * @returns {{ totalCalls: number, totalCostUsd: number, totalInputTokens: number, totalOutputTokens: number }}
+   */
+  summary() {
+    let totalCostUsd = 0, totalInputTokens = 0, totalOutputTokens = 0;
+    for (const e of this.#entries) {
+      totalCostUsd += e.costUsd || 0;
+      totalInputTokens += e.inputTokens || 0;
+      totalOutputTokens += e.outputTokens || 0;
+    }
+    return {
+      totalCalls: this.#entries.length,
+      totalCostUsd,
+      totalInputTokens,
+      totalOutputTokens,
+    };
+  }
+}
+
+// ── Per-profile cost ledger ────────────────────────────────────────
+
+/**
+ * Tracks cost per auth profile with per-profile thresholds.
+ */
+export class ProfileCostLedger {
+  /** @type {Map<string, Array>} profileId → entries */
+  #entries = new Map();
+
+  /** @type {Map<string, number>} profileId → threshold */
+  #thresholds = new Map();
+
+  /**
+   * Record a cost entry for a specific profile.
+   * @param {string} profileId
+   * @param {{ model: string, provider: string, inputTokens: number, outputTokens: number, costUsd: number }} entry
+   */
+  record(profileId, entry) {
+    if (!this.#entries.has(profileId)) this.#entries.set(profileId, []);
+    this.#entries.get(profileId).push({ ...entry, timestamp: Date.now() });
+  }
+
+  /**
+   * Get summary for a specific profile.
+   * @param {string} profileId
+   * @returns {{ totalCalls: number, totalCostUsd: number, totalInputTokens: number, totalOutputTokens: number }}
+   */
+  profileSummary(profileId) {
+    const entries = this.#entries.get(profileId) || [];
+    let totalCostUsd = 0, totalInputTokens = 0, totalOutputTokens = 0;
+    for (const e of entries) {
+      totalCostUsd += e.costUsd || 0;
+      totalInputTokens += e.inputTokens || 0;
+      totalOutputTokens += e.outputTokens || 0;
+    }
+    return { totalCalls: entries.length, totalCostUsd, totalInputTokens, totalOutputTokens };
+  }
+
+  /**
+   * Set threshold for a specific profile.
+   * @param {string} profileId
+   * @param {number} usd
+   */
+  setProfileThreshold(profileId, usd) {
+    this.#thresholds.set(profileId, usd);
+  }
+
+  /**
+   * Check if a profile is over its threshold.
+   * @param {string} profileId
+   * @returns {boolean}
+   */
+  isProfileOverThreshold(profileId) {
+    const threshold = this.#thresholds.get(profileId);
+    if (threshold == null) return false;
+    const summary = this.profileSummary(profileId);
+    return summary.totalCostUsd > threshold;
+  }
+
+  /**
+   * Get summaries for all tracked profiles.
+   * @returns {Object<string, { totalCalls: number, totalCostUsd: number, totalInputTokens: number, totalOutputTokens: number }>}
+   */
+  allProfileSummaries() {
+    const result = {};
+    for (const profileId of this.#entries.keys()) {
+      result[profileId] = this.profileSummary(profileId);
+    }
+    return result;
+  }
 }
 
 // ── Error classification ───────────────────────────────────────────

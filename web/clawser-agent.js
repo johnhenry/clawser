@@ -41,9 +41,18 @@ const TEXT_DECODER = new TextDecoder();
 // All conversation state (messages, tool calls, goals) can be derived
 // from this single stream. Serialized as JSONL for OPFS storage.
 
-class EventLog {
+export class EventLog {
   #events = [];
   #seq = 0;
+  #maxSize;
+
+  /**
+   * @param {object} [opts]
+   * @param {number} [opts.maxSize] - Maximum number of events to retain (oldest dropped)
+   */
+  constructor(opts = {}) {
+    this.#maxSize = opts.maxSize || 0; // 0 = unlimited
+  }
 
   /**
    * Append a new event.
@@ -61,7 +70,38 @@ class EventLog {
       source,
     };
     this.#events.push(event);
+    if (this.#maxSize > 0 && this.#events.length > this.#maxSize) {
+      this.#events.splice(0, this.#events.length - this.#maxSize);
+    }
     return event;
+  }
+
+  /**
+   * Query events with optional filters.
+   * @param {object} [opts]
+   * @param {string} [opts.type] - Filter by event type
+   * @param {string} [opts.source] - Filter by source
+   * @param {number} [opts.limit] - Max results (from the end)
+   * @returns {object[]}
+   */
+  query({ type, source, limit } = {}) {
+    let results = this.#events;
+    if (type) results = results.filter(e => e.type === type);
+    if (source) results = results.filter(e => e.source === source);
+    if (limit && limit > 0) results = results.slice(-limit);
+    return results;
+  }
+
+  /**
+   * Get a count summary by event type.
+   * @returns {object} { [type]: count }
+   */
+  summary() {
+    const counts = {};
+    for (const e of this.#events) {
+      counts[e.type] = (counts[e.type] || 0) + 1;
+    }
+    return counts;
   }
 
   /** @returns {Array<object>} Full event array */
@@ -259,6 +299,7 @@ export class HookPipeline {
       priority: hook.priority ?? 100,
       enabled: hook.enabled !== false,
       execute: hook.execute,
+      factoryName: hook.factoryName || null,
     };
     const list = this.#hooks.get(hook.point) || [];
     list.push(entry);
@@ -353,6 +394,47 @@ export class HookPipeline {
     let total = 0;
     for (const list of this.#hooks.values()) total += list.length;
     return total;
+  }
+
+  /**
+   * Serialize hook definitions (without execute functions) for persistence.
+   * @returns {{ hooks: Array<{name: string, point: string, priority: number, enabled: boolean, factoryName?: string}> }}
+   */
+  serialize() {
+    const hooks = [];
+    for (const list of this.#hooks.values()) {
+      for (const h of list) {
+        hooks.push({
+          name: h.name,
+          point: h.point,
+          priority: h.priority,
+          enabled: h.enabled,
+          factoryName: h.factoryName || null,
+        });
+      }
+    }
+    return { hooks };
+  }
+
+  /**
+   * Reconstruct hooks from serialized data using factory functions.
+   * Unknown factories are silently skipped.
+   * @param {{ hooks: Array<object> }} data - Serialized hook data
+   * @param {Object<string, Function>} factories - Map of factoryName → (config) => hookDef
+   */
+  deserialize(data, factories) {
+    if (!data?.hooks) return;
+    for (const entry of data.hooks) {
+      const factory = factories[entry.factoryName];
+      if (!factory) continue;
+      const hookDef = factory(entry);
+      this.register({
+        ...hookDef,
+        priority: entry.priority,
+        enabled: entry.enabled,
+        factoryName: entry.factoryName,
+      });
+    }
   }
 }
 
@@ -467,17 +549,23 @@ export class AutonomyController {
     }
 
     if (this.#actionsThisHour >= this.#maxActionsPerHour) {
-      const minsUntilReset = Math.ceil((3_600_000 - (now - this.#hourStart)) / 60_000);
+      const resetTime = 3_600_000 - (now - this.#hourStart);
+      const minsUntilReset = Math.ceil(resetTime / 60_000);
       return {
         blocked: true,
+        limitType: 'rate',
+        resetTime,
         reason: `Rate limit: ${this.#maxActionsPerHour} actions/hour exceeded. Resets in ~${minsUntilReset} min.`,
         stats: this.stats,
       };
     }
     if (this.#costTodayCents >= this.#maxCostPerDayCents) {
-      const hoursUntilReset = Math.ceil((86_400_000 - (now - this.#dayStart)) / 3_600_000);
+      const resetTime = 86_400_000 - (now - this.#dayStart);
+      const hoursUntilReset = Math.ceil(resetTime / 3_600_000);
       return {
         blocked: true,
+        limitType: 'cost',
+        resetTime,
         reason: `Cost limit: $${(this.#maxCostPerDayCents / 100).toFixed(2)}/day exceeded. Resets in ~${hoursUntilReset}h.`,
         stats: this.stats,
       };
@@ -518,7 +606,14 @@ export class ClawserAgent {
   #goals = [];            // Array<{id, description, status, created_at, updated_at, sub_goals, artifacts}>
   #goalNextId = 1;
   #toolSpecs = [];        // Array<{name, description, parameters, required_permission}>
-  #config = { maxToolIterations: 20, maxHistoryMessages: 50 };
+  #config = {
+    maxToolIterations: 20,
+    maxHistoryMessages: 50,
+    compactionThreshold: 12000,
+    maxResultLength: 1500,
+    recallCacheTTL: 120000,
+    recallCacheMax: 50,
+  };
 
   // ── Memory backend ───────────────────────────────────────────
   /** @type {SemanticMemory} */
@@ -527,8 +622,6 @@ export class ClawserAgent {
   // ── Memory Recall LRU Cache (Gap 10.1) ──────────────────────
   /** @type {Map<string, {result: Array, timestamp: number}>} */
   #recallCache = new Map();
-  #recallCacheMax = 50;
-  #recallCacheTTL = 120000; // 2 minutes
 
   // ── Scheduler ────────────────────────────────────────────────
   #schedulerJobs = [];    // Array<ScheduledJob>
@@ -567,12 +660,19 @@ export class ClawserAgent {
   #selfRepairEngine = null;
   /** @type {import('./clawser-undo.js').UndoManager|null} */
   #undoManager = null;
+  /** @type {import('./clawser-metrics.js').MetricsCollector|null} */
+  #metrics = null;
+  /** @type {import('./clawser-metrics.js').RingBufferLog|null} */
+  #log = null;
 
   // ── Workspace ────────────────────────────────────────────────
   #workspaceId = 'default';
 
   // ── Destroy flag ─────────────────────────────────────────────
   #destroyed = false;
+
+  // ── Pause flag (set by self-repair cost runaway) ────────────
+  #paused = false;
 
   // ── Callbacks ────────────────────────────────────────────────
   #onEvent = () => {};
@@ -612,9 +712,59 @@ export class ClawserAgent {
     if (opts.safety || opts.safetyPipeline) agent.#safety = opts.safety || opts.safetyPipeline;
     if (opts.memory) agent.#memory = opts.memory;
     if (opts.fallbackExecutor) agent.#fallbackExecutor = opts.fallbackExecutor;
-    if (opts.selfRepairEngine) agent.#selfRepairEngine = opts.selfRepairEngine;
+    if (opts.selfRepairEngine) {
+      agent.#selfRepairEngine = opts.selfRepairEngine;
+      const sre = opts.selfRepairEngine;
+      // Register default recovery handlers (don't override pre-registered ones)
+      if (!sre.hasHandler('compact')) {
+        sre.registerHandler('compact', async () => {
+          await agent.compactContext();
+          return true;
+        });
+      }
+      if (!sre.hasHandler('inject_message')) {
+        sre.registerHandler('inject_message', async (prompt) => {
+          agent.#history.push({ role: 'system', content: prompt });
+          return true;
+        });
+      }
+      if (!sre.hasHandler('abort')) {
+        sre.registerHandler('abort', async () => {
+          agent.#destroyed = true;
+          return true;
+        });
+      }
+      if (!sre.hasHandler('fallback_provider')) {
+        sre.registerHandler('fallback_provider', async () => {
+          if (!agent.#providers) return false;
+          const available = await agent.#providers.listWithAvailability();
+          const others = available.filter(p => p.name !== agent.#activeProvider);
+          if (others.length === 0) return false;
+          agent.#activeProvider = others[0].name;
+          return true;
+        });
+      }
+      if (!sre.hasHandler('pause')) {
+        sre.registerHandler('pause', async () => {
+          agent.#paused = true;
+          return true;
+        });
+      }
+      if (!sre.hasHandler('downgrade_model')) {
+        sre.registerHandler('downgrade_model', async () => {
+          if (!agent.#providers) return false;
+          const available = await agent.#providers.listWithAvailability();
+          const others = available.filter(p => p.name !== agent.#activeProvider);
+          if (others.length === 0) return false;
+          agent.#activeProvider = others[others.length - 1].name;
+          return true;
+        });
+      }
+    }
     if (opts.undoManager) agent.#undoManager = opts.undoManager;
-    if (opts.maxResultLength != null) agent.#maxResultLen = opts.maxResultLength;
+    if (opts.metricsCollector) agent.#metrics = opts.metricsCollector;
+    if (opts.ringBufferLog) agent.#log = opts.ringBufferLog;
+    if (opts.maxResultLength != null) agent.#config.maxResultLength = opts.maxResultLength;
     agent.#onToolCall = opts.onToolCall || (() => {});
 
     if (agent.#browserTools) {
@@ -644,6 +794,13 @@ export class ClawserAgent {
    * @returns {number} 0 on success
    */
   reinit(config = {}) {
+    // Fire onSessionEnd hook if there are messages to end
+    if (this.#history.length > 1) { // more than just system prompt
+      this.#hooks.run('onSessionEnd', {
+        workspaceId: this.#workspaceId,
+        messageCount: this.#history.length,
+      }).catch(() => {}); // fire-and-forget, don't block reinit
+    }
     this.#history = [];
     this.#goals = [];
     this.#goalNextId = 1;
@@ -652,6 +809,39 @@ export class ClawserAgent {
     // Preserve memories across reinit (workspace switch, new conversation)
     this.#eventLog.clear();
     return this.init(config);
+  }
+
+  /**
+   * Clear conversation history. Fires onSessionEnd hook if messages exist.
+   */
+  clearHistory() {
+    if (this.#history.length > 0) {
+      this.#hooks.run('onSessionEnd', {
+        workspaceId: this.#workspaceId,
+        messageCount: this.#history.length,
+      }).catch(() => {}); // fire-and-forget
+    }
+    this.#history = [];
+    this.#eventLog.clear();
+  }
+
+  /**
+   * Get a shallow copy of the current agent config.
+   * @returns {object}
+   */
+  getConfig() {
+    return { ...this.#config };
+  }
+
+  /**
+   * Push a structured log entry to the RingBufferLog (if wired).
+   * @param {number} level - 0=debug, 1=info, 2=warn, 3=error
+   * @param {string} source - Component name (agent, llm, tool, safety, system)
+   * @param {string} message - Human-readable message
+   * @param {object} [data] - Structured data payload
+   */
+  #logEvent(level, source, message, data) {
+    this.#log?.push({ level, source, message, data });
   }
 
   /**
@@ -690,6 +880,8 @@ export class ClawserAgent {
     this.#fallbackExecutor = null;
     this.#undoManager = null;
     this.#responseCache = null;
+    this.#metrics = null;
+    this.#log = null;
 
     // 6. Clear event log
     this.#eventLog.clear();
@@ -855,6 +1047,12 @@ export class ClawserAgent {
    * @param {string} text
    */
   sendMessage(text) {
+    // Fire onSessionStart on the first user message
+    const userMsgCount = this.#history.filter(m => m.role === 'user').length;
+    if (userMsgCount === 0) {
+      this.#hooks.run('onSessionStart', { workspaceId: this.#workspaceId })
+        .catch(() => {}); // fire-and-forget
+    }
     this.#history.push({ role: 'user', content: text });
     this.#eventLog.append('user_message', { content: text }, 'user');
   }
@@ -932,14 +1130,20 @@ export class ClawserAgent {
         params = hookResult.ctx.args;
       }
 
-      // Safety: validate tool call arguments
-      const validation = this.#safety?.validateToolCall(call.name, params) ?? { valid: true, issues: [] };
-      if (!validation.valid) {
-        const msg = validation.issues[0]?.msg || 'Validation failed';
-        result = { success: false, output: '', error: `Safety: ${msg}` };
-        this.#onToolCall(call.name, params, result);
-        results.push({ id: call.id, name: call.name, result });
-        continue;
+      // Safety: validate tool call arguments (MCP tools only — browser tools
+      // are validated inside BrowserToolRegistry.execute() to avoid double work)
+      const isBrowserTool = this.#browserTools?.has(call.name);
+      if (!isBrowserTool) {
+        const validation = this.#safety?.validateToolCall(call.name, params) ?? { valid: true, issues: [] };
+        if (!validation.valid) {
+          const msg = validation.issues[0]?.msg || 'Validation failed';
+          this.#eventLog.append('safety_tool_blocked', { tool: call.name, issues: validation.issues }, 'system');
+          this.#metrics?.increment('safety.tool_blocks');
+          result = { success: false, output: '', error: `Safety: ${msg}` };
+          this.#onToolCall(call.name, params, result);
+          results.push({ id: call.id, name: call.name, result });
+          continue;
+        }
       }
 
       // Autonomy: check if tool is allowed at current level
@@ -981,10 +1185,22 @@ export class ClawserAgent {
         } catch { /* best-effort */ }
       }
 
+      // Tool timeout wrapper
+      const _toolTimeout = this.#config.toolTimeout;
+
       // 1. Check browser tools first
+      this.#metrics?.increment('tools.calls');
+      this.#metrics?.increment(`tools.by_name.${call.name}`);
       if (this.#browserTools?.has(call.name)) {
         this.#onToolCall(call.name, params, null);
-        result = await this.#browserTools.execute(call.name, params);
+        if (_toolTimeout && _toolTimeout > 0) {
+          result = await Promise.race([
+            this.#browserTools.execute(call.name, params),
+            new Promise((_, rej) => setTimeout(() => rej(new Error(`Tool "${call.name}" timed out after ${_toolTimeout}ms`)), _toolTimeout)),
+          ]).catch(e => ({ success: false, output: '', error: e.message }));
+        } else {
+          result = await this.#browserTools.execute(call.name, params);
+        }
         this.#autonomy.recordAction();
         this.#onToolCall(call.name, params, result);
       }
@@ -1000,11 +1216,19 @@ export class ClawserAgent {
         result = { success: false, output: '', error: `Tool not found: ${call.name}` };
         this.#onToolCall(call.name, params, result);
       }
+      if (result && !result.success) this.#metrics?.increment('tools.errors');
 
-      // Safety: scan tool output for leaked secrets
-      if (result && result.output && this.#safety) {
+      // Safety: scan tool output for leaked secrets (MCP tools only —
+      // browser tools are scanned inside BrowserToolRegistry.execute())
+      if (!isBrowserTool && result && result.output && this.#safety) {
         const scanResult = this.#safety.scanOutput(result.output);
-        if (scanResult.findings.length > 0) {
+        if (scanResult.blocked) {
+          this.#eventLog.append('safety_output_blocked', { tool: call.name, findings: scanResult.findings }, 'system');
+          this.#metrics?.increment('safety.output_blocks');
+          result = { success: false, output: '', error: 'Output blocked by safety pipeline (sensitive content detected)' };
+        } else if (scanResult.findings.length > 0) {
+          this.#eventLog.append('safety_output_redacted', { tool: call.name, findings: scanResult.findings }, 'system');
+          this.#metrics?.increment('safety.output_redactions');
           result = { ...result, output: scanResult.content };
         }
       }
@@ -1014,10 +1238,6 @@ export class ClawserAgent {
 
     return results;
   }
-
-  /** Max chars for a single tool result shown in chat (default, overridable via opts.maxResultLength) */
-  static #MAX_RESULT_LEN = 1500;
-  #maxResultLen = 1500;
 
   /**
    * Execute code blocks from an LLM response and perform a follow-up LLM call
@@ -1105,7 +1325,7 @@ export class ClawserAgent {
     this.#onEvent('codex.executed', `${results.length} code block(s)`);
 
     // Truncate results to prevent flooding
-    const maxLen = this.#maxResultLen;
+    const maxLen = this.#config.maxResultLength || 1500;
     const resultSummaries = results.map(r => {
       if (r.error) return `Error: ${r.error}`;
       if (!r.output || r.output === '(no output)') return '(no output)';
@@ -1159,12 +1379,15 @@ export class ClawserAgent {
    */
   async run() {
     if (this.#destroyed) throw new Error('Agent has been destroyed');
+    if (this.#paused) return { status: -1, data: 'Agent is paused (cost runaway). Resume or reset to continue.' };
+    this.#metrics?.increment('agent.runs');
+    const _runStart = Date.now();
 
     // Autonomy: check limits before starting
     const limitsCheck = this.#autonomy.checkLimits();
     if (limitsCheck.blocked) {
-      this.#eventLog.append('autonomy_blocked', { reason: limitsCheck.reason }, 'system');
-      return { status: -1, data: limitsCheck.reason };
+      this.#eventLog.append('autonomy_blocked', { reason: limitsCheck.reason, limitType: limitsCheck.limitType }, 'system');
+      return { status: -1, data: limitsCheck.reason, limitType: limitsCheck.limitType, resetTime: limitsCheck.resetTime };
     }
 
     // Lifecycle hook: beforeInbound (last user message)
@@ -1177,6 +1400,16 @@ export class ClawserAgent {
       if (inbound.ctx.message !== lastUserMsg.content) {
         lastUserMsg.content = inbound.ctx.message;
       }
+
+      // Safety: sanitize inbound user message
+      if (this.#safety && typeof lastUserMsg.content === 'string') {
+        const sanitized = this.#safety.sanitizeInput(lastUserMsg.content);
+        if (sanitized.flags.length > 0) {
+          this.#eventLog.append('safety_input_flag', { flags: sanitized.flags, warning: sanitized.warning }, 'system');
+          this.#metrics?.increment('safety.input_flags');
+        }
+        lastUserMsg.content = sanitized.content;
+      }
     }
 
     // Undo checkpoint is created by the UI layer (clawser-ui-chat.js)
@@ -1186,7 +1419,7 @@ export class ClawserAgent {
 
     while (maxIterations-- > 0) {
       // Proactive context compaction
-      if (this.estimateHistoryTokens() > 12000) {
+      if (this.estimateHistoryTokens() > (this.#config.compactionThreshold || 12000)) {
         await this.compactContext();
       }
 
@@ -1225,9 +1458,19 @@ export class ClawserAgent {
         const cached = this.#responseCache.get(cacheKey);
         if (cached) {
           this.#eventLog.append('cache_hit', { key: cacheKey }, 'system');
-          this.#history.push({ role: 'assistant', content: cached.content });
-          this.#eventLog.append('agent_message', { content: cached.content }, 'agent');
-          return { status: 1, data: cached.content, usage: cached.usage, model: cached.model, cached: true };
+          // Hook: beforeOutbound (cache hit path)
+          let cachedContent = cached.content;
+          if (lastUserMsg) {
+            const outbound = await this.#hooks.run('beforeOutbound', { content: cachedContent, model: cached.model, usage: cached.usage });
+            if (outbound.blocked) {
+              return { status: -1, data: `Blocked: ${outbound.reason}` };
+            }
+            if (outbound.ctx.content !== cachedContent) cachedContent = outbound.ctx.content;
+          }
+          this.#history.push({ role: 'assistant', content: cachedContent });
+          this.#eventLog.append('agent_message', { content: cachedContent }, 'agent');
+          this.#metrics?.observe('agent.run_duration_ms', Date.now() - _runStart);
+          return { status: 1, data: cachedContent, usage: cached.usage, model: cached.model, cached: true };
         }
       }
 
@@ -1243,14 +1486,34 @@ export class ClawserAgent {
         }
       } catch (e) {
         this.#eventLog.append('error', { message: e.message }, 'system');
+        this.#metrics?.increment('agent.errors');
+        this.#metrics?.observe('agent.run_duration_ms', Date.now() - _runStart);
+        this.#logEvent(3, 'agent', `Provider error: ${e.message}`, { error: e.message });
         return { status: -1, data: `Provider error: ${e.message}` };
       }
+
+      // Metrics: LLM call tracking
+      this.#metrics?.increment('llm.calls');
+      if (response.usage) {
+        this.#metrics?.observe('llm.input_tokens', response.usage.input_tokens || 0);
+        this.#metrics?.observe('llm.output_tokens', response.usage.output_tokens || 0);
+      }
+      // Per-model/provider metrics
+      const _model = response.model || 'unknown';
+      this.#metrics?.increment(`llm.calls_by_model.${_model}`);
+      this.#metrics?.increment(`llm.calls_by_provider.${this.#activeProvider}`);
+      if (response.usage) {
+        this.#metrics?.increment(`llm.tokens_by_model.${_model}`, (response.usage.input_tokens || 0) + (response.usage.output_tokens || 0));
+      }
+      // RingBufferLog: LLM call event
+      this.#logEvent(1, 'llm', `LLM call to ${_model}`, { model: _model, provider: this.#activeProvider, usage: response.usage });
 
       // Autonomy: record cost after LLM call
       if (response.usage) {
         const { estimateCost } = await getProvidersModule();
         const cost = estimateCost(response.model, response.usage);
         this.#autonomy.recordCost(Math.round(cost * 100));
+        this.#metrics?.observe('llm.cost_cents', cost * 100);
         // Step 26: Emit kernel trace event for cost tracking
         if (this._kernelIntegration) {
           this._kernelIntegration.traceLlmCall({
@@ -1268,22 +1531,68 @@ export class ClawserAgent {
         const codexResult = await this.#executeAndSummarize(response, request);
         codexDone = true;
         if (codexResult) {
+          // Safety: scan LLM response for leaked secrets
+          let safeContent = codexResult.content;
+          if (this.#safety && typeof safeContent === 'string') {
+            const scan = this.#safety.scanOutput(safeContent);
+            if (scan.blocked) {
+              this.#eventLog.append('safety_output_blocked', { source: 'llm_codex', findings: scan.findings }, 'system');
+              this.#metrics?.increment('safety.output_blocks');
+              safeContent = '[Response blocked by safety pipeline]';
+            } else if (scan.findings.length > 0) {
+              this.#eventLog.append('safety_output_redacted', { source: 'llm_codex', findings: scan.findings }, 'system');
+              this.#metrics?.increment('safety.output_redactions');
+              safeContent = scan.content;
+            }
+          }
+          // Hook: beforeOutbound (codex path)
+          if (lastUserMsg) {
+            const outbound = await this.#hooks.run('beforeOutbound', { content: safeContent, model: codexResult.model, usage: codexResult.usage });
+            if (outbound.blocked) {
+              return { status: -1, data: `Blocked: ${outbound.reason}` };
+            }
+            if (outbound.ctx.content !== safeContent) safeContent = outbound.ctx.content;
+          }
           // Push the summarized response to history and record event
-          this.#history.push({ role: 'assistant', content: codexResult.content });
-          this.#eventLog.append('agent_message', { content: codexResult.content }, 'agent');
-          return { status: 1, data: codexResult.content };
+          this.#history.push({ role: 'assistant', content: safeContent });
+          this.#eventLog.append('agent_message', { content: safeContent }, 'agent');
+          this.#metrics?.observe('agent.run_duration_ms', Date.now() - _runStart);
+          return { status: 1, data: safeContent };
         }
       }
 
       // No tool calls — plain text response
       if (!response.tool_calls || response.tool_calls.length === 0) {
-        // Store in response cache
-        if (this.#responseCache && cacheKey) {
-          this.#responseCache.set(cacheKey, response, response.model);
+        // Safety: scan LLM response for leaked secrets
+        let safeContent = response.content;
+        if (this.#safety && typeof safeContent === 'string') {
+          const scan = this.#safety.scanOutput(safeContent);
+          if (scan.blocked) {
+            this.#eventLog.append('safety_output_blocked', { source: 'llm_response', findings: scan.findings }, 'system');
+            this.#metrics?.increment('safety.output_blocks');
+            safeContent = '[Response blocked by safety pipeline]';
+          } else if (scan.findings.length > 0) {
+            this.#eventLog.append('safety_output_redacted', { source: 'llm_response', findings: scan.findings }, 'system');
+            this.#metrics?.increment('safety.output_redactions');
+            safeContent = scan.content;
+          }
         }
-        this.#history.push({ role: 'assistant', content: response.content });
-        this.#eventLog.append('agent_message', { content: response.content }, 'agent');
-        return { status: 1, data: response.content, usage: response.usage, model: response.model };
+        // Hook: beforeOutbound (plain text path)
+        if (lastUserMsg) {
+          const outbound = await this.#hooks.run('beforeOutbound', { content: safeContent, model: response.model, usage: response.usage });
+          if (outbound.blocked) {
+            return { status: -1, data: `Blocked: ${outbound.reason}` };
+          }
+          if (outbound.ctx.content !== safeContent) safeContent = outbound.ctx.content;
+        }
+        // Store in response cache (use safe content so cache hits don't leak secrets)
+        if (this.#responseCache && cacheKey) {
+          this.#responseCache.set(cacheKey, { ...response, content: safeContent }, response.model);
+        }
+        this.#history.push({ role: 'assistant', content: safeContent });
+        this.#eventLog.append('agent_message', { content: safeContent }, 'agent');
+        this.#metrics?.observe('agent.run_duration_ms', Date.now() - _runStart);
+        return { status: 1, data: safeContent, usage: response.usage, model: response.model };
       }
 
       // Has tool calls — record agent_message event, then push assistant message with tool_calls
@@ -1368,12 +1677,15 @@ export class ClawserAgent {
    */
   async *runStream(options = {}) {
     if (this.#destroyed) throw new Error('Agent has been destroyed');
+    if (this.#paused) { yield { type: 'error', error: 'Agent is paused (cost runaway).' }; return; }
+    this.#metrics?.increment('agent.runs');
+    const _runStart = Date.now();
 
     // Autonomy: check limits before starting
     const limitsCheck = this.#autonomy.checkLimits();
     if (limitsCheck.blocked) {
-      this.#eventLog.append('autonomy_blocked', { reason: limitsCheck.reason }, 'system');
-      yield { type: 'error', error: limitsCheck.reason };
+      this.#eventLog.append('autonomy_blocked', { reason: limitsCheck.reason, limitType: limitsCheck.limitType }, 'system');
+      yield { type: 'error', error: limitsCheck.reason, limitType: limitsCheck.limitType, resetTime: limitsCheck.resetTime };
       return;
     }
 
@@ -1388,6 +1700,16 @@ export class ClawserAgent {
       if (inbound.ctx.message !== lastUserMsg.content) {
         lastUserMsg.content = inbound.ctx.message;
       }
+
+      // Safety: sanitize inbound user message
+      if (this.#safety && typeof lastUserMsg.content === 'string') {
+        const sanitized = this.#safety.sanitizeInput(lastUserMsg.content);
+        if (sanitized.flags.length > 0) {
+          this.#eventLog.append('safety_input_flag', { flags: sanitized.flags, warning: sanitized.warning }, 'system');
+          this.#metrics?.increment('safety.input_flags');
+        }
+        lastUserMsg.content = sanitized.content;
+      }
     }
 
     // Undo checkpoint is created by the UI layer (clawser-ui-chat.js)
@@ -1397,7 +1719,7 @@ export class ClawserAgent {
 
     while (maxIterations-- > 0) {
       // Proactive context compaction
-      if (this.estimateHistoryTokens() > 12000) {
+      if (this.estimateHistoryTokens() > (this.#config.compactionThreshold || 12000)) {
         await this.compactContext();
       }
 
@@ -1434,10 +1756,21 @@ export class ClawserAgent {
         const cached = this.#responseCache.get(cacheKey);
         if (cached) {
           this.#eventLog.append('cache_hit', { key: cacheKey }, 'system');
-          this.#history.push({ role: 'assistant', content: cached.content });
-          this.#eventLog.append('agent_message', { content: cached.content }, 'agent');
-          yield { type: 'text', text: cached.content };
-          yield { type: 'done', response: cached };
+          // Hook: beforeOutbound (cache hit path)
+          let cachedContent = cached.content;
+          if (lastUserMsg) {
+            const outbound = await this.#hooks.run('beforeOutbound', { content: cachedContent, model: cached.model, usage: cached.usage });
+            if (outbound.blocked) {
+              yield { type: 'error', error: `Blocked: ${outbound.reason}` };
+              return;
+            }
+            if (outbound.ctx.content !== cachedContent) cachedContent = outbound.ctx.content;
+          }
+          this.#history.push({ role: 'assistant', content: cachedContent });
+          this.#eventLog.append('agent_message', { content: cachedContent }, 'agent');
+          this.#metrics?.observe('agent.run_duration_ms', Date.now() - _runStart);
+          yield { type: 'text', text: cachedContent };
+          yield { type: 'done', response: { ...cached, content: cachedContent } };
           return;
         }
       }
@@ -1458,8 +1791,27 @@ export class ClawserAgent {
         } catch (fallbackErr) {
           this.#eventLog.append('provider_error', { message: fallbackErr.message }, 'system');
           this.#onLog(3, `Non-streaming fallback error: ${fallbackErr.message}`);
+          this.#metrics?.increment('agent.errors');
+          this.#metrics?.observe('agent.run_duration_ms', Date.now() - _runStart);
+          this.#logEvent(3, 'agent', `Non-streaming fallback error: ${fallbackErr.message}`, { error: fallbackErr.message });
           yield { type: 'error', error: fallbackErr.message };
           return;
+        }
+
+        // Metrics: LLM call tracking (non-streaming fallback)
+        this.#metrics?.increment('llm.calls');
+        if (response.usage) {
+          this.#metrics?.observe('llm.input_tokens', response.usage.input_tokens || 0);
+          this.#metrics?.observe('llm.output_tokens', response.usage.output_tokens || 0);
+        }
+        {
+          const _model = response.model || 'unknown';
+          this.#metrics?.increment(`llm.calls_by_model.${_model}`);
+          this.#metrics?.increment(`llm.calls_by_provider.${this.#activeProvider}`);
+          if (response.usage) {
+            this.#metrics?.increment(`llm.tokens_by_model.${_model}`, (response.usage.input_tokens || 0) + (response.usage.output_tokens || 0));
+          }
+          this.#logEvent(1, 'llm', `LLM call to ${_model}`, { model: _model, provider: this.#activeProvider, usage: response.usage });
         }
 
         // Record cost for non-streaming fallback
@@ -1468,6 +1820,7 @@ export class ClawserAgent {
             const { estimateCost } = await getProvidersModule();
             const cost = estimateCost(response.model, response.usage);
             this.#autonomy.recordCost(Math.round(cost * 100));
+            this.#metrics?.observe('llm.cost_cents', cost * 100);
           } catch { /* best-effort */ }
         }
 
@@ -1476,23 +1829,69 @@ export class ClawserAgent {
           const codexResult = await this.#executeAndSummarize(response, request);
           codexDone = true;
           if (codexResult) {
-            this.#history.push({ role: 'assistant', content: codexResult.content });
-            this.#eventLog.append('agent_message', { content: codexResult.content }, 'agent');
-            yield { type: 'text', text: codexResult.content };
-            yield { type: 'done', response: codexResult };
+            let safeContent = codexResult.content;
+            if (this.#safety && typeof safeContent === 'string') {
+              const scan = this.#safety.scanOutput(safeContent);
+              if (scan.blocked) {
+                this.#eventLog.append('safety_output_blocked', { source: 'llm_codex', findings: scan.findings }, 'system');
+                this.#metrics?.increment('safety.output_blocks');
+                safeContent = '[Response blocked by safety pipeline]';
+              } else if (scan.findings.length > 0) {
+                this.#eventLog.append('safety_output_redacted', { source: 'llm_codex', findings: scan.findings }, 'system');
+                this.#metrics?.increment('safety.output_redactions');
+                safeContent = scan.content;
+              }
+            }
+            // Hook: beforeOutbound (non-streaming codex path)
+            if (lastUserMsg) {
+              const outbound = await this.#hooks.run('beforeOutbound', { content: safeContent, model: codexResult.model, usage: codexResult.usage });
+              if (outbound.blocked) {
+                yield { type: 'error', error: `Blocked: ${outbound.reason}` };
+                return;
+              }
+              if (outbound.ctx.content !== safeContent) safeContent = outbound.ctx.content;
+            }
+            this.#history.push({ role: 'assistant', content: safeContent });
+            this.#eventLog.append('agent_message', { content: safeContent }, 'agent');
+            this.#metrics?.observe('agent.run_duration_ms', Date.now() - _runStart);
+            yield { type: 'text', text: safeContent };
+            yield { type: 'done', response: { ...codexResult, content: safeContent } };
             return;
           }
         }
 
         // No tool calls — plain text
         if (!response.tool_calls || response.tool_calls.length === 0) {
-          if (this.#responseCache && cacheKey) {
-            this.#responseCache.set(cacheKey, response, response.model);
+          let safeContent = response.content;
+          if (this.#safety && typeof safeContent === 'string') {
+            const scan = this.#safety.scanOutput(safeContent);
+            if (scan.blocked) {
+              this.#eventLog.append('safety_output_blocked', { source: 'llm_response', findings: scan.findings }, 'system');
+              this.#metrics?.increment('safety.output_blocks');
+              safeContent = '[Response blocked by safety pipeline]';
+            } else if (scan.findings.length > 0) {
+              this.#eventLog.append('safety_output_redacted', { source: 'llm_response', findings: scan.findings }, 'system');
+              this.#metrics?.increment('safety.output_redactions');
+              safeContent = scan.content;
+            }
           }
-          this.#history.push({ role: 'assistant', content: response.content });
-          this.#eventLog.append('agent_message', { content: response.content }, 'agent');
-          yield { type: 'text', text: response.content };
-          yield { type: 'done', response };
+          // Hook: beforeOutbound (non-streaming plain text path)
+          if (lastUserMsg) {
+            const outbound = await this.#hooks.run('beforeOutbound', { content: safeContent, model: response.model, usage: response.usage });
+            if (outbound.blocked) {
+              yield { type: 'error', error: `Blocked: ${outbound.reason}` };
+              return;
+            }
+            if (outbound.ctx.content !== safeContent) safeContent = outbound.ctx.content;
+          }
+          if (this.#responseCache && cacheKey) {
+            this.#responseCache.set(cacheKey, { ...response, content: safeContent }, response.model);
+          }
+          this.#history.push({ role: 'assistant', content: safeContent });
+          this.#eventLog.append('agent_message', { content: safeContent }, 'agent');
+          this.#metrics?.observe('agent.run_duration_ms', Date.now() - _runStart);
+          yield { type: 'text', text: safeContent };
+          yield { type: 'done', response: { ...response, content: safeContent } };
           return;
         }
 
@@ -1579,6 +1978,9 @@ export class ClawserAgent {
           };
         } else {
           // No content received — yield error and stop
+          this.#metrics?.increment('agent.errors');
+          this.#metrics?.observe('agent.run_duration_ms', Date.now() - _runStart);
+          this.#logEvent(3, 'agent', `Stream error: ${streamErr.message}`, { error: streamErr.message });
           yield { type: 'error', error: `Stream error: ${streamErr.message}` };
           return;
         }
@@ -1588,12 +1990,29 @@ export class ClawserAgent {
         fullResponse = { content: fullContent, tool_calls: fullToolCalls, usage: { input_tokens: 0, output_tokens: 0 }, model: '' };
       }
 
+      // Metrics: LLM call tracking (streaming path)
+      this.#metrics?.increment('llm.calls');
+      if (fullResponse.usage) {
+        this.#metrics?.observe('llm.input_tokens', fullResponse.usage.input_tokens || 0);
+        this.#metrics?.observe('llm.output_tokens', fullResponse.usage.output_tokens || 0);
+      }
+      {
+        const _model = fullResponse.model || 'unknown';
+        this.#metrics?.increment(`llm.calls_by_model.${_model}`);
+        this.#metrics?.increment(`llm.calls_by_provider.${this.#activeProvider}`);
+        if (fullResponse.usage) {
+          this.#metrics?.increment(`llm.tokens_by_model.${_model}`, (fullResponse.usage.input_tokens || 0) + (fullResponse.usage.output_tokens || 0));
+        }
+        this.#logEvent(1, 'llm', `LLM call to ${_model}`, { model: _model, provider: this.#activeProvider, usage: fullResponse.usage });
+      }
+
       // Record cost for streaming response
       if (fullResponse.usage && (fullResponse.usage.input_tokens > 0 || fullResponse.usage.output_tokens > 0)) {
         try {
           const { estimateCost } = await getProvidersModule();
           const cost = estimateCost(fullResponse.model, fullResponse.usage);
           this.#autonomy.recordCost(Math.round(cost * 100));
+          this.#metrics?.observe('llm.cost_cents', cost * 100);
         } catch { /* best-effort */ }
       }
 
@@ -1602,21 +2021,71 @@ export class ClawserAgent {
         const codexResult = await this.#executeAndSummarize(fullResponse, request);
         codexDone = true;
         if (codexResult) {
-          this.#history.push({ role: 'assistant', content: codexResult.content });
-          this.#eventLog.append('agent_message', { content: codexResult.content }, 'agent');
-          yield { type: 'text', text: codexResult.content };
-          yield { type: 'done', response: codexResult };
+          let safeContent = codexResult.content;
+          if (this.#safety && typeof safeContent === 'string') {
+            const scan = this.#safety.scanOutput(safeContent);
+            if (scan.blocked) {
+              this.#eventLog.append('safety_output_blocked', { source: 'llm_codex', findings: scan.findings }, 'system');
+              this.#metrics?.increment('safety.output_blocks');
+              safeContent = '[Response blocked by safety pipeline]';
+            } else if (scan.findings.length > 0) {
+              this.#eventLog.append('safety_output_redacted', { source: 'llm_codex', findings: scan.findings }, 'system');
+              this.#metrics?.increment('safety.output_redactions');
+              safeContent = scan.content;
+            }
+          }
+          // Hook: beforeOutbound (streaming codex path)
+          if (lastUserMsg) {
+            const outbound = await this.#hooks.run('beforeOutbound', { content: safeContent, model: codexResult.model, usage: codexResult.usage });
+            if (outbound.blocked) {
+              yield { type: 'error', error: `Blocked: ${outbound.reason}` };
+              return;
+            }
+            if (outbound.ctx.content !== safeContent) safeContent = outbound.ctx.content;
+          }
+          this.#history.push({ role: 'assistant', content: safeContent });
+          this.#eventLog.append('agent_message', { content: safeContent }, 'agent');
+          this.#metrics?.observe('agent.run_duration_ms', Date.now() - _runStart);
+          yield { type: 'text', text: safeContent };
+          yield { type: 'done', response: { ...codexResult, content: safeContent } };
           return;
         }
       }
 
-      // No tool calls — done
+      // No tool calls — done (scan accumulated streamed content)
       if (fullToolCalls.length === 0) {
-        if (this.#responseCache && cacheKey) {
-          this.#responseCache.set(cacheKey, fullResponse, fullResponse.model);
+        let safeContent = fullContent;
+        if (this.#safety && typeof safeContent === 'string') {
+          const scan = this.#safety.scanOutput(safeContent);
+          if (scan.blocked) {
+            this.#eventLog.append('safety_output_blocked', { source: 'llm_response', findings: scan.findings }, 'system');
+            this.#metrics?.increment('safety.output_blocks');
+            safeContent = '[Response blocked by safety pipeline]';
+          } else if (scan.findings.length > 0) {
+            this.#eventLog.append('safety_output_redacted', { source: 'llm_response', findings: scan.findings }, 'system');
+            this.#metrics?.increment('safety.output_redactions');
+            safeContent = scan.content;
+          }
         }
-        this.#history.push({ role: 'assistant', content: fullContent });
-        this.#eventLog.append('agent_message', { content: fullContent }, 'agent');
+        // Hook: beforeOutbound (streaming plain text path)
+        if (lastUserMsg) {
+          const outbound = await this.#hooks.run('beforeOutbound', { content: safeContent, model: fullResponse.model, usage: fullResponse.usage });
+          if (outbound.blocked) {
+            yield { type: 'error', error: `Blocked: ${outbound.reason}` };
+            return;
+          }
+          if (outbound.ctx.content !== safeContent) safeContent = outbound.ctx.content;
+        }
+        if (this.#responseCache && cacheKey) {
+          this.#responseCache.set(cacheKey, { ...fullResponse, content: safeContent }, fullResponse.model);
+        }
+        this.#history.push({ role: 'assistant', content: safeContent });
+        this.#eventLog.append('agent_message', { content: safeContent }, 'agent');
+        this.#metrics?.observe('agent.run_duration_ms', Date.now() - _runStart);
+        if (safeContent !== fullContent) {
+          // Content was modified by safety — yield the safe version
+          yield { type: 'safety_redacted', text: safeContent };
+        }
         return;
       }
 
@@ -1674,6 +2143,8 @@ export class ClawserAgent {
       continue;
     }
 
+    this.#metrics?.increment('agent.errors');
+    this.#metrics?.observe('agent.run_duration_ms', Date.now() - _runStart);
     yield { type: 'error', error: 'max iterations reached' };
   }
 
@@ -1905,7 +2376,7 @@ export class ClawserAgent {
     // LRU cache lookup (Gap 10.1)
     const cacheKey = `${query}|${opts?.category || ''}|${opts?.limit || 20}`;
     const cached = this.#recallCache.get(cacheKey);
-    if (cached && (Date.now() - cached.timestamp) < this.#recallCacheTTL) {
+    if (cached && (Date.now() - cached.timestamp) < (this.#config.recallCacheTTL || 120000)) {
       // Move to end (most recently used) by re-inserting
       this.#recallCache.delete(cacheKey);
       this.#recallCache.set(cacheKey, cached);
@@ -1953,7 +2424,7 @@ export class ClawserAgent {
     const result = scored.slice(0, opts?.limit || 20);
 
     // Store in LRU cache
-    if (this.#recallCache.size >= this.#recallCacheMax) {
+    if (this.#recallCache.size >= (this.#config.recallCacheMax || 50)) {
       // Evict oldest entry (first key in Map iteration order)
       const oldestKey = this.#recallCache.keys().next().value;
       this.#recallCache.delete(oldestKey);
@@ -2261,15 +2732,20 @@ export class ClawserAgent {
    * @returns {Promise<{success: boolean, output: string, error?: string}>}
    */
   async executeToolDirect(name, params) {
-    // Safety validation (same checks as #executeToolCalls)
-    const validation = this.#safety?.validateToolCall(name, params) ?? { valid: true, issues: [] };
-    if (!validation.valid) {
-      const msg = validation.issues[0]?.msg || 'Validation failed';
-      return { success: false, output: '', error: `Safety: ${msg}` };
+    const isBrowserTool = this.#browserTools?.has(name);
+
+    // Safety validation (MCP tools only — browser tools validated in registry)
+    if (!isBrowserTool) {
+      const validation = this.#safety?.validateToolCall(name, params) ?? { valid: true, issues: [] };
+      if (!validation.valid) {
+        const msg = validation.issues[0]?.msg || 'Validation failed';
+        this.#eventLog.append('safety_tool_blocked', { tool: name, issues: validation.issues }, 'system');
+        return { success: false, output: '', error: `Safety: ${msg}` };
+      }
     }
 
     let result;
-    if (this.#browserTools?.has(name)) {
+    if (isBrowserTool) {
       result = await this.#browserTools.execute(name, params);
     } else if (this.#mcpManager?.findClient(name)) {
       result = await this.#mcpManager.executeTool(name, params);
@@ -2277,10 +2753,17 @@ export class ClawserAgent {
       return { success: false, output: '', error: `Tool not found: ${name}` };
     }
 
-    // Scan output for leaked secrets
-    if (result && result.output && this.#safety) {
+    // Scan output for leaked secrets (MCP tools only — browser tools scanned in registry)
+    if (!isBrowserTool && result && result.output && this.#safety) {
       const scanResult = this.#safety.scanOutput(result.output);
+      if (scanResult.blocked) {
+        this.#eventLog.append('safety_output_blocked', { tool: name, findings: scanResult.findings }, 'system');
+        this.#metrics?.increment('safety.output_blocks');
+        return { success: false, output: '', error: 'Output blocked by safety pipeline (sensitive content detected)' };
+      }
       if (scanResult.findings.length > 0) {
+        this.#eventLog.append('safety_output_redacted', { tool: name, findings: scanResult.findings }, 'system');
+        this.#metrics?.increment('safety.output_redactions');
         result = { ...result, output: scanResult.content };
       }
     }
@@ -2342,8 +2825,37 @@ export class ClawserAgent {
     this.#workspaceFs?.setWorkspace(id);
   }
 
+  /** Alias for setWorkspace (test compatibility) */
+  setWorkspaceId(id) { this.setWorkspace(id); }
+
   /** Get the active workspace ID */
   getWorkspace() { return this.#workspaceId; }
+
+  // ── Hook Persistence ─────────────────────────────────────────
+
+  /** Register a hook on the agent's HookPipeline. */
+  registerHook(hook) { this.#hooks.register(hook); }
+
+  /** List all registered hooks. */
+  listHooks() { return this.#hooks.list(); }
+
+  /** Persist hook definitions to localStorage for the current workspace. */
+  persistHooks() {
+    if (typeof localStorage === 'undefined') return;
+    const data = this.#hooks.serialize();
+    localStorage.setItem(`clawser_hooks_${this.#workspaceId}`, JSON.stringify(data));
+  }
+
+  /** Restore hooks from localStorage using factory functions. */
+  restoreHooks(factories) {
+    if (typeof localStorage === 'undefined') return;
+    const raw = localStorage.getItem(`clawser_hooks_${this.#workspaceId}`);
+    if (!raw) return;
+    try {
+      const data = JSON.parse(raw);
+      this.#hooks.deserialize(data, factories);
+    } catch { /* ignore invalid stored data */ }
+  }
 
   /** Get the event log for kernel integration (Step 29). */
   get eventLog() { return this.#eventLog; }

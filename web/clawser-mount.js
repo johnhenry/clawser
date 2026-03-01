@@ -138,6 +138,189 @@ export class MountableFs extends WorkspaceFs {
     return this.mountTable;
   }
 
+  /**
+   * Format the mount table as a markdown string for display/system prompt.
+   * @returns {string} Empty string if no mounts
+   */
+  formatMountTable() {
+    const table = this.mountTable;
+    if (table.length === 0) return '';
+    const lines = ['| Path | Name | Kind | Access |', '|------|------|------|--------|'];
+    for (const m of table) {
+      lines.push(`| ${m.path} | ${m.name} | ${m.kind} | ${m.readOnly ? 'readonly' : 'readwrite'} |`);
+    }
+    return lines.join('\n');
+  }
+
+  /**
+   * Inject mount context into a system prompt.
+   * If no mounts exist, returns the base prompt unchanged.
+   * @param {string} basePrompt
+   * @returns {string}
+   */
+  injectMountContext(basePrompt) {
+    const table = this.formatMountTable();
+    if (!table) return basePrompt;
+    return `${basePrompt}\n\n## Mounted Directories\n\n${table}`;
+  }
+
+  // ── Mount I/O ──────────────────────────────────────────────────
+
+  /**
+   * Read a file from a mounted directory.
+   * Returns null if the path is not under a mount.
+   * @param {string} path
+   * @returns {Promise<string|null>}
+   */
+  async readMounted(path) {
+    const resolved = this.resolveMount(path);
+    if (resolved.type !== 'mount') return null;
+    const handle = resolved.handle;
+    if (resolved.kind === 'file' || handle.kind === 'file') {
+      const file = await handle.getFile();
+      return file.text();
+    }
+    // Directory handle — navigate to file via relative path
+    const parts = resolved.relative.split('/').filter(Boolean);
+    let current = handle;
+    for (let i = 0; i < parts.length - 1; i++) {
+      current = await current.getDirectoryHandle(parts[i]);
+    }
+    const fileHandle = await current.getFileHandle(parts[parts.length - 1]);
+    const file = await fileHandle.getFile();
+    return file.text();
+  }
+
+  /**
+   * Write a file to a mounted directory.
+   * Throws if the mount is read-only or path is not under a mount.
+   * @param {string} path
+   * @param {string} content
+   */
+  async writeMounted(path, content) {
+    const resolved = this.resolveMount(path);
+    if (resolved.type !== 'mount') {
+      throw new Error('Path is not under a mount');
+    }
+    if (resolved.readOnly) {
+      throw new Error('Mount is read-only');
+    }
+    const handle = resolved.handle;
+    const parts = resolved.relative.split('/').filter(Boolean);
+    let current = handle;
+    for (let i = 0; i < parts.length - 1; i++) {
+      current = await current.getDirectoryHandle(parts[i], { create: true });
+    }
+    const fileHandle = await current.getFileHandle(parts[parts.length - 1], { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(content);
+    await writable.close();
+  }
+
+  /**
+   * List entries in a mounted directory.
+   * Returns null if path is not under a mount.
+   * @param {string} path
+   * @returns {Promise<Array<{name: string, kind: string}>|null>}
+   */
+  async listMounted(path) {
+    const resolved = this.resolveMount(path);
+    if (resolved.type !== 'mount') return null;
+    const handle = resolved.handle;
+    // Navigate to subdirectory if needed
+    const parts = resolved.relative.split('/').filter(Boolean);
+    let dir = handle;
+    for (const part of parts) {
+      dir = await dir.getDirectoryHandle(part);
+    }
+    const entries = [];
+    for await (const [name, entry] of dir.entries()) {
+      entries.push({ name, kind: entry.kind });
+    }
+    return entries;
+  }
+
+  // ── Auto-Indexing ────────────────────────────────────────────
+
+  /**
+   * Build an indented directory tree string for a mounted path.
+   * Returns empty string if the path is not under a mount.
+   * @param {string} path - Mount path to index
+   * @param {object} [opts]
+   * @param {number} [opts.maxDepth=Infinity] - Maximum directory depth
+   * @returns {Promise<string>}
+   */
+  async buildIndex(path, opts = {}) {
+    const resolved = this.resolveMount(path);
+    if (resolved.type !== 'mount') return '';
+    const maxDepth = opts.maxDepth ?? Infinity;
+    const lines = [];
+    await this.#walkTree(resolved.handle, lines, 0, maxDepth);
+    return lines.join('\n');
+  }
+
+  async #walkTree(handle, lines, depth, maxDepth) {
+    if (depth >= maxDepth) return;
+    const indent = '  '.repeat(depth);
+    const entries = [];
+    for await (const [name, entry] of handle.entries()) {
+      entries.push({ name, kind: entry.kind, entry });
+    }
+    // Sort: directories first, then alphabetical
+    entries.sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    for (const { name, kind, entry } of entries) {
+      if (kind === 'directory') {
+        lines.push(`${indent}${name}/`);
+        if (depth + 1 < maxDepth && typeof entry.entries === 'function') {
+          await this.#walkTree(entry, lines, depth + 1, maxDepth);
+        } else if (depth + 1 < maxDepth && typeof handle.getDirectoryHandle === 'function') {
+          try {
+            const sub = await handle.getDirectoryHandle(name);
+            await this.#walkTree(sub, lines, depth + 1, maxDepth);
+          } catch { /* skip inaccessible */ }
+        }
+      } else {
+        lines.push(`${indent}${name}`);
+      }
+    }
+  }
+
+  // ── Mount Presets ──────────────────────────────────────────────
+
+  /**
+   * Export mount configurations as serializable preset array.
+   * Handles are NOT included (they must be re-acquired via picker/IndexedDB).
+   * @returns {Array<{path: string, name: string, kind: string, readOnly: boolean}>}
+   */
+  exportPresets() {
+    return this.mountTable;
+  }
+
+  /**
+   * Import mount presets. Validates structure and returns valid entries.
+   * Does NOT actually mount (handles must be re-acquired separately).
+   * @param {*} presets - Array of preset objects
+   * @returns {Array<{path: string, name: string, kind: string, readOnly: boolean}>}
+   */
+  importPresets(presets) {
+    if (!Array.isArray(presets)) return [];
+    const valid = [];
+    for (const p of presets) {
+      if (p && typeof p === 'object' && typeof p.path === 'string') {
+        valid.push({
+          path: p.path,
+          name: p.name || p.path.split('/').pop(),
+          kind: p.kind || 'directory',
+          readOnly: p.readOnly ?? false,
+        });
+      }
+    }
+    return valid;
+  }
+
   // ── Path helpers ──────────────────────────────────────────────
 
   #normalizeMountPath(p) {

@@ -340,3 +340,66 @@ export class McpManager {
 
   getClient(name) { return this.#clients.get(name); }
 }
+
+// ── WebMCPDiscovery ─────────────────────────────────────────────
+
+/**
+ * Discovers and manages tools from WebMCP-enabled pages.
+ * Parses tool descriptors from page metadata and maintains a registry
+ * of discovered tools for user approval.
+ */
+export class WebMCPDiscovery {
+  #discovered = new Map();
+
+  /**
+   * Parse tool descriptors from page metadata.
+   * @param {{ tools: Array<{ name: string, description: string, parameters: object }> }} metadata
+   * @returns {Array<{ name: string, description: string, parameters: object }>}
+   */
+  parseToolDescriptors(metadata) {
+    if (!metadata || !Array.isArray(metadata.tools)) return [];
+    return metadata.tools.filter(t => this.isValidTool(t));
+  }
+
+  /**
+   * Validate a tool descriptor has required fields.
+   * @param {*} tool
+   * @returns {boolean}
+   */
+  isValidTool(tool) {
+    if (!tool || typeof tool !== 'object') return false;
+    if (typeof tool.name !== 'string' || !tool.name) return false;
+    if (typeof tool.description !== 'string') return false;
+    return true;
+  }
+
+  /**
+   * Add discovered tools (deduplicates by name).
+   * @param {Array<{ name: string, description: string, parameters: object, source: string }>} tools
+   */
+  addDiscovered(tools) {
+    for (const tool of tools) {
+      if (!this.#discovered.has(tool.name)) {
+        this.#discovered.set(tool.name, { ...tool, discoveredAt: Date.now() });
+      }
+    }
+  }
+
+  /**
+   * List all discovered tools.
+   * @returns {Array<object>}
+   */
+  listDiscovered() {
+    return [...this.#discovered.values()];
+  }
+
+  /**
+   * Clear all discovered tools.
+   */
+  clearDiscovered() {
+    this.#discovered.clear();
+  }
+
+  /** Number of discovered tools. */
+  get size() { return this.#discovered.size; }
+}

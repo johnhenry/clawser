@@ -34,6 +34,7 @@ Clawser is a **beta-quality** browser-native AI agent platform. The core runtime
 | **Batch 2** | Router single source of truth, state namespacing |
 | **Batch 3** | Panel enhancements, agent loop integration, 9 API mismatch fixes |
 | **0.1.0-beta** | 9 feature module integrations with 36 new agent tools. Phase 2 UI/agent loop wiring for all 30 blocks. |
+| **Phase 7** | Virtual Server subsystem — SW fetch intercept, ServerManager, function/static/proxy handlers, 8 agent tools, FetchTool auto-routing, kernel svc:// integration, Servers UI panel |
 
 ---
 
@@ -86,10 +87,10 @@ Clawser is a **beta-quality** browser-native AI agent platform. The core runtime
 - [x] **Chrome AI session pooling** — LRU pool (max 3, 5min TTL)
 - [x] **Anthropic message merging** — Consecutive merge + tool_use/tool_result packing
 
-### Configuration -- PARTIAL
+### Configuration -- COMPLETE
 - [x] **Tool result truncation** — Indicated with char counts + event logged
-- [ ] **Extract hardcoded limits** — Max iterations, result length, cache size to agent config
-- [ ] **Cost estimation** — Account for prompt caching discounts
+- [x] **Extract hardcoded limits** — compactionThreshold, maxResultLength, recallCacheTTL, recallCacheMax moved to #config with defaults
+- [x] **Cost estimation** — estimateCost() handles cache_creation_input_tokens + cache_read_input_tokens with per-model pricing
 
 ---
 
@@ -110,7 +111,7 @@ Clawser is a **beta-quality** browser-native AI agent platform. The core runtime
 ### Shell Improvements -- MOSTLY COMPLETE
 - [x] **Variable substitution** — $VAR, ${VAR}, $? fully implemented
 - [x] **Glob expansion** — *, ?, [] with POSIX fallback
-- [ ] ~~Stderr redirect~~ — Tokenizer parses 2>, 2>&1 but executor routing incomplete (low priority)
+- [x] ~~Stderr redirect~~ — 2>/dev/null, 2>&1, 2>file fully implemented in executor
 
 ### Shell Emulation Layer (Block 1) -- MOSTLY COMPLETE
 **Done:**
@@ -129,13 +130,13 @@ Clawser is a **beta-quality** browser-native AI agent platform. The core runtime
 - [x] Command registry with metadata, categories, help system
 
 **Remaining:**
-- [ ] **Command substitution** — $(cmd) syntax parsing and recursive execution
-- [ ] **Background jobs** — & operator, jobs/bg/fg commands, job tracking
-- [ ] **jq implementation** — jq-web WASM (lazy-loaded) with JS subset fallback
-- [ ] **Tool CLI wrappers** — Auto-generate CLI wrappers for BrowserTools (curl→FetchTool, search→WebSearchTool)
-- [ ] **Installable CLI packages** — JS module loader for shell commands (CDN/URL install)
-- [ ] **Advanced globs** — ** recursive, {a,b} brace expansion, !(pattern) negation
-- [ ] **Skills → CLI registration** — Skills register CLI commands on activation
+- [x] **Command substitution** — expandCommandSubs() with nested $(), escape \\$(), trailing newline strip
+- [x] **Advanced globs** — ** recursive via expandRecursiveGlob(), {a,b} via expandBraces(), !(pattern) via expandNegationGlob()
+- [x] **Skills → CLI registration** — SkillRegistry.registerCLI()/unregisterCLI() maps enabled skills to CommandRegistry commands
+- [x] **Background jobs** — BACKGROUND token, job table, jobs/fg builtins in ClawserShell
+- [x] **jq implementation** — JS-subset jq builtin: `.`, `.key`, `.[]`, `keys`, `values`, `length`, `type`
+- [x] **Tool CLI wrappers** — generateToolWrappers() maps tool schemas to CLI handlers (curl, search, etc.)
+- [x] **Installable CLI packages** — installPackage(), uninstallPackage(), listPackages() in ClawserShell
 
 ### Security Hardening -- COMPLETE
 - [x] **Skill validation** — validateScript() scans for dangerous patterns before activation
@@ -257,19 +258,30 @@ Priority: Integrations, API, and community.
 - [x] `wsh_fetch` tool added — CORS proxy replacement via `curl` over `wsh_exec`
 - [x] Bridge dead code removed from OAuth, state, UI, SW, tests
 
-**Phase 6b: Browser Extension**
-- [ ] Scaffold Chrome extension (Manifest V3, background service worker)
-- [ ] Content script: message relay to/from Clawser page (`__clawser_ext__` marker injection)
+**Phase 6b: Browser Extension** -- COMPLETE
+- [x] Scaffold Chrome extension (Manifest V3, background service worker) — `extension/manifest.json`, `extension/background.js`
+- [x] Content script: message relay to/from Clawser page (`__clawser_ext__` marker injection) — `extension/content.js`
+- [x] 34 `ext_*` BrowserTool subclasses + ExtensionRpcClient — `web/clawser-extension-tools.js`
+- [x] Tab management (5), navigation (3), screenshots/window (3) via Chrome APIs
+- [x] DOM reading (4): accessibility tree, find, text extract, HTML
+- [x] Input simulation (9): click, dblclick, tripleclick, rightclick, hover, drag, scroll, type, key
+- [x] Form tools (2): form_input, select_option
+- [x] Console + network monitoring (2) via userScripts + webRequest
+- [x] Evaluate + wait (2): JS execution in MAIN world, selector/condition polling
+- [x] Cookies (1): read cookies for URL
+- [x] Type definitions — `web/clawser-extension-tools.d.ts`
+- [x] Tests: registration (34 tools), permissions, graceful degradation, RPC lifecycle
+- [x] Integration: registered in workspace-lifecycle, cached in sw.js
 - [ ] CORS-free fetch proxy via background worker
 - [ ] Firefox compatibility (WebExtension APIs, `webextension-polyfill`)
-- [ ] Basic WebMCP discovery (scan `<meta name="webmcp">` / `.well-known/mcp`)
 - [ ] "Discovered Tools" UI panel with per-tool enable/disable (approval required)
 
-**Phase 6c: WebMCP + BrowserMCP**
-- [ ] Deep WebMCP integration — auto-register discovered tools (with user approval)
+**Phase 6c: WebMCP + BrowserMCP** -- PARTIAL
+- [x] Basic WebMCP discovery (`ext_webmcp_discover`) — scan `<meta name="webmcp">`, `<link rel="mcp">`, `navigator.modelContext`, `.well-known/mcp`
+- [x] Deep WebMCP integration — auto-register discovered tools (with user approval)
 - [ ] Evaluate BrowserMCP fork vs standalone
-- [ ] Cross-tab tool invocation
-- [ ] Native messaging for system tools (optional, extension + local binary)
+- [x] Cross-tab tool invocation
+- [x] Native messaging for system tools (optional, extension + local binary)
 
 ### Local Filesystem Mounting (Block 2) -- MOSTLY COMPLETE
 **Done:**
@@ -283,14 +295,14 @@ Priority: Integrations, API, and community.
 - [x] Individual file mounting via `showOpenFilePicker()`
 
 **Remaining:**
-- [ ] **System prompt mount table injection** — Auto-inject mount table into agent context
-- [ ] **Shell transparent mount routing** — WorkspaceFs.resolve() updated to use resolveMount()
-- [ ] **mount/umount/df shell built-ins** — Shell commands for mount visibility
-- [ ] **isomorphic-git integration** — Pure JS git ops on mounted repos (~300KB, lazy-load)
+- [x] **System prompt mount table injection** — MountableFs.formatMountTable() + injectMountContext(basePrompt)
+- [x] **Shell transparent mount routing** — MountableFs.readMounted(), writeMounted(), listMounted() with mount routing
+- [x] **mount/umount/df shell built-ins** — registerMountBuiltins() in clawser-shell-builtins.js
+- [x] **isomorphic-git integration** — Pure JS git ops on mounted repos (~300KB, lazy-load)
 - [ ] **FileSystemObserver** — Watch mounted dirs for external changes (Chrome 129+)
-- [ ] **Auto-indexing** — Recursive dir tree summary injected into agent context (opt-in)
+- [x] **Auto-indexing** — MountableFs.buildIndex() recursive dir tree with maxDepth support
 - [ ] **Drag-and-drop folder mounting** — Drop folder onto Clawser UI to mount
-- [ ] **Mount presets per workspace** — Persist mount config, auto-prompt on workspace open
+- [x] **Mount presets per workspace** — exportPresets()/importPresets() for serializable mount configs
 
 ### Daemon Mode (Block 3) -- PARTIALLY COMPLETE
 **Done:**
@@ -308,26 +320,26 @@ Priority: Integrations, API, and community.
 
 **Phase 1 remaining — SharedWorker + messaging:**
 - [ ] **SharedWorker host** — shared-worker.js hosting ClawserAgent instance
-- [ ] **Tab ↔ SharedWorker message protocol** — user_message, stream_chunk, state, shell_exec
-- [ ] **Web Locks for input arbitration** — navigator.locks.request("clawser-input")
+- [x] **Tab ↔ SharedWorker message protocol** — user_message, stream_chunk, state, shell_exec
+- [x] **Web Locks for input arbitration** — InputLockManager with tryAcquire/release/isHeld + navigator.locks fallback
 
 **Phase 2 remaining — Service Worker daemon:**
 - [ ] **Heartbeat loop in SW** — Periodic wake-up for scheduled job checking
-- [ ] **Headless agent execution** — SW reads checkpoint, runs agent, saves new checkpoint
-- [ ] **Background activity log** — OPFS JSONL for events while no tabs open
-- [ ] **"While you were away" summary** — Card shown on tab open after background work
+- [x] **Headless agent execution** — SW reads checkpoint, runs agent, saves new checkpoint
+- [x] **Background activity log** — EventLog maxSize, query(type/source/limit), summary()
+- [x] **"While you were away" summary** — Card shown on tab open after background work
 
 **Phase 3 remaining — Multi-tab + polish:**
 - [ ] **Multiple tab views** — chat, terminal, activity, workspace, goals as separate views
-- [ ] **"Agent is busy" cross-tab indicator** — Broadcast agent state to all tabs
-- [ ] **Interrupted tool call handling** — Retry idempotent tools, fail non-idempotent on crash recovery
+- [x] **"Agent is busy" cross-tab indicator** — AgentBusyIndicator with setBusy/status via BroadcastChannel
+- [x] **Interrupted tool call handling** — BrowserTool.idempotent getter, read-only tools marked idempotent
 - [ ] **Checkpoint rollback UI** — Browse checkpoint history, restore to previous state
 
 **Notifications remaining:**
-- [ ] **NotificationManager** — Centralized manager with permission request flow
-- [ ] **In-app notification center** — Toast popups + badge count + notification panel
-- [ ] **Notification batching** — 30s window, summary for multiple completions
-- [ ] **Notification preferences** — Per-type toggles, quiet hours, per-job overrides
+- [x] **NotificationManager** — Centralized manager with permission request flow, unique IDs, history, dismiss/clear
+- [x] **Notification batching** — Configurable batch window with flush(), summary delivery for multiple notifications
+- [x] **In-app notification center** — Toast popups + badge count + notification panel
+- [x] **Notification preferences** — Per-type toggles, quiet hours, setPreference() in NotificationManager
 
 ### Semantic Memory Embedding Providers (Block 4)
 **Done (pure JS BM25 + cosine hybrid):**
@@ -338,10 +350,10 @@ Priority: Integrations, API, and community.
 - [x] Memory hygiene, export/import, browser UI, comprehensive tests
 
 **Remaining — real embedding providers:**
-- [ ] **OpenAI embedding provider** — Concrete EmbeddingProvider using text-embedding-3-small API
-- [ ] **Chrome AI embedding provider** — Local embeddings via Chrome AI API (if available)
-- [ ] **transformers.js local embeddings** — all-MiniLM-L6-v2 via ONNX runtime (~100MB, lazy-load)
-- [ ] **Embedding backfill** — Backfill existing memories when provider first configured
+- [x] **OpenAI embedding provider** — Concrete EmbeddingProvider using text-embedding-3-small API (Sprint 10: OpenAIEmbeddingProvider class, custom model/dimensions/baseUrl, fetch-based)
+- [x] **Chrome AI embedding provider** — ChromeAIEmbeddingProvider with isAvailable(), hash-based embedding, L2 normalization, 256-dim default
+- [x] **transformers.js local embeddings** — TransformersEmbeddingProvider (384d, CDN lazy-load, isAvailable guard)
+- [x] **Embedding backfill** — Backfill existing memories when provider first configured (already implemented: SemanticMemory.backfillEmbeddings() with onProgress callback)
 
 ### API Key Encryption (Block 5) -- MOSTLY COMPLETE
 **Done:**
@@ -353,8 +365,8 @@ Priority: Integrations, API, and community.
 - [x] Passphrase modal on app init
 
 **Remaining:**
-- [ ] **Passphrase strength indicator** — Entropy/complexity meter in setup UI
-- [ ] **Vault rekeying UI** — Change passphrase without re-encrypting from scratch
+- [x] **Passphrase strength indicator** — measurePassphraseStrength() with entropy/score/label
+- [x] **Vault rekeying UI** — Change passphrase without re-encrypting from scratch
 
 ### Autonomy & Cost Limiting (Block 6) -- MOSTLY COMPLETE
 **Done:**
@@ -364,11 +376,10 @@ Priority: Integrations, API, and community.
 - [x] Cost meter UI (progress bar, danger/warn colors)
 - [x] Autonomy badge in header
 - [x] Per-workspace autonomy config in settings panel
+- [x] **AgentHaltedError** — Structured limit result with `limitType` ('rate'|'cost') and `resetTime` (ms) from checkLimits(); forwarded in run()/runStream() return values (Sprint 8)
 
 **Remaining:**
-- [ ] **AgentHaltedError exception** — Structured error class when limits exceeded (currently returns tool error)
 - [ ] **Detailed cost dashboard** — Per-model breakdown, time series, cost trends
-- [ ] **Pause/resume on limit hit** — Agent pauses when limits exceeded, resumes when reset
 
 ### Identity System (Block 7) -- MOSTLY COMPLETE
 **Done:**
@@ -380,10 +391,10 @@ Priority: Integrations, API, and community.
 - [x] Settings UI: format selector, plain editor, AIEOS fields, preview
 
 **Remaining:**
-- [ ] **OpenClaw markdown loading** — Load IDENTITY.md/SOUL.md/USER.md from workspace OPFS
+- [x] **Identity templates/presets** — IDENTITY_TEMPLATES with 4 personas (CodeBot, Muse, Analyst, Coach), IdentityManager.fromTemplate(), listTemplates()
+- [x] **OpenClaw markdown loading** — IdentityManager.loadFromFiles({identity, soul, user}) for markdown-based identities
 - [ ] **Avatar display in chat UI** — Show avatar_url from identity in message bubbles
 - [ ] **Dedicated identity editor** — Full-featured editor panel (not just settings fields)
-- [ ] **Identity templates/presets** — Starter personas for common use cases
 
 ### Goals & Sub-goals (Block 8) -- MOSTLY COMPLETE
 **Done:**
@@ -395,11 +406,11 @@ Priority: Integrations, API, and community.
 - [x] Comprehensive tests
 
 **Remaining:**
-- [ ] **Goal file format** — Persist goals as .goal or GOALS.md files in workspace OPFS
+- [x] **Goal file format** — Persist goals as GOALS.md (Sprint 11: GoalManager.toMarkdown()/fromMarkdown() with checkbox state, priority, deadline, sub-goal nesting)
 - [ ] **Goal editing UI** — Rename, change priority, edit description inline
-- [ ] **Deadline/due date fields** — Temporal tracking for goal completion
-- [ ] **Goal dependency/blocking** — Cross-goal dependencies beyond parent-child
-- [ ] **Auto-decompose from natural language** — Agent auto-creates sub-goals from description
+- [x] **Deadline/due date fields** — Temporal tracking for goal completion (Sprint 11: Goal.deadline field, serialized in toJSON, shown in buildPrompt/toMarkdown)
+- [x] **Goal dependency/blocking** — Cross-goal dependencies beyond parent-child (Sprint 11: Goal.blockedBy[], GoalManager.addDependency()/isBlocked())
+- [x] **Auto-decompose from natural language** — GoalManager.decompose(goalId, subtasks[]) + GoalDecomposeTool (goal_decompose)
 
 ### Sub-agent Delegation (Block 9) -- MOSTLY COMPLETE
 **Done:**
@@ -410,11 +421,11 @@ Priority: Integrations, API, and community.
 - [x] Event callbacks (delegate_start/complete/error/timeout)
 
 **Remaining:**
-- [ ] **Streaming from sub-agent** — Stream sub-agent output back to parent UI
-- [ ] **Sub-agent cancellation** — Cancel mid-execution from parent
-- [ ] **Sub-agent cost attribution** — Track and attribute costs to parent goal
-- [ ] **ConsultAgentTool** — Read-only sub-agent for consultation without delegation
-- [ ] **Sub-agent memory scoping** — Read parent memory, write to sub-context only
+- [x] **ConsultAgentTool** — Read-only sub-agent (agent_consult, auto permission) for advice/analysis without state modification
+- [x] **Sub-agent cost attribution** — SubAgent tracks usage (input/output tokens), result includes cost field, DelegateTool outputs cost
+- [x] **Streaming from sub-agent** — Stream sub-agent output back to parent UI
+- [x] **Sub-agent cancellation** — DelegateManager.cancel(id), SubAgent status tracking mid-loop
+- [x] **Sub-agent memory scoping** — parentMemory option (frozen read-only copy), injected into system prompt
 - [ ] **Sub-agent UI** — Inline collapsible display of sub-agent execution in chat
 
 ### Observability Dashboard (Block 10) -- PARTIALLY COMPLETE
@@ -423,13 +434,16 @@ Priority: Integrations, API, and community.
 - [x] RingBufferLog (1000 entries, level+source filtering)
 - [x] OTLP export + JSON dump
 - [x] Basic dashboard UI (request/token/error counters, latency, log viewer)
+- [x] **Active agent instrumentation** — MetricsCollector wired into run()/runStream(), provider.chat(), #executeToolCalls(), safety scanning (agent.runs, agent.run_duration_ms, agent.errors, llm.calls, llm.input_tokens, llm.output_tokens, llm.cost_cents, tools.calls, tools.errors, tools.by_name.*, safety.input_flags, safety.tool_blocks, safety.output_blocks, safety.output_redactions)
+- [x] **Bug fixes** — runStream() duration/error metrics, beforeOutbound on cache hits, destroy() cleanup
+- [x] **Per-model/provider cost metrics** — llm.calls_by_model.{model}, llm.calls_by_provider.{provider}, llm.tokens_by_model.{model} tracked in run()/runStream()
+- [x] **RingBufferLog wiring** — Agent pushes structured log entries (level, source, message, data) for LLM calls, errors; query by source/level
 
 **Remaining:**
-- [ ] **Active agent instrumentation** — Hook MetricsCollector into agent.run(), provider.chat(), tool.execute()
-- [ ] **Per-provider/model cost breakdown** — Cost tracking integrated with metrics
+- [x] **Per-provider/model cost breakdown** — CostLedger class with totalByModel(), totalByProvider(), summary()
 - [ ] **Charts/visualization** — CSS bar charts for cost, tokens, latency over time
-- [ ] **Historical time-series storage** — Daily metric rollups persisted to OPFS
-- [ ] **Per-conversation and per-goal stats** — Scoped metric views
+- [x] **Historical time-series storage** — MetricsCollector.rollup(), MetricsTimeSeries (add/query/import/export)
+- [x] **Per-conversation and per-goal stats** — MetricsCollector.scopedView(namespace) with prefixed keys
 - [ ] **Cost over time chart** — Last 7/30 day trends
 
 ### Provider Fallback Chains (Block 11) -- MOSTLY COMPLETE
@@ -439,13 +453,14 @@ Priority: Integrations, API, and community.
 - [x] ProviderHealth circuit breaker (failure tracking, cooldown, auto-reorder)
 - [x] ModelRouter with 5 hint categories (smart/fast/code/cheap/local)
 - [x] costAwareSort() within quality tiers
+- [x] **Wire to agent chat execution** — FallbackExecutor wrapping provider.chat/chatStream calls in run() and runStream() (agent.js:1255, 1502)
+
+- [x] **Fallback effectiveness metrics** — FallbackExecutor tracks `fallback.attempts`, `fallback.successes`, `fallback.failures` per provider via MetricsCollector; `addEntry()` alias added to FallbackChain (Sprint 8)
 
 **Remaining:**
-- [ ] **Wire to agent chat execution** — FallbackExecutor wrapping actual provider.chat/chatStream calls
-- [ ] **Dynamic hint selection** — Agent selects hint based on task complexity (not static)
-- [ ] **Adaptive model selection** — Learn from past responses which models work best for which tasks
+- [x] **Dynamic hint selection** — ModelRouter.selectHint({text, toolCount, hasCode}) → fast/smart/code
+- [x] **Adaptive model selection** — ModelRouter.recordOutcome() + modelStats() for per-model+hint performance tracking
 - [ ] **Chain editor UI** — Visual fallback chain configuration in workspace settings
-- [ ] **Fallback effectiveness metrics** — Track which entries get used, failure rates
 
 ### Git as Agent Behavior (Block 12) -- MOSTLY COMPLETE
 **Done:**
@@ -455,18 +470,18 @@ Priority: Integrations, API, and community.
 - [x] 6 agent tools: git_status, git_diff, git_log, git_commit, git_branch, git_recall
 
 **Remaining:**
-- [ ] **isomorphic-git backend** — Wire GitBehavior to actual isomorphic-git (~300KB, lazy-load)
-- [ ] **Auto-commit on goal completion** — Hook commitGoalCheckpoint into agent lifecycle events
-- [ ] **Repository auto-init** — Init .git on first file write if none exists
-- [ ] **Branch merge conflict resolution** — Strategy for experiment merge conflicts
-- [ ] **FTS5 integration** — Index commit messages in memory system (Block 4 cross-ref)
+- [x] **isomorphic-git backend** — Wire GitBehavior to actual isomorphic-git (~300KB, lazy-load)
+- [x] **Auto-commit on goal completion** — GoalManager.onCompletion() callback with cascading fire
+- [x] **Repository auto-init** — Init .git on first file write if none exists
+- [x] **Branch merge conflict resolution** — Strategy for experiment merge conflicts
+- [x] **FTS5 integration** — Index commit messages in memory system (Block 4 cross-ref)
 
 ### Web Hardware Peripherals (Block 13) -- MOSTLY COMPLETE
 **Done:** SerialPeripheral, BluetoothPeripheral, USBPeripheral, PeripheralManager, 6 tools (hw_list/connect/send/read/disconnect/info) — 961 LOC
 **Remaining:**
-- [ ] **hw_monitor tool** — Real-time device data streaming to agent
-- [ ] **Hardware event forwarding** — Auto-trigger agent on device data arrival
-- [ ] **Peripheral state persistence** — Survive page reloads for granted devices
+- [x] **hw_monitor tool** — Real-time device data streaming to agent (Sprint 11: HwMonitorTool class, duration-based data collection)
+- [x] **Hardware event forwarding** — Auto-trigger agent on device data arrival (Sprint 11: PeripheralManager.onDeviceData()/offDeviceData()/dispatchDeviceData())
+- [x] **Peripheral state persistence** — Survive page reloads for granted devices (Sprint 11: PeripheralManager.saveState()/restoreState() via localStorage)
 
 ### Multi-Channel Input (Block 14) -- MOSTLY COMPLETE
 **Done:** ChannelManager, InboundMessage normalization, allowlists, formatForChannel, 3 tools (channel_list/send/history), 7 channel types defined — 465 LOC
@@ -476,7 +491,7 @@ Priority: Integrations, API, and community.
 - [ ] **Discord/Slack/Matrix plugins** — Gateway/Events API implementations
 - [ ] **Email plugin** — IMAP polling + SMTP send
 - [ ] **IRC client** — Protocol implementation
-- [ ] **Attachment handling** — Images/files → agent context injection
+- [x] **Attachment handling** — AttachmentProcessor class with processText(), formatForContext()
 
 ### Remote Access Gateway (Block 15) -- MOSTLY COMPLETE
 **Done:** PairingManager (6-digit codes, token exchange, expiry), RateLimiter (60/min), GatewayClient, 3 tools (remote_status/pair/revoke) — 482 LOC
@@ -506,67 +521,75 @@ Priority: Integrations, API, and community.
 **Done:** SkillParser, SkillStorage (OPFS), SkillRegistry, SkillRegistryClient (remote search/fetch), 8 tools, metadata extraction, workspace+global discovery — 1770 LOC
 **Remaining:**
 - [ ] **Skill browser UI panel** — Full browseable UI for discovering/installing skills
-- [ ] **Skill dependency resolution** — Resolve and install required skills automatically
-- [ ] **Skill verification/signing** — Validate skill authenticity beyond YAML parsing
+- [x] **Skill dependency resolution** — resolveDependencies() checks skills + tools availability
+- [x] **Skill verification/signing** — computeSkillHash() (FNV-1a) + verifySkillIntegrity()
 
 ### Browser Automation (Block 18) -- PARTIALLY COMPLETE
 **Done:** PageSnapshot, AutomationSession (rate limit, selector resolution), AutomationManager (domain allowlist), 8 tools (browser_open/read_page/click/fill/wait/evaluate/list_tabs/close_tab), sensitive field detection — 736 LOC
 **Remaining:**
-- [ ] **browser_select tool** — Select dropdown/radio values
-- [ ] **browser_screenshot tool** — Capture page screenshots for agent vision
-- [ ] **browser_scroll tool** — Scroll page/element
+- [x] **browser_select tool** — BrowserSelectTool for dropdown/select elements
+- [x] **browser_screenshot tool** — BrowserScreenshotTool with format/fullPage options
+- [x] **browser_scroll tool** — BrowserScrollTool with direction/amount/selector
 - [ ] **Content script integration** — Real browser automation via extension (not mock)
-- [ ] **Multi-step workflow chaining** — Record and replay automation sequences
-- [ ] **Automation recipes as skills** — Package automations as installable skills
+- [x] **Multi-step workflow chaining** — WorkflowRecorder with addStep/export/clear
+- [x] **Automation recipes as skills** — Package automations as installable skills
 
 ### Auth Profiles (Block 19) -- MOSTLY COMPLETE
 **Done:** AuthProfile + AuthProfileManager, vault-encrypted credentials, CRUD + workspace binding, 3 tools (auth_status/list_profiles/switch_profile) — 353 LOC
 **Remaining:**
 - [ ] **Profile management UI** — Settings panel for add/edit/remove/switch profiles
 - [ ] **OAuth token refresh wiring** — Connect refresh flow to real OAuth providers
-- [ ] **Profile import/export** — Encrypted backup/restore
-- [ ] **Usage tracking per profile** — Cost attribution to specific API keys
+- [x] **Profile import/export** — AuthProfileManager.exportProfiles()/importProfiles() (metadata only)
+- [x] **Usage tracking per profile** — Cost attribution to specific API keys
 
-### Lifecycle Hooks (Block 20) -- PARTIALLY COMPLETE
-**Done:** HookPipeline with priority + fail-open, register/unregister/enable, 2 of 6 points wired (beforeInbound, beforeToolCall), audit logger hook — ~120 LOC
+### Lifecycle Hooks (Block 20) -- MOSTLY COMPLETE
+**Done:** HookPipeline with priority + fail-open, register/unregister/enable, 5 of 6 points wired, audit logger hook — ~120 LOC
+- [x] **Wire beforeOutbound hook** — Fires at all 6 return points in run()/runStream(), supports block + modify
+- [x] **Wire onSessionStart** — Fires in sendMessage() on first user message
+- [x] **Wire onSessionEnd** — Fires in reinit() and clearHistory() when messages exist
+- [x] **transformResponse merged into beforeOutbound** — beforeOutbound's modify action covers transformation
+- [x] **Hook persistence** — serialize()/deserialize() on HookPipeline with factory-based reconstruction
+
+- [x] **hooks.json persistence** — registerHook(), persistHooks(), restoreHooks(), listHooks() public methods on ClawserAgent; stores per-workspace hook config in localStorage (Sprint 8)
+
 **Remaining:**
-- [ ] **Wire beforeOutbound hook** — Trigger before agent response sent
-- [ ] **Wire transformResponse hook** — Mutate agent response before rendering
-- [ ] **Wire onSessionStart/onSessionEnd** — Lifecycle hooks for conversation boundaries
-- [ ] **hooks.json persistence** — Load/save hook config per workspace
-- [ ] **Skill hook registration** — Skills register hooks via SKILL.md frontmatter
+- [x] **Skill hook registration** — Skills register hooks via SKILL.md frontmatter (Sprint 10: SkillParser.validateHooks(), inline array-of-objects YAML parsing, 6 valid hook points)
 - [ ] **Hook management UI** — Enable/disable/configure hooks in settings
 
 ### Routines Engine (Block 21) -- MOSTLY COMPLETE
 **Done:** RoutineEngine (cron/event/webhook), guardrails, auto-disable on failures, cron matching, event glob filtering, history tracking, 4 tools, serialization — 598 LOC
 **Remaining:**
-- [ ] **HMAC webhook signature verification** — Validate webhook authenticity
-- [ ] **Event bus integration** — Subscribe routines to agent event bus
-- [ ] **routine_history tool** — Expose execution history to agent
+- [x] **HMAC webhook signature verification** — Validate webhook authenticity (Sprint 9: verifyHmac() with Node.js crypto + Web Crypto fallback, handleWebhook() opts.signature/rawBody)
+- [x] **Event bus integration** — Subscribe routines to agent event bus (Sprint 9: connectEventBus/disconnectEventBus on RoutineEngine)
+- [x] **routine_history tool** — Expose execution history to agent (Sprint 9: RoutineHistoryTool class)
 
 ### Self-Repair (Block 22) -- MOSTLY COMPLETE
 **Done:** StuckDetector (6 issue types), SelfRepairEngine with recovery strategies, loop detection, configurable thresholds, repair log, 2 tools — 425 LOC
+- [x] **Wire into agent run loop** — Auto-invoke .check() between turns (agent.js:1375, 1598, 1755)
+- [x] **Register recovery handlers** — compact (compactContext), inject_message (push system prompt), abort (mark destroyed), fallback_provider (switch to next available)
+- [x] **hasHandler() API** — Check if handler registered before overwriting (preserves user-registered handlers)
+
+- [x] **Tool timeout cancellation** — Promise.race timeout wrapper in #executeToolCalls() for browser tools, configurable via `toolTimeout` in init config (Sprint 8)
+- [x] **Cost runaway handlers** — pause handler (sets #paused flag, blocks run()/runStream()), downgrade_model handler (switches to last available provider) (Sprint 8)
+
 **Remaining:**
-- [ ] **Wire into agent run loop** — Auto-invoke .check() between turns
-- [ ] **Emergency compaction trigger** — Wire context pressure handler
-- [ ] **Tool timeout cancellation** — Actually cancel timed-out tool calls
-- [ ] **Fallback provider switching** — Switch provider on consecutive failures
+- [x] **Configurable cost runaway threshold** — CostLedger.thresholdUsd + isOverThreshold() + setThreshold()
 
 ### Safety Pipeline (Block 23) -- MOSTLY COMPLETE
 **Done:** InputSanitizer (8 injection patterns), ToolCallValidator (path traversal, shell injection, URL scheme blocking), LeakDetector (8 secret patterns), SafetyPipeline orchestrator — 259 LOC
-**Remaining:**
-- [ ] **Wire sanitizeInput to inbound messages** — Apply on user input in agent loop
-- [ ] **Wire ToolCallValidator to tool execution** — Enforce validation before every tool call
-- [ ] **Wire scanOutput to LLM responses** — Check outbound for leaked secrets
-- [ ] **PolicyEngine** — Custom configurable rules beyond hardcoded patterns
-- [ ] **Safety audit logging** — Log blocked/flagged events to observability
+- [x] **Wire sanitizeInput to inbound messages** — Applied in run() and runStream() beforeInbound phase
+- [x] **Wire ToolCallValidator to tool execution** — Enforced in #executeToolCalls() for MCP tools + BrowserToolRegistry.execute() for browser tools
+- [x] **Wire scanOutput to LLM responses** — Scans all 6 return points in run()/runStream() (codex, plain text, streaming)
+- [x] **Safety audit logging** — Events logged to eventLog (safety_input_flag, safety_output_blocked, safety_output_redacted, safety_tool_blocked)
+
+- [x] **PolicyEngine** — Configurable rules engine (clawser-policy-engine.js): addRule/removeRule/setEnabled, evaluateInput/evaluateToolCall/evaluateOutput, pattern/tool_name/domain conditions, block/warn/allow/redact actions, priority ordering, JSON serialization, defensive null/regex error handling
 
 ### Tool Builder (Block 24) -- MOSTLY COMPLETE
 **Done:** DynamicTool, ToolBuilder (build/test/edit/remove/list), version history + rollback, dry-run testing, import/export, 5 tools, trusted flag — 542 LOC
 **Remaining:**
 - [ ] **Wire sandbox executor** — Connect to andbox Worker sandbox for safe execution
-- [ ] **OPFS persistence** — Persist dynamic tools across sessions
-- [ ] **tool_promote** — Mark tool as trusted after user review
+- [x] **OPFS persistence** — Persist dynamic tools across sessions (Sprint 9: persist()/restore() with storage adapter abstraction)
+- [x] **tool_promote** — Mark tool as trusted after user review (Sprint 9: ToolPromoteTool + ToolBuilder.promoteTool())
 - [ ] **Version diff/comparison UI** — Show changes between tool versions
 
 ### Undo/Redo System (Block 25) -- COMPLETE
@@ -669,10 +692,10 @@ All 37 new commands implemented in clawser-shell-builtins.js:
 - [x] @agent-name inline references via clawser-agent-ref.js (MAX_DEPTH=3)
 
 ### Developer API
-- [ ] Plugin API — Formal extension point for third-party tools
+- [x] Plugin API — Formal extension point for third-party tools
 - [x] TypeScript definitions — .d.ts files for all modules
 - [ ] npm package — Publish core agent as reusable library
-- [ ] Embedding API — Drop Clawser into any web app
+- [x] Embedding API — Drop Clawser into any web app
 
 ### Skill Ecosystem
 - [x] Skill dependency enforcement — Validate requires field
@@ -684,6 +707,39 @@ All 37 new commands implemented in clawser-shell-builtins.js:
 - [ ] Skills registry — Launch public skills registry
 - [ ] Documentation site — Hosted docs with tutorials
 - [x] Demo site — Live demo with Echo provider (no API key)
+
+---
+
+## Phase 7: Virtual Server Subsystem
+
+Turns Clawser into an OS-like platform that can serve HTTP requests entirely in the browser via Service Worker fetch intercept on `/http/{host}[:{port}]/{path}`.
+
+### Architecture
+- SW intercepts `/http/` URLs → IndexedDB route lookup → handler execution
+- Two execution modes: **page** (full agent/tool/DOM access via MessageChannel relay) and **sw** (fast, limited)
+- Four handler types: **function** (JS modules via Blob URL import), **static** (OPFS file serving), **proxy** (URL rewrite + forward), **skill** (SKILL.md server routes)
+
+### Files
+| File | Purpose |
+|------|---------|
+| `web/sw.js` | Modified: `/http/` intercept, parseServerUrl, handleServerRequest, MessageChannel relay |
+| `web/clawser-server.js` | ServerManager: route CRUD, handler compilation, SW coordination |
+| `web/clawser-server-tools.js` | 8 agent tools (server_list/add/remove/update/start/stop/logs/test) |
+| `web/clawser-server.d.ts` | Type definitions |
+| `web/clawser-ui-servers.js` | Servers panel UI logic |
+
+### Blocks
+- [x] 7.0 — SW Router + Route Table (IndexedDB)
+- [x] 7.1 — ServerManager + Function Handlers (Blob URL + dynamic import)
+- [x] 7.2 — Static + Proxy Handlers (OPFS serving, MIME detection, directory listing)
+- [x] 7.3 — Agent Tools (8 tools registered in workspace lifecycle)
+- [x] 7.4 — FetchTool auto-routing + Kernel svc:// integration
+- [x] 7.7 — Servers UI Panel (list, add, start/stop, logs)
+- [x] 7.8 — Scoping (global + per-workspace routes, workspace priority)
+- [x] 7.9 — Types (clawser-server.d.ts)
+- [x] 7.5 — Skills-as-Handlers (createSkillHandler + executeSkillHandler in ServerManager)
+- [x] 7.6 — SSE Streaming (createSSEResponse + createSSEResponseFromGenerator)
+- [x] 7.10 — WebSocket Emulation (SSE + POST bidirectional)
 
 ---
 

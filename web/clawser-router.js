@@ -12,6 +12,7 @@ export const PANELS = Object.freeze({
   skills:    { id: 'panelSkills',    btn: 'btnSkills',    label: 'Skills' },
   terminal:  { id: 'panelTerminal',  btn: 'btnTerminal',  label: 'Terminal' },
   dashboard: { id: 'panelDashboard', btn: 'btnDashboard', label: 'Dashboard' },
+  servers:   { id: 'panelServers',  btn: 'btnServers',  label: 'Servers' },
   toolMgmt:  { id: 'panelToolMgmt',  btn: 'btnToolMgmt',  label: 'Tool Mgmt' },
   agents:    { id: 'panelAgents',    btn: 'btnAgents',    label: 'Agents' },
   config:    { id: 'panelConfig',    btn: 'btnConfig',    label: 'Config' },

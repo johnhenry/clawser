@@ -58,6 +58,7 @@ export function createRoutine(opts = {}) {
       event: opts.trigger?.event || null,
       filter: opts.trigger?.filter || null,
       webhookPath: opts.trigger?.webhookPath || null,
+      hmacSecret: opts.trigger?.hmacSecret || null,
     },
     action: {
       type: opts.action?.type || ACTION_TYPES.PROMPT,
@@ -106,6 +107,38 @@ export function matchFilter(filter, payload) {
     }
   }
   return true;
+}
+
+// ── HMAC Verification ───────────────────────────────────────────
+
+/**
+ * Verify an HMAC-SHA256 signature.
+ * Supports both Web Crypto (browser) and Node.js crypto.
+ * @param {string} secret
+ * @param {string} body - Raw request body string
+ * @param {string} signature - e.g. "sha256=<hex>"
+ * @returns {Promise<boolean>}
+ */
+async function verifyHmac(secret, body, signature) {
+  const prefix = 'sha256=';
+  if (!signature.startsWith(prefix)) return false;
+  const provided = signature.slice(prefix.length);
+
+  // Prefer Node.js crypto (available in test env and server contexts)
+  try {
+    const { createHmac } = await import('node:crypto');
+    const expected = createHmac('sha256', secret).update(body).digest('hex');
+    return expected === provided;
+  } catch {
+    // Fallback: Web Crypto API (browser)
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      'raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
+    );
+    const sig = await crypto.subtle.sign('HMAC', key, enc.encode(body));
+    const expected = [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2, '0')).join('');
+    return expected === provided;
+  }
 }
 
 // ── RoutineEngine ───────────────────────────────────────────────
@@ -260,13 +293,25 @@ export class RoutineEngine {
    * Handle an incoming webhook. Checks all webhook-triggered routines.
    * @param {string} path
    * @param {object} [payload]
+   * @param {object} [opts] - { signature?: string, rawBody?: string }
    * @returns {Promise<object|null>}
    */
-  async handleWebhook(path, payload = {}) {
+  async handleWebhook(path, payload = {}, opts = {}) {
     for (const routine of this.#routines.values()) {
       if (!routine.enabled) continue;
       if (routine.trigger.type !== TRIGGER_TYPES.WEBHOOK) continue;
       if (routine.trigger.webhookPath !== path) continue;
+
+      // HMAC signature verification
+      if (routine.trigger.hmacSecret) {
+        if (!opts.signature || !opts.rawBody) {
+          return { routineId: routine.id, result: 'signature_invalid' };
+        }
+        const valid = await verifyHmac(routine.trigger.hmacSecret, opts.rawBody, opts.signature);
+        if (!valid) {
+          return { routineId: routine.id, result: 'signature_invalid' };
+        }
+      }
 
       const result = await this.#enqueue(routine, { type: 'webhook.received', payload });
       return { routineId: routine.id, result };
@@ -433,6 +478,54 @@ export class RoutineEngine {
     }
   }
 
+  // ── Event Bus Integration ────────────────────────────────
+
+  /** @type {EventTarget|null} */
+  #eventBus = null;
+
+  /** @type {Function|null} bound handler for removeEventListener */
+  #eventBusHandler = null;
+
+  /** @type {Set<string>} event types we're subscribed to */
+  #subscribedEvents = new Set();
+
+  /**
+   * Connect to an EventTarget-based event bus.
+   * Subscribes to all event types used by EVENT-triggered routines.
+   * @param {EventTarget} bus
+   */
+  connectEventBus(bus) {
+    this.disconnectEventBus(); // clear previous
+    this.#eventBus = bus;
+    this.#eventBusHandler = (e) => {
+      this.handleEvent(e.type, e.detail || {});
+    };
+
+    // Subscribe to all event types from current routines
+    for (const routine of this.#routines.values()) {
+      if (routine.trigger.type === TRIGGER_TYPES.EVENT && routine.trigger.event) {
+        if (!this.#subscribedEvents.has(routine.trigger.event)) {
+          this.#subscribedEvents.add(routine.trigger.event);
+          bus.addEventListener(routine.trigger.event, this.#eventBusHandler);
+        }
+      }
+    }
+  }
+
+  /**
+   * Disconnect from the event bus.
+   */
+  disconnectEventBus() {
+    if (this.#eventBus && this.#eventBusHandler) {
+      for (const eventType of this.#subscribedEvents) {
+        this.#eventBus.removeEventListener(eventType, this.#eventBusHandler);
+      }
+    }
+    this.#eventBus = null;
+    this.#eventBusHandler = null;
+    this.#subscribedEvents.clear();
+  }
+
   /**
    * Serialize all routines for persistence.
    * @returns {object[]}
@@ -563,6 +656,52 @@ export class RoutineDeleteTool extends BrowserTool {
       return { success: true, output: `Removed routine: ${id}` };
     }
     return { success: false, output: '', error: `Routine not found: ${id}` };
+  }
+}
+
+export class RoutineHistoryTool extends BrowserTool {
+  #engine;
+
+  constructor(engine) {
+    super();
+    this.#engine = engine;
+  }
+
+  get name() { return 'routine_history'; }
+  get description() { return 'Get execution history for a routine.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Routine ID' },
+        limit: { type: 'number', description: 'Max entries to return (default 20)' },
+      },
+      required: ['id'],
+    };
+  }
+  get permission() { return 'read'; }
+
+  async execute({ id, limit }) {
+    const routine = this.#engine.getRoutine(id);
+    if (!routine) {
+      return { success: false, output: '', error: `Routine not found: ${id}` };
+    }
+
+    const max = limit || 20;
+    const entries = routine.state.history.slice(-max);
+    if (entries.length === 0) {
+      return { success: true, output: `${routine.name}: No execution history.` };
+    }
+
+    const lines = entries.map((e, i) => {
+      const ts = new Date(e.timestamp).toISOString();
+      const err = e.error ? ` — ${e.error}` : '';
+      return `${i + 1}. [${ts}] ${e.result} (${e.trigger})${err}`;
+    });
+    return {
+      success: true,
+      output: `${routine.name} — ${entries.length} entries:\n${lines.join('\n')}`,
+    };
   }
 }
 

@@ -321,6 +321,47 @@ export class ToolBuilder {
   }
 
   /**
+   * Persist all dynamic tools via a storage adapter.
+   * @param {{ write: (key: string, data: string) => Promise<void> }} storage
+   * @returns {Promise<void>}
+   */
+  async persist(storage) {
+    const data = this.exportAll();
+    await storage.write('clawser_dynamic_tools', JSON.stringify(data));
+  }
+
+  /**
+   * Restore dynamic tools from a storage adapter.
+   * @param {{ read: (key: string) => Promise<string|null> }} storage
+   * @returns {Promise<number>} Number of tools restored
+   */
+  async restore(storage) {
+    const raw = await storage.read('clawser_dynamic_tools');
+    if (!raw) return 0;
+    try {
+      const data = JSON.parse(raw);
+      return this.importAll(data);
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * Promote a dynamic tool to trusted status.
+   * @param {string} name
+   * @returns {{ success: boolean, error?: string }}
+   */
+  promoteTool(name) {
+    if (!this.#registry) return { success: false, error: 'No registry' };
+    const tool = this.#registry.get(name);
+    if (!(tool instanceof DynamicTool)) {
+      return { success: false, error: `Dynamic tool "${name}" not found` };
+    }
+    tool.trusted = true;
+    return { success: true };
+  }
+
+  /**
    * Serialize all dynamic tools for persistence.
    * @returns {object[]}
    */
@@ -536,6 +577,39 @@ export class ToolRemoveTool extends BrowserTool {
     const result = this.#builder.removeTool(name);
     if (result.success) {
       return { success: true, output: `Tool "${name}" removed.` };
+    }
+    return { success: false, output: '', error: result.error };
+  }
+}
+
+/**
+ * Agent tool for promoting a dynamic tool to trusted.
+ */
+export class ToolPromoteTool extends BrowserTool {
+  #builder;
+
+  constructor(builder) {
+    super();
+    this.#builder = builder;
+  }
+
+  get name() { return 'tool_promote'; }
+  get description() { return 'Mark a dynamic tool as trusted after user review.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Tool name to promote to trusted' },
+      },
+      required: ['name'],
+    };
+  }
+  get permission() { return 'approve'; }
+
+  async execute({ name }) {
+    const result = this.#builder.promoteTool(name);
+    if (result.success) {
+      return { success: true, output: `Tool "${name}" promoted to trusted.` };
     }
     return { success: false, output: '', error: result.error };
   }

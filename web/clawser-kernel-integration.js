@@ -307,6 +307,44 @@ export class KernelIntegration {
 
   // ── Lifecycle ──────────────────────────────────────────────────
 
+  // ── Phase 7: Virtual server as kernel service ──────────────────
+
+  #serverServices = new Map(); // routeId → service name
+
+  /**
+   * Register a virtual server route as a kernel service.
+   * Service name: http-{hostname}-{port}
+   *
+   * @param {{ id: string, hostname: string, port: number }} route
+   */
+  registerServerService(route) {
+    if (!this.#kernel) return;
+    const svcName = `http-${route.hostname}-${route.port}`;
+    try {
+      this.#kernel.services.register(svcName, { routeId: route.id }, {
+        metadata: { type: 'http-server', hostname: route.hostname, port: route.port },
+      });
+      this.#serverServices.set(route.id, svcName);
+      this.#kernel.log.info('kernel-integration', `Server service registered: svc://${svcName}`);
+    } catch {
+      // Already registered — ignore
+    }
+  }
+
+  /**
+   * Unregister a virtual server route from the kernel service registry.
+   *
+   * @param {string} routeId
+   */
+  unregisterServerService(routeId) {
+    if (!this.#kernel) return;
+    const svcName = this.#serverServices.get(routeId);
+    if (svcName) {
+      try { this.#kernel.services.unregister(svcName); } catch {}
+      this.#serverServices.delete(routeId);
+    }
+  }
+
   /**
    * Clean up all integration state.
    */
@@ -326,5 +364,13 @@ export class KernelIntegration {
       }
     }
     this.#mcpServices.clear();
+
+    // Unregister all server services
+    for (const [routeId, svcName] of this.#serverServices) {
+      if (this.#kernel) {
+        try { this.#kernel.services.unregister(svcName); } catch {}
+      }
+    }
+    this.#serverServices.clear();
   }
 }

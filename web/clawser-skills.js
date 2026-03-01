@@ -184,13 +184,14 @@ export class SkillParser {
   }
 
   /**
-   * Split a string by commas, but respect quoted substrings.
-   * "foo, \"bar, baz\", qux" → ["foo", "\"bar, baz\"", "qux"]
+   * Split a string by commas, respecting quoted substrings and brace-delimited blocks.
+   * "foo, \"bar, baz\", {a: 1, b: 2}" → ["foo", "\"bar, baz\"", "{a: 1, b: 2}"]
    */
   static #splitRespectingQuotes(str) {
     const parts = [];
     let current = '';
     let inQuote = null; // null, '"', or "'"
+    let braceDepth = 0;
     let escaped = false;
     for (let i = 0; i < str.length; i++) {
       const ch = str[i];
@@ -206,7 +207,13 @@ export class SkillParser {
       } else if (ch === '"' || ch === "'") {
         inQuote = ch;
         current += ch;
-      } else if (ch === ',') {
+      } else if (ch === '{') {
+        braceDepth++;
+        current += ch;
+      } else if (ch === '}') {
+        braceDepth = Math.max(0, braceDepth - 1);
+        current += ch;
+      } else if (ch === ',' && braceDepth === 0) {
         parts.push(current);
         current = '';
       } else {
@@ -265,6 +272,55 @@ export class SkillParser {
     }
 
     return { safe: warnings.length === 0, warnings };
+  }
+
+  /** Valid hook points for skill hook registration. */
+  static VALID_HOOK_POINTS = [
+    'beforeInbound', 'beforeOutbound', 'transformResponse',
+    'onSessionStart', 'onSessionEnd', 'onError',
+  ];
+
+  /**
+   * Validate and normalize hook entries from skill frontmatter.
+   * @param {Array<{point: string, handler: string, priority?: number, enabled?: boolean}>} hooks
+   * @returns {{ valid: boolean, errors: string[], normalized: object[] }}
+   */
+  static validateHooks(hooks) {
+    if (!hooks || !Array.isArray(hooks)) {
+      return { valid: true, errors: [], normalized: [] };
+    }
+
+    const errors = [];
+    const normalized = [];
+
+    for (let i = 0; i < hooks.length; i++) {
+      const hook = hooks[i];
+      const prefix = `Hook[${i}]`;
+
+      if (!hook.point || typeof hook.point !== 'string') {
+        errors.push(`${prefix}: missing or invalid "point" field`);
+        continue;
+      }
+
+      if (!SkillParser.VALID_HOOK_POINTS.includes(hook.point)) {
+        errors.push(`${prefix}: invalid hook point "${hook.point}". Valid: ${SkillParser.VALID_HOOK_POINTS.join(', ')}`);
+        continue;
+      }
+
+      if (!hook.handler || typeof hook.handler !== 'string') {
+        errors.push(`${prefix}: missing or invalid "handler" field`);
+        continue;
+      }
+
+      normalized.push({
+        point: hook.point,
+        handler: hook.handler,
+        priority: typeof hook.priority === 'number' ? hook.priority : 10,
+        enabled: hook.enabled !== false,
+      });
+    }
+
+    return { valid: errors.length === 0, errors, normalized };
   }
 
   /**
@@ -992,6 +1048,71 @@ export class SkillRegistry {
       return parent.getDirectoryHandle(dirName);
     }
   }
+
+  // ── Skills → CLI Registration ───────────────────────────────────
+
+  /** @type {Set<string>} Names of commands registered by skills */
+  #registeredCommands = new Set();
+
+  /**
+   * Register enabled skills as shell CLI commands in a CommandRegistry.
+   * Uses skill metadata.commands if specified, otherwise uses the skill name.
+   * @param {object} cmdRegistry - CommandRegistry with register(name, handler, meta)
+   */
+  registerCLI(cmdRegistry) {
+    if (!cmdRegistry) return;
+
+    for (const [name, skill] of this.#skills) {
+      if (!skill.enabled) continue;
+
+      const commandNames = skill.metadata?.commands && Array.isArray(skill.metadata.commands)
+        ? skill.metadata.commands
+        : [name];
+
+      for (const cmdName of commandNames) {
+        if (cmdRegistry.has(cmdName)) continue; // Don't override built-in commands
+
+        const handler = async ({ args, stdin, state }) => {
+          // Invoke the skill through the activation system
+          const active = this.#activeSkills.get(name);
+          if (active?.scriptTool) {
+            const result = await active.scriptTool.execute({ input: args.join(' '), stdin });
+            return {
+              stdout: result.output || '',
+              stderr: result.error || '',
+              exitCode: result.success ? 0 : 1,
+            };
+          }
+          // Skill not activated — return its description
+          return {
+            stdout: `Skill '${name}': ${skill.description || 'No description'}. Activate it first.`,
+            stderr: '',
+            exitCode: 0,
+          };
+        };
+
+        cmdRegistry.register(cmdName, handler, {
+          description: skill.description || `Skill: ${name}`,
+          category: 'skills',
+          usage: `${cmdName} [args...]`,
+        });
+        this.#registeredCommands.add(cmdName);
+      }
+    }
+  }
+
+  /**
+   * Unregister all skill-added CLI commands from a CommandRegistry.
+   * @param {object} cmdRegistry - CommandRegistry with unregister(name) method
+   */
+  unregisterCLI(cmdRegistry) {
+    if (!cmdRegistry || typeof cmdRegistry.unregister !== 'function') return;
+
+    for (const cmdName of this.#registeredCommands) {
+      cmdRegistry.unregister(cmdName);
+    }
+    this.#registeredCommands.clear();
+  }
 }
 
 // ── SkillScriptTool ──────────────────────────────────────────────
@@ -1224,6 +1345,67 @@ export function validateRequirements(metadata, context = {}) {
   return {
     satisfied: missingTools.length === 0 && missingPerms.length === 0,
     missing: { tools: missingTools, permissions: missingPerms },
+  };
+}
+
+// ── Skill Verification ──────────────────────────────────────
+
+/**
+ * Compute a hash of skill content for integrity verification.
+ * Uses FNV-1a hash (no Web Crypto needed, synchronous).
+ * @param {string} content - Skill file content
+ * @returns {string} Hex hash string
+ */
+export function computeSkillHash(content) {
+  let hash = 0x811c9dc5; // FNV offset basis
+  for (let i = 0; i < content.length; i++) {
+    hash ^= content.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193); // FNV prime
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+/**
+ * Verify skill content matches an expected hash.
+ * @param {string} content - Skill content
+ * @param {string} expectedHash - Expected hex hash
+ * @returns {boolean}
+ */
+export function verifySkillIntegrity(content, expectedHash) {
+  return computeSkillHash(content) === expectedHash;
+}
+
+// ── Dependency Resolution ───────────────────────────────────
+
+/**
+ * Resolve skill dependencies against available skills and tools.
+ * @param {object} metadata - Skill metadata with optional `requires` field
+ * @param {object} available - Available resources
+ * @param {string[]} [available.skills] - Available skill names
+ * @param {string[]} [available.tools] - Available tool names
+ * @returns {{ resolved: boolean, missing: string[] }}
+ */
+export function resolveDependencies(metadata, available = {}) {
+  const requires = metadata.requires || {};
+  const missing = [];
+
+  if (Array.isArray(requires.skills)) {
+    const avail = new Set(available.skills || []);
+    for (const skill of requires.skills) {
+      if (!avail.has(skill)) missing.push(skill);
+    }
+  }
+
+  if (Array.isArray(requires.tools)) {
+    const avail = new Set(available.tools || []);
+    for (const tool of requires.tools) {
+      if (!avail.has(tool)) missing.push(tool);
+    }
+  }
+
+  return {
+    resolved: missing.length === 0,
+    missing,
   };
 }
 

@@ -1333,3 +1333,162 @@ export function registerExtendedBuiltins(registry) {
   registry.register('test', testHandler, { description: 'Evaluate conditional expression', category: 'Process', usage: 'test EXPRESSION' });
   registry.register('[', testHandler, { description: 'Evaluate conditional expression (bracket form)', category: 'Process', usage: '[ EXPRESSION ]' });
 }
+
+// ── Mount Built-ins ─────────────────────────────────────────────
+
+/**
+ * Register mount-related shell commands: mount, umount, df.
+ * @param {object} registry - CommandRegistry with register(name, handler, meta)
+ * @param {object} [ctx]
+ * @param {import('./clawser-mount.js').MountableFs} [ctx.mountableFs]
+ */
+export function registerMountBuiltins(registry, ctx = {}) {
+  const mfs = ctx.mountableFs;
+
+  // ── mount ──────────────────────────────────────────────────────
+
+  registry.register('mount', async (args) => {
+    if (!mfs) {
+      return { stdout: '', stderr: 'mount: no mountable filesystem available', exitCode: 1 };
+    }
+
+    // mount -l → list mounts
+    if (args.length === 0 || args.includes('-l')) {
+      const table = mfs.mountTable;
+      if (table.length === 0) {
+        return { stdout: 'No mounts active. Use the Mount button to mount a directory.', stderr: '', exitCode: 0 };
+      }
+      const lines = table.map(m =>
+        `${m.path} on ${m.name} type ${m.kind} (${m.readOnly ? 'ro' : 'rw'})`
+      );
+      return { stdout: lines.join('\n'), stderr: '', exitCode: 0 };
+    }
+
+    // mount <path> requires interactive directory picker — can't be done in shell
+    return { stdout: '', stderr: 'mount: interactive mounting requires the UI Mount button', exitCode: 1 };
+  }, { description: 'List or manage mounts', category: 'Filesystem', usage: 'mount [-l]' });
+
+  // ── umount ─────────────────────────────────────────────────────
+
+  registry.register('umount', async (args) => {
+    if (!mfs) {
+      return { stdout: '', stderr: 'umount: no mountable filesystem available', exitCode: 1 };
+    }
+    if (args.length === 0) {
+      return { stdout: '', stderr: 'umount: missing mount point', exitCode: 1 };
+    }
+    const target = args[0];
+    if (!mfs.isMounted(target)) {
+      return { stdout: '', stderr: `umount: ${target}: not mounted`, exitCode: 1 };
+    }
+    mfs.unmount(target);
+    return { stdout: `Unmounted ${target}`, stderr: '', exitCode: 0 };
+  }, { description: 'Unmount a filesystem', category: 'Filesystem', usage: 'umount MOUNT_POINT' });
+
+  // ── df ─────────────────────────────────────────────────────────
+
+  registry.register('df', async (args) => {
+    const lines = ['Filesystem      Type     Access   Mounted on'];
+    lines.push('OPFS            opfs     rw       /');
+
+    if (mfs) {
+      const table = mfs.mountTable;
+      for (const m of table) {
+        const fsName = m.name.padEnd(15);
+        const kind = m.kind.padEnd(8);
+        const access = (m.readOnly ? 'ro' : 'rw').padEnd(8);
+        lines.push(`${fsName} ${kind} ${access} ${m.path}`);
+      }
+    }
+
+    return { stdout: lines.join('\n'), stderr: '', exitCode: 0 };
+  }, { description: 'Report filesystem disk space usage', category: 'Filesystem', usage: 'df' });
+}
+
+// ── jq builtin ──────────────────────────────────────────────────
+
+/**
+ * Minimal jq implementation (JS subset).
+ * Supports: ., .key, .key.subkey, .[], keys, values, length, type
+ */
+function jqEval(data, expr) {
+  expr = expr.trim();
+  if (!expr || expr === '.') return [data];
+
+  // Built-in functions
+  if (expr === 'keys') {
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      return [Object.keys(data).sort()];
+    }
+    if (Array.isArray(data)) return [data.map((_, i) => i)];
+    return [[]];
+  }
+  if (expr === 'values') {
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      return [Object.values(data)];
+    }
+    if (Array.isArray(data)) return [data];
+    return [[]];
+  }
+  if (expr === 'length') {
+    if (typeof data === 'string') return [data.length];
+    if (Array.isArray(data)) return [data.length];
+    if (data && typeof data === 'object') return [Object.keys(data).length];
+    return [0];
+  }
+  if (expr === 'type') {
+    if (data === null) return ['"null"'];
+    if (Array.isArray(data)) return ['"array"'];
+    return ['"' + typeof data + '"'];
+  }
+
+  // .[] — iterate array or object values
+  if (expr === '.[]') {
+    if (Array.isArray(data)) return data;
+    if (data && typeof data === 'object') return Object.values(data);
+    return [];
+  }
+
+  // .key or .key.subkey — field access
+  if (expr.startsWith('.')) {
+    const path = expr.slice(1).split('.').filter(Boolean);
+    let current = data;
+    for (const key of path) {
+      if (current == null || typeof current !== 'object') return [null];
+      current = current[key];
+    }
+    return [current];
+  }
+
+  // Fallback: return data unchanged
+  return [data];
+}
+
+function jqFormat(value) {
+  if (typeof value === 'string') return JSON.stringify(value);
+  if (value === null || value === undefined) return 'null';
+  if (typeof value === 'object') return JSON.stringify(value, null, 2);
+  return String(value);
+}
+
+/**
+ * Register the jq shell builtin command.
+ * @param {import('../clawser-shell.js').CommandRegistry} registry
+ */
+export function registerJqBuiltin(registry) {
+  registry.register('jq', async ({ args, stdin }) => {
+    const expr = args[0] || '.';
+    const input = stdin || '';
+    if (!input.trim()) {
+      return { stdout: '', stderr: 'jq: no input', exitCode: 1 };
+    }
+    try {
+      const data = JSON.parse(input);
+      const results = jqEval(data, expr);
+      const output = results.map(jqFormat).join('\n');
+      return { stdout: output, stderr: '', exitCode: 0 };
+    } catch (e) {
+      return { stdout: '', stderr: `jq: ${e.message}`, exitCode: 1 };
+    }
+  }, { description: 'Lightweight jq (JSON processor)', category: 'Data', usage: 'jq <expression>' });
+}

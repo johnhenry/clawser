@@ -302,6 +302,15 @@ export class SelfRepairEngine {
   clearLog() { this.#repairLog = []; }
 
   /**
+   * Check if a handler is registered for a given action.
+   * @param {string} action
+   * @returns {boolean}
+   */
+  hasHandler(action) {
+    return !!this.#handlers[action];
+  }
+
+  /**
    * Register a handler for a recovery action.
    * @param {string} action
    * @param {Function} handler - async (strategy, issue, jobState) => boolean

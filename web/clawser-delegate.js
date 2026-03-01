@@ -29,6 +29,9 @@ export class SubAgent {
   #result = null;
   #iterations = 0;
   #toolCallCount = 0;
+  #usage = { input_tokens: 0, output_tokens: 0 };
+  #model = '';
+  #parentMemory = Object.freeze([]);
 
   /** @type {Function} Provider chat function: (messages, tools, opts) => response */
   #chatFn;
@@ -53,6 +56,7 @@ export class SubAgent {
    * @param {number} [opts.depth=0] - Current delegation depth
    * @param {string} [opts.systemPrompt=''] - Base system prompt from parent
    * @param {Function} [opts.onEvent] - Event callback
+   * @param {object[]} [opts.parentMemory] - Read-only parent memory entries
    */
   constructor(opts) {
     this.#id = crypto.randomUUID();
@@ -62,6 +66,11 @@ export class SubAgent {
     this.#maxIterations = opts.maxIterations || DEFAULT_MAX_ITERATIONS;
     this.#depth = opts.depth || 0;
     this.#onEvent = opts.onEvent || null;
+
+    // Parent memory: frozen read-only copy
+    this.#parentMemory = opts.parentMemory
+      ? Object.freeze([...opts.parentMemory])
+      : Object.freeze([]);
 
     // Filter tools by allowlist if provided
     if (opts.allowedTools && opts.allowedTools.length > 0) {
@@ -77,12 +86,17 @@ export class SubAgent {
     }
 
     // Build initial history
+    const memorySection = this.#parentMemory.length > 0
+      ? '\n\nParent context:\n' + this.#parentMemory.map(m => `- ${m.key}: ${m.content}`).join('\n')
+      : '';
+
     const sysPrompt = [
       opts.systemPrompt || '',
       '\nYou are working on a delegated sub-task.',
       `Task: ${this.#goal}`,
       'Complete this task and provide a clear summary of your findings.',
       `You have up to ${this.#maxIterations} tool iterations.`,
+      memorySection,
     ].join('\n').trim();
 
     this.#history.push({ role: 'system', content: sysPrompt });
@@ -97,6 +111,9 @@ export class SubAgent {
   get toolCallCount() { return this.#toolCallCount; }
   get result() { return this.#result; }
   get allowedTools() { return [...this.#allowedTools]; }
+  get usage() { return { ...this.#usage }; }
+  get model() { return this.#model; }
+  get parentMemory() { return this.#parentMemory; }
 
   /**
    * Run the sub-agent loop to completion.
@@ -131,6 +148,13 @@ export class SubAgent {
           {}
         );
 
+        // Track token usage
+        if (response.usage) {
+          this.#usage.input_tokens += response.usage.input_tokens || 0;
+          this.#usage.output_tokens += response.usage.output_tokens || 0;
+        }
+        if (response.model) this.#model = response.model;
+
         this.#history.push({
           role: 'assistant',
           content: response.content || '',
@@ -145,6 +169,7 @@ export class SubAgent {
             summary: response.content || '',
             iterations: i + 1,
             toolCalls: this.#toolCallCount,
+            cost: this.#estimateCost(),
           };
           this.#emit('delegate_complete', this.#result);
           return this.#result;
@@ -184,6 +209,7 @@ export class SubAgent {
           summary: `Sub-agent error: ${e.message}`,
           iterations: i + 1,
           toolCalls: this.#toolCallCount,
+          cost: this.#estimateCost(),
         };
         this.#emit('delegate_error', { error: e.message });
         return this.#result;
@@ -198,9 +224,135 @@ export class SubAgent {
       summary: lastContent || 'Sub-task reached iteration limit without completing.',
       iterations: this.#maxIterations,
       toolCalls: this.#toolCallCount,
+      cost: this.#estimateCost(),
     };
     this.#emit('delegate_timeout', this.#result);
     return this.#result;
+  }
+
+  /**
+   * Run the sub-agent loop as an async generator, yielding progress events.
+   * @yields {{ type: 'text'|'tool_start'|'tool_result'|'done', ... }}
+   */
+  async *runStream() {
+    if (this.#depth >= MAX_DELEGATION_DEPTH) {
+      this.#status = 'failed';
+      this.#result = {
+        success: false,
+        summary: 'Maximum delegation depth reached.',
+        iterations: 0,
+        toolCalls: 0,
+      };
+      yield { type: 'done', success: false, summary: this.#result.summary };
+      return;
+    }
+
+    this.#status = 'running';
+    this.#emit('delegate_start', { goal: this.#goal, depth: this.#depth });
+
+    for (let i = 0; i < this.#maxIterations; i++) {
+      if (this.#status === 'cancelled') {
+        yield { type: 'done', success: false, summary: 'Cancelled.' };
+        return;
+      }
+      this.#iterations = i + 1;
+
+      try {
+        const response = await this.#chatFn(
+          this.#history,
+          this.#toolSpecs,
+          {}
+        );
+
+        if (response.usage) {
+          this.#usage.input_tokens += response.usage.input_tokens || 0;
+          this.#usage.output_tokens += response.usage.output_tokens || 0;
+        }
+        if (response.model) this.#model = response.model;
+
+        this.#history.push({
+          role: 'assistant',
+          content: response.content || '',
+          tool_calls: response.tool_calls,
+        });
+
+        // Yield text content
+        if (response.content) {
+          yield { type: 'text', content: response.content, iteration: i + 1 };
+        }
+
+        // If no tool calls, task is done
+        if (!response.tool_calls || response.tool_calls.length === 0) {
+          this.#status = 'completed';
+          this.#result = {
+            success: true,
+            summary: response.content || '',
+            iterations: i + 1,
+            toolCalls: this.#toolCallCount,
+            cost: this.#estimateCost(),
+          };
+          this.#emit('delegate_complete', this.#result);
+          yield { type: 'done', success: true, summary: this.#result.summary, iterations: i + 1 };
+          return;
+        }
+
+        // Execute tool calls with streaming events
+        for (const call of response.tool_calls) {
+          const name = call.name || '';
+          const args = typeof call.arguments === 'string'
+            ? JSON.parse(call.arguments)
+            : (call.arguments || {});
+
+          if (!this.#allowedTools.includes(name)) {
+            this.#history.push({
+              role: 'tool',
+              tool_call_id: call.id || '',
+              content: `Error: Tool "${name}" not available in this sub-agent context.`,
+            });
+            continue;
+          }
+
+          yield { type: 'tool_start', name, args, iteration: i + 1 };
+
+          this.#toolCallCount++;
+          const toolResult = await this.#executeFn(name, args);
+          this.#history.push({
+            role: 'tool',
+            tool_call_id: call.id || '',
+            content: toolResult.success
+              ? toolResult.output
+              : `Error: ${toolResult.error || 'Unknown error'}`,
+          });
+
+          yield { type: 'tool_result', name, success: toolResult.success, iteration: i + 1 };
+        }
+      } catch (e) {
+        this.#status = 'failed';
+        this.#result = {
+          success: false,
+          summary: `Sub-agent error: ${e.message}`,
+          iterations: i + 1,
+          toolCalls: this.#toolCallCount,
+          cost: this.#estimateCost(),
+        };
+        this.#emit('delegate_error', { error: e.message });
+        yield { type: 'done', success: false, summary: this.#result.summary };
+        return;
+      }
+    }
+
+    // Hit iteration limit
+    this.#status = 'failed';
+    const lastContent = this.#history.filter(m => m.role === 'assistant').pop()?.content || '';
+    this.#result = {
+      success: false,
+      summary: lastContent || 'Sub-task reached iteration limit without completing.',
+      iterations: this.#maxIterations,
+      toolCalls: this.#toolCallCount,
+      cost: this.#estimateCost(),
+    };
+    this.#emit('delegate_timeout', this.#result);
+    yield { type: 'done', success: false, summary: this.#result.summary };
   }
 
   /**
@@ -209,6 +361,22 @@ export class SubAgent {
   cancel() {
     this.#status = 'cancelled';
     this.#emit('delegate_cancel', { goal: this.#goal });
+  }
+
+  /**
+   * Estimate cost based on accumulated token usage.
+   * Uses a simple per-1K-token pricing model.
+   */
+  #estimateCost() {
+    try {
+      // Try to use the estimateCost from providers module if available
+      const { input_tokens, output_tokens } = this.#usage;
+      if (!input_tokens && !output_tokens) return 0;
+      // Approximate fallback: $0.002/1K input, $0.008/1K output (GPT-4o-like)
+      return ((input_tokens / 1000) * 0.002) + ((output_tokens / 1000) * 0.008);
+    } catch {
+      return 0;
+    }
   }
 
   #emit(type, data) {
@@ -326,6 +494,18 @@ export class DelegateManager {
     }));
   }
 
+  /**
+   * Cancel a running sub-agent.
+   * @param {string} id
+   * @returns {boolean} True if agent was found and cancelled
+   */
+  cancel(id) {
+    const agent = this.#agents.get(id);
+    if (!agent) return false;
+    agent.cancel();
+    return true;
+  }
+
   /** Currently running sub-agents */
   get running() { return this.#running; }
 
@@ -416,9 +596,97 @@ export class DelegateTool extends BrowserTool {
           `Status: ${result.success ? 'completed' : 'incomplete'}`,
           `Iterations: ${result.iterations}`,
           `Tool calls: ${result.toolCalls}`,
+          `Cost: $${(result.cost || 0).toFixed(6)}`,
           '---',
           result.summary,
         ].join('\n'),
+      };
+    } catch (e) {
+      return { success: false, output: '', error: e.message };
+    }
+  }
+}
+
+// ── Consult Tool ────────────────────────────────────────────────
+
+/**
+ * Read-only sub-agent for consultation without delegation.
+ * Uses only read-permission tools and returns advice/analysis.
+ * Auto-permission: safe because it only reads, never writes.
+ */
+export class ConsultAgentTool extends BrowserTool {
+  #manager;
+  #chatFn;
+  #executeFn;
+  #toolSpecs;
+  #systemPrompt;
+
+  /**
+   * @param {object} opts
+   * @param {DelegateManager} opts.manager
+   * @param {Function} opts.chatFn
+   * @param {Function} opts.executeFn
+   * @param {object[]} opts.toolSpecs
+   * @param {string} [opts.systemPrompt='']
+   */
+  constructor(opts) {
+    super();
+    this.#manager = opts.manager;
+    this.#chatFn = opts.chatFn;
+    this.#executeFn = opts.executeFn;
+    this.#toolSpecs = opts.toolSpecs;
+    this.#systemPrompt = opts.systemPrompt || '';
+  }
+
+  get name() { return 'agent_consult'; }
+  get description() {
+    return 'Consult a read-only sub-agent for advice or analysis without modifying state.';
+  }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        question: { type: 'string', description: 'Question or topic to consult about' },
+        context: { type: 'string', description: 'Additional context (code, data) for the consultation' },
+      },
+      required: ['question'],
+    };
+  }
+  get permission() { return 'auto'; }
+
+  async execute({ question, context }) {
+    try {
+      const specs = typeof this.#toolSpecs === 'function' ? this.#toolSpecs() : this.#toolSpecs;
+      // Only allow read-only tools
+      const readOnlySpecs = specs.filter(
+        s => s.required_permission === 'read' || s.required_permission === 'internal'
+      );
+      const readOnlyNames = readOnlySpecs.map(s => s.name);
+
+      const goal = context
+        ? `${question}\n\nContext:\n${context}`
+        : question;
+
+      const sysPrompt = [
+        this.#systemPrompt,
+        '\nYou are a read-only consultant. Analyze and advise, but do not modify anything.',
+        'Provide clear, actionable advice.',
+      ].filter(Boolean).join('\n');
+
+      const result = await this.#manager.delegate({
+        goal,
+        chatFn: this.#chatFn,
+        executeFn: this.#executeFn,
+        toolSpecs: readOnlySpecs,
+        maxIterations: 5, // Consultations should be quick
+        allowedTools: readOnlyNames,
+        depth: 1,
+        systemPrompt: sysPrompt,
+      });
+
+      return {
+        success: result.success,
+        output: result.summary || 'No advice generated.',
       };
     } catch (e) {
       return { success: false, output: '', error: e.message };

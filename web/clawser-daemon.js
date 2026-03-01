@@ -590,3 +590,480 @@ export class DaemonCheckpointTool extends BrowserTool {
     return { success: true, output: `Checkpoint ${meta.id} created (${meta.size} bytes, reason: ${meta.reason})` };
   }
 }
+
+// ── Input Lock Manager ──────────────────────────────────────────
+
+/**
+ * Manages input arbitration locks for multi-tab coordination.
+ * Uses navigator.locks when available, falls back to in-memory tracking.
+ */
+export class InputLockManager {
+  #held = new Map(); // resource → { acquired: timestamp }
+
+  /**
+   * Try to acquire a lock on a resource.
+   * @param {string} resource - Resource name to lock
+   * @returns {Promise<{acquired: boolean}>}
+   */
+  async tryAcquire(resource) {
+    if (typeof navigator !== 'undefined' && navigator.locks) {
+      try {
+        let acquired = false;
+        await navigator.locks.request(resource, { ifAvailable: true }, (lock) => {
+          acquired = lock !== null;
+          if (acquired) {
+            this.#held.set(resource, { acquired: Date.now() });
+          }
+        });
+        return { acquired };
+      } catch {
+        // Fallback to in-memory
+      }
+    }
+    // In-memory fallback
+    if (this.#held.has(resource)) {
+      return { acquired: false };
+    }
+    this.#held.set(resource, { acquired: Date.now() });
+    return { acquired: true };
+  }
+
+  /**
+   * Release a lock on a resource.
+   * @param {string} resource
+   */
+  release(resource) {
+    this.#held.delete(resource);
+  }
+
+  /**
+   * Check if a resource is currently held.
+   * @param {string} resource
+   * @returns {boolean}
+   */
+  isHeld(resource) {
+    return this.#held.has(resource);
+  }
+}
+
+// ── Agent Busy Indicator ────────────────────────────────────────
+
+/**
+ * Broadcasts agent busy/idle state to other tabs via BroadcastChannel.
+ */
+export class AgentBusyIndicator {
+  #busy = false;
+  #reason = '';
+  #since = 0;
+  #channel;
+
+  /**
+   * @param {object} [opts]
+   * @param {object} [opts.channel] - BroadcastChannel-like (for testing)
+   * @param {string} [opts.channelName='clawser-agent-busy']
+   */
+  constructor(opts = {}) {
+    if (opts.channel) {
+      this.#channel = opts.channel;
+    } else if (typeof BroadcastChannel !== 'undefined') {
+      this.#channel = new BroadcastChannel(opts.channelName || 'clawser-agent-busy');
+    } else {
+      this.#channel = { postMessage: () => {}, close: () => {} };
+    }
+  }
+
+  /** @returns {boolean} */
+  get isBusy() { return this.#busy; }
+
+  /** @returns {string} */
+  get reason() { return this.#reason; }
+
+  /**
+   * Set busy state and broadcast to other tabs.
+   * @param {boolean} busy
+   * @param {string} [reason]
+   */
+  setBusy(busy, reason = '') {
+    this.#busy = busy;
+    this.#reason = busy ? reason : '';
+    this.#since = busy ? Date.now() : 0;
+    this.#channel.postMessage({
+      type: 'agent_busy',
+      busy: this.#busy,
+      reason: this.#reason,
+      since: this.#since,
+    });
+  }
+
+  /**
+   * Get current status.
+   * @returns {{ busy: boolean, reason: string, since: number }}
+   */
+  status() {
+    return {
+      busy: this.#busy,
+      reason: this.#reason,
+      since: this.#since,
+    };
+  }
+
+  /** Clean up channel. */
+  close() {
+    this.#channel.close();
+  }
+}
+
+// ── WorkerProtocol ──────────────────────────────────────────────
+
+/**
+ * Message protocol for Tab↔SharedWorker communication.
+ * Defines message types, encoding, decoding, and validation.
+ */
+
+const VALID_MESSAGE_TYPES = new Set([
+  'user_message',
+  'stream_chunk',
+  'state',
+  'shell_exec',
+  'tool_invoke',
+  'tool_result',
+  'error',
+  'heartbeat',
+]);
+
+export class WorkerProtocol {
+  /**
+   * Encode a message for transport.
+   * @param {string} type - Message type
+   * @param {object} payload - Message payload
+   * @returns {{ type: string, payload: object, id: string, timestamp: number }}
+   */
+  static encode(type, payload) {
+    return {
+      type,
+      payload: payload || {},
+      id: crypto.randomUUID(),
+      timestamp: Date.now(),
+    };
+  }
+
+  /**
+   * Decode a transport message.
+   * @param {object} msg - Raw message
+   * @returns {{ type: string, payload: object, id: string, timestamp: number }}
+   */
+  static decode(msg) {
+    return {
+      type: msg.type,
+      payload: msg.payload || {},
+      id: msg.id,
+      timestamp: msg.timestamp,
+    };
+  }
+
+  /**
+   * Validate a message structure.
+   * @param {*} msg - Message to validate
+   * @returns {boolean}
+   */
+  static isValid(msg) {
+    if (!msg || typeof msg !== 'object') return false;
+    if (!VALID_MESSAGE_TYPES.has(msg.type)) return false;
+    return true;
+  }
+}
+
+// ── CrossTabToolBridge ──────────────────────────────────────────
+
+/**
+ * Enables tools to be invoked across browser tabs via BroadcastChannel.
+ */
+export class CrossTabToolBridge {
+  #tools = new Map();
+  #channel;
+
+  /**
+   * @param {object} [opts]
+   * @param {object} [opts.channel] - BroadcastChannel-like (for testing)
+   * @param {string} [opts.channelName='clawser-cross-tab-tools']
+   */
+  constructor(opts = {}) {
+    if (opts.channel) {
+      this.#channel = opts.channel;
+    } else if (typeof BroadcastChannel !== 'undefined') {
+      this.#channel = new BroadcastChannel(opts.channelName || 'clawser-cross-tab-tools');
+    } else {
+      this.#channel = { postMessage: () => {}, close: () => {} };
+    }
+  }
+
+  /**
+   * Register a tool for cross-tab access.
+   * @param {string} name - Tool name
+   * @param {Function} executeFn - async (args) => ToolResult
+   */
+  registerTool(name, executeFn) {
+    this.#tools.set(name, executeFn);
+  }
+
+  /**
+   * Unregister a tool.
+   * @param {string} name
+   */
+  unregisterTool(name) {
+    this.#tools.delete(name);
+  }
+
+  /**
+   * List registered tool names.
+   * @returns {string[]}
+   */
+  listTools() {
+    return [...this.#tools.keys()];
+  }
+
+  /**
+   * Invoke a registered tool locally.
+   * @param {string} name - Tool name
+   * @param {object} args - Tool arguments
+   * @returns {Promise<{ success: boolean, output: string, error?: string }>}
+   */
+  async invoke(name, args) {
+    const fn = this.#tools.get(name);
+    if (!fn) {
+      return { success: false, output: '', error: `Tool "${name}" not found` };
+    }
+    try {
+      return await fn(args);
+    } catch (e) {
+      return { success: false, output: '', error: e.message };
+    }
+  }
+
+  /** Clean up channel. */
+  close() {
+    this.#channel.close();
+  }
+}
+
+// ── HeadlessRunner ──────────────────────────────────────────────
+
+/**
+ * Runs the agent in headless mode (Service Worker / background context).
+ * Manages checkpoint load → execute pending jobs → checkpoint save lifecycle.
+ */
+export class HeadlessRunner {
+  #readFn;
+  #writeFn;
+  #executeFn;
+
+  /**
+   * @param {object} opts
+   * @param {Function} opts.readFn - async (key) => data|null
+   * @param {Function} [opts.writeFn] - async (key, data) => void
+   * @param {Function} [opts.executeFn] - async (job) => { success: boolean }
+   */
+  constructor(opts = {}) {
+    this.#readFn = opts.readFn || (async () => null);
+    this.#writeFn = opts.writeFn || (async () => {});
+    this.#executeFn = opts.executeFn || (async () => ({ success: true }));
+  }
+
+  /**
+   * Load the latest checkpoint.
+   * @returns {Promise<object|null>}
+   */
+  async loadCheckpoint() {
+    try {
+      return await this.#readFn('checkpoint_latest');
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Run from the latest checkpoint: load state, process pending jobs, save.
+   * @returns {Promise<{ executed: number, results: Array }|null>}
+   */
+  async runFromCheckpoint() {
+    const state = await this.loadCheckpoint();
+    if (!state) return null;
+
+    const jobs = state.pendingJobs || [];
+    const results = [];
+
+    for (const job of jobs) {
+      const result = await this.#executeFn(job);
+      results.push({ jobId: job.id, ...result });
+    }
+
+    // Save updated checkpoint (clear pending jobs)
+    const updatedState = { ...state, pendingJobs: [], lastRun: Date.now() };
+    await this.#writeFn('checkpoint_latest', updatedState);
+
+    return { executed: results.length, results };
+  }
+}
+
+// ── AwaySummaryBuilder ──────────────────────────────────────────
+
+/**
+ * Builds a "While you were away" summary from activity events.
+ */
+export class AwaySummaryBuilder {
+  #events = [];
+
+  /**
+   * Add an activity event.
+   * @param {{ type: string, timestamp: number, [key: string]: any }} event
+   */
+  addEvent(event) {
+    this.#events.push({ ...event });
+  }
+
+  get eventCount() { return this.#events.length; }
+
+  /**
+   * Build a summary of activity.
+   * @param {object} [opts]
+   * @param {number} [opts.since] - Only include events after this timestamp
+   * @returns {{ events: Array, text: string }}
+   */
+  build(opts = {}) {
+    let events = [...this.#events];
+    if (opts.since) {
+      events = events.filter(e => e.timestamp >= opts.since);
+    }
+
+    if (events.length === 0) {
+      return { events: [], text: 'No activity while you were away.' };
+    }
+
+    const lines = [];
+    const byType = {};
+    for (const e of events) {
+      byType[e.type] = (byType[e.type] || 0) + 1;
+    }
+
+    for (const [type, count] of Object.entries(byType)) {
+      lines.push(`- ${type}: ${count} event${count > 1 ? 's' : ''}`);
+    }
+
+    const text = `While you were away (${events.length} events):\n${lines.join('\n')}`;
+    return { events, text };
+  }
+
+  /** Clear all events. */
+  clear() {
+    this.#events = [];
+  }
+}
+
+// ── NotificationCenter ──────────────────────────────────────────
+
+/**
+ * In-app notification center with unread tracking.
+ */
+export class NotificationCenter {
+  #notifications = [];
+  #nextId = 1;
+
+  /**
+   * Add a notification.
+   * @param {{ type: string, title: string, message: string }} opts
+   * @returns {number} Notification ID
+   */
+  add(opts) {
+    const id = this.#nextId++;
+    this.#notifications.push({
+      id,
+      type: opts.type || 'info',
+      title: opts.title,
+      message: opts.message,
+      read: false,
+      timestamp: Date.now(),
+    });
+    return id;
+  }
+
+  /**
+   * Mark a notification as read.
+   * @param {number} id
+   */
+  markRead(id) {
+    const n = this.#notifications.find(n => n.id === id);
+    if (n) n.read = true;
+  }
+
+  /** Mark all notifications as read. */
+  markAllRead() {
+    for (const n of this.#notifications) n.read = true;
+  }
+
+  /**
+   * List notifications (newest first).
+   * @param {object} [opts]
+   * @param {number} [opts.limit=50]
+   * @returns {Array}
+   */
+  list(opts = {}) {
+    const limit = opts.limit || 50;
+    return [...this.#notifications].reverse().slice(0, limit);
+  }
+
+  get count() { return this.#notifications.length; }
+  get unreadCount() { return this.#notifications.filter(n => !n.read).length; }
+
+  /** Remove a notification by ID. */
+  remove(id) {
+    const idx = this.#notifications.findIndex(n => n.id === id);
+    if (idx !== -1) this.#notifications.splice(idx, 1);
+  }
+
+  /** Clear all notifications. */
+  clear() {
+    this.#notifications = [];
+    this.#nextId = 1;
+  }
+}
+
+// ── NativeMessageCodec ──────────────────────────────────────────
+
+/**
+ * Chrome Native Messaging protocol codec.
+ * Messages are JSON with a 4-byte little-endian length prefix.
+ */
+export class NativeMessageCodec {
+  /**
+   * Encode a message with a 4-byte LE length prefix.
+   * @param {object} msg - JSON-serializable message
+   * @returns {Uint8Array}
+   */
+  static encode(msg) {
+    const json = JSON.stringify(msg);
+    const encoder = new TextEncoder();
+    const body = encoder.encode(json);
+    const result = new Uint8Array(4 + body.length);
+    // Write length as 4-byte little-endian
+    result[0] = body.length & 0xff;
+    result[1] = (body.length >> 8) & 0xff;
+    result[2] = (body.length >> 16) & 0xff;
+    result[3] = (body.length >> 24) & 0xff;
+    result.set(body, 4);
+    return result;
+  }
+
+  /**
+   * Decode a length-prefixed message.
+   * @param {Uint8Array} data
+   * @returns {object}
+   */
+  static decode(data) {
+    if (!data || data.length < 4) throw new Error('Invalid native message: too short');
+    const length = data[0] | (data[1] << 8) | (data[2] << 16) | (data[3] << 24);
+    if (data.length < 4 + length) throw new Error('Invalid native message: truncated');
+    const decoder = new TextDecoder();
+    const json = decoder.decode(data.slice(4, 4 + length));
+    return JSON.parse(json);
+  }
+}

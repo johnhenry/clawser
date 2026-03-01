@@ -1143,7 +1143,9 @@ function toggleShellCmdDetail(itemEl, cmdName, entries) {
 
 let agentPickerVisible = false;
 
+let _agentPickerInited = false;
 export function initAgentPicker() {
+  if (_agentPickerInited) return;
   const label = $('providerLabel');
   if (!label) return;
   let dropdown = $('agentPicker');
@@ -1156,6 +1158,7 @@ export function initAgentPicker() {
   label.style.cursor = 'pointer';
   label.addEventListener('click', (e) => { e.stopPropagation(); toggleAgentPicker(); });
   document.addEventListener('click', () => { if (agentPickerVisible) closeAgentPicker(); });
+  _agentPickerInited = true;
 }
 
 export function updateAgentLabel(agentDef) {

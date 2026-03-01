@@ -647,6 +647,83 @@ export class BrowserWaitTool extends BrowserTool {
   }
 }
 
+export class BrowserSelectTool extends BrowserTool {
+  #manager;
+
+  constructor(manager) {
+    super();
+    this.#manager = manager;
+  }
+
+  get name() { return 'browser_select'; }
+  get description() { return 'Select an option in a dropdown/select element.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string', description: 'Session ID' },
+        selector: { type: 'string', description: 'CSS selector for select element' },
+        value: { type: 'string', description: 'Option value or text to select' },
+      },
+      required: ['session_id', 'selector', 'value'],
+    };
+  }
+  get permission() { return 'approve'; }
+
+  async execute({ session_id, selector, value }) {
+    const session = this.#manager.getSession(session_id);
+    if (!session) return { success: false, output: '', error: 'Session not found' };
+
+    try {
+      const result = await session.execute('select', { selector, value });
+      return { success: true, output: `Selected "${value}" in ${selector}` };
+    } catch (e) {
+      return { success: false, output: '', error: e.message };
+    }
+  }
+}
+
+export class BrowserScrollTool extends BrowserTool {
+  #manager;
+
+  constructor(manager) {
+    super();
+    this.#manager = manager;
+  }
+
+  get name() { return 'browser_scroll'; }
+  get description() { return 'Scroll the page or a specific element.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string', description: 'Session ID' },
+        direction: { type: 'string', description: 'Scroll direction: up, down, left, right', enum: ['up', 'down', 'left', 'right'] },
+        amount: { type: 'number', description: 'Scroll amount in pixels (default 300)' },
+        selector: { type: 'string', description: 'CSS selector of element to scroll (default: page)' },
+      },
+      required: ['session_id'],
+    };
+  }
+  get permission() { return 'auto'; }
+
+  async execute({ session_id, direction, amount, selector }) {
+    const session = this.#manager.getSession(session_id);
+    if (!session) return { success: false, output: '', error: 'Session not found' };
+
+    try {
+      const result = await session.execute('scroll', {
+        direction: direction || 'down',
+        amount: amount || 300,
+        selector,
+      });
+      return { success: true, output: `Scrolled ${direction || 'down'}` };
+    } catch (e) {
+      return { success: false, output: '', error: e.message };
+    }
+  }
+}
+
 export class BrowserEvaluateTool extends BrowserTool {
   #manager;
 
@@ -732,5 +809,138 @@ export class BrowserCloseTabTool extends BrowserTool {
     const ok = this.#manager.close(session_id);
     if (ok) return { success: true, output: `Closed session ${session_id}` };
     return { success: false, output: '', error: 'Session not found' };
+  }
+}
+
+export class BrowserScreenshotTool extends BrowserTool {
+  #manager;
+
+  constructor(manager) {
+    super();
+    this.#manager = manager;
+  }
+
+  get name() { return 'browser_screenshot'; }
+  get description() { return 'Capture a screenshot of the current page for agent vision.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string', description: 'Session ID' },
+        format: { type: 'string', description: 'Image format: png or jpeg', enum: ['png', 'jpeg'] },
+        fullPage: { type: 'boolean', description: 'Capture full scrollable page' },
+      },
+      required: ['session_id'],
+    };
+  }
+  get permission() { return 'auto'; }
+
+  async execute({ session_id, format, fullPage }) {
+    const session = this.#manager.getSession(session_id);
+    if (!session) return { success: false, output: '', error: 'Session not found' };
+
+    try {
+      const result = await session.execute('screenshot', {
+        format: format || 'png',
+        fullPage: fullPage || false,
+      });
+      return { success: true, output: result?.dataUrl || 'Screenshot captured' };
+    } catch (e) {
+      return { success: false, output: '', error: e.message };
+    }
+  }
+}
+
+// ── Workflow Recorder ──────────────────────────────────────────
+
+/**
+ * Records multi-step browser automation workflows for replay.
+ */
+export class WorkflowRecorder {
+  #steps = [];
+
+  /** @returns {Array<{action: string, [key: string]: any, timestamp: number}>} */
+  get steps() { return [...this.#steps]; }
+
+  /**
+   * Record a workflow step.
+   * @param {{ action: string, [key: string]: any }} step
+   */
+  addStep(step) {
+    this.#steps.push({ ...step, timestamp: Date.now() });
+  }
+
+  /** Clear all recorded steps. */
+  clear() {
+    this.#steps = [];
+  }
+
+  /**
+   * Export the workflow as a serializable object.
+   * @param {string} name - Workflow name
+   * @returns {{ name: string, steps: Array, createdAt: number }}
+   */
+  export(name) {
+    return {
+      name,
+      steps: this.steps,
+      createdAt: Date.now(),
+    };
+  }
+
+  /**
+   * Export the recorded workflow as a SKILL.md file for the skills system.
+   * @param {string} name - Skill name
+   * @param {string} description - Skill description
+   * @param {object} [opts] - Additional options
+   * @param {string} [opts.version='1.0.0'] - Skill version
+   * @returns {string} SKILL.md content with YAML frontmatter
+   */
+  exportAsSkill(name, description, opts = {}) {
+    const version = opts.version || '1.0.0';
+
+    // Determine required browser tools from recorded actions
+    const actionToolMap = {
+      navigate: 'browser_navigate',
+      click: 'browser_click',
+      fill: 'browser_fill',
+      select: 'browser_select',
+      scroll: 'browser_scroll',
+      screenshot: 'browser_screenshot',
+    };
+    const usedTools = new Set();
+    for (const step of this.#steps) {
+      const tool = actionToolMap[step.action];
+      if (tool) usedTools.add(tool);
+      else usedTools.add(`browser_${step.action}`);
+    }
+
+    const toolsList = [...usedTools].map(t => `    - ${t}`).join('\n');
+
+    const frontmatter = [
+      '---',
+      `name: ${name}`,
+      `description: ${description}`,
+      `version: ${version}`,
+      'requires:',
+      '  tools:',
+      toolsList,
+      '---',
+    ].join('\n');
+
+    const stepsJson = JSON.stringify(this.steps, null, 2);
+    const body = [
+      `# ${name}`,
+      '',
+      description,
+      '',
+      '## Workflow Steps',
+      '',
+      '```json',
+      stepsJson,
+      '```',
+    ].join('\n');
+
+    return frontmatter + '\n\n' + body;
   }
 }

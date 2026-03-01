@@ -160,6 +160,22 @@ import {
 } from './clawser-browser-auto.js';
 
 import {
+  ExtensionRpcClient, getExtensionClient, destroyExtensionClient,
+  registerExtensionTools, createExtensionBridge,
+  ExtStatusTool, ExtCapabilitiesTool,
+  ExtTabsListTool, ExtTabOpenTool, ExtTabCloseTool, ExtTabActivateTool, ExtTabReloadTool,
+  ExtNavigateTool, ExtGoBackTool, ExtGoForwardTool,
+  ExtScreenshotTool, ExtResizeTool, ExtZoomTool,
+  ExtReadPageTool, ExtFindTool, ExtGetTextTool, ExtGetHtmlTool,
+  ExtClickTool, ExtDoubleClickTool, ExtTripleClickTool, ExtRightClickTool,
+  ExtHoverTool, ExtDragTool, ExtScrollTool, ExtTypeTool, ExtKeyTool,
+  ExtFormInputTool, ExtSelectOptionTool,
+  ExtConsoleTool, ExtNetworkTool,
+  ExtEvaluateTool, ExtWaitTool,
+  ExtCookiesTool, ExtWebmcpDiscoverTool,
+} from './clawser-extension-tools.js';
+
+import {
   SANDBOX_TIERS, CAPABILITIES, SANDBOX_LIMITS,
   CapabilityGate, WORKER_CODE,
   WorkerSandbox, WasmSandbox, SandboxManager,
@@ -11760,6 +11776,196 @@ section('CommandRegistry — allEntries Full');
   // Check categories are populated
   const withCategory = entries.filter(e => e.category);
   assert('allEntries: most have category', withCategory.length >= 59);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CHROME EXTENSION TOOLS (Block 6b/6c)
+// ═══════════════════════════════════════════════════════════════
+
+section('Extension Tools — Registration (34 tools)');
+
+{
+  const reg = new BrowserToolRegistry();
+  const mockRpc = new ExtensionRpcClient(); // not connected, but usable for registration
+  registerExtensionTools(reg, mockRpc);
+
+  const names = reg.names();
+  assertEq('registerExtensionTools registers 34 tools', names.length, 34);
+
+  // Verify all expected tool names
+  const expectedTools = [
+    'ext_status', 'ext_capabilities',
+    'ext_tabs_list', 'ext_tab_open', 'ext_tab_close', 'ext_tab_activate', 'ext_tab_reload',
+    'ext_navigate', 'ext_go_back', 'ext_go_forward',
+    'ext_screenshot', 'ext_resize', 'ext_zoom',
+    'ext_read_page', 'ext_find', 'ext_get_text', 'ext_get_html',
+    'ext_click', 'ext_double_click', 'ext_triple_click', 'ext_right_click',
+    'ext_hover', 'ext_drag', 'ext_scroll', 'ext_type', 'ext_key',
+    'ext_form_input', 'ext_select_option',
+    'ext_console', 'ext_network',
+    'ext_evaluate', 'ext_wait',
+    'ext_cookies',
+    'ext_webmcp_discover',
+  ];
+  for (const tn of expectedTools) {
+    assert(`tool registered: ${tn}`, reg.has(tn));
+  }
+}
+
+section('Extension Tools — Properties & Permissions');
+
+{
+  const reg = new BrowserToolRegistry();
+  const mockRpc = new ExtensionRpcClient();
+  registerExtensionTools(reg, mockRpc);
+
+  // Read-permission tools default to 'auto'
+  assertEq('ext_status permission → auto', reg.getPermission('ext_status'), 'auto');
+  assertEq('ext_capabilities permission → auto', reg.getPermission('ext_capabilities'), 'auto');
+  assertEq('ext_tabs_list permission → auto', reg.getPermission('ext_tabs_list'), 'auto');
+  assertEq('ext_console permission → auto', reg.getPermission('ext_console'), 'auto');
+  assertEq('ext_network permission → auto', reg.getPermission('ext_network'), 'auto');
+  assertEq('ext_cookies permission → auto', reg.getPermission('ext_cookies'), 'auto');
+
+  // Approve-permission tools default to 'approve'
+  assertEq('ext_tab_open permission → approve', reg.getPermission('ext_tab_open'), 'approve');
+  assertEq('ext_navigate permission → approve', reg.getPermission('ext_navigate'), 'approve');
+  assertEq('ext_click permission → approve', reg.getPermission('ext_click'), 'approve');
+  assertEq('ext_type permission → approve', reg.getPermission('ext_type'), 'approve');
+  assertEq('ext_evaluate permission → approve', reg.getPermission('ext_evaluate'), 'approve');
+  assertEq('ext_screenshot permission → approve', reg.getPermission('ext_screenshot'), 'approve');
+
+  // All tools have spec with name and description
+  const specs = reg.allSpecs();
+  for (const spec of specs) {
+    if (spec.name.startsWith('ext_')) {
+      assert(`${spec.name} has description`, typeof spec.description === 'string' && spec.description.length > 5);
+    }
+  }
+}
+
+section('Extension Tools — Graceful Degradation');
+
+{
+  // RPC client starts disconnected
+  const client = new ExtensionRpcClient();
+  assert('new client is not connected', !client.connected);
+  assertEq('new client version is null', client.version, null);
+  assertEq('new client capabilities empty', client.capabilities.length, 0);
+
+  // Tools return helpful errors when not connected
+  const statusTool = new ExtStatusTool(client);
+  const result = await statusTool.execute();
+  assert('ext_status works when disconnected', result.success);
+  const parsed = JSON.parse(result.output);
+  assertEq('ext_status reports not connected', parsed.connected, false);
+
+  // Action tools return error when disconnected
+  const clickTool = new ExtClickTool(client);
+  const clickResult = await clickTool.execute({ selector: '#test' });
+  assert('ext_click fails gracefully when disconnected', !clickResult.success);
+  assert('ext_click error mentions extension', clickResult.error.includes('Extension not connected'));
+
+  const tabsTool = new ExtTabOpenTool(client);
+  const tabResult = await tabsTool.execute({ url: 'https://example.com' });
+  assert('ext_tab_open fails gracefully when disconnected', !tabResult.success);
+
+  client.destroy();
+}
+
+section('Extension Tools — RPC Client Lifecycle');
+
+{
+  const client = new ExtensionRpcClient();
+  assert('client starts disconnected', !client.connected);
+
+  // Simulate presence message with coarse capability names
+  window.postMessage({
+    type: '__clawser_ext__',
+    direction: 'presence',
+    action: 'present',
+    version: '0.1.0-test',
+    capabilities: ['tabs', 'scripting', 'cookies', 'network'],
+  }, '*');
+
+  // Allow message to be processed
+  await new Promise(r => setTimeout(r, 50));
+
+  assert('client detects presence', client.connected);
+  assertEq('client version set', client.version, '0.1.0-test');
+  assertEq('client capabilities length', client.capabilities.length, 4);
+
+  client.destroy();
+  assert('client disconnected after destroy', !client.connected);
+}
+
+section('Extension Tools — createExtensionBridge');
+
+{
+  const client = new ExtensionRpcClient();
+  const bridge = createExtensionBridge(client);
+  assert('bridge is a function', typeof bridge === 'function');
+
+  // Bridge returns error when not connected
+  const result = await bridge('click', { selector: '#test' });
+  assert('bridge fails when not connected', !result.success);
+  assert('bridge error message', result.error.includes('not connected'));
+}
+
+section('Extension Tools — Runtime Capability Checks');
+
+{
+  // Simulate extension connected with only 'tabs' capability (no scripting)
+  const client = new ExtensionRpcClient();
+  window.postMessage({
+    type: '__clawser_ext__',
+    direction: 'presence',
+    action: 'present',
+    version: '0.1.0-test',
+    capabilities: ['tabs'],
+  }, '*');
+  await new Promise(r => setTimeout(r, 50));
+  assert('cap-test client connected', client.connected);
+
+  // Tools requiring 'tabs' should not fail capability check (they'll fail on RPC since no real extension)
+  const tabsTool = new ExtTabsListTool(client);
+  assertEq('ext_tabs_list requires tabs', tabsTool.requires, 'tabs');
+
+  // Tools requiring 'scripting' should fail with actionable error
+  const clickTool = new ExtClickTool(client);
+  assertEq('ext_click requires scripting', clickTool.requires, 'scripting');
+  const clickResult = await clickTool.execute({ selector: '#test' });
+  assert('ext_click blocked by missing scripting cap', !clickResult.success);
+  assert('ext_click error mentions capability', clickResult.error.includes('scripting'));
+  assert('ext_click error has actionable hint', clickResult.error.includes('scripting') && clickResult.error.includes('permission'));
+
+  // Tools requiring 'cookies' should fail
+  const cookiesTool = new ExtCookiesTool(client);
+  assertEq('ext_cookies requires cookies', cookiesTool.requires, 'cookies');
+  const cookiesResult = await cookiesTool.execute({ url: 'https://example.com' });
+  assert('ext_cookies blocked by missing cookies cap', !cookiesResult.success);
+  assert('ext_cookies error mentions capability', cookiesResult.error.includes('cookies'));
+
+  // Tools requiring 'network' should fail
+  const netTool = new ExtNetworkTool(client);
+  assertEq('ext_network requires network', netTool.requires, 'network');
+  const netResult = await netTool.execute({});
+  assert('ext_network blocked by missing network cap', !netResult.success);
+  assert('ext_network error mentions capability', netResult.error.includes('network'));
+
+  // Status tools have no requirement (requires = null)
+  const statusTool = new ExtStatusTool(client);
+  assertEq('ext_status requires null', statusTool.requires, null);
+
+  // Verify requires values for key tools
+  assertEq('ext_navigate requires tabs', new ExtNavigateTool(client).requires, 'tabs');
+  assertEq('ext_screenshot requires tabs', new ExtScreenshotTool(client).requires, 'tabs');
+  assertEq('ext_read_page requires scripting', new ExtReadPageTool(client).requires, 'scripting');
+  assertEq('ext_evaluate requires scripting', new ExtEvaluateTool(client).requires, 'scripting');
+  assertEq('ext_console requires scripting', new ExtConsoleTool(client).requires, 'scripting');
+  assertEq('ext_webmcp_discover requires scripting', new ExtWebmcpDiscoverTool(client).requires, 'scripting');
+
+  client.destroy();
 }
 
 // ═══════════════════════════════════════════════════════════════

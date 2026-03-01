@@ -57,6 +57,9 @@ export class BrowserTool {
   get parameters() { return { type: 'object', properties: {} }; }
   get permission() { return 'internal'; }
 
+  /** Whether this tool is idempotent (safe to retry on crash recovery). */
+  get idempotent() { return false; }
+
   /**
    * Execute the tool.
    * @param {object} params - Parsed JSON parameters
@@ -84,6 +87,12 @@ export class BrowserToolRegistry {
 
   /** @type {Function|null} */
   #onApprovalRequest = null;
+
+  /** @type {import('./clawser-safety.js').SafetyPipeline|null} */
+  #safety = null;
+
+  /** Inject the safety pipeline for pre/post validation on all execute() calls. */
+  setSafety(pipeline) { this.#safety = pipeline; }
 
   register(tool) {
     this.#tools.set(tool.name, tool);
@@ -168,7 +177,12 @@ export class BrowserToolRegistry {
 
   /** @returns {object[]} All tool specs for registration with the agent */
   allSpecs() {
-    return [...this.#tools.values()].map(t => t.spec);
+    return [...this.#tools.values()].map(t => t.spec || {
+      name: t.name,
+      description: t.description || '',
+      parameters: t.parameters || { type: 'object', properties: {} },
+      required_permission: t.permission || 'auto',
+    });
   }
 
   /** @returns {string[]} All tool names */
@@ -198,11 +212,34 @@ export class BrowserToolRegistry {
       }
     }
 
+    // Safety: validate tool call arguments before execution
+    if (this.#safety) {
+      const validation = this.#safety.validateToolCall(name, params);
+      if (!validation.valid) {
+        const msg = validation.issues[0]?.msg || 'Validation failed';
+        return { success: false, output: '', error: `Safety: ${msg}` };
+      }
+    }
+
+    let result;
     try {
-      return await tool.execute(params);
+      result = await tool.execute(params);
     } catch (e) {
       return { success: false, output: '', error: e.message };
     }
+
+    // Safety: scan tool output for leaked secrets
+    if (this.#safety && result && result.output) {
+      const scanResult = this.#safety.scanOutput(result.output);
+      if (scanResult.blocked) {
+        return { success: false, output: '', error: 'Output blocked by safety pipeline (sensitive content detected)' };
+      }
+      if (scanResult.findings.length > 0) {
+        result = { ...result, output: scanResult.content };
+      }
+    }
+
+    return result;
   }
 }
 
@@ -229,6 +266,7 @@ export class FetchTool extends BrowserTool {
     };
   }
   get permission() { return 'network'; }
+  get idempotent() { return true; }
 
   /**
    * Set a domain allowlist. If set, only URLs matching these domains will be fetched.
@@ -262,6 +300,31 @@ export class FetchTool extends BrowserTool {
         return { success: false, output: '', error: `Domain "${hostname}" is not in the allowlist` };
       }
     }
+
+    // Virtual server auto-routing: if hostname matches a registered server,
+    // rewrite URL to /http/{host}:{port}/{path} and route through SW intercept
+    try {
+      const { getServerManager } = await import('./clawser-server.js');
+      const serverMgr = getServerManager();
+      const port = parsed.port ? parseInt(parsed.port, 10) : (parsed.protocol === 'https:' ? 443 : 80);
+      const route = await serverMgr.getRoute(hostname, port);
+      if (route && route.enabled) {
+        const portStr = port !== 80 ? `:${port}` : '';
+        const serverUrl = `${location.origin}/http/${hostname}${portStr}${parsed.pathname}${parsed.search}`;
+        const sOpts = { method, headers };
+        if (body && method !== 'GET') sOpts.body = body;
+        const sResp = await fetch(serverUrl, sOpts);
+        const sText = await sResp.text();
+        const sHeaders = {};
+        sResp.headers.forEach((v, k) => { sHeaders[k] = v; });
+        const sOutput = JSON.stringify({
+          status: sResp.status, statusText: sResp.statusText,
+          headers: sHeaders,
+          body: sText.length > 50000 ? sText.slice(0, 50000) + '\n... (truncated)' : sText,
+        });
+        return { success: sResp.ok, output: sOutput, error: sResp.ok ? undefined : `HTTP ${sResp.status}` };
+      }
+    } catch { /* server manager not initialized yet — fall through to normal fetch */ }
 
     const opts = { method, headers, redirect: 'manual' };
     if (body && method !== 'GET') opts.body = body;
@@ -461,6 +524,7 @@ export class FsReadTool extends BrowserTool {
     };
   }
   get permission() { return 'read'; }
+  get idempotent() { return true; }
 
   async execute({ path }) {
     const resolved = this.#ws.resolve(path);
@@ -564,6 +628,7 @@ export class FsListTool extends BrowserTool {
     };
   }
   get permission() { return 'read'; }
+  get idempotent() { return true; }
 
   async execute({ path = '/' }) {
     const resolved = this.#ws.resolve(path);
@@ -1398,4 +1463,120 @@ export function createDefaultRegistry(workspaceFs) {
   registry.register(new ScreenshotTool());
 
   return registry;
+}
+
+// ── Tool CLI Wrappers ────────────────────────────────────────────
+
+/** Tool name → CLI alias mapping */
+const TOOL_CLI_ALIASES = {
+  browser_fetch: 'curl',
+  browser_web_search: 'search',
+  browser_fs_read: 'cat',
+  browser_fs_write: 'write',
+  browser_fs_list: 'ls-tool',
+  browser_dom_query: 'query',
+  browser_navigate: 'open',
+  browser_screenshot: 'screenshot',
+};
+
+/**
+ * Generate CLI wrapper handlers from tool specs.
+ * Maps tool parameters to positional + flag arguments.
+ * @param {Array<{name: string, description: string, parameters: object, execute?: Function}>} tools
+ * @returns {Map<string, Function>} alias → handler(args, state)
+ */
+// ── Attachment Processing ───────────────────────────────────
+
+const EXTENSION_LANGUAGES = {
+  js: 'javascript', mjs: 'javascript', cjs: 'javascript',
+  ts: 'typescript', tsx: 'typescript',
+  jsx: 'javascript',
+  py: 'python', rb: 'ruby', rs: 'rust', go: 'go',
+  java: 'java', kt: 'kotlin', swift: 'swift',
+  c: 'c', cpp: 'cpp', h: 'c', hpp: 'cpp',
+  cs: 'csharp',
+  json: 'json', yaml: 'yaml', yml: 'yaml', toml: 'toml',
+  xml: 'xml', html: 'html', css: 'css', scss: 'scss',
+  sql: 'sql', sh: 'shell', bash: 'shell', zsh: 'shell',
+  md: 'markdown', txt: 'text',
+};
+
+/**
+ * Process file attachments for agent context injection.
+ */
+export class AttachmentProcessor {
+  /**
+   * Process text file content.
+   * @param {string} filename
+   * @param {string} content
+   * @returns {Promise<{type: string, filename: string, content: string, language: string}>}
+   */
+  async processText(filename, content) {
+    const ext = filename.split('.').pop()?.toLowerCase() || '';
+    const language = EXTENSION_LANGUAGES[ext] || 'text';
+    return { type: 'text', filename, content, language };
+  }
+
+  /**
+   * Format an attachment for context injection.
+   * @param {{type: string, filename: string, content: string, language?: string}} attachment
+   * @returns {string}
+   */
+  formatForContext(attachment) {
+    const lang = attachment.language || 'text';
+    if (lang === 'text') {
+      return `📎 ${attachment.filename}\n${attachment.content}`;
+    }
+    return `📎 ${attachment.filename}\n\`\`\`${lang}\n${attachment.content}\n\`\`\``;
+  }
+}
+
+export function generateToolWrappers(tools) {
+  const wrappers = new Map();
+
+  for (const tool of tools) {
+    const alias = TOOL_CLI_ALIASES[tool.name];
+    if (!alias) continue;
+
+    const params = tool.parameters?.properties || {};
+    const required = tool.parameters?.required || [];
+
+    wrappers.set(alias, async (args, state) => {
+      // Build params from positional args: first required param gets the first arg
+      const parsed = {};
+      const reqKeys = required.filter(k => k in params);
+      let argIdx = 0;
+
+      for (const key of reqKeys) {
+        if (argIdx < args.length) {
+          parsed[key] = args[argIdx++];
+        }
+      }
+
+      // Remaining args as additional positional params
+      const optKeys = Object.keys(params).filter(k => !required.includes(k));
+      for (const key of optKeys) {
+        if (argIdx < args.length) {
+          parsed[key] = args[argIdx++];
+        }
+      }
+
+      if (typeof tool.execute === 'function') {
+        try {
+          const result = await tool.execute(parsed);
+          return {
+            stdout: result.output || '',
+            stderr: result.error || '',
+            exitCode: result.success ? 0 : 1,
+          };
+        } catch (e) {
+          return { stdout: '', stderr: e.message, exitCode: 1 };
+        }
+      }
+
+      return { stdout: JSON.stringify(parsed), stderr: '', exitCode: 0 };
+    });
+  }
+
+  return wrappers;
 }

@@ -392,6 +392,281 @@ export class GitEpisodicMemory {
   }
 }
 
+// ── GitOpsProvider ──────────────────────────────────────────────
+
+/**
+ * Interface for git operations. Implementations can wrap isomorphic-git,
+ * mock backends, or other git libraries.
+ */
+export class GitOpsProvider {
+  async status() { return []; }
+  async add(/* path */) {}
+  async commit(/* message, author */) { return 'unknown'; }
+  async log(/* depth */) { return []; }
+  async diff(/* ref */) { return { files: [], additions: 0, deletions: 0, patch: '' }; }
+  async branch(/* name */) {}
+  async checkout(/* name */) {}
+  async merge(/* branch */) {}
+  async deleteBranch(/* name */) {}
+  async init() {}
+}
+
+// ── MockGitBackend ──────────────────────────────────────────────
+
+/**
+ * In-memory mock git backend for testing without isomorphic-git.
+ */
+export class MockGitBackend extends GitOpsProvider {
+  #commits = [];
+  #staged = [];
+  #branch = 'main';
+  #initialized = false;
+
+  async init() {
+    this.#initialized = true;
+  }
+
+  get initialized() { return this.#initialized; }
+
+  async status() {
+    return this.#staged.map(f => ({ path: f, status: 'modified' }));
+  }
+
+  async add(path) {
+    if (path === '.') {
+      this.#staged.push('.');
+    } else {
+      this.#staged.push(path);
+    }
+  }
+
+  async commit(message, author) {
+    const oid = Math.random().toString(16).slice(2, 14);
+    this.#commits.unshift({
+      oid,
+      message,
+      author: author || { name: 'test', email: 'test@test.com' },
+      timestamp: Date.now(),
+    });
+    this.#staged = [];
+    this.#initialized = true;
+    return oid;
+  }
+
+  async log(depth = 20) {
+    return this.#commits.slice(0, depth);
+  }
+
+  async diff(ref) {
+    return { files: [], additions: 0, deletions: 0, patch: '' };
+  }
+
+  async branch(name) {
+    this.#branch = name;
+  }
+
+  async checkout(name) {
+    this.#branch = name;
+  }
+
+  async merge(branch) {
+    // no-op in mock
+  }
+
+  async deleteBranch(name) {
+    // no-op in mock
+  }
+}
+
+// ── AutoInitManager ─────────────────────────────────────────────
+
+/**
+ * Auto-initializes a git repository on first file write.
+ */
+export class AutoInitManager {
+  #backend;
+  #initialized = false;
+  #autoCommit;
+
+  /**
+   * @param {object} opts
+   * @param {GitOpsProvider} opts.backend - Git operations backend
+   * @param {boolean} [opts.autoCommit=false] - Auto-commit after write
+   */
+  constructor(opts = {}) {
+    this.#backend = opts.backend;
+    this.#autoCommit = opts.autoCommit || false;
+  }
+
+  get isInitialized() { return this.#initialized; }
+
+  /**
+   * Ensure the repository is initialized.
+   * @returns {Promise<{ initialized: boolean, alreadyExists?: boolean }>}
+   */
+  async ensureRepo() {
+    if (this.#initialized) {
+      return { initialized: false, alreadyExists: true };
+    }
+    await this.#backend.init();
+    this.#initialized = true;
+    return { initialized: true };
+  }
+
+  /**
+   * Called when a file is written. Auto-inits and optionally auto-commits.
+   * @param {string} path - File path
+   * @param {string} content - File content
+   */
+  async onWrite(path, content) {
+    await this.ensureRepo();
+    if (this.#autoCommit) {
+      await this.#backend.add(path);
+      await this.#backend.commit(`Auto-commit: ${path}`, { name: 'Clawser', email: 'agent@clawser.local' });
+    }
+  }
+}
+
+// ── CommitSearchIndex ───────────────────────────────────────────
+
+/**
+ * In-memory full-text search index for commit messages.
+ * Uses TF-based scoring for ranked results.
+ */
+export class CommitSearchIndex {
+  #entries = [];
+
+  /**
+   * Add a commit to the index.
+   * @param {{ oid: string, message: string, timestamp: number }} entry
+   */
+  add(entry) {
+    this.#entries.push({
+      oid: entry.oid,
+      message: entry.message,
+      timestamp: entry.timestamp,
+      tokens: entry.message.toLowerCase().split(/\s+/),
+    });
+  }
+
+  get size() { return this.#entries.length; }
+
+  /**
+   * Search for commits matching query terms.
+   * @param {string} query - Space-separated search terms
+   * @returns {Array<{ oid: string, message: string, timestamp: number, score: number }>}
+   */
+  search(query) {
+    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+    if (terms.length === 0) return [];
+
+    const scored = [];
+    for (const entry of this.#entries) {
+      let score = 0;
+      for (const term of terms) {
+        // Count occurrences of each term
+        const count = entry.tokens.filter(t => t.includes(term)).length;
+        score += count;
+      }
+      if (score > 0) {
+        scored.push({
+          oid: entry.oid,
+          message: entry.message,
+          timestamp: entry.timestamp,
+          score,
+        });
+      }
+    }
+
+    // Sort by score descending, then by timestamp descending
+    scored.sort((a, b) => b.score - a.score || b.timestamp - a.timestamp);
+    return scored;
+  }
+}
+
+// ── ConflictResolver ─────────────────────────────────────────────
+
+/**
+ * Resolves merge conflicts using configurable strategies.
+ */
+export class ConflictResolver {
+  #strategy;
+
+  /**
+   * @param {object} [opts]
+   * @param {'ours'|'theirs'|'union'} [opts.strategy='ours'] - Default resolution strategy
+   */
+  constructor(opts = {}) {
+    this.#strategy = opts.strategy || 'ours';
+  }
+
+  get strategy() { return this.#strategy; }
+
+  /**
+   * Resolve a single conflict.
+   * @param {{ path: string, ours: string, theirs: string, base: string }} conflict
+   * @returns {{ path: string, content: string, strategy: string }}
+   */
+  resolve(conflict) {
+    const strategy = this.#strategy;
+    let content;
+
+    switch (strategy) {
+      case 'theirs':
+        content = conflict.theirs;
+        break;
+      case 'union':
+        content = this.#unionMerge(conflict);
+        break;
+      case 'ours':
+      default:
+        content = conflict.ours;
+        break;
+    }
+
+    return { path: conflict.path, content, strategy };
+  }
+
+  /**
+   * Resolve multiple conflicts.
+   * @param {Array<{ path: string, ours: string, theirs: string, base: string }>} conflicts
+   * @returns {Array<{ path: string, content: string, strategy: string }>}
+   */
+  resolveAll(conflicts) {
+    return conflicts.map(c => this.resolve(c));
+  }
+
+  /**
+   * Line-based union merge: include lines from both sides.
+   * @param {{ ours: string, theirs: string, base: string }} conflict
+   * @returns {string}
+   */
+  #unionMerge(conflict) {
+    const baseLines = (conflict.base || '').split('\n');
+    const ourLines = (conflict.ours || '').split('\n');
+    const theirLines = (conflict.theirs || '').split('\n');
+    const baseSet = new Set(baseLines);
+
+    // Lines added by ours (not in base)
+    const oursAdded = ourLines.filter(l => !baseSet.has(l));
+    // Lines added by theirs (not in base)
+    const theirsAdded = theirLines.filter(l => !baseSet.has(l));
+    // Lines in base kept by both
+    const kept = baseLines.filter(l => ourLines.includes(l) || theirLines.includes(l));
+
+    // Merge: kept lines + ours additions + theirs additions (deduplicated)
+    const seen = new Set();
+    const merged = [];
+    for (const l of [...kept, ...oursAdded, ...theirsAdded]) {
+      if (!seen.has(l)) {
+        seen.add(l);
+        merged.push(l);
+      }
+    }
+    return merged.join('\n');
+  }
+}
+
 // ── Agent Tools ─────────────────────────────────────────────────
 
 export class GitStatusTool extends BrowserTool {

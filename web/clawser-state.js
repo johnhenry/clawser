@@ -29,12 +29,12 @@ export const DEFAULTS = Object.freeze({
 // Or set localStorage key 'clawser_debug' to 'true'
 
 /** @type {boolean} */
-let _debugEnabled = localStorage.getItem('clawser_debug') === 'true';
+let _debugEnabled = (typeof localStorage !== 'undefined') && localStorage.getItem('clawser_debug') === 'true';
 
 export const clawserDebug = {
   get enabled() { return _debugEnabled; },
-  enable()  { _debugEnabled = true;  localStorage.setItem('clawser_debug', 'true'); },
-  disable() { _debugEnabled = false; localStorage.removeItem('clawser_debug'); },
+  enable()  { _debugEnabled = true;  if (typeof localStorage !== 'undefined') localStorage.setItem('clawser_debug', 'true'); },
+  disable() { _debugEnabled = false; if (typeof localStorage !== 'undefined') localStorage.removeItem('clawser_debug'); },
   /** Log only when debug mode is active. @param {...*} args */
   log(...args)  { if (_debugEnabled) console.log('[clawser]', ...args); },
   warn(...args) { if (_debugEnabled) console.warn('[clawser]', ...args); },
@@ -77,6 +77,7 @@ export const lsKey = {
  * and removes the old key. Safe to call multiple times (idempotent).
  */
 export function migrateLocalStorageKeys() {
+  if (typeof localStorage === 'undefined') return;
   if (localStorage.getItem('clawser_ls_migrated') === LS_VERSION) return;
 
   const keyPatterns = [
@@ -196,6 +197,7 @@ export const state = {
   shuttingDown: false,
   /** Demo mode — activated via ?demo or ?demo=true URL param (not ?demo=false) */
   demoMode: (() => {
+    if (typeof location === 'undefined' || !location.search) return false;
     const p = new URLSearchParams(location.search);
     return p.has('demo') && p.get('demo') !== 'false';
   })(),

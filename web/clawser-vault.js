@@ -77,6 +77,58 @@ export async function decryptSecret(encrypted, derivedKey) {
   return new TextDecoder().decode(plaintext);
 }
 
+// ── Passphrase Strength ──────────────────────────────────────────
+
+const COMMON_PASSWORDS = new Set([
+  'password', 'password1', 'password123', '123456', '123456789', 'qwerty',
+  'abc123', 'letmein', 'admin', 'welcome', 'monkey', 'dragon', 'master',
+  'login', 'princess', 'starwars', 'passw0rd', 'shadow', 'sunshine',
+  'trustno1', 'iloveyou', 'batman', 'football', 'charlie', 'donald',
+]);
+
+/**
+ * Measure passphrase strength.
+ * @param {string} passphrase
+ * @returns {{ score: number, entropy: number, label: string }}
+ */
+export function measurePassphraseStrength(passphrase) {
+  if (!passphrase || passphrase.length === 0) {
+    return { score: 0, entropy: 0, label: 'none' };
+  }
+
+  // Calculate character set size
+  let charsetSize = 0;
+  if (/[a-z]/.test(passphrase)) charsetSize += 26;
+  if (/[A-Z]/.test(passphrase)) charsetSize += 26;
+  if (/[0-9]/.test(passphrase)) charsetSize += 10;
+  if (/[^a-zA-Z0-9]/.test(passphrase)) charsetSize += 32;
+  if (charsetSize === 0) charsetSize = 26; // fallback
+
+  // Entropy = length × log2(charsetSize)
+  let entropy = passphrase.length * Math.log2(charsetSize);
+
+  // Penalize common passwords
+  if (COMMON_PASSWORDS.has(passphrase.toLowerCase())) {
+    entropy = Math.min(entropy, 10);
+  }
+
+  // Penalize repetitive patterns
+  if (/^(.)\1+$/.test(passphrase)) {
+    entropy *= 0.3;
+  }
+
+  // Score: 0-4 based on entropy
+  let score;
+  if (entropy < 15) score = 0;
+  else if (entropy < 25) score = 1;
+  else if (entropy < 40) score = 2;
+  else if (entropy < 60) score = 3;
+  else score = 4;
+
+  const labels = ['none', 'weak', 'fair', 'strong', 'very strong'];
+  return { score, entropy: Math.round(entropy * 100) / 100, label: labels[score] };
+}
+
 // ── Storage backends ─────────────────────────────────────────────
 
 /**
@@ -338,6 +390,75 @@ export class SecretVault {
       // Decryption failed — wrong passphrase
       this.#derivedKey = prevKey;
       return false;
+    }
+  }
+}
+
+// ── VaultRekeyer ────────────────────────────────────────────────
+
+/**
+ * Handles vault passphrase change by re-encrypting all secrets.
+ * Supports rollback on failure.
+ */
+export class VaultRekeyer {
+  #vault;
+
+  /**
+   * @param {SecretVault} vault - The vault to rekey
+   */
+  constructor(vault) {
+    this.#vault = vault;
+  }
+
+  /**
+   * Plan the rekeying operation (list secrets to re-encrypt).
+   * @returns {Promise<{ secretCount: number, secrets: string[] }>}
+   */
+  async plan() {
+    if (this.#vault.isLocked) throw new Error('Vault is locked');
+    const secrets = await this.#vault.list();
+    return { secretCount: secrets.length, secrets };
+  }
+
+  /**
+   * Execute the rekeying: retrieve all secrets, re-lock with new passphrase, re-store.
+   * @param {string} oldPassphrase
+   * @param {string} newPassphrase
+   * @returns {Promise<{ success: boolean, rekeyed: number, error?: string }>}
+   */
+  async execute(oldPassphrase, newPassphrase) {
+    if (this.#vault.isLocked) throw new Error('Vault is locked');
+
+    // Step 1: Read all secrets with old key
+    const secrets = await this.#vault.list();
+    const backup = {};
+    for (const name of secrets) {
+      try {
+        backup[name] = await this.#vault.retrieve(name);
+      } catch {
+        // Skip secrets that can't be read
+      }
+    }
+
+    // Step 2: Re-lock with new passphrase and re-store
+    try {
+      this.#vault.lock();
+      await this.#vault.unlock(newPassphrase);
+
+      let rekeyed = 0;
+      for (const [name, value] of Object.entries(backup)) {
+        await this.#vault.store(name, value);
+        rekeyed++;
+      }
+
+      return { success: true, rekeyed };
+    } catch (e) {
+      // Rollback: try to restore old passphrase
+      try {
+        this.#vault.lock();
+        await this.#vault.unlock(oldPassphrase);
+      } catch { /* best-effort rollback */ }
+      return { success: false, rekeyed: 0, error: e.message };
     }
   }
 }

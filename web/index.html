@@ -101,6 +101,7 @@
   <span id="autonomyBadge" class="autonomy-badge" title="Autonomy level"></span>
   <span id="daemonBadge" class="daemon-badge" title="Daemon status"></span>
   <span id="remoteBadge" class="remote-badge" title="Remote sessions"></span>
+  <span id="extensionBadge" class="extension-badge" title="Chrome Extension status"></span>
   <div class="status">
     <span class="dot" id="statusDot"></span>
     <span id="statusText">loading...</span>
@@ -129,6 +130,7 @@
     <button data-panel="skills" title="Skills" aria-label="Skills panel">🧩</button>
     <button data-panel="terminal" title="Terminal" aria-label="Terminal panel">🖥</button>
     <button data-panel="dashboard" title="Dashboard" aria-label="Dashboard panel">📊</button>
+    <button data-panel="servers" title="Servers" aria-label="Servers panel">🌐</button>
     <span class="sep-line" role="separator"></span>
     <button data-panel="toolMgmt" title="Tool Management" aria-label="Tool Management panel">🛠</button>
     <button data-panel="agents" title="Agents" aria-label="Agents panel">🤖</button>
@@ -265,6 +267,86 @@
         </div>
         <div class="config-group"><label>Recent Logs</label></div>
         <div class="panel-body panel-mono dash-log-wrap" id="dashLogViewer"></div>
+      </div>
+    </div>
+
+    <!-- Virtual Servers (Phase 7) -->
+    <div class="panel" id="panelServers">
+      <div class="panel-header">Servers
+        <button class="btn-sm ml-auto" id="srvRefresh" title="Refresh server list">Refresh</button>
+        <button class="btn-sm" id="srvAddToggle" title="Add a virtual server">+ Add</button>
+      </div>
+      <div class="panel-body panel-body-flush">
+        <!-- Add server form (hidden by default) -->
+        <div id="srvAddForm" class="srv-add-form" style="display:none;">
+          <div class="config-group">
+            <label>Hostname</label>
+            <input type="text" id="srvHostname" placeholder="e.g. myapp.internal" />
+          </div>
+          <div class="config-group">
+            <label>Port</label>
+            <input type="number" id="srvPort" value="80" min="1" max="65535" />
+          </div>
+          <div class="config-group">
+            <label>Handler Type</label>
+            <select id="srvType">
+              <option value="function">Function</option>
+              <option value="static">Static Files</option>
+              <option value="proxy">Proxy</option>
+            </select>
+          </div>
+          <div class="config-group">
+            <label>Execution</label>
+            <select id="srvExecution">
+              <option value="page">Page (full access)</option>
+              <option value="sw">Service Worker (fast)</option>
+            </select>
+          </div>
+          <div class="config-group srv-fn-group">
+            <label>Handler Code</label>
+            <textarea id="srvCode" rows="6" class="code-editor" placeholder="export default async ({ request, env }) => {&#10;  return new Response('Hello!', { status: 200 });&#10;};"></textarea>
+          </div>
+          <div class="config-group srv-static-group" style="display:none;">
+            <label>OPFS Root Path</label>
+            <input type="text" id="srvStaticRoot" placeholder="e.g. public/" />
+          </div>
+          <div class="config-group srv-proxy-group" style="display:none;">
+            <label>Proxy Target URL</label>
+            <input type="text" id="srvProxyTarget" placeholder="https://api.example.com" />
+          </div>
+          <div class="config-group srv-proxy-group" style="display:none;">
+            <label>Path Rewrite</label>
+            <input type="text" id="srvProxyRewrite" placeholder="^/api -> /" />
+          </div>
+          <div class="config-group">
+            <label>Scope</label>
+            <select id="srvScope">
+              <option value="workspace">Current Workspace</option>
+              <option value="_global">Global</option>
+            </select>
+          </div>
+          <div class="config-group">
+            <label>Environment Variables</label>
+            <textarea id="srvEnv" rows="2" class="code-editor" placeholder="KEY=value (one per line)"></textarea>
+          </div>
+          <div class="btn-row">
+            <button class="btn-sm" id="srvSave">Create</button>
+            <button class="btn-sm btn-surface2" id="srvCancel">Cancel</button>
+          </div>
+        </div>
+
+        <!-- Server list -->
+        <div id="srvList" class="srv-list"></div>
+
+        <!-- Server detail / log viewer -->
+        <div id="srvDetail" class="srv-detail" style="display:none;">
+          <div class="srv-detail-header">
+            <span id="srvDetailName"></span>
+            <button class="btn-sm" id="srvDetailClose">Close</button>
+          </div>
+          <div class="config-group"><label>Request Log</label></div>
+          <div class="panel-body panel-mono srv-log-wrap" id="srvLogViewer"></div>
+        </div>
       </div>
     </div>
 

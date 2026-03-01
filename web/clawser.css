@@ -476,10 +476,10 @@ input[type="range"] { width:100%; accent-color:var(--accent); }
 .heartbeat-check-item .hb-remove:hover { color:var(--red); }
 
 /* ── Batch 2: Header badges ────────────────────────── */
-.autonomy-badge, .daemon-badge, .remote-badge {
+.autonomy-badge, .daemon-badge, .remote-badge, .extension-badge {
   font-size:10px; font-family:var(--mono); padding:1px 6px; border-radius:10px; margin-right:4px; display:none;
 }
-.autonomy-badge.visible, .daemon-badge.visible, .remote-badge.visible { display:inline-block; }
+.autonomy-badge.visible, .daemon-badge.visible, .remote-badge.visible, .extension-badge.visible { display:inline-block; }
 .autonomy-badge.readonly { background:rgba(248,81,73,.15); color:var(--red); }
 .autonomy-badge.supervised { background:rgba(210,153,34,.15); color:var(--orange); }
 .autonomy-badge.full { background:rgba(63,185,80,.15); color:var(--green); }
@@ -487,6 +487,8 @@ input[type="range"] { width:100%; accent-color:var(--accent); }
 .daemon-badge.running { background:rgba(63,185,80,.15); color:var(--green); }
 .daemon-badge.stopped { background:rgba(248,81,73,.15); color:var(--red); }
 .remote-badge { background:rgba(88,166,255,.15); color:var(--accent); }
+.extension-badge.connected { background:rgba(63,185,80,.15); color:var(--green); }
+.extension-badge.disconnected { background:rgba(139,148,158,.15); color:var(--muted); }
 
 /* ── Batch 3: Panel enhancements ───────────────────── */
 .mount-list { font-size:11px; font-family:var(--mono); }
@@ -909,3 +911,28 @@ dialog.skill-dialog::backdrop { background:rgba(0,0,0,0.7); }
 .vault-form button { padding: 8px 16px; border: none; border-radius: 4px; background: #238636; color: #fff; cursor: pointer; font-size: 14px; }
 .vault-form button:hover { background: #2ea043; }
 .vault-error { color: #f85149; font-size: 13px; margin: 0; }
+
+/* ── Virtual Servers (Phase 7) ──────────────────────────── */
+.srv-add-form { padding:8px 12px; border-bottom:1px solid var(--border); }
+.srv-add-form .config-group { margin-bottom:6px; }
+.srv-add-form .code-editor { font-family:var(--mono); font-size:12px; resize:vertical; background:var(--surface1); color:var(--fg); border:1px solid var(--border); border-radius:var(--radius); padding:6px; width:100%; box-sizing:border-box; }
+.srv-list { padding:4px 0; }
+.srv-item { display:flex; align-items:center; gap:8px; padding:6px 12px; border-bottom:1px solid rgba(48,54,61,.3); cursor:pointer; }
+.srv-item:hover { background:var(--surface2); }
+.srv-item .srv-host { font-family:var(--mono); font-weight:600; color:var(--accent); flex:1; }
+.srv-item .srv-type { font-size:10px; text-transform:uppercase; color:var(--muted); padding:1px 6px; background:var(--surface2); border-radius:var(--radius); }
+.srv-item .srv-status { width:8px; height:8px; border-radius:50%; }
+.srv-item .srv-status.on { background:#3fb950; }
+.srv-item .srv-status.off { background:#8b949e; }
+.srv-item .srv-actions { display:flex; gap:4px; }
+.srv-item .srv-actions button { font-size:11px; padding:1px 6px; }
+.srv-detail { padding:8px 12px; }
+.srv-detail-header { display:flex; align-items:center; gap:8px; margin-bottom:8px; font-weight:600; }
+.srv-detail-header span { flex:1; font-family:var(--mono); color:var(--accent); }
+.srv-log-wrap { max-height:300px; overflow-y:auto; font-size:11px; }
+.srv-log-entry { padding:2px 4px; border-bottom:1px solid rgba(48,54,61,.2); }
+.srv-log-entry .log-status { font-weight:600; }
+.srv-log-entry .log-status.s2xx { color:#3fb950; }
+.srv-log-entry .log-status.s4xx { color:var(--orange); }
+.srv-log-entry .log-status.s5xx { color:var(--red); }
+.srv-empty { text-align:center; color:var(--muted); padding:24px 12px; font-size:13px; }

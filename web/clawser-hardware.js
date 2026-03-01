@@ -526,6 +526,10 @@ export class PeripheralManager {
   /** @type {object} Injectable API surfaces for testing */
   #apis;
 
+  /** @type {Function[]} Device data callbacks */
+  #dataCallbacks = [];
+
+
   /**
    * @param {object} [opts]
    * @param {Function} [opts.onLog] - (message: string) => void
@@ -709,6 +713,61 @@ export class PeripheralManager {
       `  ${d.id} (${d.type}): ${d.name} [${d.connected ? 'connected' : 'disconnected'}]`
     );
     return `Connected peripherals:\n${lines.join('\n')}`;
+  }
+
+  // ── Device Data Forwarding ──────────────────────────────
+
+  /**
+   * Register a callback for device data events.
+   * @param {Function} callback - (deviceId: string, data: Uint8Array) => void
+   */
+  onDeviceData(callback) {
+    this.#dataCallbacks.push(callback);
+  }
+
+  /**
+   * Remove a device data callback.
+   * @param {Function} callback
+   */
+  offDeviceData(callback) {
+    this.#dataCallbacks = this.#dataCallbacks.filter(cb => cb !== callback);
+  }
+
+  /**
+   * Dispatch a device data event to all registered callbacks.
+   * @param {string} deviceId
+   * @param {Uint8Array} data
+   */
+  dispatchDeviceData(deviceId, data) {
+    for (const cb of this.#dataCallbacks) {
+      try { cb(deviceId, data); } catch {}
+    }
+  }
+
+  // ── State Persistence ────────────────────────────────────
+
+  /**
+   * Save device metadata to localStorage for reconnection.
+   */
+  saveState() {
+    if (typeof localStorage === 'undefined') return;
+    const devices = this.listDevices().map(d => d.toJSON());
+    localStorage.setItem('clawser_peripherals', JSON.stringify({ devices }));
+  }
+
+  /**
+   * Restore device metadata from localStorage.
+   * @returns {{ devices: object[] } | null}
+   */
+  restoreState() {
+    if (typeof localStorage === 'undefined') return null;
+    const raw = localStorage.getItem('clawser_peripherals');
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
   }
 
   #log(msg) {
@@ -956,5 +1015,66 @@ export class HwInfoTool extends BrowserTool {
     } catch (e) {
       return { success: false, output: '', error: e.message };
     }
+  }
+}
+
+/**
+ * Agent tool for monitoring real-time device data.
+ * Reads latest data from a connected device with optional duration.
+ */
+export class HwMonitorTool extends BrowserTool {
+  #manager;
+
+  constructor(manager) {
+    super();
+    this.#manager = manager;
+  }
+
+  get name() { return 'hw_monitor'; }
+  get description() { return 'Monitor real-time data from a connected peripheral device.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        device: { type: 'string', description: 'Device ID to monitor' },
+        duration: { type: 'number', description: 'Duration in ms to collect data (default 1000)' },
+      },
+      required: ['device'],
+    };
+  }
+  get permission() { return 'approve'; }
+
+  async execute({ device, duration }) {
+    const handle = this.#manager.getDevice(device);
+    if (!handle) {
+      return { success: false, output: '', error: `Device not found: ${device}` };
+    }
+
+    const timeout = duration || 1000;
+    const readings = [];
+
+    return new Promise(resolve => {
+      const handler = (_id, data) => {
+        readings.push({
+          timestamp: Date.now(),
+          bytes: data.length,
+          text: new TextDecoder().decode(data),
+        });
+      };
+
+      this.#manager.onDeviceData(handler);
+
+      setTimeout(() => {
+        this.#manager.offDeviceData(handler);
+        if (readings.length === 0) {
+          resolve({ success: true, output: `No data received from ${device} in ${timeout}ms.` });
+        } else {
+          resolve({
+            success: true,
+            output: `${readings.length} readings from ${device}:\n${readings.map(r => r.text).join('\n')}`,
+          });
+        }
+      }, timeout);
+    });
   }
 }

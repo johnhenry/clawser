@@ -149,6 +149,137 @@ export class MetricsCollector {
     this.#gauges.clear();
     this.#histograms.clear();
   }
+
+  /**
+   * Create a dated rollup of current metrics for time-series storage.
+   * @param {string} [date] - ISO date string (defaults to today)
+   * @returns {{date: string, counters: object, gauges: object, histograms: object}}
+   */
+  rollup(date) {
+    const snap = this.snapshot();
+    return {
+      date: date || new Date().toISOString().slice(0, 10),
+      counters: snap.counters,
+      gauges: snap.gauges,
+      histograms: snap.histograms,
+    };
+  }
+
+  /**
+   * Create a scoped view that prefixes all metric names with a namespace.
+   * Writes go to the parent collector; snapshot() filters to scoped keys only.
+   * @param {string} namespace - Prefix (e.g., 'conv-123', 'goal-abc')
+   * @returns {ScopedMetricsView}
+   */
+  scopedView(namespace) {
+    return new ScopedMetricsView(this, namespace);
+  }
+}
+
+/**
+ * Scoped view into a MetricsCollector.
+ * Prefixes all metric names with `namespace:` and filters snapshots to scoped keys.
+ */
+class ScopedMetricsView {
+  #parent;
+  #prefix;
+
+  constructor(parent, namespace) {
+    this.#parent = parent;
+    this.#prefix = namespace + ':';
+  }
+
+  increment(name, value = 1) { this.#parent.increment(this.#prefix + name, value); }
+  gauge(name, value) { this.#parent.gauge(this.#prefix + name, value); }
+  observe(name, value) { this.#parent.observe(this.#prefix + name, value); }
+  counter(name) { return this.#parent.counter(this.#prefix + name); }
+  getGauge(name) { return this.#parent.getGauge(this.#prefix + name); }
+  histogram(name) { return this.#parent.histogram(this.#prefix + name); }
+
+  snapshot() {
+    const full = this.#parent.snapshot();
+    const prefix = this.#prefix;
+    const strip = (obj) => {
+      const result = {};
+      for (const [k, v] of Object.entries(obj)) {
+        if (k.startsWith(prefix)) result[k.slice(prefix.length)] = v;
+      }
+      return result;
+    };
+    return {
+      counters: strip(full.counters),
+      gauges: strip(full.gauges),
+      histograms: strip(full.histograms),
+      timestamp: full.timestamp,
+    };
+  }
+}
+
+// ── MetricsTimeSeries ───────────────────────────────────────────
+
+/**
+ * Time-series storage for daily metric rollups.
+ * Stores dated snapshots and supports range queries.
+ */
+export class MetricsTimeSeries {
+  /** @type {Map<string, object>} date → rollup data */
+  #entries = new Map();
+
+  /** Number of stored rollups. */
+  get size() { return this.#entries.size; }
+
+  /**
+   * Add a rollup entry.
+   * @param {object} rollup - {date, counters, gauges, ...}
+   */
+  add(rollup) {
+    if (!rollup || !rollup.date) return;
+    this.#entries.set(rollup.date, rollup);
+  }
+
+  /**
+   * Query rollups within a date range (inclusive).
+   * @param {string} startDate - ISO date string (YYYY-MM-DD)
+   * @param {string} endDate - ISO date string (YYYY-MM-DD)
+   * @returns {object[]} Matching rollups sorted by date
+   */
+  query(startDate, endDate) {
+    const results = [];
+    for (const [date, rollup] of this.#entries) {
+      if (date >= startDate && date <= endDate) {
+        results.push(rollup);
+      }
+    }
+    return results.sort((a, b) => a.date.localeCompare(b.date));
+  }
+
+  /**
+   * Export all data as a JSON-serializable array.
+   * @returns {object[]}
+   */
+  export() {
+    return [...this.#entries.values()].sort((a, b) => a.date.localeCompare(b.date));
+  }
+
+  /**
+   * Import rollup data from a JSON array.
+   * @param {object[]} data
+   */
+  import(data) {
+    if (!Array.isArray(data)) return;
+    for (const rollup of data) {
+      if (rollup && rollup.date) {
+        this.#entries.set(rollup.date, rollup);
+      }
+    }
+  }
+
+  /**
+   * Clear all stored data.
+   */
+  clear() {
+    this.#entries.clear();
+  }
 }
 
 // ── RingBufferLog ───────────────────────────────────────────────

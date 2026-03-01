@@ -53,6 +53,10 @@ import { SelfRepairStatusTool, SelfRepairConfigureTool } from './clawser-self-re
 import { UndoTool, UndoStatusTool, RedoTool } from './clawser-undo.js';
 import { IntentClassifyTool, IntentOverrideTool } from './clawser-intent.js';
 import { HeartbeatStatusTool, HeartbeatRunTool } from './clawser-heartbeat.js';
+import { registerExtensionTools, initExtensionBadge } from './clawser-extension-tools.js';
+import { initServerManager, getServerManager } from './clawser-server.js';
+import { registerServerTools } from './clawser-server-tools.js';
+import { renderServerList, initServerPanel } from './clawser-ui-servers.js';
 
 // ── Shell session management ─────────────────────────────────────
 /** Create a fresh shell session for the current workspace. Sources .clawserrc and registers CLI. */
@@ -266,6 +270,7 @@ export async function switchWorkspace(newId, convId) {
     files:    () => { refreshFiles(); renderMountList(); },
     skills:   () => renderSkills(),
     dashboard: () => refreshDashboard(),
+    servers:  () => { initServerPanel(); renderServerList(); },
   });
 
   updateState();
@@ -318,6 +323,7 @@ export async function initWorkspace(wsId, convId) {
       safetyPipeline: state.safetyPipeline,
       selfRepairEngine: state.selfRepairEngine,
       undoManager: state.undoManager,
+      metricsCollector: state.metricsCollector,
       onEvent: (topic, payload) => addEvent(topic, payload),
       onLog: (level, msg) => {
         const methods = ['debug','debug','info','warn','error'];
@@ -548,7 +554,23 @@ export async function initWorkspace(wsId, convId) {
       console.warn('[clawser] Agent storage init failed:', e);
     }
 
+    // Chrome Extension — real browser control (34 tools)
+    registerExtensionTools(state.browserTools);
+    initExtensionBadge();
+
+    // Virtual Server subsystem (Phase 7) — 8 tools
+    try {
+      await initServerManager();
+      registerServerTools(state.browserTools, () => getActiveWorkspaceId());
+    } catch (e) { console.warn('[clawser] Server manager init failed:', e); }
+
     state.agent.refreshToolSpecs();
+
+    // Wire safety pipeline into tool registry for defense-in-depth
+    // (catches Codex path, executeToolDirect, and any direct registry calls)
+    if (state.safetyPipeline) {
+      state.browserTools.setSafety(state.safetyPipeline);
+    }
 
     state.browserTools.setApprovalHandler(async (toolName, params) => {
       return await modal.confirm(`Allow tool "${toolName}" to execute?\n\nParams: ${JSON.stringify(params).slice(0, 200)}`);
@@ -705,9 +727,14 @@ export async function initWorkspace(wsId, convId) {
       goals:    () => renderGoals(),
       skills:   () => renderSkills(),
       toolMgmt: () => renderToolManagementPanel(),
-      agents:   () => { renderAgentPanel(); initAgentPicker(); },
+      agents:   () => { renderAgentPanel(); },
       dashboard: () => refreshDashboard(),
+      servers:  () => { initServerPanel(); renderServerList(); },
     });
+
+    // Agent picker must be initialized eagerly — it attaches to the
+    // header provider label which is visible on every page load.
+    initAgentPicker();
 
     const toolCount = state.browserTools.names().length;
 

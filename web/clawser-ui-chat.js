@@ -866,6 +866,17 @@ export async function sendMessage() {
             state.sessionCost += cost;
             updateCostDisplay();
           }
+        } else if (chunk.type === 'safety_redacted') {
+          // Safety pipeline redacted the streamed content — replace what's already rendered
+          const label = streamEl.querySelector('.label');
+          const cursor = streamEl.querySelector('.streaming-cursor');
+          // Remove all content nodes (text nodes and cursor), keep the label
+          while (streamEl.lastChild && streamEl.lastChild !== label) {
+            streamEl.removeChild(streamEl.lastChild);
+          }
+          streamEl.appendChild(document.createTextNode(chunk.text));
+          if (cursor) streamEl.appendChild(cursor);
+          fullContent = chunk.text;
         } else if (chunk.type === 'error') {
           finalizeStreamingMsg(streamEl);
           const classified = classifyError(chunk.error);

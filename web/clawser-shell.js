@@ -18,7 +18,7 @@
  */
 
 import { BrowserTool } from './clawser-tools.js';
-import { registerExtendedBuiltins } from './clawser-shell-builtins.js';
+import { registerExtendedBuiltins, registerJqBuiltin } from './clawser-shell-builtins.js';
 
 // ── Token Types ─────────────────────────────────────────────────
 
@@ -33,6 +33,7 @@ const T = {
   REDIRECT_ERR: 'REDIRECT_ERR',     // 2>
   REDIRECT_ERR_APPEND: 'REDIRECT_ERR_APPEND', // 2>>
   REDIRECT_ERR_TO_OUT: 'REDIRECT_ERR_TO_OUT', // 2>&1
+  BACKGROUND: 'BACKGROUND',               // &
   EOF: 'EOF',
 };
 
@@ -65,10 +66,15 @@ export function tokenize(input) {
       continue;
     }
 
-    // AND
-    if (input[i] === '&' && input[i + 1] === '&') {
-      tokens.push({ type: T.AND, value: '&&' });
-      i += 2;
+    // AND or BACKGROUND
+    if (input[i] === '&') {
+      if (input[i + 1] === '&') {
+        tokens.push({ type: T.AND, value: '&&' });
+        i += 2;
+      } else {
+        tokens.push({ type: T.BACKGROUND, value: '&' });
+        i++;
+      }
       continue;
     }
 
@@ -275,8 +281,17 @@ export function parse(input) {
       commands.push(next);
     }
 
-    if (commands.length === 1) return commands[0];
-    return { type: 'list', commands, operators };
+    // Check for trailing & (background)
+    let background = false;
+    if (peek().type === T.BACKGROUND) {
+      advance();
+      background = true;
+    }
+
+    if (commands.length === 1 && !background) return commands[0];
+    const node = { type: 'list', commands, operators };
+    if (background) node.background = true;
+    return node;
   }
 
   return parseList();
@@ -358,11 +373,149 @@ export function expandVariables(token, env) {
   return result;
 }
 
+// ── Command Substitution ─────────────────────────────────────────
+
+/**
+ * Expand $(cmd) command substitutions in a string.
+ * Supports nested $(…) via paren-depth tracking.
+ * Trailing newlines in command output are stripped (standard shell behavior).
+ *
+ * @param {string} token - String possibly containing $(cmd) sequences
+ * @param {function} executor - async (cmdString) → {stdout, stderr, exitCode}
+ * @returns {Promise<string>} Token with substitutions replaced by command output
+ */
+export async function expandCommandSubs(token, executor) {
+  if (!token || typeof token !== 'string') return token || '';
+  if (!executor) return token;
+
+  let result = '';
+  let i = 0;
+  const len = token.length;
+
+  while (i < len) {
+    // Escaped \$( — keep literal $(
+    if (token[i] === '\\' && i + 1 < len && token[i + 1] === '$') {
+      result += token[i + 1];
+      // Check if this is \$( — preserve the ( too
+      if (i + 2 < len && token[i + 2] === '(') {
+        result += token[i + 2];
+        i += 3;
+      } else {
+        i += 2;
+      }
+      continue;
+    }
+
+    // $( — start of command substitution
+    if (token[i] === '$' && i + 1 < len && token[i + 1] === '(') {
+      // Find matching closing paren, tracking depth
+      let depth = 1;
+      let j = i + 2;
+      while (j < len && depth > 0) {
+        if (token[j] === '(' && token[j - 1] === '$') depth++;
+        else if (token[j] === '(') depth++; // nested parens
+        else if (token[j] === ')') depth--;
+        if (depth > 0) j++;
+      }
+
+      if (depth !== 0) {
+        // Unmatched $( — treat as literal
+        result += token[i];
+        i++;
+        continue;
+      }
+
+      const innerCmd = token.slice(i + 2, j);
+
+      // Recursively expand nested $(…) in the inner command
+      const expandedCmd = await expandCommandSubs(innerCmd, executor);
+
+      // Execute the command
+      const { stdout } = await executor(expandedCmd);
+
+      // Strip trailing newlines (standard shell behavior)
+      result += (stdout || '').replace(/\n+$/, '');
+      i = j + 1;
+      continue;
+    }
+
+    result += token[i];
+    i++;
+  }
+
+  return result;
+}
+
+// ── Brace Expansion ─────────────────────────────────────────────
+
+/**
+ * Expand {a,b,c} brace patterns into all alternatives.
+ * Supports nested braces: {a,b{1,2}} → [a, b1, b2].
+ * Returns [token] if no braces present.
+ *
+ * @param {string} token - String possibly containing {alternatives}
+ * @returns {string[]} Array of expanded alternatives
+ */
+export function expandBraces(token) {
+  if (!token || typeof token !== 'string') return [token || ''];
+  if (!token.includes('{')) return [token];
+
+  // Find the first top-level brace group
+  let start = -1;
+  let end = -1;
+  let depth = 0;
+
+  for (let i = 0; i < token.length; i++) {
+    if (token[i] === '{') {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (token[i] === '}') {
+      depth--;
+      if (depth === 0 && start !== -1) {
+        end = i;
+        break;
+      }
+    }
+  }
+
+  if (start === -1 || end === -1) return [token];
+
+  const prefix = token.slice(0, start);
+  const suffix = token.slice(end + 1);
+  const body = token.slice(start + 1, end);
+
+  // Split body on commas at depth 0 only
+  const alternatives = [];
+  let current = '';
+  depth = 0;
+  for (let i = 0; i < body.length; i++) {
+    if (body[i] === '{') depth++;
+    else if (body[i] === '}') depth--;
+    if (body[i] === ',' && depth === 0) {
+      alternatives.push(current);
+      current = '';
+    } else {
+      current += body[i];
+    }
+  }
+  alternatives.push(current);
+
+  if (alternatives.length <= 1) return [token]; // No comma → literal braces
+
+  // Recursively expand each alternative (handles nested braces)
+  const results = [];
+  for (const alt of alternatives) {
+    const expanded = expandBraces(prefix + alt + suffix);
+    results.push(...expanded);
+  }
+  return results;
+}
+
 // ── Glob Expansion ──────────────────────────────────────────────
 
 /**
  * Expand glob patterns in a token by matching against filesystem entries.
- * Handles *, ?, and [abc] character classes.
+ * Handles *, ?, [abc] character classes, ** recursive, {a,b} braces, !(pattern) negation.
  * If no matches found, returns the original token (standard shell behavior).
  * @param {string} token - Token string that may contain glob characters
  * @param {object} fs - Filesystem object with listDir(path) method
@@ -372,8 +525,33 @@ export function expandVariables(token, env) {
 export async function expandGlobs(token, fs, cwd) {
   if (!token || !fs) return [token];
 
+  // Handle brace expansion first — expand {a,b} into multiple patterns
+  if (token.includes('{')) {
+    const braceExpanded = expandBraces(token);
+    if (braceExpanded.length > 1) {
+      const allMatches = [];
+      for (const pattern of braceExpanded) {
+        const matches = await expandGlobs(pattern, fs, cwd);
+        allMatches.push(...matches);
+      }
+      // Deduplicate and sort
+      const unique = [...new Set(allMatches)];
+      return unique.length > 0 ? unique.sort() : [token];
+    }
+  }
+
   // Check if token contains glob characters
-  if (!/[*?\[]/.test(token)) return [token];
+  if (!/[*?\[!]/.test(token)) return [token];
+
+  // Handle ** recursive glob
+  if (token.includes('**')) {
+    return expandRecursiveGlob(token, fs, cwd);
+  }
+
+  // Handle !(pattern) negation — extglob
+  if (/!\(/.test(token)) {
+    return expandNegationGlob(token, fs, cwd);
+  }
 
   // Convert glob pattern to regex
   let regexStr = '^';
@@ -419,6 +597,127 @@ export async function expandGlobs(token, fs, cwd) {
     const matches = entries
       .map(e => e.name)
       .filter(name => regex.test(name))
+      .sort();
+
+    return matches.length > 0 ? matches : [token];
+  } catch {
+    return [token];
+  }
+}
+
+/**
+ * Expand ** recursive glob pattern.
+ * Traverses directory tree and matches files against the pattern.
+ */
+async function expandRecursiveGlob(pattern, fs, cwd) {
+  const parts = pattern.split('/');
+  const results = [];
+
+  async function walk(dir, partIndex) {
+    if (partIndex >= parts.length) return;
+
+    const part = parts[partIndex];
+    const isLast = partIndex === parts.length - 1;
+
+    try {
+      const entries = await fs.listDir(dir);
+
+      if (part === '**') {
+        // Match zero or more directories
+        // Try matching remaining pattern parts at this level
+        for (const entry of entries) {
+          const fullPath = dir === '/' ? '/' + entry.name : dir + '/' + entry.name;
+          const relPath = fullPath.startsWith(cwd + '/') ? fullPath.slice(cwd.length + 1) : entry.name;
+
+          if (isLast) {
+            // ** at end matches everything
+            results.push(relPath);
+          } else {
+            // Try matching next part against this entry
+            const nextPart = parts[partIndex + 1];
+            if (simpleGlobMatch(nextPart, entry.name)) {
+              if (partIndex + 1 === parts.length - 1) {
+                results.push(relPath);
+              } else if (entry.isDirectory) {
+                await walk(fullPath, partIndex + 2);
+              }
+            }
+          }
+
+          // Recurse into subdirectories (** keeps matching)
+          if (entry.isDirectory) {
+            await walk(fullPath, partIndex);
+          }
+        }
+      } else {
+        for (const entry of entries) {
+          if (simpleGlobMatch(part, entry.name)) {
+            const fullPath = dir === '/' ? '/' + entry.name : dir + '/' + entry.name;
+            const relPath = fullPath.startsWith(cwd + '/') ? fullPath.slice(cwd.length + 1) : entry.name;
+
+            if (isLast) {
+              results.push(relPath);
+            } else if (entry.isDirectory) {
+              await walk(fullPath, partIndex + 1);
+            }
+          }
+        }
+      }
+    } catch {
+      // Directory not accessible
+    }
+  }
+
+  await walk(cwd || '/', 0);
+  return results.length > 0 ? results.sort() : [pattern];
+}
+
+/**
+ * Simple glob match for a single filename segment (* and ?).
+ */
+function simpleGlobMatch(pattern, name) {
+  let regexStr = '^';
+  for (let i = 0; i < pattern.length; i++) {
+    if (pattern[i] === '*') regexStr += '[^/]*';
+    else if (pattern[i] === '?') regexStr += '[^/]';
+    else regexStr += pattern[i].replace(/[.+^${}()|\\[\]]/g, '\\$&');
+  }
+  regexStr += '$';
+  try {
+    return new RegExp(regexStr).test(name);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Expand !(pattern) negation glob.
+ * Matches files that do NOT match the inner pattern.
+ */
+async function expandNegationGlob(token, fs, cwd) {
+  // Parse !(pattern) — extract the negation part and any surrounding text
+  const match = token.match(/^(.*)!\(([^)]+)\)(.*)$/);
+  if (!match) return [token];
+
+  const [, prefix, negPattern, suffix] = match;
+  const positiveGlob = prefix + '*' + suffix;
+
+  try {
+    const entries = await fs.listDir(cwd || '/');
+    const negRegex = new RegExp('^' + negPattern.replace(/\*/g, '.*').replace(/\?/g, '.') + '$');
+    const suffixRegex = suffix ? new RegExp(suffix.replace(/[.+^${}()|\\[\]]/g, '\\$&') + '$') : null;
+
+    const matches = entries
+      .map(e => e.name)
+      .filter(name => {
+        // Must match the overall pattern (prefix + something + suffix)
+        if (prefix && !name.startsWith(prefix)) return false;
+        if (suffix && !name.endsWith(suffix)) return false;
+
+        // The part between prefix and suffix must NOT match the negation
+        const middle = name.slice(prefix.length, suffix ? name.length - suffix.length : undefined);
+        return !negRegex.test(middle);
+      })
       .sort();
 
     return matches.length > 0 ? matches : [token];
@@ -502,6 +801,15 @@ export class CommandRegistry {
   get(name) {
     const entry = this.#commands.get(name);
     return entry ? entry.handler : null;
+  }
+
+  /**
+   * Unregister a command.
+   * @param {string} name
+   * @returns {boolean} True if command existed
+   */
+  unregister(name) {
+    return this.#commands.delete(name);
   }
 
   /** @returns {boolean} */
@@ -1334,6 +1642,10 @@ export class ClawserShell {
   registry;
   /** @type {ShellFs|MemoryFs|null} */
   fs;
+  /** @type {Map<number, {id: number, command: string, promise: Promise, status: string, result: object|null}>} */
+  #jobTable = new Map();
+  /** @type {number} */
+  #nextJobId = 1;
 
   /**
    * Create a new shell instance.
@@ -1350,7 +1662,96 @@ export class ClawserShell {
     if (!opts.registry) {
       registerBuiltins(this.registry);
       registerExtendedBuiltins(this.registry);
+      registerJqBuiltin(this.registry);
     }
+
+    // Register job-related builtins
+    this.#registerJobBuiltins();
+  }
+
+  /** @type {Map<string, {name: string, commands: object}>} */
+  #packages = new Map();
+
+  /**
+   * Install a CLI package that registers commands.
+   * @param {object} pkg
+   * @param {string} pkg.name - Package name
+   * @param {object} pkg.commands - Map of command name → async handler
+   */
+  installPackage(pkg) {
+    if (!pkg || !pkg.name) throw new Error('Package must have a name');
+    if (!pkg.commands || typeof pkg.commands !== 'object') throw new Error('Package must have commands');
+    this.#packages.set(pkg.name, pkg);
+    for (const [cmdName, handler] of Object.entries(pkg.commands)) {
+      this.registry.register(cmdName, async (ctx) => {
+        return handler(ctx.args || ctx);
+      }, { description: `From package ${pkg.name}`, category: 'Package' });
+    }
+  }
+
+  /**
+   * Uninstall a CLI package and remove its commands.
+   * @param {string} name - Package name
+   */
+  uninstallPackage(name) {
+    const pkg = this.#packages.get(name);
+    if (!pkg) return;
+    for (const cmdName of Object.keys(pkg.commands)) {
+      this.registry.unregister(cmdName);
+    }
+    this.#packages.delete(name);
+  }
+
+  /**
+   * List installed packages.
+   * @returns {Array<{name: string, commands: string[]}>}
+   */
+  listPackages() {
+    return [...this.#packages.values()].map(p => ({
+      name: p.name,
+      commands: Object.keys(p.commands),
+    }));
+  }
+
+  /** List background jobs. */
+  jobs() {
+    return [...this.#jobTable.values()].map(j => ({
+      id: j.id, command: j.command, status: j.status,
+    }));
+  }
+
+  #registerJobBuiltins() {
+    this.registry.register('jobs', async () => {
+      const list = this.jobs();
+      if (list.length === 0) {
+        return { stdout: 'No active jobs', stderr: '', exitCode: 0 };
+      }
+      const lines = list.map(j => `[${j.id}] ${j.status.padEnd(8)} ${j.command}`);
+      return { stdout: lines.join('\n'), stderr: '', exitCode: 0 };
+    }, { description: 'List background jobs', category: 'Process', usage: 'jobs' });
+
+    this.registry.register('fg', async (args) => {
+      // Find the most recent running job, or by ID
+      let job;
+      if (args.length > 0) {
+        const id = parseInt(args[0].replace('%', ''), 10);
+        job = this.#jobTable.get(id);
+      } else {
+        // Most recent running job
+        for (const j of this.#jobTable.values()) {
+          if (j.status === 'running') job = j;
+        }
+      }
+      if (!job) {
+        return { stdout: '', stderr: 'fg: no current job', exitCode: 1 };
+      }
+      // Wait for the job to complete
+      const result = await job.promise;
+      job.status = 'done';
+      job.result = result;
+      this.#jobTable.delete(job.id);
+      return result;
+    }, { description: 'Bring a background job to foreground', category: 'Process', usage: 'fg [%job_id]' });
   }
 
   /**
@@ -1372,6 +1773,23 @@ export class ClawserShell {
     } catch (e) {
       this.state.lastExitCode = 2;
       return { stdout: '', stderr: `syntax error: ${e.message}`, exitCode: 2 };
+    }
+
+    // Handle background execution
+    if (ast && ast.background) {
+      const jobId = this.#nextJobId++;
+      const bgAst = { ...ast };
+      delete bgAst.background;
+      const promise = execute(bgAst, this.state, this.registry, { fs: this.fs });
+      const job = { id: jobId, command: command.replace(/\s*&\s*$/, ''), promise, status: 'running', result: null };
+      this.#jobTable.set(jobId, job);
+      promise.then(result => {
+        job.status = 'done';
+        job.result = result;
+      }).catch(() => {
+        job.status = 'failed';
+      });
+      return { stdout: `[${jobId}] started`, stderr: '', exitCode: 0, jobId };
     }
 
     return execute(ast, this.state, this.registry, { fs: this.fs });

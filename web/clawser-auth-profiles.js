@@ -230,6 +230,43 @@ export class AuthProfileManager {
   get size() { return this.#profiles.size; }
 
   /**
+   * Export profiles as serializable data (without credentials).
+   * @returns {Array<{id: string, name: string, provider: string, isDefault: boolean}>}
+   */
+  exportProfiles() {
+    return [...this.#profiles.values()].map(p => ({
+      id: p.id,
+      name: p.name,
+      provider: p.provider,
+      isDefault: p.isDefault || false,
+      defaultModel: p.defaultModel || undefined,
+      baseUrl: p.baseUrl || undefined,
+    }));
+  }
+
+  /**
+   * Import profile metadata (without credentials).
+   * Validates structure and returns accepted profiles.
+   * @param {*} profiles
+   * @returns {Array<{id: string, name: string, provider: string, isDefault: boolean}>}
+   */
+  importProfiles(profiles) {
+    if (!Array.isArray(profiles)) return [];
+    const valid = [];
+    for (const p of profiles) {
+      if (p && typeof p === 'object' && typeof p.provider === 'string' && typeof p.name === 'string') {
+        valid.push({
+          id: p.id || `profile_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          name: p.name,
+          provider: p.provider,
+          isDefault: p.isDefault || false,
+        });
+      }
+    }
+    return valid;
+  }
+
+  /**
    * Build system prompt context for active profiles.
    * @returns {string}
    */
