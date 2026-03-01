@@ -152,6 +152,9 @@ export declare class ChannelManager {
     limit?: number;
   }): InboundMessage[];
 
+  /** Clear all message history. */
+  clearHistory(): void;
+
   /**
    * Format a message for agent context.
    */

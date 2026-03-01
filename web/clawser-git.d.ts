@@ -71,3 +71,10 @@ export class GitRecallTool extends BrowserTool {
   constructor(memory: GitEpisodicMemory);
   execute(params?: { query?: string }): Promise<ToolResult>;
 }
+
+export class CommitSearchIndex {
+  add(entry: { oid: string; message: string; timestamp: number }): void;
+  readonly size: number;
+  clear(): void;
+  search(query: string): Array<{ oid: string; message: string; timestamp: number; score: number }>;
+}

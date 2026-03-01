@@ -28,6 +28,7 @@ export class IntentRouter {
   route(message: string, meta?: Record<string, unknown>): { intent: string; config: PipelineConfig };
   addPattern(intent: string, testFn: (message: string, meta?: Record<string, unknown>) => boolean): void;
   addOverride(prefix: string, intent: string): void;
+  removeOverride(prefix: string): boolean;
   resetPatterns(): void;
   stripOverride(message: string): string;
   get patternCount(): number;

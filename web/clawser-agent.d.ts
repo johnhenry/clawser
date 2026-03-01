@@ -41,6 +41,7 @@ export declare class EventLog {
   query(opts?: EventLogQueryOptions): EventLogEvent[];
   summary(): Record<string, number>;
   get events(): EventLogEvent[];
+  readonly size: number;
   clear(): void;
   load(events: EventLogEvent[]): void;
   toJSONL(): string;

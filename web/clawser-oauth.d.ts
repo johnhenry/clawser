@@ -40,6 +40,7 @@ export class OAuthManager {
   connect(provider: string, scopes?: string[]): Promise<boolean>;
   disconnect(provider: string): Promise<boolean>;
   getClient(provider: string): Promise<OAuthConnection | null>;
+  disconnectAll(): Promise<void>;
   listConnections(): Array<{ provider: string; name: string; expired: boolean }>;
   isConnected(provider: string): boolean;
   restoreFromVault(providers: string[]): Promise<string[]>;

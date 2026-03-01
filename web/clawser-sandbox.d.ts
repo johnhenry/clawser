@@ -26,6 +26,7 @@ export class WorkerSandbox {
   get execCount(): number;
   execute(code: string, args?: Record<string, unknown>, opts?: { timeout?: number }): Promise<unknown>;
   getLog(): Array<Record<string, unknown>>;
+  clearLog(): void;
   terminate(): void;
 }
 
@@ -40,6 +41,7 @@ export class WasmSandbox {
   execute(code: string, args?: Record<string, unknown>): Promise<unknown>;
   resetFuel(): void;
   getLog(): Array<Record<string, unknown>>;
+  clearLog(): void;
   terminate(): void;
 }
 

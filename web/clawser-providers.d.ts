@@ -50,6 +50,7 @@ export declare class CostLedger {
   isOverThreshold(): boolean;
   record(entry: CostEntry): void;
   get entries(): CostEntry[];
+  readonly size: number;
   totalByModel(): Record<string, CostGroupSummary>;
   totalByProvider(): Record<string, CostGroupSummary>;
   summary(): CostSummary;

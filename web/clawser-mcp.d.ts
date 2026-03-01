@@ -60,6 +60,7 @@ export declare class McpManager {
   allToolSpecs(): ToolSpec[];
   findClient(toolName: string): McpClient | null;
   executeTool(toolName: string, args: Record<string, unknown>): Promise<ToolResult>;
+  disconnectAll(): void;
   get serverNames(): string[];
   get serverCount(): number;
   getClient(name: string): McpClient | undefined;

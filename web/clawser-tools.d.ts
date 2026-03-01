@@ -52,6 +52,7 @@ export declare class FetchTool extends BrowserTool {
   get parameters(): object;
   get permission(): string;
   setDomainAllowlist(domains: string[] | null): void;
+  getDomainAllowlist(): string[] | null;
   execute(params: { url: string; method?: string; headers?: Record<string, string>; body?: string }): Promise<ToolResult>;
 }
 
