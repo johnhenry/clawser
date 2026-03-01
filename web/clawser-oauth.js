@@ -281,6 +281,13 @@ export class OAuthManager {
     return true;
   }
 
+  /** Disconnect all OAuth connections. */
+  async disconnectAll() {
+    for (const provider of [...this.#connections.keys()]) {
+      await this.disconnect(provider);
+    }
+  }
+
   /**
    * Get or refresh a connection.
    * @param {string} provider

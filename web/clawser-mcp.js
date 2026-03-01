@@ -309,6 +309,13 @@ export class McpManager {
     }
   }
 
+  /** Disconnect and remove all MCP servers. */
+  disconnectAll() {
+    for (const name of [...this.#clients.keys()]) {
+      this.removeServer(name);
+    }
+  }
+
   /** Get all tool specs from all connected servers */
   allToolSpecs() {
     const specs = [];

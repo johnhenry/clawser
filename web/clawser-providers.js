@@ -284,6 +284,9 @@ export class CostLedger {
     };
   }
 
+  /** @returns {number} Number of recorded entries. */
+  get size() { return this.#entries.length; }
+
   /** Clear all recorded entries. */
   clear() {
     this.#entries = [];

@@ -338,6 +338,11 @@ export class ChannelManager {
     return msgs.slice(-(opts.limit || 20));
   }
 
+  /** Clear all message history. */
+  clearHistory() {
+    this.#history = [];
+  }
+
   /**
    * Format a message for agent context.
    * @param {object} msg - InboundMessage

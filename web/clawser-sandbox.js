@@ -230,6 +230,11 @@ export class WorkerSandbox {
     return [...this.#execLog];
   }
 
+  /** Clear the execution log. */
+  clearLog() {
+    this.#execLog = [];
+  }
+
   /**
    * Terminate the sandbox.
    */
@@ -387,6 +392,11 @@ export class WasmSandbox {
    */
   getLog() {
     return [...this.#execLog];
+  }
+
+  /** Clear the execution log. */
+  clearLog() {
+    this.#execLog = [];
   }
 
   /**

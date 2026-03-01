@@ -551,6 +551,9 @@ export class CommitSearchIndex {
 
   get size() { return this.#entries.length; }
 
+  /** Clear all indexed entries. */
+  clear() { this.#entries = []; }
+
   /**
    * Search for commits matching query terms.
    * @param {string} query - Space-separated search terms

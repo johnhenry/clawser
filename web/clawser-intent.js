@@ -179,6 +179,18 @@ export class IntentRouter {
   }
 
   /**
+   * Remove a user-defined prefix override.
+   * @param {string} prefix
+   * @returns {boolean} true if found and removed
+   */
+  removeOverride(prefix) {
+    const idx = this.#overrides.findIndex(o => o.prefix === prefix);
+    if (idx < 0) return false;
+    this.#overrides.splice(idx, 1);
+    return true;
+  }
+
+  /**
    * Remove all custom patterns (keeps built-in ones from constructor).
    */
   resetPatterns() {

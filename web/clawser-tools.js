@@ -284,6 +284,11 @@ export class FetchTool extends BrowserTool {
     this.#domainAllowlist = domains ? new Set(domains.map(d => d.toLowerCase())) : null;
   }
 
+  /** @returns {string[]|null} Current domain allowlist or null if unrestricted. */
+  getDomainAllowlist() {
+    return this.#domainAllowlist ? [...this.#domainAllowlist] : null;
+  }
+
   async execute({ url, method = 'GET', headers = {}, body }) {
     let parsed;
     try { parsed = new URL(url); } catch (e) {

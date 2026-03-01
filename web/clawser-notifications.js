@@ -54,6 +54,12 @@ export class NotificationManager {
   /** Per-type notification preferences. */
   get preferences() { return { ...this.#preferences }; }
 
+  /** @returns {object|null} Current quiet hours config or null. */
+  getQuietHours() { return this.#quietHours ? { ...this.#quietHours } : null; }
+
+  /** @param {object|null} config - { start: 0-23, end: 0-23 } or null to disable. */
+  setQuietHours(config) { this.#quietHours = config || null; }
+
   /**
    * Update a single type preference.
    * @param {string} type - 'info'|'warning'|'error'|'success'

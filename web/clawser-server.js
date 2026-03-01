@@ -694,6 +694,7 @@ export class SSEChannel {
    */
   close() {
     this.#closed = true;
+    this.#onMessageCallbacks.length = 0;
   }
 }
 

@@ -107,6 +107,9 @@ export class EventLog {
   /** @returns {Array<object>} Full event array */
   get events() { return this.#events; }
 
+  /** @returns {number} Number of recorded events. */
+  get size() { return this.#events.length; }
+
   /** Reset the log for new conversations */
   clear() {
     this.#events = [];
