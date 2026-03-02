@@ -1,0 +1,29 @@
+{
+  "name": "@clawser/core",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Core classes for the Clawser browser agent: agent, tools, providers, hooks, event log.",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "index.js"
+  ],
+  "keywords": [
+    "agent",
+    "browser",
+    "llm",
+    "tools",
+    "clawser"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/user/clawser.git",
+    "directory": "packages/clawser-core"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

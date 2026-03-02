@@ -6,6 +6,7 @@ import { loadAccounts } from './clawser-accounts.js';
 import { updateRouteHash } from './clawser-router.js';
 import { estimateCost, classifyError } from './clawser-providers.js';
 import { createItemBar, _relativeTime, _downloadText } from './clawser-item-bar.js';
+import { recordCostEvent } from './clawser-ui-config.js';
 
 // ── Reset helpers (shared for clearing tool/event + message state) ──
 /** Clear tool call log, event log, and their DOM elements. */
@@ -47,7 +48,9 @@ export function addMsg(type, text, eventId) {
       if (evtId) forkConversationFromEvent(evtId);
     });
   } else if (type === 'agent') {
-    d.innerHTML = `<div class="label">Agent</div>${esc(text)}`;
+    const avatarUrl = state.identityManager?.getCurrent?.()?.physicality?.avatar_url;
+    const avatarHtml = avatarUrl ? `<img class="msg-avatar" src="${esc(avatarUrl)}" alt="" />` : '';
+    d.innerHTML = `<div class="label">${avatarHtml}Agent</div>${esc(text)}`;
   } else {
     d.textContent = text;
   }
@@ -111,6 +114,72 @@ export function renderToolCalls() {
       this.parentElement.classList.toggle('expanded');
     });
     el.appendChild(div);
+  }
+}
+
+// ── Sub-Agent UI (Phase 3b) ──────────────────────────────────────
+
+const _subAgentBlocks = new Map();
+
+/**
+ * Add a collapsible sub-agent block in the chat flow.
+ * @param {string} id - Sub-agent ID
+ * @param {string} goal - What the sub-agent is doing
+ * @returns {HTMLElement}
+ */
+export function addSubAgentBlock(id, goal) {
+  const messagesEl = $('messages');
+  const d = document.createElement('div');
+  d.className = 'msg subagent-card';
+  d.innerHTML = `
+    <div class="subagent-head">
+      <span class="sa-icon">\u{1F916}</span>
+      <span class="sa-task">${esc(goal || 'Sub-agent')}</span>
+      <span class="sa-stats" id="saStats_${esc(id)}">running...</span>
+    </div>
+    <div class="subagent-detail" id="saDetail_${esc(id)}"></div>
+  `;
+  d.querySelector('.subagent-head').addEventListener('click', () => {
+    d.classList.toggle('expanded');
+  });
+  messagesEl.appendChild(d);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  _subAgentBlocks.set(id, d);
+  return d;
+}
+
+/**
+ * Update a sub-agent block with iteration/tool-call events.
+ * @param {string} id - Sub-agent ID
+ * @param {{type: string, text?: string, name?: string, iteration?: number}} event
+ */
+export function updateSubAgentBlock(id, event) {
+  const block = _subAgentBlocks.get(id);
+  if (!block) return;
+  const detail = block.querySelector(`#saDetail_${id}`);
+  const stats = block.querySelector(`#saStats_${id}`);
+  if (!detail) return;
+
+  if (event.type === 'iteration') {
+    const line = document.createElement('div');
+    line.textContent = `[iter ${event.iteration}] ${event.text || ''}`;
+    detail.appendChild(line);
+  } else if (event.type === 'tool_call') {
+    const line = document.createElement('div');
+    line.style.color = 'var(--accent)';
+    line.textContent = `\u{1F527} ${event.name || 'tool'}: ${(event.text || '').slice(0, 80)}`;
+    detail.appendChild(line);
+  } else if (event.type === 'done') {
+    if (stats) stats.textContent = `completed \u2713`;
+    stats?.classList.add('sa-done');
+  } else if (event.type === 'error') {
+    if (stats) stats.textContent = `error \u2717`;
+    stats?.classList.add('sa-error');
+  }
+
+  // Auto-scroll detail if expanded
+  if (block.classList.contains('expanded')) {
+    detail.scrollTop = detail.scrollHeight;
   }
 }
 
@@ -862,6 +931,7 @@ export async function sendMessage() {
             const cost = estimateCost(model, usage);
             state.sessionCost += cost;
             updateCostDisplay();
+            recordCostEvent(model, usage, cost * 100);
           }
         } else if (chunk.type === 'safety_redacted') {
           // Safety pipeline redacted the streamed content — replace what's already rendered
@@ -905,6 +975,7 @@ export async function sendMessage() {
         const cost = estimateCost(model, result.usage);
         state.sessionCost += cost;
         updateCostDisplay();
+        recordCostEvent(model, result.usage, cost * 100);
       }
 
       switch (result.status) {

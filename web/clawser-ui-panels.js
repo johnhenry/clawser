@@ -51,6 +51,15 @@ export {
   renderApiKeyWarning,
   renderQuotaBar,
   renderCleanConversationsSection,
+  getCostTracker,
+  recordCostEvent,
+  renderHooksSection,
+  initIdentityEditor,
+  renderCheckpointSection,
+  renderFallbackChainEditor,
+  renderDiscoveredToolsSection,
+  renderConnectedAppsSection,
+  renderAuthProfilesEnhanced,
 } from './clawser-ui-config.js';
 
 // ── Local imports from extracted modules (used by initPanelListeners) ──
@@ -77,6 +86,15 @@ import {
   renderApiKeyWarning,
   renderQuotaBar,
   renderCleanConversationsSection,
+  getCostTracker,
+  recordCostEvent,
+  renderHooksSection,
+  initIdentityEditor,
+  renderCheckpointSection,
+  renderFallbackChainEditor,
+  renderDiscoveredToolsSection,
+  renderConnectedAppsSection,
+  renderAuthProfilesEnhanced,
 } from './clawser-ui-config.js';
 
 /** Sanitize a color value for safe use in style attributes. */

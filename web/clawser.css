@@ -52,7 +52,8 @@ header .dot.error { background:var(--red); }
 .msg.agent { align-self:flex-start; background:#1a2332; border:1px solid var(--border); }
 .msg.system { align-self:center; color:var(--muted); font-size:11px; font-family:var(--mono); padding:2px 8px; }
 .msg.error { align-self:center; color:var(--red); font-size:11px; font-family:var(--mono); background:rgba(248,81,73,.08); border:1px solid rgba(248,81,73,.2); }
-.msg .label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:3px; color:var(--muted); }
+.msg .label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:3px; color:var(--muted); display:flex; align-items:center; gap:4px; }
+.msg-avatar { width:24px; height:24px; border-radius:50%; object-fit:cover; flex-shrink:0; }
 
 /* ── Retry button (error messages) ────────────── */
 .retry-btn {
@@ -310,6 +311,12 @@ header .dot.error { background:var(--red); }
 .goal-dot.completed { color:var(--green); }
 .goal-dot.failed { color:var(--red); }
 .goal-complete-btn { margin-left:auto; border:none; background:var(--green); color:#fff; border-radius:4px; padding:2px 8px; cursor:pointer; font-size:11px; }
+.goal-edit-btn { border:none; background:transparent; color:var(--dim); cursor:pointer; font-size:12px; padding:0 4px; opacity:0.5; }
+.goal-edit-btn:hover { opacity:1; color:var(--accent); }
+.goal-edit-wrap { display:flex; align-items:center; gap:4px; flex:1; }
+.goal-edit-input { flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--accent); border-radius:3px; padding:2px 6px; font-size:11px; font-family:var(--mono); }
+.goal-edit-priority { background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:3px; padding:2px 4px; font-size:10px; }
+.goal-edit-save, .goal-edit-cancel { font-size:10px; padding:2px 6px; }
 
 /* ── Workspace dropdown ────────────────────────────── */
 .ws-dd-item { padding:5px 8px; cursor:pointer; border-radius:4px; display:flex; align-items:center; gap:6px; }
@@ -547,6 +554,72 @@ input[type="range"] { width:100%; accent-color:var(--accent); }
 .dash-log-entry.error { color:var(--red); }
 .dash-log-entry .log-time { color:var(--dim); margin-right:6px; }
 
+/* ── Dashboard Charts (Phase 1) ────────────────────── */
+.dash-chart-period { display:flex; align-items:center; gap:6px; padding:4px 0; font-size:var(--text-sm); color:var(--muted); }
+.dash-chart-period select { background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:var(--radius); padding:2px 6px; font-size:10px; }
+.dash-chart-container { margin-bottom:12px; }
+.chart-empty { color:var(--dim); font-size:11px; padding:8px 0; text-align:center; }
+.chart-title { font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; margin-bottom:4px; }
+.chart-bar-container { display:flex; align-items:flex-end; gap:2px; height:100px; padding:4px 0; }
+.chart-bar-col { flex:1; display:flex; flex-direction:column; align-items:center; min-width:0; }
+.chart-bar-value { font-size:8px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
+.chart-bar-track { width:100%; height:80px; display:flex; align-items:flex-end; }
+.chart-bar { width:100%; border-radius:2px 2px 0 0; min-height:1px; transition:height .2s; }
+.chart-bar-label { font-size:8px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; margin-top:2px; }
+.chart-ts { display:flex; flex-direction:column; gap:3px; padding:4px 0; }
+.chart-ts-row { display:flex; align-items:center; gap:4px; font-size:10px; }
+.chart-ts-label { width:48px; text-align:right; color:var(--dim); flex-shrink:0; overflow:hidden; text-overflow:ellipsis; }
+.chart-ts-track { flex:1; height:10px; background:var(--surface2); border-radius:3px; overflow:hidden; }
+.chart-ts-bar { height:100%; border-radius:3px; min-width:1px; transition:width .2s; }
+.chart-ts-value { width:48px; text-align:right; color:var(--muted); flex-shrink:0; font-family:var(--mono); }
+.cost-breakdown { padding:4px 0; }
+.cost-breakdown-bar { display:flex; height:12px; border-radius:4px; overflow:hidden; margin-bottom:6px; }
+.cost-seg { min-width:2px; transition:width .2s; }
+.cost-breakdown-legend { display:flex; flex-direction:column; gap:2px; }
+.cost-legend-row { display:flex; align-items:center; gap:6px; font-size:10px; color:var(--muted); }
+.cost-legend-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+.cost-legend-model { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text); }
+.cost-legend-pct { width:28px; text-align:right; font-family:var(--mono); }
+.cost-legend-cost { width:56px; text-align:right; font-family:var(--mono); color:var(--accent); }
+.cost-legend-tokens { width:56px; text-align:right; font-family:var(--mono); }
+.cost-legend-calls { width:40px; text-align:right; font-family:var(--mono); }
+
+/* ── Diff View (Phase 2e) ─────────────────────────── */
+.diff-view { font-family:var(--mono); font-size:11px; overflow-x:auto; }
+.diff-line { display:flex; gap:0; line-height:1.6; }
+.diff-num { width:32px; text-align:right; padding-right:4px; color:var(--dim); user-select:none; flex-shrink:0; }
+.diff-prefix { width:12px; text-align:center; flex-shrink:0; user-select:none; }
+.diff-text { flex:1; white-space:pre; }
+.diff-add { background:rgba(63,185,80,.15); color:var(--green); }
+.diff-del { background:rgba(248,81,73,.15); color:var(--red); }
+.diff-eq { color:var(--muted); }
+.diff-empty { color:var(--dim); padding:8px 0; text-align:center; font-size:11px; }
+
+/* ── Identity Editor (Phase 2b) ───────────────────── */
+.identity-editor { padding:4px 0; }
+.ide-section { margin-bottom:8px; }
+.ide-label { font-size:10px; color:var(--muted); display:block; margin-bottom:2px; }
+.ide-input, .ide-textarea, .ide-select { width:100%; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:var(--radius); padding:4px 8px; font-size:var(--text-sm); font-family:var(--mono); box-sizing:border-box; }
+.ide-textarea { resize:vertical; min-height:40px; }
+.ide-group { border:1px solid var(--border); border-radius:var(--radius); padding:6px 8px; }
+.ide-group-title { font-size:10px; font-weight:600; color:var(--accent); text-transform:uppercase; margin-bottom:4px; }
+.ide-avatar-preview { margin-top:4px; }
+.ide-avatar-preview img { width:48px; height:48px; border-radius:50%; object-fit:cover; border:2px solid var(--border); }
+.ide-no-avatar { font-size:10px; color:var(--dim); }
+.ide-actions { display:flex; gap:6px; margin-top:8px; }
+.ide-import-label { cursor:pointer; }
+
+/* ── Hook Management (Phase 2d) ───────────────────── */
+.hook-list { display:flex; flex-direction:column; gap:4px; }
+.hook-item { display:flex; align-items:center; gap:6px; padding:4px 6px; background:var(--surface2); border-radius:var(--radius); font-size:11px; }
+.hook-name { flex:1; font-family:var(--mono); color:var(--text); }
+.hook-point { font-size:10px; color:var(--accent); background:var(--surface); padding:1px 6px; border-radius:8px; }
+.hook-priority { font-size:10px; color:var(--dim); }
+.hook-toggle { cursor:pointer; }
+.hook-remove { border:none; background:transparent; color:var(--dim); cursor:pointer; font-size:11px; }
+.hook-remove:hover { color:var(--red); }
+.hook-add-form { display:flex; flex-direction:column; gap:4px; margin-top:6px; padding:6px; border:1px solid var(--border); border-radius:var(--radius); }
+
 /* ── Batch 5: Chat inline elements ─────────────────── */
 .msg.subagent-card { align-self:stretch; max-width:100%; padding:0; background:transparent; border:none; border-left:3px solid var(--purple); margin:4px 0; font-size:var(--text-sm); font-family:var(--mono); }
 .subagent-head { padding:4px 10px; display:flex; align-items:center; gap:6px; cursor:pointer; color:var(--muted); }
@@ -556,6 +629,34 @@ input[type="range"] { width:100%; accent-color:var(--accent); }
 .subagent-head .sa-stats { color:var(--dim); font-size:10px; }
 .subagent-detail { display:none; padding:4px 10px 6px; color:var(--muted); white-space:pre-wrap; word-break:break-word; max-height:200px; overflow-y:auto; border-top:1px solid var(--border); }
 .msg.subagent-card.expanded .subagent-detail { display:block; }
+.sa-done { color:var(--green) !important; }
+.sa-error { color:var(--red) !important; }
+
+/* ── Checkpoint items ─────────────────────────────── */
+.checkpoint-item { display:flex; align-items:center; gap:6px; padding:4px 6px; border-bottom:1px solid var(--border); font-size:11px; }
+.cp-time { flex:1; color:var(--text); font-family:var(--mono); }
+.cp-size { color:var(--dim); font-size:10px; }
+.cp-restore { font-size:10px; }
+.cp-delete { font-size:10px; padding:2px 6px; }
+
+/* ── Fallback chain editor ────────────────────────── */
+.chain-entry { display:flex; align-items:center; gap:4px; padding:4px 6px; border:1px solid var(--border); border-radius:var(--radius); margin-bottom:2px; font-size:11px; }
+.chain-entry.drag-over { border-color:var(--accent); background:rgba(88,166,255,.1); }
+.chain-drag-handle { cursor:grab; color:var(--dim); }
+.chain-name { flex:1; color:var(--text); font-family:var(--mono); }
+.chain-model { color:var(--muted); font-size:10px; }
+.chain-remove { border:none; background:transparent; color:var(--dim); cursor:pointer; }
+.chain-remove:hover { color:var(--red); }
+.chain-add-row { display:flex; gap:4px; margin-top:4px; }
+.chain-add-row input { flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:var(--radius); padding:2px 6px; font-size:10px; }
+
+/* ── Discovered tools ─────────────────────────────── */
+.discovered-tool-item { display:flex; align-items:center; gap:6px; padding:3px 6px; border-bottom:1px solid var(--border); font-size:11px; }
+.dt-name { font-family:var(--mono); color:var(--text); }
+.dt-source-badge { font-size:9px; padding:1px 4px; border-radius:6px; text-transform:uppercase; }
+.dt-ext { background:var(--green); color:#000; }
+.dt-mcp { background:var(--accent); color:#000; }
+.dt-desc { flex:1; color:var(--dim); font-size:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
 .safety-banner { padding:6px 10px; background:rgba(210,153,34,.08); border:1px solid rgba(210,153,34,.2); border-radius:var(--radius); color:var(--orange); font-size:11px; font-family:var(--mono); margin:4px 0; }
 

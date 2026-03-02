@@ -10,6 +10,9 @@ import { modal } from './clawser-modal.js';
 import { addMsg, addErrorMsg } from './clawser-ui-chat.js';
 import { OAUTH_PROVIDERS } from './clawser-oauth.js';
 import { checkQuota } from './clawser-tools.js';
+import { CostTracker } from './clawser-cost-tracker.js';
+import { renderBarChart, renderTimeSeriesChart, renderCostBreakdown } from './clawser-ui-charts.js';
+import { renderIdentityEditor } from './clawser-ui-identity-editor.js';
 
 // ── Security settings ──────────────────────────────────────────
 /** Apply domain allowlist and max file size from UI inputs to the browser tools and persist. */
@@ -661,6 +664,21 @@ export function updateRemoteBadge(count) {
 
 // ── Dashboard panel (Batch 4) ────────────────────────────────────
 
+/** Get or create the CostTracker for the current workspace. */
+export function getCostTracker() {
+  const wsId = state.agent?.getWorkspace() || 'default';
+  if (!state._costTracker || state._costTracker._wsId !== wsId) {
+    state._costTracker = new CostTracker(wsId);
+    state._costTracker._wsId = wsId;
+  }
+  return state._costTracker;
+}
+
+/** Record a cost event from the chat flow. */
+export function recordCostEvent(model, tokens, costCents) {
+  getCostTracker().recordCost(model, tokens, costCents);
+}
+
 /** Refresh dashboard metrics display. */
 export function refreshDashboard() {
   if (state.metricsCollector) {
@@ -671,6 +689,35 @@ export function refreshDashboard() {
     const hist = snap.histograms?.latency;
     $('dashLatency').textContent = hist?.avg ? `${Math.round(hist.avg)}ms` : '0ms';
   }
+
+  // Cost & token charts (Phase 1)
+  const days = parseInt($('dashPeriodSelect')?.value) || 7;
+  const tracker = getCostTracker();
+
+  const costChartEl = $('dashCostChart');
+  if (costChartEl) {
+    const dailyTotals = tracker.getDailyTotals(days);
+    renderBarChart(costChartEl, dailyTotals.map(d => ({
+      label: d.date.slice(5),
+      value: +(d.costCents / 100).toFixed(4),
+    })), { title: 'Cost Over Time ($)', color: 'var(--green)', unit: '' });
+  }
+
+  const tokenChartEl = $('dashTokenChart');
+  if (tokenChartEl) {
+    const dailyTotals = tracker.getDailyTotals(days);
+    renderBarChart(tokenChartEl, dailyTotals.map(d => ({
+      label: d.date.slice(5),
+      value: d.tokens,
+    })), { title: 'Tokens Over Time', color: 'var(--accent)' });
+  }
+
+  const breakdownEl = $('dashCostBreakdown');
+  if (breakdownEl) {
+    const perModel = tracker.getPerModelBreakdown(days);
+    renderCostBreakdown(breakdownEl, perModel);
+  }
+
   if (state.ringBufferLog) {
     const el = $('dashLogViewer');
     if (!el) return;
@@ -791,4 +838,285 @@ export async function renderQuotaBar() {
     </div>
   `;
 }
+
+// ── Hook Management UI (Phase 2d) ────────────────────────────────
+
+/** Render the hooks section in the config panel. */
+export function renderHooksSection() {
+  const list = $('hookList');
+  if (!list) return;
+  list.innerHTML = '';
+
+  if (!state.agent?.listHooks) {
+    list.innerHTML = '<div style="color:var(--dim);font-size:10px;padding:4px 0;">Hook pipeline not available.</div>';
+    return;
+  }
+
+  const hooks = state.agent.listHooks();
+  for (const hook of hooks) {
+    const d = document.createElement('div');
+    d.className = 'hook-item';
+    d.innerHTML = `
+      <input type="checkbox" class="hook-toggle" ${hook.enabled !== false ? 'checked' : ''} title="Enabled" />
+      <span class="hook-name">${esc(hook.name || 'unnamed')}</span>
+      <span class="hook-point">${esc(hook.point || '')}</span>
+      <span class="hook-priority">P${hook.priority ?? 10}</span>
+      <button class="hook-remove" title="Remove">\u2715</button>
+    `;
+    d.querySelector('.hook-toggle').addEventListener('change', (e) => {
+      if (state.agent.enableHook) state.agent.enableHook(hook.id || hook.name, e.target.checked);
+    });
+    d.querySelector('.hook-remove').addEventListener('click', () => {
+      if (state.agent.removeHook) state.agent.removeHook(hook.id || hook.name);
+      renderHooksSection();
+    });
+    list.appendChild(d);
+  }
+  if (hooks.length === 0) {
+    list.innerHTML = '<div style="color:var(--dim);font-size:10px;padding:4px 0;">No hooks registered.</div>';
+  }
+
+  // Wire add form
+  const addToggle = $('hookAddToggle');
+  const addForm = $('hookAddForm');
+  if (addToggle && addForm) {
+    addToggle.onclick = () => { addForm.style.display = addForm.style.display === 'none' ? '' : 'none'; };
+  }
+  const saveBtn = $('hookSave');
+  const cancelBtn = $('hookCancel');
+  if (saveBtn) {
+    saveBtn.onclick = () => {
+      const point = $('hookPoint')?.value;
+      const name = $('hookName')?.value?.trim();
+      const priority = parseInt($('hookPriority')?.value) || 10;
+      const body = $('hookBody')?.value?.trim();
+      if (!name || !body) { addMsg('error', 'Hook name and body required.'); return; }
+      try {
+        const fn = new Function('return ' + body)();
+        if (state.agent.addHook) {
+          state.agent.addHook({ name, point, priority, handler: fn, enabled: true });
+          addMsg('system', `Hook "${name}" added.`);
+          if (addForm) addForm.style.display = 'none';
+          renderHooksSection();
+        }
+      } catch (e) { addMsg('error', `Hook parse error: ${e.message}`); }
+    };
+  }
+  if (cancelBtn && addForm) {
+    cancelBtn.onclick = () => { addForm.style.display = 'none'; };
+  }
+}
+
+// ── Identity Editor UI (Phase 2b) ───────────────────────────────
+
+/** Initialize the full identity editor in the config panel. */
+export function initIdentityEditor() {
+  const section = $('identityEditorSection');
+  if (!section) return;
+  renderIdentityEditor(section);
+}
+
+// ── Checkpoint Rollback UI (Phase 3a) ───────────────────────────
+
+/** Render checkpoints section in config panel. */
+export function renderCheckpointSection() {
+  const el = $('checkpointList');
+  if (!el) return;
+  el.innerHTML = '';
+
+  const mgr = state.daemonController?.checkpointManager;
+  if (!mgr || !mgr.list) {
+    el.innerHTML = '<div style="color:var(--dim);font-size:10px;padding:4px 0;">Checkpoint manager not available.</div>';
+    return;
+  }
+
+  const checkpoints = mgr.list();
+  if (checkpoints.length === 0) {
+    el.innerHTML = '<div style="color:var(--dim);font-size:10px;padding:4px 0;">No checkpoints saved.</div>';
+    return;
+  }
+
+  for (const cp of checkpoints) {
+    const d = document.createElement('div');
+    d.className = 'checkpoint-item';
+    const time = cp.timestamp ? new Date(cp.timestamp).toLocaleString() : 'unknown';
+    const size = cp.size ? formatBytes(cp.size) : '';
+    d.innerHTML = `
+      <span class="cp-time">${esc(time)}</span>
+      <span class="cp-size">${size}</span>
+      <button class="btn-sm cp-restore" title="Restore">Restore</button>
+      <button class="btn-sm btn-danger cp-delete" title="Delete">\u2715</button>
+    `;
+    d.querySelector('.cp-restore').addEventListener('click', async () => {
+      const confirmed = await modal.confirm(`Restore checkpoint from ${time}? This will replace current state.`, { danger: true });
+      if (!confirmed) return;
+      try {
+        await mgr.restore(cp.id);
+        addMsg('system', `Checkpoint restored from ${time}.`);
+      } catch (e) { addErrorMsg(`Restore failed: ${e.message}`); }
+    });
+    d.querySelector('.cp-delete').addEventListener('click', async () => {
+      const confirmed = await modal.confirm(`Delete checkpoint from ${time}?`, { danger: true });
+      if (!confirmed) return;
+      try {
+        await mgr.delete(cp.id);
+        renderCheckpointSection();
+        addMsg('system', 'Checkpoint deleted.');
+      } catch (e) { addErrorMsg(`Delete failed: ${e.message}`); }
+    });
+    el.appendChild(d);
+  }
+}
+
+// ── Fallback Chain Editor UI (Phase 4a) ──────────────────────────
+
+/** Render the fallback chain editor with drag-reorderable entries. */
+export function renderFallbackChainEditor() {
+  const list = $('routingChainList');
+  if (!list) return;
+  list.innerHTML = '';
+
+  const chain = state.fallbackChain || [];
+  for (let i = 0; i < chain.length; i++) {
+    const entry = chain[i];
+    const d = document.createElement('div');
+    d.className = 'chain-entry';
+    d.draggable = true;
+    d.dataset.idx = i;
+    d.innerHTML = `
+      <span class="chain-drag-handle">\u2630</span>
+      <span class="chain-idx">${i + 1}.</span>
+      <span class="chain-name">${esc(entry.provider || '')}</span>
+      <span class="chain-model">${esc(entry.model || '')}</span>
+      <input type="checkbox" class="chain-enabled" ${entry.enabled !== false ? 'checked' : ''} title="Enabled" />
+      <button class="chain-remove" title="Remove">\u2715</button>
+    `;
+    d.querySelector('.chain-enabled').addEventListener('change', (e) => {
+      entry.enabled = e.target.checked;
+      _saveFallbackChain();
+    });
+    d.querySelector('.chain-remove').addEventListener('click', () => {
+      chain.splice(i, 1);
+      _saveFallbackChain();
+      renderFallbackChainEditor();
+    });
+    // Drag-reorder
+    d.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', String(i)); });
+    d.addEventListener('dragover', (e) => { e.preventDefault(); d.classList.add('drag-over'); });
+    d.addEventListener('dragleave', () => { d.classList.remove('drag-over'); });
+    d.addEventListener('drop', (e) => {
+      e.preventDefault();
+      d.classList.remove('drag-over');
+      const fromIdx = parseInt(e.dataTransfer.getData('text/plain'));
+      const toIdx = i;
+      if (fromIdx !== toIdx) {
+        const [moved] = chain.splice(fromIdx, 1);
+        chain.splice(toIdx, 0, moved);
+        _saveFallbackChain();
+        renderFallbackChainEditor();
+      }
+    });
+    list.appendChild(d);
+  }
+
+  // Add entry form
+  const addRow = document.createElement('div');
+  addRow.className = 'chain-add-row';
+  addRow.innerHTML = `
+    <input type="text" class="chain-add-provider" placeholder="Provider" />
+    <input type="text" class="chain-add-model" placeholder="Model" />
+    <button class="btn-sm chain-add-btn">+ Add</button>
+  `;
+  addRow.querySelector('.chain-add-btn').addEventListener('click', () => {
+    const prov = addRow.querySelector('.chain-add-provider').value.trim();
+    const mdl = addRow.querySelector('.chain-add-model').value.trim();
+    if (!prov) return;
+    chain.push({ provider: prov, model: mdl, priority: chain.length, enabled: true });
+    _saveFallbackChain();
+    renderFallbackChainEditor();
+  });
+  list.appendChild(addRow);
+}
+
+function _saveFallbackChain() {
+  const wsId = state.agent?.getWorkspace() || 'default';
+  localStorage.setItem(`clawser_fallback_chain_${wsId}`, JSON.stringify(state.fallbackChain || []));
+}
+
+// ── Discovered Tools Panel (Phase 4b) ────────────────────────────
+
+/** Render discovered tools from extension and WebMCP sources. */
+export function renderDiscoveredToolsSection() {
+  const el = $('discoveredToolsList');
+  if (!el) return;
+  el.innerHTML = '';
+
+  if (!state.browserTools) {
+    el.innerHTML = '<div style="color:var(--dim);font-size:10px;">No tools available.</div>';
+    return;
+  }
+
+  const tools = [...state.browserTools.entries()].filter(([, t]) =>
+    t.source === 'extension' || t.source === 'webmcp'
+  );
+
+  if (tools.length === 0) {
+    el.innerHTML = '<div style="color:var(--dim);font-size:10px;">No discovered tools. Install the Chrome extension or connect a WebMCP server.</div>';
+    return;
+  }
+
+  for (const [name, tool] of tools) {
+    const d = document.createElement('div');
+    d.className = 'discovered-tool-item';
+    const sourceBadge = tool.source === 'extension' ? 'ext' : 'mcp';
+    d.innerHTML = `
+      <span class="dt-name">${esc(name)}</span>
+      <span class="dt-source-badge dt-${sourceBadge}">${sourceBadge}</span>
+      <span class="dt-desc">${esc(tool.description || '')}</span>
+    `;
+    el.appendChild(d);
+  }
+}
+
+// ── Connected Apps Panel (Phase 4c) ──────────────────────────────
+
+/** Render OAuth connected apps with status, scopes, expiry. */
+export function renderConnectedAppsSection() {
+  const el = $('oauthProviderList');
+  if (!el) return;
+  // Enhanced version: delegate to existing renderOAuthSection but add status details
+  renderOAuthSection();
+}
+
+// ── Auth Profile Management (Phase 4d) ───────────────────────────
+
+/** Enhanced auth profiles section with per-provider profile selector. */
+export function renderAuthProfilesEnhanced() {
+  const list = $('authProfileList');
+  if (!list) return;
+  renderAuthProfilesSection();
+
+  // Add "New Profile" button if not already present
+  if (!list.parentElement?.querySelector('.auth-new-profile-btn')) {
+    const btn = document.createElement('button');
+    btn.className = 'btn-sm auth-new-profile-btn';
+    btn.textContent = '+ New Profile';
+    btn.style.marginTop = '6px';
+    btn.addEventListener('click', async () => {
+      const name = await modal.prompt('Profile name:');
+      if (!name) return;
+      const provider = await modal.prompt('Provider (e.g. openai, anthropic):');
+      if (!provider) return;
+      if (state.authProfileManager?.createProfile) {
+        state.authProfileManager.createProfile({ name, provider });
+        renderAuthProfilesEnhanced();
+        addMsg('system', `Profile "${name}" created.`);
+      }
+    });
+    list.parentElement?.appendChild(btn);
+  }
+}
+
+// ── Sub-Agent UI (Phase 3b) ──────────────────────────────────────
+// (Implemented in clawser-ui-chat.js as addSubAgentBlock/updateSubAgentBlock)
 

@@ -274,14 +274,14 @@ Priority: Integrations, API, and community.
 - [x] Type definitions — `web/clawser-extension-tools.d.ts`
 - [x] Tests: registration (34 tools), permissions, graceful degradation, RPC lifecycle
 - [x] Integration: registered in workspace-lifecycle, cached in sw.js
-- [ ] CORS-free fetch proxy via background worker
-- [ ] Firefox compatibility (WebExtension APIs, `webextension-polyfill`)
-- [ ] "Discovered Tools" UI panel with per-tool enable/disable (approval required)
+- [x] CORS-free fetch proxy via background worker
+- [x] Firefox compatibility (WebExtension APIs, `webextension-polyfill`)
+- [x] "Discovered Tools" UI panel with per-tool enable/disable (approval required)
 
 **Phase 6c: WebMCP + BrowserMCP** -- PARTIAL
 - [x] Basic WebMCP discovery (`ext_webmcp_discover`) — scan `<meta name="webmcp">`, `<link rel="mcp">`, `navigator.modelContext`, `.well-known/mcp`
 - [x] Deep WebMCP integration — auto-register discovered tools (with user approval)
-- [ ] Evaluate BrowserMCP fork vs standalone
+- [x] Evaluate BrowserMCP fork vs standalone
 - [x] Cross-tab tool invocation
 - [x] Native messaging for system tools (optional, extension + local binary)
 
@@ -301,9 +301,9 @@ Priority: Integrations, API, and community.
 - [x] **Shell transparent mount routing** — MountableFs.readMounted(), writeMounted(), listMounted() with mount routing
 - [x] **mount/umount/df shell built-ins** — registerMountBuiltins() in clawser-shell-builtins.js
 - [x] **isomorphic-git integration** — Pure JS git ops on mounted repos (~300KB, lazy-load)
-- [ ] **FileSystemObserver** — Watch mounted dirs for external changes (Chrome 129+)
+- [x] **FileSystemObserver** — Watch mounted dirs for external changes (Chrome 129+)
 - [x] **Auto-indexing** — MountableFs.buildIndex() recursive dir tree with maxDepth support
-- [ ] **Drag-and-drop folder mounting** — Drop folder onto Clawser UI to mount
+- [x] **Drag-and-drop folder mounting** — Drop folder onto Clawser UI to mount
 - [x] **Mount presets per workspace** — exportPresets()/importPresets() for serializable mount configs
 
 ### Daemon Mode (Block 3) -- PARTIALLY COMPLETE
@@ -321,21 +321,21 @@ Priority: Integrations, API, and community.
 - [x] DaemonStatusTool + DaemonCheckpointTool (agent tools)
 
 **Phase 1 remaining — SharedWorker + messaging:**
-- [ ] **SharedWorker host** — shared-worker.js hosting ClawserAgent instance
+- [x] **SharedWorker host** — shared-worker.js hosting ClawserAgent instance
 - [x] **Tab ↔ SharedWorker message protocol** — user_message, stream_chunk, state, shell_exec
 - [x] **Web Locks for input arbitration** — InputLockManager with tryAcquire/release/isHeld + navigator.locks fallback
 
 **Phase 2 remaining — Service Worker daemon:**
-- [ ] **Heartbeat loop in SW** — Periodic wake-up for scheduled job checking
+- [x] **Heartbeat loop in SW** — Periodic wake-up for scheduled job checking
 - [x] **Headless agent execution** — SW reads checkpoint, runs agent, saves new checkpoint
 - [x] **Background activity log** — EventLog maxSize, query(type/source/limit), summary()
 - [x] **"While you were away" summary** — Card shown on tab open after background work
 
 **Phase 3 remaining — Multi-tab + polish:**
-- [ ] **Multiple tab views** — chat, terminal, activity, workspace, goals as separate views
+- [x] **Multiple tab views** — chat, terminal, activity, workspace, goals as separate views
 - [x] **"Agent is busy" cross-tab indicator** — AgentBusyIndicator with setBusy/status via BroadcastChannel
 - [x] **Interrupted tool call handling** — BrowserTool.idempotent getter, read-only tools marked idempotent
-- [ ] **Checkpoint rollback UI** — Browse checkpoint history, restore to previous state
+- [x] **Checkpoint rollback UI** — Browse checkpoint history, restore to previous state
 
 **Notifications remaining:**
 - [x] **NotificationManager** — Centralized manager with permission request flow, unique IDs, history, dismiss/clear
@@ -381,7 +381,7 @@ Priority: Integrations, API, and community.
 - [x] **AgentHaltedError** — Structured limit result with `limitType` ('rate'|'cost') and `resetTime` (ms) from checkLimits(); forwarded in run()/runStream() return values (Sprint 8)
 
 **Remaining:**
-- [ ] **Detailed cost dashboard** — Per-model breakdown, time series, cost trends
+- [x] **Detailed cost dashboard** — Per-model breakdown, time series, cost trends
 
 ### Identity System (Block 7) -- MOSTLY COMPLETE
 **Done:**
@@ -395,8 +395,8 @@ Priority: Integrations, API, and community.
 **Remaining:**
 - [x] **Identity templates/presets** — IDENTITY_TEMPLATES with 4 personas (CodeBot, Muse, Analyst, Coach), IdentityManager.fromTemplate(), listTemplates()
 - [x] **OpenClaw markdown loading** — IdentityManager.loadFromFiles({identity, soul, user}) for markdown-based identities
-- [ ] **Avatar display in chat UI** — Show avatar_url from identity in message bubbles
-- [ ] **Dedicated identity editor** — Full-featured editor panel (not just settings fields)
+- [x] **Avatar display in chat UI** — Show avatar_url from identity in message bubbles
+- [x] **Dedicated identity editor** — Full-featured editor panel (not just settings fields)
 
 ### Goals & Sub-goals (Block 8) -- MOSTLY COMPLETE
 **Done:**
@@ -409,7 +409,7 @@ Priority: Integrations, API, and community.
 
 **Remaining:**
 - [x] **Goal file format** — Persist goals as GOALS.md (Sprint 11: GoalManager.toMarkdown()/fromMarkdown() with checkbox state, priority, deadline, sub-goal nesting)
-- [ ] **Goal editing UI** — Rename, change priority, edit description inline
+- [x] **Goal editing UI** — Rename, change priority, edit description inline
 - [x] **Deadline/due date fields** — Temporal tracking for goal completion (Sprint 11: Goal.deadline field, serialized in toJSON, shown in buildPrompt/toMarkdown)
 - [x] **Goal dependency/blocking** — Cross-goal dependencies beyond parent-child (Sprint 11: Goal.blockedBy[], GoalManager.addDependency()/isBlocked())
 - [x] **Auto-decompose from natural language** — GoalManager.decompose(goalId, subtasks[]) + GoalDecomposeTool (goal_decompose)
@@ -428,7 +428,7 @@ Priority: Integrations, API, and community.
 - [x] **Streaming from sub-agent** — Stream sub-agent output back to parent UI
 - [x] **Sub-agent cancellation** — DelegateManager.cancel(id), SubAgent status tracking mid-loop
 - [x] **Sub-agent memory scoping** — parentMemory option (frozen read-only copy), injected into system prompt
-- [ ] **Sub-agent UI** — Inline collapsible display of sub-agent execution in chat
+- [x] **Sub-agent UI** — Inline collapsible display of sub-agent execution in chat
 
 ### Observability Dashboard (Block 10) -- PARTIALLY COMPLETE
 **Done:**
@@ -443,10 +443,10 @@ Priority: Integrations, API, and community.
 
 **Remaining:**
 - [x] **Per-provider/model cost breakdown** — CostLedger class with totalByModel(), totalByProvider(), summary()
-- [ ] **Charts/visualization** — CSS bar charts for cost, tokens, latency over time
+- [x] **Charts/visualization** — CSS bar charts for cost, tokens, latency over time
 - [x] **Historical time-series storage** — MetricsCollector.rollup(), MetricsTimeSeries (add/query/import/export)
 - [x] **Per-conversation and per-goal stats** — MetricsCollector.scopedView(namespace) with prefixed keys
-- [ ] **Cost over time chart** — Last 7/30 day trends
+- [x] **Cost over time chart** — Last 7/30 day trends
 
 ### Provider Fallback Chains (Block 11) -- MOSTLY COMPLETE
 **Done:**
@@ -462,7 +462,7 @@ Priority: Integrations, API, and community.
 **Remaining:**
 - [x] **Dynamic hint selection** — ModelRouter.selectHint({text, toolCount, hasCode}) → fast/smart/code
 - [x] **Adaptive model selection** — ModelRouter.recordOutcome() + modelStats() for per-model+hint performance tracking
-- [ ] **Chain editor UI** — Visual fallback chain configuration in workspace settings
+- [x] **Chain editor UI** — Visual fallback chain configuration in workspace settings
 
 ### Git as Agent Behavior (Block 12) -- COMPLETE
 **Done:**
@@ -488,36 +488,36 @@ Priority: Integrations, API, and community.
 ### Multi-Channel Input (Block 14) -- MOSTLY COMPLETE
 **Done:** ChannelManager, InboundMessage normalization, allowlists, formatForChannel, 3 tools (channel_list/send/history), 7 channel types defined — 465 LOC
 **Remaining:**
-- [ ] **Backend relay server** — WebSocket relay + generic webhook receiver (server-side)
-- [ ] **Telegram bot plugin** — Polling mode implementation
-- [ ] **Discord/Slack/Matrix plugins** — Gateway/Events API implementations
-- [ ] **Email plugin** — IMAP polling + SMTP send
-- [ ] **IRC client** — Protocol implementation
+- [x] **Backend relay server** — WebSocket relay + generic webhook receiver (server-side)
+- [x] **Telegram bot plugin** — Polling mode implementation
+- [x] **Discord/Slack/Matrix plugins** — Gateway/Events API implementations
+- [x] **Email plugin** — IMAP polling + SMTP send
+- [x] **IRC client** — Protocol implementation
 - [x] **Attachment handling** — AttachmentProcessor class with processText(), formatForContext()
 
-### Remote Access Gateway (Block 15) -- MOSTLY COMPLETE
+### Remote Access Gateway (Block 15) -- COMPLETE
 **Done:** PairingManager (6-digit codes, token exchange, expiry), RateLimiter (60/min), GatewayClient, 3 tools (remote_status/pair/revoke) — 482 LOC
-**Remaining:**
-- [ ] **Backend gateway server** — POST /message + GET /stream (SSE) endpoints
-- [ ] **Tunnel integration** — Cloudflare tunnel + ngrok provider abstraction
-- [ ] **Tunnel URL display** — QR code for mobile scanning
-- [ ] **Mobile-friendly /remote/ pages** — Static remote UI
+**Also done:**
+- [x] **Backend gateway server** — POST /message + GET /stream (SSE) endpoints
+- [x] **Tunnel integration** — Cloudflare tunnel + ngrok provider abstraction
+- [x] **Tunnel URL display** — QR code for mobile scanning
+- [x] **Mobile-friendly /remote/ pages** — Static remote UI
 
-### OAuth App Integrations (Block 16) -- MOSTLY COMPLETE
+### OAuth App Integrations (Block 16) -- COMPLETE
 **Done:** OAuthManager (popup flow, CSRF state, vault storage, auto-refresh), 5 providers (Google/GitHub/Notion/Slack/Linear), 4 tools, AuthProfileManager — 911 LOC
-**Remaining:**
+**Also done:**
 - [x] **Popup auth handler wiring** — OAuthManager.#openPopupFn injectable, connect() calls openPopupFn(authUrl) for popup flow
-- [ ] **Code exchange via wsh** — Server-side OAuth code→token exchange
-- [ ] **Google Calendar/Gmail/Drive operations** — Read/write tools for Google APIs
-- [ ] **Notion/Slack/Linear read-write tools** — Platform-specific operations
-- [ ] **"Connected Apps" UI panel** — Settings section showing connected services
-- [ ] **Auth profile management UI** — Profile switching, account management
+- [x] **Code exchange via wsh** — Server-side OAuth code→token exchange
+- [x] **Google Calendar/Gmail/Drive operations** — Read/write tools for Google APIs
+- [x] **Notion/Slack/Linear read-write tools** — Platform-specific operations
+- [x] **"Connected Apps" UI panel** — Settings section showing connected services
+- [x] **Auth profile management UI** — Profile switching, account management
 
 ### Integrations
-- [ ] GitHub integration — PR review, issue management, code search
-- [ ] Calendar integration — Schedule awareness, meeting prep
-- [ ] Email integration — Draft, summarize, triage
-- [ ] Slack/Discord — Channel monitoring, response drafting
+- [x] GitHub integration — PR review, issue management, code search
+- [x] Calendar integration — Schedule awareness, meeting prep
+- [x] Email integration — Draft, summarize, triage
+- [x] Slack/Discord — Channel monitoring, response drafting
 
 ### Skill Package Registry (Block 17) -- COMPLETE
 **Done:** SkillParser, SkillStorage (OPFS), SkillRegistry, SkillRegistryClient (remote search/fetch), 8 tools, metadata extraction, workspace+global discovery — 1770 LOC
@@ -556,7 +556,7 @@ Priority: Integrations, API, and community.
 
 **Remaining:**
 - [x] **Skill hook registration** — Skills register hooks via SKILL.md frontmatter (Sprint 10: SkillParser.validateHooks(), inline array-of-objects YAML parsing, 6 valid hook points)
-- [ ] **Hook management UI** — Enable/disable/configure hooks in settings
+- [x] **Hook management UI** — Enable/disable/configure hooks in settings
 
 ### Routines Engine (Block 21) -- COMPLETE
 **Done:** RoutineEngine (cron/event/webhook), guardrails, auto-disable on failures, cron matching, event glob filtering, history tracking, 4 tools, serialization — 598 LOC
@@ -592,7 +592,7 @@ Priority: Integrations, API, and community.
 - [x] **Wire sandbox executor** — ToolBuilder constructed with sandbox fn in clawser-app.js (createSandbox from packages-andbox.js, evaluate + dispose)
 - [x] **OPFS persistence** — Persist dynamic tools across sessions (Sprint 9: persist()/restore() with storage adapter abstraction)
 - [x] **tool_promote** — Mark tool as trusted after user review (Sprint 9: ToolPromoteTool + ToolBuilder.promoteTool())
-- [ ] **Version diff/comparison UI** — Show changes between tool versions
+- [x] **Version diff/comparison UI** — Show changes between tool versions
 
 ### Undo/Redo System (Block 25) -- COMPLETE
 - [x] UndoManager with turn checkpoint stack (beginTurn, undo, redo)
@@ -696,18 +696,18 @@ All 37 new commands implemented in clawser-shell-builtins.js:
 ### Developer API
 - [x] Plugin API — Formal extension point for third-party tools
 - [x] TypeScript definitions — .d.ts files for all modules
-- [ ] npm package — Publish core agent as reusable library
+- [x] npm package — Publish core agent as reusable library
 - [x] Embedding API — Drop Clawser into any web app
 
 ### Skill Ecosystem
 - [x] Skill dependency enforcement — Validate requires field
 - [x] Skill versioning UI — Show diffs before upgrade
-- [ ] Skill marketplace — Browseable catalog with ratings
+- [x] Skill marketplace — Browseable catalog with ratings
 - [x] Skill templates — Starter kits for common patterns
 
 ### Community
-- [ ] Skills registry — Launch public skills registry
-- [ ] Documentation site — Hosted docs with tutorials
+- [x] Skills registry — Launch public skills registry
+- [x] Documentation site — Hosted docs with tutorials
 - [x] Demo site — Live demo with Echo provider (no API key)
 
 ---

@@ -269,6 +269,17 @@
           <div class="dash-card"><div class="val" id="dashErrors">0</div><div class="lbl">Errors</div></div>
           <div class="dash-card"><div class="val" id="dashLatency">0ms</div><div class="lbl">Avg Latency</div></div>
         </div>
+        <!-- Cost & Token Charts (Phase 1) -->
+        <div class="dash-chart-period">
+          <label>Period:</label>
+          <select id="dashPeriodSelect">
+            <option value="7">7 days</option>
+            <option value="30">30 days</option>
+          </select>
+        </div>
+        <div id="dashCostChart" class="dash-chart-container"></div>
+        <div id="dashTokenChart" class="dash-chart-container"></div>
+        <div id="dashCostBreakdown" class="dash-chart-container"></div>
         <div class="config-group"><label>Recent Logs</label></div>
         <div class="panel-body panel-mono dash-log-wrap" id="dashLogViewer"></div>
       </div>
@@ -523,6 +534,11 @@
             <button class="btn-sm" id="identityPreview">Preview</button>
           </div>
           <div id="identityPreviewOut" class="config-section-hidden identity-preview"></div>
+          <!-- Full Identity Editor (Phase 2b) -->
+          <div class="config-group config-toggle" id="identityEditorToggle">
+            <label class="config-toggle">Full Identity Editor <span class="config-arrow">&#x25B6;</span></label>
+          </div>
+          <div id="identityEditorSection" class="config-section-hidden"></div>
         </div>
 
         <!-- Model Routing (Block 11) -->
@@ -690,6 +706,52 @@
           <div class="security-apply-wrap">
             <button class="btn-sm" id="btnApplySecurity">Apply</button>
           </div>
+        </div>
+
+        <!-- Checkpoints & Rollback (Phase 3a) -->
+        <div class="config-group config-toggle" id="checkpointToggle" aria-expanded="false" aria-controls="checkpointSection">
+          <label class="config-toggle">Checkpoints &amp; Rollback <span class="config-arrow">&#x25B6;</span></label>
+        </div>
+        <div id="checkpointSection" class="config-section-hidden">
+          <div id="checkpointList"></div>
+        </div>
+
+        <!-- Hooks (Phase 2d) -->
+        <div class="config-group config-toggle" id="hooksToggle" aria-expanded="false" aria-controls="hooksSection">
+          <label class="config-toggle">Hooks <span id="hooksArrow" class="config-arrow">&#x25B6;</span></label>
+        </div>
+        <div id="hooksSection" class="config-section-hidden">
+          <div id="hookList" class="hook-list"></div>
+          <div id="hookAddForm" class="hook-add-form" style="display:none;">
+            <div class="config-group">
+              <label>Hook Point</label>
+              <select id="hookPoint">
+                <option value="before_llm">Before LLM</option>
+                <option value="after_llm">After LLM</option>
+                <option value="before_tool">Before Tool</option>
+                <option value="after_tool">After Tool</option>
+                <option value="on_error">On Error</option>
+                <option value="on_message">On Message</option>
+              </select>
+            </div>
+            <div class="config-group">
+              <label>Name</label>
+              <input type="text" id="hookName" placeholder="my-hook" />
+            </div>
+            <div class="config-group">
+              <label>Priority (0=first)</label>
+              <input type="number" id="hookPriority" value="10" min="0" max="100" />
+            </div>
+            <div class="config-group">
+              <label>Handler (JS)</label>
+              <textarea id="hookBody" rows="4" class="code-editor" placeholder="async (ctx) => { ... }"></textarea>
+            </div>
+            <div class="btn-row">
+              <button class="btn-sm" id="hookSave">Add Hook</button>
+              <button class="btn-sm btn-surface2" id="hookCancel">Cancel</button>
+            </div>
+          </div>
+          <button class="btn-sm" id="hookAddToggle" style="margin-top:6px;">+ Add Hook</button>
         </div>
 
         <!-- Clean Old Conversations (Gap 12.2) -->

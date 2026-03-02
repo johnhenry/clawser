@@ -52,7 +52,48 @@ export function renderGoals() {
       arrow = `<span class="goal-toggle" data-gid="${g.id}">${collapsed ? '\u25B6' : '\u25BC'}</span>`;
     }
 
-    d.innerHTML = `${arrow}<span class="goal-dot ${esc(g.status)}">●</span><span class="goal-desc">${esc(g.description)}</span>`;
+    d.innerHTML = `${arrow}<span class="goal-dot ${esc(g.status)}">●</span><span class="goal-desc">${esc(g.description)}</span><button class="goal-edit-btn" data-gid="${g.id}" title="Edit">✎</button>`;
+
+    // Inline edit handler
+    d.querySelector('.goal-edit-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      const descSpan = d.querySelector('.goal-desc');
+      const editWrap = document.createElement('div');
+      editWrap.className = 'goal-edit-wrap';
+      editWrap.innerHTML = `
+        <input type="text" class="goal-edit-input" value="${esc(g.description)}" />
+        <select class="goal-edit-priority">
+          <option value="low" ${g.priority === 'low' ? 'selected' : ''}>Low</option>
+          <option value="medium" ${g.priority === 'medium' || !g.priority ? 'selected' : ''}>Medium</option>
+          <option value="high" ${g.priority === 'high' ? 'selected' : ''}>High</option>
+          <option value="critical" ${g.priority === 'critical' ? 'selected' : ''}>Critical</option>
+        </select>
+        <button class="btn-sm goal-edit-save">Save</button>
+        <button class="btn-sm btn-surface2 goal-edit-cancel">Cancel</button>
+      `;
+      descSpan.replaceWith(editWrap);
+
+      const input = editWrap.querySelector('.goal-edit-input');
+      input.focus();
+
+      const save = () => {
+        const newDesc = input.value.trim();
+        const newPriority = editWrap.querySelector('.goal-edit-priority').value;
+        if (newDesc && state.agent) {
+          const goalObj = state.agent.getGoal?.(g.id);
+          if (goalObj) {
+            goalObj.description = newDesc;
+            goalObj.priority = newPriority;
+          }
+        }
+        renderGoals();
+        updateState();
+      };
+
+      editWrap.querySelector('.goal-edit-save').addEventListener('click', save);
+      editWrap.querySelector('.goal-edit-cancel').addEventListener('click', () => renderGoals());
+      input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') save(); if (ev.key === 'Escape') renderGoals(); });
+    });
 
     // Progress bar for goals with sub-goals
     if (hasChildren) {
