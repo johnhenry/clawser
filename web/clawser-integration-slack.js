@@ -7,9 +7,11 @@
 //   SlackMonitorTool       — Monitor recent activity across multiple channels
 //   SlackDraftResponseTool — Draft and send a response in a channel or thread
 
+import { BrowserTool } from './clawser-tools.js';
+
 // ── SlackMonitorTool ──────────────────────────────────────────────
 
-export class SlackMonitorTool {
+export class SlackMonitorTool extends BrowserTool {
   #slackHistory;
   #slackChannels;
 
@@ -18,13 +20,15 @@ export class SlackMonitorTool {
    * @param {object} slackChannelsTool - A SlackChannelsTool instance (or compatible)
    */
   constructor(slackHistoryTool, slackChannelsTool) {
+    super();
     this.#slackHistory = slackHistoryTool;
     this.#slackChannels = slackChannelsTool;
   }
 
   get name() { return 'slack_integration_monitor'; }
   get description() { return 'Monitor recent activity across specified Slack channels, providing an activity digest.'; }
-  get schema() {
+  get permission() { return 'approve'; }
+  get parameters() {
     return {
       type: 'object',
       properties: {
@@ -105,19 +109,21 @@ export class SlackMonitorTool {
 
 // ── SlackDraftResponseTool ────────────────────────────────────────
 
-export class SlackDraftResponseTool {
+export class SlackDraftResponseTool extends BrowserTool {
   #slackPost;
 
   /**
    * @param {object} slackPostTool - A SlackPostTool instance (or compatible)
    */
   constructor(slackPostTool) {
+    super();
     this.#slackPost = slackPostTool;
   }
 
   get name() { return 'slack_integration_draft_response'; }
   get description() { return 'Draft and send a Slack response to a channel or thread.'; }
-  get schema() {
+  get permission() { return 'approve'; }
+  get parameters() {
     return {
       type: 'object',
       properties: {

@@ -17,6 +17,7 @@ import { classifyError, MODEL_PRICING } from './clawser-providers.js';
  * @property {number} priority - Lower = tried first
  * @property {number} [maxTokens]
  * @property {boolean} enabled
+ * @property {string} [accountId] - Account ID for credential resolution
  */
 
 /**
@@ -25,13 +26,15 @@ import { classifyError, MODEL_PRICING } from './clawser-providers.js';
  * @returns {FallbackEntry}
  */
 export function createFallbackEntry(opts) {
-  return {
+  const entry = {
     providerId: opts.providerId,
     model: opts.model,
     priority: opts.priority ?? 0,
     maxTokens: opts.maxTokens ?? undefined,
     enabled: opts.enabled !== false,
   };
+  if (opts.accountId) entry.accountId = opts.accountId;
+  return entry;
 }
 
 // ── FallbackChain ───────────────────────────────────────────────
@@ -185,7 +188,7 @@ export class FallbackExecutor {
 
   /**
    * Execute a function through the fallback chain.
-   * @param {(providerId: string, model: string, maxTokens?: number) => Promise<any>} fn
+   * @param {(providerId: string, model: string, maxTokens?: number, entry?: FallbackEntry) => Promise<any>} fn
    * @returns {Promise<{result: any, providerId: string, model: string}>}
    */
   async execute(fn) {
@@ -210,7 +213,7 @@ export class FallbackExecutor {
         this.#metrics?.increment(`fallback.attempts.${entry.providerId}`);
         const start = performance.now();
         try {
-          const result = await fn(entry.providerId, entry.model, entry.maxTokens);
+          const result = await fn(entry.providerId, entry.model, entry.maxTokens, entry);
           const duration = performance.now() - start;
           this.#health?.recordSuccess(entry.providerId, entry.model, duration);
           this.#metrics?.increment('fallback.successes');
@@ -259,7 +262,7 @@ export class FallbackExecutor {
 
       const start = performance.now();
       try {
-        const gen = fn(entry.providerId, entry.model, entry.maxTokens);
+        const gen = fn(entry.providerId, entry.model, entry.maxTokens, entry);
         for await (const chunk of gen) {
           yield { chunk, providerId: entry.providerId, model: entry.model };
         }

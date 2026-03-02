@@ -96,6 +96,11 @@ export class CloudflareTunnel extends TunnelProvider {
         'tunnel', '--url', `http://localhost:${port}`,
       ]);
 
+      // Capture process ID from exec result if available
+      if (result.pid != null) {
+        this.#processId = result.pid;
+      }
+
       if (result.exitCode !== 0) {
         this.#state = TUNNEL_STATE.ERROR;
         throw new Error(`cloudflared failed: ${result.stderr || 'unknown error'}`);

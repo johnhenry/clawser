@@ -46,14 +46,26 @@ export class SlackPlugin {
   /**
    * Normalize a Slack event into standard inbound message format.
    * @param {object} raw — Slack event object
-   * @returns {{id: string, text: string, sender: string, channel: string, timestamp: number}}
+   * @returns {object} Standard InboundMessage
    */
   createInboundMessage(raw) {
     return {
       id: raw.client_msg_id || raw.ts || String(Date.now()),
-      text: raw.text || '',
-      sender: raw.user || 'unknown',
       channel: 'slack',
+      channelId: raw.channel || null,
+      sender: {
+        id: raw.user || 'unknown',
+        name: raw.user_profile?.real_name || raw.user || 'Unknown',
+        username: raw.user_profile?.display_name || raw.user || null,
+      },
+      content: raw.text || '',
+      attachments: (raw.files || []).map(f => ({
+        id: f.id,
+        url: f.url_private,
+        filename: f.name,
+        size: f.size,
+      })),
+      replyTo: raw.thread_ts && raw.thread_ts !== raw.ts ? raw.thread_ts : null,
       timestamp: raw.ts ? Math.floor(parseFloat(raw.ts) * 1000) : Date.now(),
     };
   }

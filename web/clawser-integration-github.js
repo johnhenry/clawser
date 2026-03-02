@@ -8,14 +8,16 @@
 //   GitHubIssueCreateTool — Create a new GitHub issue
 //   GitHubCodeSearchTool  — Search code across GitHub repositories
 
+import { BrowserTool } from './clawser-tools.js';
+
 // ── Base ──────────────────────────────────────────────────────────
 
-class GitHubToolBase {
+class GitHubToolBase extends BrowserTool {
   #oauth;
 
-  constructor(oauth) { this.#oauth = oauth; }
+  constructor(oauth) { super(); this.#oauth = oauth; }
 
-  get schema() { return { type: 'object', properties: {}, required: [] }; }
+  get parameters() { return { type: 'object', properties: {}, required: [] }; }
 
   async _getClient() {
     const client = await this.#oauth.getClient('github');
@@ -58,7 +60,8 @@ class GitHubToolBase {
 export class GitHubPrReviewTool extends GitHubToolBase {
   get name() { return 'github_pr_review'; }
   get description() { return 'Get pull request details including diff stats, file changes, and reviews.'; }
-  get schema() {
+  get permission() { return 'approve'; }
+  get parameters() {
     return {
       type: 'object',
       properties: {
@@ -98,7 +101,8 @@ export class GitHubPrReviewTool extends GitHubToolBase {
 export class GitHubIssueCreateTool extends GitHubToolBase {
   get name() { return 'github_issue_create'; }
   get description() { return 'Create a new issue in a GitHub repository.'; }
-  get schema() {
+  get permission() { return 'approve'; }
+  get parameters() {
     return {
       type: 'object',
       properties: {
@@ -131,7 +135,8 @@ export class GitHubIssueCreateTool extends GitHubToolBase {
 export class GitHubCodeSearchTool extends GitHubToolBase {
   get name() { return 'github_code_search'; }
   get description() { return 'Search code across GitHub repositories using GitHub code search syntax.'; }
-  get schema() {
+  get permission() { return 'approve'; }
+  get parameters() {
     return {
       type: 'object',
       properties: {

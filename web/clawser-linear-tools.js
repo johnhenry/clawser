@@ -181,7 +181,7 @@ export class LinearUpdateIssueTool extends LinearToolBase {
       const inputParts = [];
       if (title) inputParts.push(`title: "${title.replace(/"/g, '\\"')}"`);
       if (description) inputParts.push(`description: "${description.replace(/"/g, '\\"')}"`);
-      if (state_name) inputParts.push(`stateId: "${state_name}"`);
+      if (state_name) inputParts.push(`stateName: "${state_name}"`);
       if (priority !== undefined) inputParts.push(`priority: ${priority}`);
       if (assignee_id) inputParts.push(`assigneeId: "${assignee_id}"`);
 

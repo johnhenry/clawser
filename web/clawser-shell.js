@@ -748,9 +748,10 @@ export function normalizePath(p) {
 // ── Shell State ─────────────────────────────────────────────────
 
 export class ShellState {
+  /** @type {string} */
+  #cwd = '/';
+
   constructor() {
-    /** @type {string} Virtual working directory (workspace-relative, starts at /) */
-    this.cwd = '/';
     /** @type {Map<string, string>} Environment variables */
     this.env = new Map();
     /** @type {string[]} Command history for this session */
@@ -761,6 +762,13 @@ export class ShellState {
     this.pipefail = true;
     /** @type {Map<string, string>} Shell aliases (name → expanded command) */
     this.aliases = new Map();
+  }
+
+  /** Virtual working directory (workspace-relative, starts at /). */
+  get cwd() { return this.#cwd; }
+  set cwd(value) {
+    // Defensive: never allow cwd to become null/undefined/empty
+    this.#cwd = (typeof value === 'string' && value) ? value : '/';
   }
 
   /**

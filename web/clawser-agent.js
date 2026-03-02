@@ -665,6 +665,8 @@ export class ClawserAgent {
   #safety = new SafetyPipeline();
   /** @type {import('./clawser-fallback.js').FallbackExecutor|null} */
   #fallbackExecutor = null;
+  /** @type {((accountId: string) => Promise<{apiKey: string, baseUrl: string}>)|null} */
+  #accountResolver = null;
   /** @type {import('./clawser-self-repair.js').SelfRepairEngine|null} */
   #selfRepairEngine = null;
   /** @type {import('./clawser-undo.js').UndoManager|null} */
@@ -1026,6 +1028,12 @@ export class ClawserAgent {
    * @param {import('./clawser-fallback.js').FallbackExecutor} executor
    */
   setFallbackExecutor(executor) { this.#fallbackExecutor = executor; }
+
+  /**
+   * Set callback to resolve account credentials for fallback chain entries.
+   * @param {(accountId: string) => Promise<{apiKey: string, baseUrl: string}>} resolver
+   */
+  setAccountResolver(resolver) { this.#accountResolver = resolver; }
 
   // ── Agent definitions ─────────────────────────────────────
 
@@ -1515,8 +1523,19 @@ export class ClawserAgent {
       let response;
       try {
         if (this.#fallbackExecutor) {
+          const resolver = this.#accountResolver;
           const { result } = await this.#fallbackExecutor.execute(
-            (pid, mdl) => this.#providers.get(pid).chat(request, this.#apiKey, mdl, _providerOpts)
+            async (pid, mdl, maxTokens, entry) => {
+              let key = this.#apiKey;
+              let opts = { ..._providerOpts };
+              if (entry?.accountId && resolver) {
+                const creds = await resolver(entry.accountId);
+                if (creds.apiKey) key = creds.apiKey;
+                if (creds.baseUrl) opts.baseUrl = creds.baseUrl;
+              }
+              if (maxTokens) opts.max_tokens = maxTokens;
+              return this.#providers.get(pid).chat(request, key, mdl, opts);
+            }
           );
           response = result;
         } else {
@@ -1813,8 +1832,19 @@ export class ClawserAgent {
         let response;
         try {
           if (this.#fallbackExecutor) {
+            const resolver = this.#accountResolver;
             const { result } = await this.#fallbackExecutor.execute(
-              (pid, mdl) => this.#providers.get(pid).chat(request, this.#apiKey, mdl, _providerOpts)
+              async (pid, mdl, maxTokens, entry) => {
+                let key = this.#apiKey;
+                let opts = { ..._providerOpts };
+                if (entry?.accountId && resolver) {
+                  const creds = await resolver(entry.accountId);
+                  if (creds.apiKey) key = creds.apiKey;
+                  if (creds.baseUrl) opts.baseUrl = creds.baseUrl;
+                }
+                if (maxTokens) opts.max_tokens = maxTokens;
+                return this.#providers.get(pid).chat(request, key, mdl, opts);
+              }
             );
             response = result;
           } else {

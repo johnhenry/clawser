@@ -107,14 +107,25 @@ export class IrcPlugin {
   /**
    * Normalize a parsed IRC message into standard inbound message format.
    * @param {object} raw — Parsed IRC message {prefix, command, params, trailing}
-   * @returns {{id: string, text: string, sender: string, channel: string, timestamp: number}}
+   * @returns {object} Standard InboundMessage
    */
   createInboundMessage(raw) {
+    const nick = extractNick(raw.prefix);
+    // params[0] is the target channel/user for PRIVMSG
+    const ircChannel = (raw.params && raw.params[0]) || null;
+
     return {
       id: `irc_${Date.now()}_${++ircMsgCounter}`,
-      text: raw.trailing || '',
-      sender: extractNick(raw.prefix),
       channel: 'irc',
+      channelId: ircChannel,
+      sender: {
+        id: raw.prefix || nick,
+        name: nick,
+        username: nick,
+      },
+      content: raw.trailing || '',
+      attachments: [],
+      replyTo: null,
       timestamp: Date.now(),
     };
   }

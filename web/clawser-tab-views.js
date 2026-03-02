@@ -86,6 +86,10 @@ export class TabViewManager {
     const win = this._windowOpen(url);
 
     if (existing) {
+      // Close orphaned window before replacing reference
+      if (existing.win && !existing.win.closed) {
+        try { existing.win.close(); } catch { /* cross-origin */ }
+      }
       existing.win = win;
     } else {
       this.#views.push({ wsId, panel, win });

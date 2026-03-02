@@ -61,8 +61,8 @@ describe('EmailPlugin', () => {
     };
     const msg = plugin.createInboundMessage(raw);
     assert.equal(msg.id, '<abc@example.com>');
-    assert.equal(msg.text, 'Hello from email');
-    assert.equal(msg.sender, 'alice@example.com');
+    assert.equal(msg.content, 'Hello from email');
+    assert.equal(msg.sender.id, 'alice@example.com');
     assert.equal(msg.channel, 'email');
     assert.equal(typeof msg.timestamp, 'number');
   });
@@ -70,13 +70,13 @@ describe('EmailPlugin', () => {
   it('uses subject as text fallback when body is empty', () => {
     const raw = { messageId: '<x@y>', from: 'bob@z', subject: 'Important', body: '' };
     const msg = plugin.createInboundMessage(raw);
-    assert.equal(msg.text, '[Subject: Important]');
+    assert.equal(msg.content, '[Subject: Important]');
   });
 
   it('handles missing fields gracefully', () => {
     const msg = plugin.createInboundMessage({});
-    assert.equal(msg.sender, 'unknown');
-    assert.equal(msg.text, '');
+    assert.equal(msg.sender.id, 'unknown');
+    assert.equal(msg.content, '');
     assert.ok(msg.id);
   });
 
@@ -148,8 +148,8 @@ describe('EmailPlugin', () => {
       { messageId: '<2>', from: 'c@d', subject: 'S2', body: 'B2', date: new Date().toISOString() },
     ]);
     assert.equal(received.length, 2);
-    assert.equal(received[0].text, 'B1');
-    assert.equal(received[1].text, 'B2');
+    assert.equal(received[0].content, 'B1');
+    assert.equal(received[1].content, 'B2');
   });
 
   it('processEmails tracks seen message IDs', () => {

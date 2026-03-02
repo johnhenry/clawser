@@ -54,16 +54,16 @@ describe('MatrixPlugin', () => {
     };
     const msg = plugin.createInboundMessage(raw);
     assert.equal(msg.id, '$evt_1');
-    assert.equal(msg.text, 'hello matrix');
-    assert.equal(msg.sender, '@alice:example.org');
+    assert.equal(msg.content, 'hello matrix');
+    assert.equal(msg.sender.id, '@alice:example.org');
     assert.equal(msg.channel, 'matrix');
     assert.equal(msg.timestamp, 1700000000000);
   });
 
   it('handles missing content gracefully', () => {
     const msg = plugin.createInboundMessage({ event_id: '$x' });
-    assert.equal(msg.text, '');
-    assert.equal(msg.sender, 'unknown');
+    assert.equal(msg.content, '');
+    assert.equal(msg.sender.id, 'unknown');
   });
 
   // ── lifecycle ────────────────────────────────────────────
@@ -145,7 +145,7 @@ describe('MatrixPlugin', () => {
       },
     });
     assert.equal(received.length, 1);
-    assert.equal(received[0].text, 'sync msg');
+    assert.equal(received[0].content, 'sync msg');
   });
 
   it('processSyncResponse updates since token', () => {

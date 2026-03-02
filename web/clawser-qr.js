@@ -61,7 +61,7 @@ function alphanumericValue(ch) {
   return idx >= 0 ? idx : 0;
 }
 
-function encodeToBits(text) {
+function encodeToBits(text, version) {
   const bits = [];
 
   function pushBits(value, count) {
@@ -73,8 +73,9 @@ function encodeToBits(text) {
   if (isAlphanumericMode(text)) {
     // Mode indicator: alphanumeric = 0010
     pushBits(0b0010, 4);
-    // Character count (9 bits for versions 1-9, 11 for 10+)
-    pushBits(text.length, 9);
+    // Character count: 9 bits for versions 1-9, 11 bits for versions 10+
+    const ccBits = version >= 10 ? 11 : 9;
+    pushBits(text.length, ccBits);
     // Encode pairs
     const upper = text.toUpperCase();
     for (let i = 0; i < upper.length; i += 2) {
@@ -89,7 +90,9 @@ function encodeToBits(text) {
     // Byte mode = 0100
     pushBits(0b0100, 4);
     const bytes = new TextEncoder().encode(text);
-    pushBits(bytes.length, 8);
+    // Character count: 8 bits for versions 1-9, 16 bits for versions 10+
+    const ccBits = version >= 10 ? 16 : 8;
+    pushBits(bytes.length, ccBits);
     for (const b of bytes) {
       pushBits(b, 8);
     }
@@ -290,7 +293,7 @@ export function encodeQR(text) {
   reserveFormatInfo(reserved, size);
 
   // Encode data
-  const bits = encodeToBits(text);
+  const bits = encodeToBits(text, version);
 
   // Place data
   placeData(matrix, reserved, bits);

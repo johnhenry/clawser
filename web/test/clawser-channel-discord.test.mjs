@@ -56,15 +56,15 @@ describe('DiscordPlugin', () => {
     };
     const msg = plugin.createInboundMessage(raw);
     assert.equal(msg.id, 'disc_1');
-    assert.equal(msg.text, 'hello from discord');
-    assert.equal(msg.sender, 'alice#1234');
+    assert.equal(msg.content, 'hello from discord');
+    assert.equal(msg.sender.username, 'alice#1234');
     assert.equal(msg.channel, 'discord');
     assert.equal(typeof msg.timestamp, 'number');
   });
 
   it('handles missing author gracefully', () => {
     const msg = plugin.createInboundMessage({ id: 'x', content: 'test' });
-    assert.equal(msg.sender, 'unknown');
+    assert.equal(msg.sender.id, 'unknown');
   });
 
   // ── lifecycle ────────────────────────────────────────────
@@ -127,7 +127,7 @@ describe('DiscordPlugin', () => {
       },
     });
     assert.equal(received.length, 1);
-    assert.equal(received[0].text, 'gateway msg');
+    assert.equal(received[0].content, 'gateway msg');
   });
 
   it('handleGatewayEvent ignores non-MESSAGE_CREATE events', () => {

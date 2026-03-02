@@ -74,16 +74,28 @@ export class MatrixPlugin {
   /**
    * Normalize a Matrix event into standard inbound message format.
    * @param {object} raw — Matrix event object
-   * @returns {{id: string, text: string, sender: string, channel: string, timestamp: number}}
+   * @returns {object} Standard InboundMessage
    */
   createInboundMessage(raw) {
-    const content = raw.content || {};
+    const eventContent = raw.content || {};
+    const senderId = raw.sender || 'unknown';
+    // Matrix sender IDs are like @user:server — extract localpart as name
+    const senderName = senderId.startsWith('@')
+      ? senderId.slice(1).split(':')[0]
+      : senderId;
 
     return {
       id: raw.event_id || String(Date.now()),
-      text: content.body || '',
-      sender: raw.sender || 'unknown',
       channel: 'matrix',
+      channelId: raw.room_id || null,
+      sender: {
+        id: senderId,
+        name: senderName || 'Unknown',
+        username: senderName || null,
+      },
+      content: eventContent.body || '',
+      attachments: [],
+      replyTo: eventContent['m.relates_to']?.['m.in_reply_to']?.event_id || null,
       timestamp: raw.origin_server_ts || Date.now(),
     };
   }
@@ -99,12 +111,19 @@ export class MatrixPlugin {
     this.#pollLoop();
   }
 
+  /** @type {number|null} */
+  #pollTimer = null;
+
   /**
    * Stop sync loop.
    */
   stop() {
     if (!this.running) return;
     this.running = false;
+    if (this.#pollTimer) {
+      clearTimeout(this.#pollTimer);
+      this.#pollTimer = null;
+    }
   }
 
   async #pollLoop() {
@@ -138,7 +157,7 @@ export class MatrixPlugin {
 
     // Schedule next poll
     if (this.running) {
-      setTimeout(() => this.#pollLoop(), 100);
+      this.#pollTimer = setTimeout(() => this.#pollLoop(), 100);
     }
   }
 

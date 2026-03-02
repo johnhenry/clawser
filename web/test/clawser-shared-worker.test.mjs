@@ -254,11 +254,8 @@ describe('SharedWorkerClient', () => {
     assert.equal(client.connected, false);
   });
 
-  it('sendMessage after disconnect is a no-op', () => {
-    let sent = false;
-    mockPort.postMessage = () => { sent = true; };
+  it('sendMessage after disconnect throws', () => {
     client.disconnect();
-    client.sendMessage('should not send');
-    assert.equal(sent, false);
+    assert.throws(() => client.sendMessage('should not send'), /not connected/);
   });
 });

@@ -42,6 +42,12 @@ export class DiscordPlugin {
   /** @type {number|null} Last sequence number */
   #seq = null;
 
+  /** @type {number} Reconnect attempt counter */
+  #reconnectAttempts = 0;
+
+  /** @type {number} Max reconnect attempts before giving up */
+  #maxReconnectAttempts = 10;
+
   /**
    * @param {object} opts
    * @param {string} opts.botToken — Discord bot token
@@ -64,16 +70,28 @@ export class DiscordPlugin {
   /**
    * Normalize a Discord MESSAGE_CREATE payload into standard inbound format.
    * @param {object} raw — Discord message object
-   * @returns {{id: string, text: string, sender: string, channel: string, timestamp: number}}
+   * @returns {object} Standard InboundMessage
    */
   createInboundMessage(raw) {
     const author = raw.author || {};
 
     return {
       id: raw.id || String(Date.now()),
-      text: raw.content || '',
-      sender: author.username || 'unknown',
       channel: 'discord',
+      channelId: raw.channel_id || null,
+      sender: {
+        id: author.id || 'unknown',
+        name: author.global_name || author.username || 'Unknown',
+        username: author.username || null,
+      },
+      content: raw.content || '',
+      attachments: (raw.attachments || []).map(a => ({
+        id: a.id,
+        url: a.url,
+        filename: a.filename,
+        size: a.size,
+      })),
+      replyTo: raw.message_reference?.message_id || null,
       timestamp: raw.timestamp ? new Date(raw.timestamp).getTime() : Date.now(),
     };
   }
@@ -125,9 +143,11 @@ export class DiscordPlugin {
           clearInterval(this.#heartbeatTimer);
           this.#heartbeatTimer = null;
         }
-        // Reconnect after delay if still running
-        if (this.running) {
-          setTimeout(() => this.#connectGateway(), 5000);
+        // Reconnect with exponential backoff and max attempts
+        if (this.running && this.#reconnectAttempts < this.#maxReconnectAttempts) {
+          const delay = Math.min(5000 * Math.pow(1.5, this.#reconnectAttempts), 60000);
+          this.#reconnectAttempts++;
+          setTimeout(() => this.#connectGateway(), delay);
         }
       };
 
@@ -151,6 +171,8 @@ export class DiscordPlugin {
         this.#startHeartbeat(data.d.heartbeat_interval);
         // Identify
         this.#identify();
+        // Reset reconnect counter on successful connection
+        this.#reconnectAttempts = 0;
         break;
 
       case OP_HEARTBEAT:

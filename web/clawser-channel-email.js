@@ -40,6 +40,8 @@ export class EmailPlugin {
    * @param {boolean} [opts.useGmailApi=false] — Use Gmail API instead of SMTP
    * @param {string} [opts.folder='INBOX'] — IMAP folder to poll
    * @param {number} [opts.maxSeenIds=1000] — Max tracked message IDs
+   * @param {string} [opts.imapProtocol='https://'] — Protocol for IMAP URL
+   * @param {string} [opts.smtpProtocol='https://'] — Protocol for SMTP URL
    */
   constructor(opts = {}) {
     this.config = {
@@ -50,6 +52,8 @@ export class EmailPlugin {
       useGmailApi: opts.useGmailApi || false,
       folder: opts.folder || 'INBOX',
       maxSeenIds: opts.maxSeenIds || 1000,
+      imapProtocol: opts.imapProtocol || 'https://',
+      smtpProtocol: opts.smtpProtocol || 'https://',
     };
   }
 
@@ -58,19 +62,36 @@ export class EmailPlugin {
   /**
    * Normalize an email envelope into standard inbound message format.
    * @param {object} raw — Email envelope/parsed object
-   * @returns {{id: string, text: string, sender: string, channel: string, timestamp: number}}
+   * @returns {object} Standard InboundMessage
    */
   createInboundMessage(raw) {
-    let text = raw.body || '';
-    if (!text && raw.subject) {
-      text = `[Subject: ${raw.subject}]`;
+    let body = raw.body || '';
+    if (!body && raw.subject) {
+      body = `[Subject: ${raw.subject}]`;
     }
+
+    // Parse "Name <email>" format for sender
+    const fromRaw = raw.from || 'unknown';
+    const emailMatch = fromRaw.match(/^(.+?)\s*<(.+?)>$/);
+    const senderName = emailMatch ? emailMatch[1].trim() : fromRaw;
+    const senderEmail = emailMatch ? emailMatch[2].trim() : fromRaw;
 
     return {
       id: raw.messageId || `email_${Date.now()}`,
-      text,
-      sender: raw.from || 'unknown',
       channel: 'email',
+      channelId: raw.to || null,
+      sender: {
+        id: senderEmail,
+        name: senderName || 'Unknown',
+        username: senderEmail || null,
+      },
+      content: body,
+      attachments: (raw.attachments || []).map(a => ({
+        filename: a.filename || a.name,
+        size: a.size,
+        contentType: a.contentType || a.mimeType,
+      })),
+      replyTo: raw.inReplyTo || null,
       timestamp: raw.date ? new Date(raw.date).getTime() : Date.now(),
     };
   }
@@ -135,7 +156,7 @@ export class EmailPlugin {
   async #fetchImapEmails() {
     try {
       // Uses wsh-based proxy endpoint for IMAP access
-      const url = `https://${this.config.imapHost}/fetch`;
+      const url = `${this.config.imapProtocol}${this.config.imapHost}/fetch`;
       const res = await fetch(url, {
         method: 'POST',
         headers: {
@@ -259,7 +280,7 @@ export class EmailPlugin {
 
   async #sendViaSmtp(text, opts) {
     try {
-      const url = `https://${this.config.smtpHost}/send`;
+      const url = `${this.config.smtpProtocol}${this.config.smtpHost}/send`;
       const res = await fetch(url, {
         method: 'POST',
         headers: {

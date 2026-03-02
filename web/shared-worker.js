@@ -225,7 +225,7 @@ export class SharedWorkerHost {
   #processQueue() {
     if (this.#queue.length === 0) return;
     const next = this.#queue.shift();
-    this._handleMessage(next.port, next.msg);
+    queueMicrotask(() => this._handleMessage(next.port, next.msg));
   }
 }
 

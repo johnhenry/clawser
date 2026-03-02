@@ -186,6 +186,13 @@ export class RemoteUI {
 
   /**
    * Build the EventSource URL for SSE streaming.
+   *
+   * NOTE: The token is passed as a query parameter because the EventSource API
+   * does not support custom headers (e.g., Authorization). This is a known
+   * limitation of the browser EventSource specification. The server should
+   * treat this token as a short-lived session token and rotate it frequently
+   * to limit exposure in server logs and browser history.
+   *
    * @returns {string}
    */
   createEventSourceUrl() {

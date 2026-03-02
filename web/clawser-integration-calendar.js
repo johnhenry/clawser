@@ -8,21 +8,25 @@
 //   CalendarFreeBusyTool  — Analyze free/busy time windows
 //   CalendarQuickAddTool  — Parse natural language into calendar events
 
+import { BrowserTool } from './clawser-tools.js';
+
 // ── CalendarAwarenessTool ─────────────────────────────────────────
 
-export class CalendarAwarenessTool {
+export class CalendarAwarenessTool extends BrowserTool {
   #calendarList;
 
   /**
    * @param {object} calendarListTool - A GoogleCalendarListTool instance (or compatible)
    */
   constructor(calendarListTool) {
+    super();
     this.#calendarList = calendarListTool;
   }
 
   get name() { return 'calendar_awareness'; }
   get description() { return 'Get a summary of upcoming calendar events for schedule awareness.'; }
-  get schema() {
+  get permission() { return 'approve'; }
+  get parameters() {
     return {
       type: 'object',
       properties: {
@@ -65,16 +69,18 @@ export class CalendarAwarenessTool {
 
 // ── CalendarFreeBusyTool ──────────────────────────────────────────
 
-export class CalendarFreeBusyTool {
+export class CalendarFreeBusyTool extends BrowserTool {
   #calendarList;
 
   constructor(calendarListTool) {
+    super();
     this.#calendarList = calendarListTool;
   }
 
   get name() { return 'calendar_freebusy'; }
   get description() { return 'Analyze free and busy time windows for a given day.'; }
-  get schema() {
+  get permission() { return 'approve'; }
+  get parameters() {
     return {
       type: 'object',
       properties: {
@@ -151,16 +157,18 @@ export class CalendarFreeBusyTool {
 
 // ── CalendarQuickAddTool ──────────────────────────────────────────
 
-export class CalendarQuickAddTool {
+export class CalendarQuickAddTool extends BrowserTool {
   #calendarCreate;
 
   constructor(calendarCreateTool) {
+    super();
     this.#calendarCreate = calendarCreateTool;
   }
 
   get name() { return 'calendar_quick_add'; }
   get description() { return 'Create a calendar event from a natural language description. The agent parses timing details.'; }
-  get schema() {
+  get permission() { return 'approve'; }
+  get parameters() {
     return {
       type: 'object',
       properties: {

@@ -49,8 +49,8 @@ describe('SlackPlugin', () => {
     };
     const msg = plugin.createInboundMessage(raw);
     assert.equal(msg.id, 'slack_msg_1');
-    assert.equal(msg.text, 'hello slack');
-    assert.equal(msg.sender, 'U123');
+    assert.equal(msg.content, 'hello slack');
+    assert.equal(msg.sender.id, 'U123');
     assert.equal(msg.channel, 'slack');
     assert.equal(typeof msg.timestamp, 'number');
   });
@@ -63,8 +63,8 @@ describe('SlackPlugin', () => {
 
   it('handles missing fields gracefully', () => {
     const msg = plugin.createInboundMessage({});
-    assert.equal(msg.text, '');
-    assert.equal(msg.sender, 'unknown');
+    assert.equal(msg.content, '');
+    assert.equal(msg.sender.id, 'unknown');
   });
 
   // ── lifecycle ────────────────────────────────────────────
@@ -132,7 +132,7 @@ describe('SlackPlugin', () => {
       },
     });
     assert.equal(received.length, 1);
-    assert.equal(received[0].text, 'webhook msg');
+    assert.equal(received[0].content, 'webhook msg');
   });
 
   it('handleEvent responds to url_verification', () => {

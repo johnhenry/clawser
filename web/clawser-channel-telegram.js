@@ -62,7 +62,7 @@ export class TelegramPlugin {
   /**
    * Normalize a Telegram update into standard inbound message format.
    * @param {object} raw — Telegram update object
-   * @returns {{id: string, text: string, sender: string, channel: string, timestamp: number}}
+   * @returns {object} Standard InboundMessage
    */
   createInboundMessage(raw) {
     const message = raw.message || {};
@@ -70,9 +70,16 @@ export class TelegramPlugin {
 
     return {
       id: String(message.message_id || raw.update_id || Date.now()),
-      text: message.text || '',
-      sender: from.username || from.first_name || 'unknown',
       channel: 'telegram',
+      channelId: message.chat ? String(message.chat.id) : null,
+      sender: {
+        id: from.id ? String(from.id) : 'unknown',
+        name: [from.first_name, from.last_name].filter(Boolean).join(' ') || 'Unknown',
+        username: from.username || null,
+      },
+      content: message.text || '',
+      attachments: [],
+      replyTo: message.reply_to_message ? String(message.reply_to_message.message_id) : null,
       timestamp: message.date ? message.date * 1000 : Date.now(),
     };
   }

@@ -84,8 +84,8 @@ describe('IrcPlugin', () => {
       trailing: 'hello irc',
     };
     const msg = plugin.createInboundMessage(raw);
-    assert.equal(msg.text, 'hello irc');
-    assert.equal(msg.sender, 'alice');
+    assert.equal(msg.content, 'hello irc');
+    assert.equal(msg.sender.name, 'alice');
     assert.equal(msg.channel, 'irc');
     assert.ok(msg.id);
     assert.equal(typeof msg.timestamp, 'number');
@@ -98,7 +98,7 @@ describe('IrcPlugin', () => {
       params: ['#test'],
       trailing: 'hi',
     });
-    assert.equal(msg.sender, 'bob');
+    assert.equal(msg.sender.name, 'bob');
   });
 
   // ── lifecycle ────────────────────────────────────────────
@@ -151,8 +151,8 @@ describe('IrcPlugin', () => {
     plugin.onMessage((msg) => received.push(msg));
     plugin.handleLine(':alice!u@h PRIVMSG #general :test message');
     assert.equal(received.length, 1);
-    assert.equal(received[0].text, 'test message');
-    assert.equal(received[0].sender, 'alice');
+    assert.equal(received[0].content, 'test message');
+    assert.equal(received[0].sender.name, 'alice');
   });
 
   it('handleLine responds to PING with PONG', () => {

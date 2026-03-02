@@ -54,14 +54,26 @@ export class ChannelRelay {
   /**
    * Normalize a raw webhook payload into standard inbound message format.
    * @param {object} raw
-   * @returns {{id: string, text: string, sender: string, channel: string, timestamp: number}}
+   * @returns {object} Standard InboundMessage
    */
   createInboundMessage(raw) {
+    const senderRaw = raw.sender;
+    const senderObj = (typeof senderRaw === 'object' && senderRaw !== null)
+      ? senderRaw
+      : { id: senderRaw || 'unknown', name: senderRaw || 'Unknown' };
+
     return {
       id: raw.id || generateId(),
-      text: raw.body || raw.text || '',
-      sender: raw.sender || 'unknown',
       channel: 'relay',
+      channelId: raw.channelId || null,
+      sender: {
+        id: senderObj.id || 'unknown',
+        name: senderObj.name || 'Unknown',
+        username: senderObj.username || null,
+      },
+      content: raw.body || raw.text || raw.content || '',
+      attachments: raw.attachments || [],
+      replyTo: raw.replyTo || null,
       timestamp: raw.timestamp || Date.now(),
     };
   }

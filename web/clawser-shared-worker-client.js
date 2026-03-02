@@ -63,7 +63,7 @@ export class SharedWorkerClient {
    * @param {object} [opts] - Additional options
    */
   sendMessage(text, opts = {}) {
-    if (!this.#connected) return;
+    if (!this.#connected) throw new Error('SharedWorkerClient: not connected');
     this.#port.postMessage({
       type: MSG_TYPES.USER_MESSAGE,
       payload: { text, ...opts },
@@ -75,7 +75,7 @@ export class SharedWorkerClient {
    * Request the current agent/host state.
    */
   requestState() {
-    if (!this.#connected) return;
+    if (!this.#connected) throw new Error('SharedWorkerClient: not connected');
     this.#port.postMessage({
       type: MSG_TYPES.STATE,
       reqId: ++this.#reqId,
@@ -88,7 +88,7 @@ export class SharedWorkerClient {
    * @param {object} [opts]
    */
   execShell(command, opts = {}) {
-    if (!this.#connected) return;
+    if (!this.#connected) throw new Error('SharedWorkerClient: not connected');
     this.#port.postMessage({
       type: MSG_TYPES.SHELL_EXEC,
       payload: { command, ...opts },

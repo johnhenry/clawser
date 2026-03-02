@@ -60,8 +60,8 @@ describe('TelegramPlugin', () => {
     };
     const msg = plugin.createInboundMessage(raw);
     assert.equal(msg.id, '42');
-    assert.equal(msg.text, 'hello bot');
-    assert.equal(msg.sender, 'alice');
+    assert.equal(msg.content, 'hello bot');
+    assert.equal(msg.sender.username, 'alice');
     assert.equal(msg.channel, 'telegram');
     assert.equal(msg.timestamp, 1700000000000);
   });
@@ -78,13 +78,13 @@ describe('TelegramPlugin', () => {
       },
     };
     const msg = plugin.createInboundMessage(raw);
-    assert.equal(msg.sender, 'Bob');
+    assert.equal(msg.sender.name, 'Bob');
   });
 
   it('handles missing message gracefully', () => {
     const msg = plugin.createInboundMessage({ update_id: 102 });
-    assert.equal(msg.text, '');
-    assert.equal(msg.sender, 'unknown');
+    assert.equal(msg.content, '');
+    assert.equal(msg.sender.id, 'unknown');
   });
 
   // ── lifecycle ────────────────────────────────────────────
@@ -161,8 +161,8 @@ describe('TelegramPlugin', () => {
       { update_id: 2, message: { message_id: 2, text: 'b', from: { id: 2, first_name: 'Y' }, chat: { id: 2 }, date: 2 } },
     ]);
     assert.equal(received.length, 2);
-    assert.equal(received[0].text, 'a');
-    assert.equal(received[1].text, 'b');
+    assert.equal(received[0].content, 'a');
+    assert.equal(received[1].content, 'b');
   });
 
   it('processUpdates updates offset', () => {

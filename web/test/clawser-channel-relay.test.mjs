@@ -38,8 +38,8 @@ describe('ChannelRelay', () => {
       id: 'wh_1',
     });
     assert.equal(msg.id, 'wh_1');
-    assert.equal(msg.text, 'hello from webhook');
-    assert.equal(msg.sender, 'external-system');
+    assert.equal(msg.content, 'hello from webhook');
+    assert.equal(msg.sender.name, 'external-system');
     assert.equal(msg.channel, 'relay');
     assert.equal(typeof msg.timestamp, 'number');
   });
@@ -52,7 +52,7 @@ describe('ChannelRelay', () => {
 
   it('defaults sender to unknown', () => {
     const msg = relay.createInboundMessage({ body: 'anon' });
-    assert.equal(msg.sender, 'unknown');
+    assert.equal(msg.sender.name, 'Unknown');
   });
 
   // ── lifecycle ────────────────────────────────────────────
@@ -83,7 +83,7 @@ describe('ChannelRelay', () => {
     relay.start();
     relay.handleWebhook({ body: 'test payload', sender: 'sys' });
     assert.equal(received.length, 1);
-    assert.equal(received[0].text, 'test payload');
+    assert.equal(received[0].content, 'test payload');
   });
 
   it('does not invoke callback when stopped', () => {
@@ -120,8 +120,8 @@ describe('ChannelRelay', () => {
     // Simulate BC message
     relay._handleBcMessage({ data: { text: 'from bc', sender: 'peer' } });
     assert.equal(received.length, 1);
-    assert.equal(received[0].text, 'from bc');
-    assert.equal(received[0].sender, 'peer');
+    assert.equal(received[0].content, 'from bc');
+    assert.equal(received[0].sender.name, 'peer');
   });
 
   // ── route table ──────────────────────────────────────────

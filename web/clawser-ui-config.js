@@ -13,6 +13,7 @@ import { checkQuota } from './clawser-tools.js';
 import { CostTracker } from './clawser-cost-tracker.js';
 import { renderBarChart, renderTimeSeriesChart, renderCostBreakdown } from './clawser-ui-charts.js';
 import { renderIdentityEditor } from './clawser-ui-identity-editor.js';
+import { loadAccounts, resolveAccountKey, SERVICES } from './clawser-accounts.js';
 
 // ── Security settings ──────────────────────────────────────────
 /** Apply domain allowlist and max file size from UI inputs to the browser tools and persist. */
@@ -674,9 +675,13 @@ export function getCostTracker() {
   return state._costTracker;
 }
 
-/** Record a cost event from the chat flow. */
-export function recordCostEvent(model, tokens, costCents) {
-  getCostTracker().recordCost(model, tokens, costCents);
+/** Record a cost event from the chat flow.
+ * @param {string} model - Model name
+ * @param {object} usage - Usage object with input_tokens/output_tokens
+ * @param {number} costCents - Cost in cents
+ */
+export function recordCostEvent(model, usage, costCents) {
+  getCostTracker().recordCost(model, usage, costCents);
 }
 
 /** Refresh dashboard metrics display. */
@@ -970,24 +975,29 @@ export function renderCheckpointSection() {
 
 // ── Fallback Chain Editor UI (Phase 4a) ──────────────────────────
 
-/** Render the fallback chain editor with drag-reorderable entries. */
+/** Render the fallback chain editor with drag-reorderable account-based entries. */
 export function renderFallbackChainEditor() {
   const list = $('routingChainList');
   if (!list) return;
   list.innerHTML = '';
 
   const chain = state.fallbackChain || [];
+  const accts = loadAccounts();
   for (let i = 0; i < chain.length; i++) {
     const entry = chain[i];
     const d = document.createElement('div');
     d.className = 'chain-entry';
     d.draggable = true;
     d.dataset.idx = i;
+    // Resolve display name: account name if accountId, else raw provider
+    const acct = entry.accountId ? accts.find(a => a.id === entry.accountId) : null;
+    const displayName = acct ? acct.name : (entry.provider || 'unknown');
+    const displayModel = acct ? acct.model : (entry.model || '');
     d.innerHTML = `
       <span class="chain-drag-handle">\u2630</span>
       <span class="chain-idx">${i + 1}.</span>
-      <span class="chain-name">${esc(entry.provider || '')}</span>
-      <span class="chain-model">${esc(entry.model || '')}</span>
+      <span class="chain-name">${esc(displayName)}</span>
+      <span class="chain-model">${esc(displayModel)}</span>
       <input type="checkbox" class="chain-enabled" ${entry.enabled !== false ? 'checked' : ''} title="Enabled" />
       <button class="chain-remove" title="Remove">\u2715</button>
     `;
@@ -1019,19 +1029,30 @@ export function renderFallbackChainEditor() {
     list.appendChild(d);
   }
 
-  // Add entry form
+  // Add entry form — account selector dropdown
   const addRow = document.createElement('div');
   addRow.className = 'chain-add-row';
+  let acctOptions = '<option value="">-- Select account --</option>';
+  for (const a of accts) {
+    const svcName = SERVICES[a.service]?.name || a.service;
+    acctOptions += `<option value="${esc(a.id)}">${esc(a.name)} (${esc(svcName)} · ${esc(a.model)})</option>`;
+  }
   addRow.innerHTML = `
-    <input type="text" class="chain-add-provider" placeholder="Provider" />
-    <input type="text" class="chain-add-model" placeholder="Model" />
+    <select class="chain-add-account">${acctOptions}</select>
     <button class="btn-sm chain-add-btn">+ Add</button>
   `;
   addRow.querySelector('.chain-add-btn').addEventListener('click', () => {
-    const prov = addRow.querySelector('.chain-add-provider').value.trim();
-    const mdl = addRow.querySelector('.chain-add-model').value.trim();
-    if (!prov) return;
-    chain.push({ provider: prov, model: mdl, priority: chain.length, enabled: true });
+    const acctId = addRow.querySelector('.chain-add-account').value;
+    if (!acctId) return;
+    const selected = accts.find(a => a.id === acctId);
+    if (!selected) return;
+    chain.push({
+      accountId: acctId,
+      provider: selected.service,
+      model: selected.model,
+      priority: chain.length,
+      enabled: true,
+    });
     _saveFallbackChain();
     renderFallbackChainEditor();
   });

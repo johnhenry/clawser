@@ -365,6 +365,16 @@ export async function initWorkspace(wsId, convId) {
     const rc = state.agent.init({});
     if (rc !== 0) throw new Error(`agent.init returned ${rc}`);
 
+    // Wire account resolver for fallback chain credential resolution
+    state.agent.setAccountResolver(async (accountId) => {
+      const { loadAccounts, resolveAccountKey } = await import('./clawser-accounts.js');
+      const accts = loadAccounts();
+      const acct = accts.find(a => a.id === accountId);
+      if (!acct) return { apiKey: '', baseUrl: '' };
+      const apiKey = await resolveAccountKey(acct);
+      return { apiKey, baseUrl: acct.baseUrl || '' };
+    });
+
     // Create kernel tenant for this workspace (Step 23)
     if (_kernelIntegration) {
       _kernelIntegration.createWorkspaceTenant(wsId);

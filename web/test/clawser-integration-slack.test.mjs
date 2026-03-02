@@ -46,7 +46,7 @@ describe('Slack integration tool basics', () => {
   it('all have descriptions and schemas', () => {
     for (const t of tools) {
       assert.ok(t.description.length > 0);
-      assert.equal(t.schema.type, 'object');
+      assert.equal(t.parameters.type, 'object');
     }
   });
 });

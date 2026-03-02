@@ -52,7 +52,7 @@ export class CostTracker {
 
     const byDay = new Map();
     for (const r of recent) {
-      const date = new Date(r.ts).toISOString().slice(0, 10);
+      const date = new Date(r.ts).toLocaleDateString('sv-SE');
       const entry = byDay.get(date) || { date, costCents: 0, tokens: 0 };
       entry.costCents += r.costCents;
       entry.tokens += (r.tokens.input_tokens + r.tokens.output_tokens);
@@ -94,7 +94,7 @@ export class CostTracker {
     const byHour = new Map();
     for (const r of recent) {
       const d = new Date(r.ts);
-      const hour = `${d.toISOString().slice(0, 10)} ${String(d.getHours()).padStart(2, '0')}:00`;
+      const hour = `${d.toLocaleDateString('sv-SE')} ${String(d.getHours()).padStart(2, '0')}:00`;
       const entry = byHour.get(hour) || { hour, costCents: 0, tokens: 0 };
       entry.costCents += r.costCents;
       entry.tokens += (r.tokens.input_tokens + r.tokens.output_tokens);

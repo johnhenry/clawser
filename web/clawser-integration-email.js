@@ -7,21 +7,25 @@
 //   EmailSummarizeTool  — Summarize recent emails matching a query
 //   EmailTriageTool     — Triage unread emails with priority categorization
 
+import { BrowserTool } from './clawser-tools.js';
+
 // ── EmailDraftTool ────────────────────────────────────────────────
 
-export class EmailDraftTool {
+export class EmailDraftTool extends BrowserTool {
   #gmailSend;
 
   /**
    * @param {object} gmailSendTool - A GoogleGmailSendTool instance (or compatible)
    */
   constructor(gmailSendTool) {
+    super();
     this.#gmailSend = gmailSendTool;
   }
 
   get name() { return 'email_draft'; }
   get description() { return 'Compose and send an email draft via Gmail.'; }
-  get schema() {
+  get permission() { return 'approve'; }
+  get parameters() {
     return {
       type: 'object',
       properties: {
@@ -48,7 +52,7 @@ export class EmailDraftTool {
 
 // ── EmailSummarizeTool ────────────────────────────────────────────
 
-export class EmailSummarizeTool {
+export class EmailSummarizeTool extends BrowserTool {
   #gmailSearch;
   #oauth;
 
@@ -57,13 +61,15 @@ export class EmailSummarizeTool {
    * @param {object} oauth - OAuthManager for fetching full message details
    */
   constructor(gmailSearchTool, oauth) {
+    super();
     this.#gmailSearch = gmailSearchTool;
     this.#oauth = oauth;
   }
 
   get name() { return 'email_summarize'; }
   get description() { return 'Summarize recent emails matching a Gmail search query.'; }
-  get schema() {
+  get permission() { return 'approve'; }
+  get parameters() {
     return {
       type: 'object',
       properties: {
@@ -120,18 +126,20 @@ export class EmailSummarizeTool {
 
 // ── EmailTriageTool ───────────────────────────────────────────────
 
-export class EmailTriageTool {
+export class EmailTriageTool extends BrowserTool {
   #gmailSearch;
   #oauth;
 
   constructor(gmailSearchTool, oauth) {
+    super();
     this.#gmailSearch = gmailSearchTool;
     this.#oauth = oauth;
   }
 
   get name() { return 'email_triage'; }
   get description() { return 'Triage unread emails, categorizing by apparent priority.'; }
-  get schema() {
+  get permission() { return 'approve'; }
+  get parameters() {
     return {
       type: 'object',
       properties: {
