@@ -1108,8 +1108,12 @@ export class ShellFs {
         const file = await fh.getFile();
         return { kind: 'file', size: file.size, lastModified: file.lastModified };
       } catch {
-        await parent.getDirectoryHandle(name);
-        return { kind: 'directory' };
+        try {
+          await parent.getDirectoryHandle(name);
+          return { kind: 'directory' };
+        } catch {
+          return null;
+        }
       }
     } catch {
       return null;
@@ -1258,20 +1262,26 @@ export function registerBuiltins(registry) {
   registry.register('cd', async ({ args, state, fs }) => {
     const target = args[0] || '/';
     const resolved = state.resolvePath(target);
-    // Verify directory exists when filesystem is available
-    if (fs) {
-      try {
-        const stat = await fs.stat(resolved);
-        if (stat && stat.kind !== 'directory') {
-          return { stdout: '', stderr: `cd: ${target}: Not a directory`, exitCode: 1 };
-        }
-        if (!stat && resolved !== '/') {
-          // Try listDir as fallback (stat may not exist for root-like paths)
-          await fs.listDir(resolved);
-        }
-      } catch {
+    if (!fs) {
+      // No filesystem — only root is safe
+      if (resolved !== '/') {
         return { stdout: '', stderr: `cd: ${target}: No such directory`, exitCode: 1 };
       }
+      state.cwd = '/';
+      return { stdout: '', stderr: '', exitCode: 0 };
+    }
+    // Verify directory exists
+    try {
+      const stat = await fs.stat(resolved);
+      if (stat && stat.kind !== 'directory') {
+        return { stdout: '', stderr: `cd: ${target}: Not a directory`, exitCode: 1 };
+      }
+      // Always verify via listDir for non-root paths (stat can be stale/cached)
+      if (resolved !== '/') {
+        await fs.listDir(resolved);
+      }
+    } catch {
+      return { stdout: '', stderr: `cd: ${target}: No such directory`, exitCode: 1 };
     }
     state.cwd = resolved;
     return { stdout: '', stderr: '', exitCode: 0 };
