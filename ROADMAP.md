@@ -1,8 +1,8 @@
 # Clawser Roadmap
 
-## Current Status (Feb 2026)
+## Current Status (Mar 2026)
 
-Clawser is a **beta-quality** browser-native AI agent platform. The core runtime is functionally complete with 72 JS modules (~31K LOC), 70+ tools, and 38+ LLM provider backends. The project transitioned from a Rust/WASM architecture to pure JavaScript.
+Clawser is a **beta-quality** browser-native AI agent platform. The core runtime is functionally complete with 100+ JS modules (~120K LOC), 70+ tools, and 38+ LLM provider backends. The project transitioned from a Rust/WASM architecture to pure JavaScript. Phase 8 (BrowserMesh) added 30 decentralized mesh modules with 3,710 tests.
 
 ### What Works
 - Full agent loop with streaming, tool calling, and context compaction
@@ -21,6 +21,7 @@ Clawser is a **beta-quality** browser-native AI agent platform. The core runtime
 - Delegation, self-repair, undo, routines, heartbeat, auth profiles
 - ARIA accessibility, keyboard shortcuts, light/dark mode, responsive design
 - CI/CD pipeline, Docker, Service Worker, PWA
+- BrowserMesh P2P: identity, trust, CRDT sync, transport, relay, discovery, consensus, swarm, apps, marketplace
 
 ### Version History
 
@@ -109,12 +110,12 @@ Clawser is a **beta-quality** browser-native AI agent platform. The core runtime
 - [x] **File browser pagination** — PAGE_SIZE=50 with "Load more" button
 - [x] **Permission UI tooltips** — Tooltips + color coding (green/yellow/red) on all permission badges
 
-### Shell Improvements -- MOSTLY COMPLETE
+### Shell Improvements -- COMPLETE
 - [x] **Variable substitution** — $VAR, ${VAR}, $? fully implemented
 - [x] **Glob expansion** — *, ?, [] with POSIX fallback
 - [x] ~~Stderr redirect~~ — 2>/dev/null, 2>&1, 2>file fully implemented in executor
 
-### Shell Emulation Layer (Block 1) -- MOSTLY COMPLETE
+### Shell Emulation Layer (Block 1) -- COMPLETE
 **Done:**
 - [x] Shell parser — recursive descent, full AST (pipes, &&, ||, ;, quotes, redirects)
 - [x] Web Streams execution engine with pipe/redirect support and pipefail
@@ -356,7 +357,7 @@ Priority: Integrations, API, and community.
 - [x] **transformers.js local embeddings** — TransformersEmbeddingProvider (384d, CDN lazy-load, isAvailable guard)
 - [x] **Embedding backfill** — Backfill existing memories when provider first configured (already implemented: SemanticMemory.backfillEmbeddings() with onProgress callback)
 
-### API Key Encryption (Block 5) -- MOSTLY COMPLETE
+### API Key Encryption (Block 5) -- COMPLETE
 **Done:**
 - [x] SecretVault with PBKDF2 (600K iterations) + AES-GCM (256-bit)
 - [x] OPFS vault storage backend
@@ -463,7 +464,7 @@ Priority: Integrations, API, and community.
 - [x] **Adaptive model selection** — ModelRouter.recordOutcome() + modelStats() for per-model+hint performance tracking
 - [ ] **Chain editor UI** — Visual fallback chain configuration in workspace settings
 
-### Git as Agent Behavior (Block 12) -- MOSTLY COMPLETE
+### Git as Agent Behavior (Block 12) -- COMPLETE
 **Done:**
 - [x] GitBehavior with goal-boundary commits, experiment branching, micro-commits
 - [x] GitEpisodicMemory (recallByTopic, recallByGoal, recallExperiments, findHotspots)
@@ -477,7 +478,7 @@ Priority: Integrations, API, and community.
 - [x] **Branch merge conflict resolution** — Strategy for experiment merge conflicts
 - [x] **FTS5 integration** — Index commit messages in memory system (Block 4 cross-ref)
 
-### Web Hardware Peripherals (Block 13) -- MOSTLY COMPLETE
+### Web Hardware Peripherals (Block 13) -- COMPLETE
 **Done:** SerialPeripheral, BluetoothPeripheral, USBPeripheral, PeripheralManager, 6 tools (hw_list/connect/send/read/disconnect/info) — 961 LOC
 **Remaining:**
 - [x] **hw_monitor tool** — Real-time device data streaming to agent (Sprint 11: HwMonitorTool class, duration-based data collection)
@@ -505,7 +506,7 @@ Priority: Integrations, API, and community.
 ### OAuth App Integrations (Block 16) -- MOSTLY COMPLETE
 **Done:** OAuthManager (popup flow, CSRF state, vault storage, auto-refresh), 5 providers (Google/GitHub/Notion/Slack/Linear), 4 tools, AuthProfileManager — 911 LOC
 **Remaining:**
-- [ ] **Popup auth handler wiring** — Connect injectable handler to real window.open
+- [x] **Popup auth handler wiring** — OAuthManager.#openPopupFn injectable, connect() calls openPopupFn(authUrl) for popup flow
 - [ ] **Code exchange via wsh** — Server-side OAuth code→token exchange
 - [ ] **Google Calendar/Gmail/Drive operations** — Read/write tools for Google APIs
 - [ ] **Notion/Slack/Linear read-write tools** — Platform-specific operations
@@ -518,28 +519,28 @@ Priority: Integrations, API, and community.
 - [ ] Email integration — Draft, summarize, triage
 - [ ] Slack/Discord — Channel monitoring, response drafting
 
-### Skill Package Registry (Block 17) -- MOSTLY COMPLETE
+### Skill Package Registry (Block 17) -- COMPLETE
 **Done:** SkillParser, SkillStorage (OPFS), SkillRegistry, SkillRegistryClient (remote search/fetch), 8 tools, metadata extraction, workspace+global discovery — 1770 LOC
 **Remaining:**
-- [ ] **Skill browser UI panel** — Full browseable UI for discovering/installing skills
+- [x] **Skill browser UI panel** — Full browseable UI for discovering/installing skills (skillBrowseResults container, browse cards, remote search via SkillRegistryClient)
 - [x] **Skill dependency resolution** — resolveDependencies() checks skills + tools availability
 - [x] **Skill verification/signing** — computeSkillHash() (FNV-1a) + verifySkillIntegrity()
 
-### Browser Automation (Block 18) -- PARTIALLY COMPLETE
+### Browser Automation (Block 18) -- COMPLETE
 **Done:** PageSnapshot, AutomationSession (rate limit, selector resolution), AutomationManager (domain allowlist), 8 tools (browser_open/read_page/click/fill/wait/evaluate/list_tabs/close_tab), sensitive field detection — 736 LOC
 **Remaining:**
 - [x] **browser_select tool** — BrowserSelectTool for dropdown/select elements
 - [x] **browser_screenshot tool** — BrowserScreenshotTool with format/fullPage options
 - [x] **browser_scroll tool** — BrowserScrollTool with direction/amount/selector
-- [ ] **Content script integration** — Real browser automation via extension (not mock)
+- [x] **Content script integration** — Real browser automation via extension: content.js injected via manifest + scripting.executeScript, ExtensionRpcClient, 34 ext_* tools
 - [x] **Multi-step workflow chaining** — WorkflowRecorder with addStep/export/clear
 - [x] **Automation recipes as skills** — Package automations as installable skills
 
-### Auth Profiles (Block 19) -- MOSTLY COMPLETE
+### Auth Profiles (Block 19) -- COMPLETE
 **Done:** AuthProfile + AuthProfileManager, vault-encrypted credentials, CRUD + workspace binding, 3 tools (auth_status/list_profiles/switch_profile) — 353 LOC
 **Remaining:**
-- [ ] **Profile management UI** — Settings panel for add/edit/remove/switch profiles
-- [ ] **OAuth token refresh wiring** — Connect refresh flow to real OAuth providers
+- [x] **Profile management UI** — renderAuthProfilesSection() in config panel with add/remove/switch, active toggle, provider display
+- [x] **OAuth token refresh wiring** — OAuthManager auto-refresh on expired tokens via injectable #refreshTokenFn, getConnection() checks expired + refreshToken
 - [x] **Profile import/export** — AuthProfileManager.exportProfiles()/importProfiles() (metadata only)
 - [x] **Usage tracking per profile** — Cost attribution to specific API keys
 
@@ -557,14 +558,14 @@ Priority: Integrations, API, and community.
 - [x] **Skill hook registration** — Skills register hooks via SKILL.md frontmatter (Sprint 10: SkillParser.validateHooks(), inline array-of-objects YAML parsing, 6 valid hook points)
 - [ ] **Hook management UI** — Enable/disable/configure hooks in settings
 
-### Routines Engine (Block 21) -- MOSTLY COMPLETE
+### Routines Engine (Block 21) -- COMPLETE
 **Done:** RoutineEngine (cron/event/webhook), guardrails, auto-disable on failures, cron matching, event glob filtering, history tracking, 4 tools, serialization — 598 LOC
 **Remaining:**
 - [x] **HMAC webhook signature verification** — Validate webhook authenticity (Sprint 9: verifyHmac() with Node.js crypto + Web Crypto fallback, handleWebhook() opts.signature/rawBody)
 - [x] **Event bus integration** — Subscribe routines to agent event bus (Sprint 9: connectEventBus/disconnectEventBus on RoutineEngine)
 - [x] **routine_history tool** — Expose execution history to agent (Sprint 9: RoutineHistoryTool class)
 
-### Self-Repair (Block 22) -- MOSTLY COMPLETE
+### Self-Repair (Block 22) -- COMPLETE
 **Done:** StuckDetector (6 issue types), SelfRepairEngine with recovery strategies, loop detection, configurable thresholds, repair log, 2 tools — 425 LOC
 - [x] **Wire into agent run loop** — Auto-invoke .check() between turns (agent.js:1375, 1598, 1755)
 - [x] **Register recovery handlers** — compact (compactContext), inject_message (push system prompt), abort (mark destroyed), fallback_provider (switch to next available)
@@ -576,7 +577,7 @@ Priority: Integrations, API, and community.
 **Remaining:**
 - [x] **Configurable cost runaway threshold** — CostLedger.thresholdUsd + isOverThreshold() + setThreshold()
 
-### Safety Pipeline (Block 23) -- MOSTLY COMPLETE
+### Safety Pipeline (Block 23) -- COMPLETE
 **Done:** InputSanitizer (8 injection patterns), ToolCallValidator (path traversal, shell injection, URL scheme blocking), LeakDetector (8 secret patterns), SafetyPipeline orchestrator — 259 LOC
 - [x] **Wire sanitizeInput to inbound messages** — Applied in run() and runStream() beforeInbound phase
 - [x] **Wire ToolCallValidator to tool execution** — Enforced in #executeToolCalls() for MCP tools + BrowserToolRegistry.execute() for browser tools
@@ -588,7 +589,7 @@ Priority: Integrations, API, and community.
 ### Tool Builder (Block 24) -- MOSTLY COMPLETE
 **Done:** DynamicTool, ToolBuilder (build/test/edit/remove/list), version history + rollback, dry-run testing, import/export, 5 tools, trusted flag — 542 LOC
 **Remaining:**
-- [ ] **Wire sandbox executor** — Connect to andbox Worker sandbox for safe execution
+- [x] **Wire sandbox executor** — ToolBuilder constructed with sandbox fn in clawser-app.js (createSandbox from packages-andbox.js, evaluate + dispose)
 - [x] **OPFS persistence** — Persist dynamic tools across sessions (Sprint 9: persist()/restore() with storage adapter abstraction)
 - [x] **tool_promote** — Mark tool as trusted after user review (Sprint 9: ToolPromoteTool + ToolBuilder.promoteTool())
 - [ ] **Version diff/comparison UI** — Show changes between tool versions
