@@ -15,6 +15,8 @@ export const PANELS = Object.freeze({
   servers:   { id: 'panelServers',  btn: 'btnServers',  label: 'Servers' },
   toolMgmt:  { id: 'panelToolMgmt',  btn: 'btnToolMgmt',  label: 'Tool Mgmt' },
   agents:    { id: 'panelAgents',    btn: 'btnAgents',    label: 'Agents' },
+  channels:   { id: 'panelChannels',   btn: 'btnChannels',   label: 'Channels' },
+  marketplace: { id: 'panelMarketplace', btn: 'btnMarketplace', label: 'Marketplace' },
   config:    { id: 'panelConfig',    btn: 'btnConfig',    label: 'Config' },
 });
 

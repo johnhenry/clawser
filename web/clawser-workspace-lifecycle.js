@@ -13,7 +13,7 @@ import { loadConversations } from './clawser-conversations.js';
 import { saveConfig, applyRestoredConfig, rebuildProviderDropdown, setupProviders } from './clawser-accounts.js';
 import { updateRouteHash, PANELS, resetRenderedPanels, isPanelRendered } from './clawser-router.js';
 import { setStatus, addMsg, addErrorMsg, addToolCall, addInlineToolCall, updateInlineToolCall, addEvent, updateState, updateCostDisplay, replaySessionHistory, replayFromEvents, updateConvNameDisplay, persistActiveConversation, renderToolCalls, resetChatUI } from './clawser-ui-chat.js';
-import { refreshFiles, renderGoals, renderToolRegistry, renderSkills, applySecuritySettings, renderAutonomySection, renderIdentitySection, renderRoutingSection, renderAuthProfilesSection, renderSelfRepairSection, updateCacheStats, renderLimitsSection, renderSandboxSection, renderHeartbeatSection, updateCostMeter, updateAutonomyBadge, updateDaemonBadge, refreshDashboard, renderMountList, renderOAuthSection, renderTerminalSessionBar, replayTerminalSession, renderToolManagementPanel, initAgentPicker, updateAgentLabel, renderAgentPanel, terminalAskUser } from './clawser-ui-panels.js';
+import { refreshFiles, renderGoals, renderToolRegistry, renderSkills, applySecuritySettings, renderAutonomySection, renderIdentitySection, renderRoutingSection, renderAuthProfilesSection, renderSelfRepairSection, updateCacheStats, renderLimitsSection, renderSandboxSection, renderHeartbeatSection, updateCostMeter, updateAutonomyBadge, updateDaemonBadge, refreshDashboard, renderMountList, renderOAuthSection, renderTerminalSessionBar, replayTerminalSession, renderToolManagementPanel, initAgentPicker, updateAgentLabel, renderAgentPanel, terminalAskUser, renderMarketplace, renderChannelPanel, updateChannelBadge, restoreSavedChannels, initSharedWorkerFromConfig } from './clawser-ui-panels.js';
 import { registerClawserCli } from './clawser-cli.js';
 import { AgentStorage } from './clawser-agent-storage.js';
 import { SwitchAgentTool, ConsultAgentTool } from './clawser-tools.js';
@@ -30,6 +30,7 @@ export function setKernelIntegration(ki) { _kernelIntegration = ki; }
 /** Get the current kernel integration adapter. */
 export function getKernelIntegration() { return _kernelIntegration; }
 import { ActivateSkillTool, DeactivateSkillTool, SkillInstallTool, SkillUpdateTool, SkillRemoveTool, SkillListTool, SkillSearchTool } from './clawser-skills.js';
+import { SkillMarketplace } from './clawser-marketplace.js';
 
 import { MountListTool, MountResolveTool } from './clawser-mount.js';
 import { ToolBuildTool, ToolTestTool, ToolListCustomTool, ToolEditTool, ToolRemoveTool } from './clawser-tool-builder.js';
@@ -66,7 +67,7 @@ import { GoogleCalendarListTool, GoogleCalendarCreateTool, GoogleGmailSearchTool
 import { NotionSearchTool, NotionCreatePageTool, NotionUpdatePageTool, NotionQueryDatabaseTool } from './clawser-notion-tools.js';
 import { SlackChannelsTool, SlackPostTool, SlackHistoryTool } from './clawser-slack-tools.js';
 import { LinearIssuesTool, LinearCreateIssueTool, LinearUpdateIssueTool } from './clawser-linear-tools.js';
-import { GitHubPRReviewTool, GitHubIssueCreateTool, GitHubCodeSearchTool } from './clawser-integration-github.js';
+import { GitHubPrReviewTool, GitHubIssueCreateTool, GitHubCodeSearchTool } from './clawser-integration-github.js';
 import { CalendarAwarenessTool, CalendarFreeBusyTool, CalendarQuickAddTool } from './clawser-integration-calendar.js';
 import { EmailDraftTool, EmailSummarizeTool, EmailTriageTool } from './clawser-integration-email.js';
 import { SlackMonitorTool, SlackDraftResponseTool } from './clawser-integration-slack.js';
@@ -288,6 +289,9 @@ export async function switchWorkspace(newId, convId) {
   // Defer non-essential panel renders until first activation (Gap 11.1)
   resetRenderedPanels();
   await state.skillRegistry.discover(newId);
+  state.marketplace = new SkillMarketplace();
+  restoreSavedChannels(state.channelManager);
+  updateChannelBadge();
   registerLazyPanelRenders({
     tools:    () => renderToolRegistry(),
     goals:    () => renderGoals(),
@@ -295,6 +299,16 @@ export async function switchWorkspace(newId, convId) {
     skills:   () => renderSkills(),
     dashboard: () => refreshDashboard(),
     servers:  () => { initServerPanel(); renderServerList(); },
+    channels: () => renderChannelPanel(),
+    marketplace: () => {
+      const container = $('marketplaceContainer');
+      if (container && state.marketplace) {
+        renderMarketplace(container, state.marketplace, {
+          onInstall: () => renderSkills(),
+          onUninstall: () => renderSkills(),
+        });
+      }
+    },
   });
 
   updateState();
@@ -630,7 +644,7 @@ export async function initWorkspace(wsId, convId) {
     state.browserTools.register(new LinearUpdateIssueTool(oauth));
 
     // Phase 8: Integration wrappers (3 GitHub + 3 Calendar + 3 Email + 2 Slack = 11)
-    state.browserTools.register(new GitHubPRReviewTool(oauth));
+    state.browserTools.register(new GitHubPrReviewTool(oauth));
     state.browserTools.register(new GitHubIssueCreateTool(oauth));
     state.browserTools.register(new GitHubCodeSearchTool(oauth));
     state.browserTools.register(new CalendarAwarenessTool(oauth));
@@ -806,6 +820,9 @@ export async function initWorkspace(wsId, convId) {
     // Initialize heartbeat (Batch 7)
     state.heartbeatRunner.loadDefault();
 
+    // SharedWorker opt-in
+    await initSharedWorkerFromConfig();
+
     // Build default routing chains from available providers (B3)
     try {
       const providerIds = state.providers ? [...(await state.providers.listWithAvailability().catch(() => []))].map(p => p.name) : [];
@@ -826,6 +843,13 @@ export async function initWorkspace(wsId, convId) {
 
     await state.skillRegistry.discover(activeWsId);
 
+    // Init marketplace
+    state.marketplace = new SkillMarketplace();
+
+    // Restore saved channels
+    restoreSavedChannels(state.channelManager);
+    updateChannelBadge();
+
     // ── Deferred renders: non-config panels (Gap 11.1) ──
     // These panels keep empty DOM until the user first clicks on them.
     registerLazyPanelRenders({
@@ -837,6 +861,16 @@ export async function initWorkspace(wsId, convId) {
       agents:   () => { renderAgentPanel(); },
       dashboard: () => refreshDashboard(),
       servers:  () => { initServerPanel(); renderServerList(); },
+      channels: () => renderChannelPanel(),
+      marketplace: () => {
+        const container = $('marketplaceContainer');
+        if (container && state.marketplace) {
+          renderMarketplace(container, state.marketplace, {
+            onInstall: () => renderSkills(),
+            onUninstall: () => renderSkills(),
+          });
+        }
+      },
     });
 
     // Agent picker must be initialized eagerly — it attaches to the

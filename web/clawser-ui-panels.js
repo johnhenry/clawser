@@ -25,6 +25,9 @@ import { CLAWSER_SUBCOMMAND_META } from './clawser-cli.js';
 export { refreshFiles, mountLocalFolder, renderMountList } from './clawser-ui-files.js';
 export { renderMemoryResults, doMemorySearch } from './clawser-ui-memory.js';
 export { renderGoals, toggleGoalExpand } from './clawser-ui-goals.js';
+export { renderMarketplace } from './clawser-ui-marketplace.js';
+export { renderChannelPanel, updateChannelBadge, initChannelPanelListeners, restoreSavedChannels } from './clawser-ui-channels.js';
+export { renderSharedWorkerSection, handleSharedWorkerToggle, initSharedWorkerFromConfig } from './clawser-ui-config-shared-worker.js';
 export {
   applySecuritySettings,
   renderAutonomySection,
@@ -66,6 +69,9 @@ export {
 import { refreshFiles, mountLocalFolder, renderMountList } from './clawser-ui-files.js';
 import { doMemorySearch } from './clawser-ui-memory.js';
 import { renderGoals } from './clawser-ui-goals.js';
+import { renderMarketplace } from './clawser-ui-marketplace.js';
+import { initChannelPanelListeners } from './clawser-ui-channels.js';
+import { handleSharedWorkerToggle, renderSharedWorkerSection } from './clawser-ui-config-shared-worker.js';
 import {
   applySecuritySettings,
   renderAutonomySection,
@@ -1716,6 +1722,8 @@ export function initPanelListeners() {
   bindToggle('cacheToggle', 'cacheSection', 'cacheArrow', () => renderLimitsSection());
   bindToggle('sandboxToggle', 'sandboxSection', 'sandboxArrow');
   bindToggle('heartbeatToggle', 'heartbeatSection', 'heartbeatArrow');
+  bindToggle('sharedWorkerToggle', 'sharedWorkerSection', 'sharedWorkerArrow', () => renderSharedWorkerSection());
+  $('sharedWorkerEnabled')?.addEventListener('change', handleSharedWorkerToggle);
   bindToggle('cleanConvToggle', 'cleanConvSection', 'cleanConvArrow', () => renderCleanConversationsSection());
   bindToggle('checkpointToggle', 'checkpointSection', 'checkpointArrow', () => renderCheckpointSection());
   bindToggle('hooksToggle', 'hooksSection', 'hooksArrow', () => renderHooksSection());
@@ -1780,6 +1788,9 @@ export function initPanelListeners() {
 
   // Dashboard refresh
   $('dashRefresh')?.addEventListener('click', () => refreshDashboard());
+
+  // Channels panel
+  initChannelPanelListeners();
 
   // Workspace logo → home
   document.querySelector('#viewWorkspace .logo').addEventListener('click', () => navigate('home'));

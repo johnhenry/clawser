@@ -1037,3 +1037,25 @@ dialog.skill-dialog::backdrop { background:rgba(0,0,0,0.7); }
 .srv-log-entry .log-status.s4xx { color:var(--orange); }
 .srv-log-entry .log-status.s5xx { color:var(--red); }
 .srv-empty { text-align:center; color:var(--muted); padding:24px 12px; font-size:13px; }
+
+/* ── Channels panel ───────────────────────────────────────────── */
+.channel-add-form { padding:8px 12px; display:none; border-bottom:1px solid var(--border); }
+.channel-add-form.visible { display:block; }
+.channel-card { padding:8px 12px; border-bottom:1px solid var(--border); }
+.channel-card-header { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.channel-icon { font-size:16px; }
+.channel-name { font-family:var(--mono); font-weight:600; color:var(--fg); }
+.channel-type-badge { font-size:10px; padding:1px 6px; border-radius:var(--radius); background:var(--surface2); color:var(--muted); text-transform:uppercase; }
+.channel-status { font-size:10px; margin-left:auto; }
+.channel-status-on { color:var(--green); }
+.channel-status-off { color:var(--muted); }
+.channel-card-actions { display:flex; gap:4px; margin-top:6px; }
+.channel-card-actions button { font-size:11px; padding:1px 6px; }
+.channel-empty { text-align:center; color:var(--muted); padding:24px 12px; font-size:13px; }
+
+/* ── SharedWorker config ──────────────────────────────────────── */
+.sw-status-row { display:flex; align-items:center; gap:8px; padding:4px 0; }
+.sw-status-dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
+.sw-status-dot.on { background:var(--green); }
+.sw-status-dot.off { background:var(--muted); }
+.sw-status-label { font-size:12px; color:var(--muted); }

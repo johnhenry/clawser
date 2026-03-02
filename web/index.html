@@ -138,6 +138,8 @@
     <span class="sep-line" role="separator"></span>
     <button data-panel="toolMgmt" title="Tool Management" aria-label="Tool Management panel">🛠</button>
     <button data-panel="agents" title="Agents" aria-label="Agents panel">🤖</button>
+    <button data-panel="channels" title="Channels" aria-label="Channels panel">📨</button>
+    <button data-panel="marketplace" title="Marketplace" aria-label="Marketplace panel">🏪</button>
     <span class="sep-line" role="separator"></span>
     <button data-panel="config" title="Settings" aria-label="Settings panel">⚙️</button>
   </nav>
@@ -381,6 +383,19 @@
     <div class="panel" id="panelAgents">
       <div class="panel-header">Agents</div>
       <div class="panel-body panel-body-flush"></div>
+    </div>
+
+    <!-- Channels -->
+    <div class="panel" id="panelChannels">
+      <div class="panel-header">Channels <span class="badge" id="channelCount">0</span><span class="spacer"></span><button class="btn-sm" id="channelNewBtn">+ New</button></div>
+      <div id="channelAddForm" class="channel-add-form"></div>
+      <div class="panel-body panel-body-flush" id="channelListContainer"></div>
+    </div>
+
+    <!-- Marketplace -->
+    <div class="panel" id="panelMarketplace">
+      <div class="panel-header">Marketplace</div>
+      <div class="panel-body panel-body-flush" id="marketplaceContainer"></div>
     </div>
 
     <!-- Config -->
@@ -695,6 +710,23 @@
               <option value="notify">Notify</option>
               <option value="prompt">Prompt Agent</option>
             </select>
+          </div>
+        </div>
+
+        <!-- SharedWorker (Cross-Tab) -->
+        <div class="config-group config-toggle" id="sharedWorkerToggle" aria-expanded="false" aria-controls="sharedWorkerSection">
+          <label class="config-toggle">SharedWorker (Cross-Tab) <span id="sharedWorkerArrow" class="config-arrow">&#x25B6;</span></label>
+        </div>
+        <div id="sharedWorkerSection" class="config-section-hidden">
+          <div class="config-group">
+            <label>
+              <input type="checkbox" id="sharedWorkerEnabled" />
+              Enable SharedWorker for cross-tab agent sharing
+            </label>
+          </div>
+          <div class="sw-status-row" id="sharedWorkerStatus">
+            <span class="sw-status-dot off" id="swStatusDot"></span>
+            <span class="sw-status-label" id="swStatusLabel">Disconnected</span>
           </div>
         </div>
 
