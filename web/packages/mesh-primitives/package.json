@@ -1,0 +1,22 @@
+{
+  "name": "mesh-primitives",
+  "version": "0.1.0",
+  "description": "Shared data structures for BrowserMesh — identity, wire format, capabilities, trust model",
+  "type": "module",
+  "main": "src/index.mjs",
+  "exports": {
+    ".": "./src/index.mjs"
+  },
+  "files": [
+    "src/"
+  ],
+  "keywords": [
+    "browsermesh",
+    "mesh",
+    "identity",
+    "cbor",
+    "ed25519",
+    "capabilities"
+  ],
+  "license": "MIT"
+}

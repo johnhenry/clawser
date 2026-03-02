@@ -1187,6 +1187,179 @@ Execute commands in the virtual browser shell.
 
 ---
 
+## Mesh Stream & File Tools
+
+**File**: `web/clawser-mesh-tools.js`
+
+Mesh stream and file transfer tools for P2P data exchange. Registered via `registerMeshTools()`.
+
+### mesh_stream_open
+
+Open a multiplexed data stream to a peer.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `peerId` | string | yes | — | Target peer identity |
+| `method` | string | yes | — | Stream purpose (e.g., "chat", "storage/upload") |
+| `ordered` | boolean | no | true | Whether delivery must be ordered |
+| `encrypted` | boolean | no | false | Whether to use per-stream encryption |
+
+**Permission**: `network`
+
+### mesh_stream_close
+
+Close an open data stream by ID.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `streamId` | string | yes | Hex stream ID to close |
+
+**Permission**: `network`
+
+### mesh_stream_list
+
+List active mesh streams, optionally filtered by peer.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `peerId` | string | no | Filter by peer identity |
+
+**Permission**: `read`
+
+### mesh_file_send
+
+Send files to a peer. Creates a transfer offer with file metadata.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `peerId` | string | yes | Recipient peer identity |
+| `files` | array | yes | Files to send: `[{ name, size, mimeType? }]` |
+
+**Permission**: `approve`
+
+### mesh_file_accept
+
+Accept an incoming file transfer offer.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `transferId` | string | yes | Transfer ID from the incoming offer |
+
+**Permission**: `approve`
+
+### mesh_file_list
+
+List file transfers, optionally filtered by status or peer.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `status` | string | no | Filter: offered, accepted, transferring, completed, failed, cancelled |
+| `peerId` | string | no | Filter by peer identity |
+
+**Permission**: `read`
+
+### mesh_file_cancel
+
+Cancel an in-progress file transfer.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `transferId` | string | yes | Transfer ID to cancel |
+| `reason` | string | no | Cancellation reason |
+
+**Permission**: `write`
+
+---
+
+## Mesh Identity Tools
+
+**File**: `web/clawser-mesh-identity-tools.js`
+
+Identity management tools for the mesh cryptographic layer. Registered via `registerIdentityTools()`.
+
+### identity_create
+
+Create a new Ed25519 mesh identity with an optional label.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `label` | string | no | Human-readable name for the identity |
+
+**Permission**: `approve`
+
+### identity_list
+
+List all mesh identities with their pod IDs, labels, and active status.
+
+**Permission**: `read`
+
+### identity_switch
+
+Switch the active mesh identity to a different pod ID.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `podId` | string | yes | Pod ID of the identity to activate |
+
+**Permission**: `write`
+
+### identity_export
+
+Export an identity as a JWK (optionally encrypted with a passphrase).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `podId` | string | yes | Pod ID to export |
+| `passphrase` | string | no | Optional passphrase for encryption |
+
+**Permission**: `approve`
+
+### identity_import
+
+Import an identity from a JWK private key.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `keyData` | object | yes | JWK private key object |
+| `label` | string | no | Human-readable label |
+
+**Permission**: `approve`
+
+### identity_delete
+
+Delete a mesh identity by pod ID. Cannot delete the last remaining identity.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `podId` | string | yes | Pod ID to delete |
+
+**Permission**: `approve`
+
+### identity_link
+
+Create a signed link between two identities (parent endorses child).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `parentPodId` | string | yes | Parent identity pod ID |
+| `childPodId` | string | yes | Child identity pod ID |
+| `relation` | string | yes | Relation type: device, delegate, org, alias, recovery |
+
+**Permission**: `approve`
+
+### identity_select_rule
+
+Set a rule to use a specific identity when connecting to a peer.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `peerId` | string | yes | Peer ID to set the rule for |
+| `podId` | string | yes | Pod ID of the identity to use |
+
+**Permission**: `write`
+
+---
+
 ## MCP Tools (Dynamic)
 
 **File**: `web/clawser-mcp.js`
@@ -1229,5 +1402,7 @@ Not a tool itself — Codex is the code execution engine for non-native-tool pro
 | Auth profiles | clawser-auth-profiles.js | 3 |
 | Sandbox | clawser-sandbox.js | 2 |
 | Shell | clawser-shell.js | 1 (wraps 59 commands) |
+| Mesh streams/files | clawser-mesh-tools.js | 7 |
+| Mesh identity | clawser-mesh-identity-tools.js | 8 |
 | MCP | clawser-mcp.js | dynamic |
-| **Total** | | **~100 named tools** |
+| **Total** | | **~115 named tools** |

@@ -188,6 +188,40 @@ export async function fingerprint(publicKeyRaw) {
 }
 
 /**
+ * Compute the base64url-encoded SHA-256 pod ID of a raw public key.
+ * This is the BrowserMesh identity format (43 chars).
+ * @param {Uint8Array} publicKeyRaw - 32-byte raw Ed25519 public key
+ * @returns {Promise<string>} base64url-encoded pod ID
+ */
+export async function podId(publicKeyRaw) {
+  const hash = await crypto.subtle.digest('SHA-256', publicKeyRaw);
+  return base64urlEncode(new Uint8Array(hash));
+}
+
+/**
+ * Convert a hex fingerprint to a base64url pod ID.
+ * @param {string} hexFingerprint - 64-char hex fingerprint
+ * @returns {string} base64url pod ID
+ */
+export function fingerprintToPodId(hexFingerprint) {
+  const bytes = new Uint8Array(hexFingerprint.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(hexFingerprint.slice(i * 2, i * 2 + 2), 16);
+  }
+  return base64urlEncode(bytes);
+}
+
+/**
+ * Convert a base64url pod ID to a hex fingerprint.
+ * @param {string} podIdStr - base64url pod ID
+ * @returns {string} hex fingerprint
+ */
+export function podIdToFingerprint(podIdStr) {
+  const bytes = base64urlDecode(podIdStr);
+  return hexEncode(bytes);
+}
+
+/**
  * Get the shortest unique prefix of a fingerprint within a set.
  * @param {string} fp - Full hex fingerprint
  * @param {string[]} allFingerprints - All fingerprints in the context
@@ -217,6 +251,21 @@ export function generateNonce() {
 
 function hexEncode(bytes) {
   return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function base64urlEncode(bytes) {
+  let binary = '';
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function base64urlDecode(str) {
+  let b64 = str.replace(/-/g, '+').replace(/_/g, '/');
+  while (b64.length % 4) b64 += '=';
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
 }
 
 function base64Encode(bytes) {

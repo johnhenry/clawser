@@ -126,8 +126,9 @@ export function initHomeListeners() {
     const service = $('homeAcctService').value;
     const apiKey = $('homeAcctKey').value.trim();
     const model = $('homeAcctModel').value.trim();
+    const baseUrl = $('homeAcctBaseUrl')?.value?.trim() || '';
     if (!name || !apiKey || !model) return;
-    await createAccount({ name, service, apiKey, model });
+    await createAccount({ name, service, apiKey, model, baseUrl });
     $('homeAcctAddForm').classList.remove('visible');
     renderHomeAccountList();
   });

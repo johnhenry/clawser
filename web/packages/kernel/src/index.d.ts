@@ -44,6 +44,12 @@ export declare const KERNEL_CAP: Readonly<{
   ENV: 'env';
   /** Access to signal handling. */
   SIGNAL: 'signal';
+  /** Access to mesh networking and P2P operations. */
+  MESH: 'mesh';
+  /** Access to payment channels and credit ledgers. */
+  PAYMENT: 'payment';
+  /** Access to voting and consensus protocols. */
+  CONSENSUS: 'consensus';
   /** Wildcard granting all capabilities. */
   ALL: '*';
 }>;
@@ -51,7 +57,8 @@ export declare const KERNEL_CAP: Readonly<{
 /** Union of all valid KERNEL_CAP values. */
 export type KernelCapTag =
   | 'net' | 'fs' | 'clock' | 'rng' | 'ipc'
-  | 'stdio' | 'trace' | 'chaos' | 'env' | 'signal' | '*';
+  | 'stdio' | 'trace' | 'chaos' | 'env' | 'signal'
+  | 'mesh' | 'payment' | 'consensus' | '*';
 
 /** Machine-readable error codes used by kernel error classes. */
 export declare const KERNEL_ERROR: Readonly<{

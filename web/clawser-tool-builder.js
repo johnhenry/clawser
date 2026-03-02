@@ -57,6 +57,7 @@ export class DynamicTool extends BrowserTool {
    * @param {number} [spec.created]
    * @param {number} [spec.version=1]
    * @param {boolean} [spec.trusted=false]
+   * @param {number} [spec.trustLevel=0.0] - Float trust level [0.0, 1.0] for mesh compatibility
    * @param {Function} [sandbox] - Sandbox executor: async (code) => result
    */
   constructor(spec, sandbox) {
@@ -70,6 +71,9 @@ export class DynamicTool extends BrowserTool {
       created: spec.created || Date.now(),
       version: spec.version || 1,
       trusted: spec.trusted || false,
+      trustLevel: typeof spec.trustLevel === 'number'
+        ? Math.max(0, Math.min(1, spec.trustLevel))
+        : (spec.trusted ? 1.0 : 0.0),
     };
     this.#sandbox = sandbox || null;
   }
@@ -95,7 +99,19 @@ export class DynamicTool extends BrowserTool {
   get trusted() { return this.#spec.trusted; }
 
   /** Set trusted status */
-  set trusted(v) { this.#spec.trusted = !!v; }
+  set trusted(v) {
+    this.#spec.trusted = !!v;
+    this.#spec.trustLevel = v ? 1.0 : 0.0;
+  }
+
+  /** Get float trust level [0.0, 1.0] for mesh compatibility */
+  get trustLevel() { return this.#spec.trustLevel; }
+
+  /** Set float trust level [0.0, 1.0] — also updates boolean trusted (threshold: 0.5) */
+  set trustLevel(v) {
+    this.#spec.trustLevel = Math.max(0, Math.min(1, v));
+    this.#spec.trusted = this.#spec.trustLevel >= 0.5;
+  }
 
   /** Set a new sandbox executor */
   set sandbox(fn) { this.#sandbox = fn; }
@@ -521,7 +537,7 @@ export class ToolListCustomTool extends BrowserTool {
       return { success: true, output: 'No custom tools built yet.' };
     }
     const lines = tools.map(t =>
-      `${t.name} v${t.version} — ${t.description} (by ${t.author}, ${t.trusted ? 'trusted' : 'untrusted'})`
+      `${t.name} v${t.version} — ${t.description} (by ${t.author}, trust:${t.trustLevel?.toFixed(1) ?? (t.trusted ? '1.0' : '0.0')})`
     );
     return { success: true, output: lines.join('\n') };
   }

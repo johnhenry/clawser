@@ -39,6 +39,9 @@ export const KERNEL_DEFAULTS = Object.freeze({
  * @property {string} CHAOS - Access to chaos engineering controls (`'chaos'`).
  * @property {string} ENV - Access to environment variables (`'env'`).
  * @property {string} SIGNAL - Access to signal handling (`'signal'`).
+ * @property {string} MESH - Access to mesh networking and P2P operations (`'mesh'`).
+ * @property {string} PAYMENT - Access to payment channels and credit ledgers (`'payment'`).
+ * @property {string} CONSENSUS - Access to voting and consensus protocols (`'consensus'`).
  * @property {string} ALL - Wildcard granting all capabilities (`'*'`).
  */
 export const KERNEL_CAP = Object.freeze({
@@ -52,6 +55,9 @@ export const KERNEL_CAP = Object.freeze({
   CHAOS: 'chaos',
   ENV: 'env',
   SIGNAL: 'signal',
+  MESH: 'mesh',
+  PAYMENT: 'payment',
+  CONSENSUS: 'consensus',
   ALL: '*',
 });
 

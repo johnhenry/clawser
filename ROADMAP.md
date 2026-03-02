@@ -35,6 +35,7 @@ Clawser is a **beta-quality** browser-native AI agent platform. The core runtime
 | **Batch 3** | Panel enhancements, agent loop integration, 9 API mismatch fixes |
 | **0.1.0-beta** | 9 feature module integrations with 36 new agent tools. Phase 2 UI/agent loop wiring for all 30 blocks. |
 | **Phase 7** | Virtual Server subsystem — SW fetch intercept, ServerManager, function/static/proxy handlers, 8 agent tools, FetchTool auto-routing, kernel svc:// integration, Servers UI panel |
+| **Phase 8** | BrowserMesh integration — 30 new modules for decentralized mesh: identity, trust, CRDT sync, P2P transport, naming, real transports, resource scheduling, payments, consensus, swarm coordination |
 
 ---
 
@@ -740,6 +741,93 @@ Turns Clawser into an OS-like platform that can serve HTTP requests entirely in 
 - [x] 7.5 — Skills-as-Handlers (createSkillHandler + executeSkillHandler in ServerManager)
 - [x] 7.6 — SSE Streaming (createSSEResponse + createSSEResponseFromGenerator)
 - [x] 7.10 — WebSocket Emulation (SSE + POST bidirectional)
+
+---
+
+## Phase 8: BrowserMesh Integration
+
+Turns Clawser into a first-class node in the BrowserMesh decentralized mesh — peer-to-peer connectivity, cryptographic identity, CRDT replication, resource sharing, and payment channels. All mesh features are opt-in via `config.mesh.enabled`. Clawser works fully standalone; BrowserMesh makes it distributed.
+
+**Companion spec**: `docs/browsermesh/specs/proposals/clawser-integration.md`. BrowserMesh owns wire format + protocol definitions; Clawser owns API surfaces + runtime integration.
+
+**Wire format**: BrowserMesh messages use codes 0xA0–0xE5 (wsh 0x01–0x9E preserved unchanged).
+**Identity encoding**: base64url(SHA-256(publicKey)) — 43 chars.
+**Trust model**: Float [0.0, 1.0] with multiplicative transitive decay.
+
+### Phase 8.1: Foundation (Core Identity + P2P Connectivity)
+- [x] `clawser-mesh-identity.js` — Multi-identity Ed25519 management, DID format, IndexedDB/Vault persistence, AutoIdentityManager, IdentitySelector, cross-tab sync (~550 LOC, 85 tests)
+- [x] `clawser-mesh-keyring.js` — Key hierarchy & linking (device, delegate, org, alias, recovery), SignedKeyLink with Ed25519 signatures, verifyCryptoChain (~320 LOC, 87 tests)
+- [x] `clawser-mesh-wsh-bridge.js` — WshKeyStore↔MeshIdentityManager bridge: hex↔base64url conversion, import/export, bidirectional sync (~150 LOC, 21 tests)
+- [x] `clawser-mesh-identity-tools.js` — 8 BrowserTool subclasses for identity management: create, list, switch, export, import, delete, link, select_rule (~350 LOC, 32 tests)
+- [x] `clawser-mesh-sync.js` — CRDT replication: LWW-Register, G-Counter, PN-Counter, OR-Set, RGA, LWW-Map, vector clocks, delta sync. Wraps BrowserMesh `state-sync.md` (~419 LOC, tests pass)
+- [x] `clawser-mesh-trust.js` — Trust graph with float levels, transitive decay, scope intersection, reputation. Wraps BrowserMesh `trust-graph.md` (~328 LOC, tests pass)
+- [x] `clawser-mesh-peer.js` — Peer connection manager: discover, connect, lifecycle callbacks, capability advertisement (~390 LOC, tests pass)
+- [x] `clawser-mesh-transport.js` — Unified transport interface: WebRTC + wsh/WebTransport + wsh/WebSocket, negotiation, upgrade. Wraps BrowserMesh `channel-abstraction.md` + `transport-probing.md` (~356 LOC, tests pass)
+- [x] `clawser-mesh-relay.js` — Relay client for NAT traversal and signaling. Wraps BrowserMesh `relay-service.md` (~433 LOC, tests pass)
+- [ ] Kernel extensions: MESH, PAYMENT, CONSENSUS capability tags
+- [ ] base64url migration in `web/packages/wsh/src/auth.mjs`
+- [ ] Float trust migration in `web/clawser-tool-builder.js`
+
+### Phase 8.2: Access Control + Communication
+- [x] `clawser-mesh-acl.js` — Remote access control: scope templates, roster management, invitation tokens, ACLEngine integration. Wraps BrowserMesh `remote-access.md` (~400 LOC, 53 tests)
+- [x] `clawser-mesh-naming.js` — Decentralized name resolution: @name, mesh:// URIs, TTL-based expiry, ownership transfer. Wraps BrowserMesh `name-resolution.md` (~350 LOC, 41 tests)
+- [x] `clawser-mesh-chat.js` — CRDT-backed chatrooms: message log, ORSet membership, presence, moderation. Wraps BrowserMesh `chat-protocol.md` (~500 LOC, 51 tests)
+- [x] `clawser-mesh-streams.js` — Multiplexed data streaming: MeshStream state machine, StreamMultiplexer, credit-based backpressure, bidirectional flow. Wraps BrowserMesh `direct-stream.md` (~400 LOC, 74 tests)
+- [x] `clawser-mesh-files.js` — Content-addressed file transfer: SHA-256 chunking, ChunkStore, TransferOffer/TransferState, progress tracking, resume support. Wraps BrowserMesh `file-transfer.md` (~450 LOC, 71 tests)
+- [x] `clawser-mesh-tools.js` — 7 BrowserTool subclasses exposing mesh stream/file operations to AI agent: stream open/close/list, file send/accept/list/cancel (~350 LOC, 34 tests)
+
+### Phase 8.3: Resources + Economics
+- [x] `clawser-mesh-resources.js` — Resource advertisement + discovery + job scheduling. Wraps BrowserMesh `resource-marketplace.md` (~500 LOC, 82 tests)
+- [x] `clawser-mesh-quotas.js` — Per-identity resource quotas with enforcement + overage policy. Wraps BrowserMesh `quota-metering.md` (~420 LOC, 75 tests)
+- [x] `clawser-mesh-payments.js` — Payment channels: credits, WebLN/Lightning, ecash/Cashu, escrow pattern. Wraps BrowserMesh `payment-channels.md` (~480 LOC, 78 tests)
+- [x] `clawser-mesh-audit.js` — Cryptographic audit trail: signed events, Merkle proofs, non-repudiation. Wraps BrowserMesh `audit-recorder.md` (~450 LOC, 71 tests)
+
+### Phase 8.4: Advanced Coordination
+- [x] `clawser-mesh-consensus.js` — Voting & consensus: simple/super/unanimous/weighted majority, proposals, tallying. Wraps BrowserMesh `voting-protocol.md` (~520 LOC, 89 tests)
+- [x] `clawser-mesh-swarm.js` — Swarm coordination: leader election, yield control, task distribution (leader-follower, round-robin, load-balanced, redundant, pipeline). Wraps BrowserMesh `swarm-protocol.md` (~560 LOC, 93 tests)
+- [x] `clawser-mesh-migration.js` — Agent state migration between peers: checkpoint, transfer, verify, activate (~430 LOC, 68 tests)
+- [x] ~~`clawser-mesh-directory.js`~~ — Covered by `clawser-mesh-naming.js` (Phase 8.2)
+- [x] `clawser-mesh-gateway.js` — Gateway node [thin wrapper]. Wraps BrowserMesh `relay-service.md` (~380 LOC, 62 tests)
+
+### Phase 8.5: App Ecosystem
+- [x] `clawser-mesh-apps.js` — Decentralized app distribution: install/publish/verify via DHT, capability-scoped permissions. AppManifest, AppInstance state machine, AppRegistry, AppStore, AppRPC, AppEventBus (~667 LOC, 116 tests)
+
+### Phase 8.6: Naming & Addressing
+- [x] ~~`clawser-mesh-naming.js`~~ — Implemented in Phase 8.2: `@name`, `mesh://`, DID URIs, TTL expiry, ownership transfer
+- [x] `clawser-mesh-discovery.js` — mDNS/relay peer discovery + BroadcastChannel for same-origin. DiscoveryManager, BroadcastChannelStrategy, RelayStrategy, ManualStrategy, ServiceDirectory with `svc://` URIs (~605 LOC, 104 tests)
+- [x] Integrate with kernel ServiceRegistry for `svc://` scheme resolution (via ServiceDirectory)
+- [x] ~~Human-friendly naming layer~~ — Covered by `clawser-mesh-naming.js` (Phase 8.2)
+
+### Phase 8.7: Real Transports
+- [x] `clawser-mesh-websocket.js` — All transports unified: WebSocketTransport (reconnection, heartbeat, exponential backoff), WebRTCTransport (SDP offer/answer, ICE trickle), WebTransportTransport (HTTP/3 datagrams, bidirectional streams), NATTraversal (STUN/TURN), TransportFactory (browser detection, preference-ordered negotiation) (~1069 LOC, 77 tests)
+- [x] NAT traversal (STUN/TURN) integration via NATTraversal class
+- [x] TransportFactory handles relay/signaling bootstrap
+
+### Phase 8.8: Resource Description + Scheduling
+- [x] `clawser-mesh-scheduler.js` — ScheduledTask (7 statuses), TaskConstraints, TaskQueue (priority queue), MeshScheduler (4 policies: best-fit, first-fit, round-robin, load-balanced) (~87 tests)
+- [x] `clawser-mesh-marketplace.js` — ServiceListing (pricing: free/per-call/subscription/credits), ServiceReview, Marketplace (ownership enforcement, self-review prevention), MarketplaceIndex (inverted index) (~94 tests)
+
+### Phase 8.9: Advanced Capabilities
+- [x] `clawser-mesh-capabilities.js` — CapabilityToken (unforgeable, attenuate/revoke), CapabilityChain (verify monotonicity), CapabilityValidator (revokeTree cascade), WasmSandboxPolicy, WasmSandbox state machine, SandboxRegistry (~530 LOC, 72 tests)
+- [x] `clawser-mesh-delta-sync.js` — DeltaEntry, DeltaLog (append-only, auto-compaction), DeltaEncoder/Decoder (set/delete/merge ops), SyncSession, SyncCoordinator (multi-peer) (~480 LOC, 54 tests)
+- [x] `clawser-mesh-visualizations.js` — TrustGraphLayout (force-directed), TrustHeatmap, TopologySnapshot, TopologyLayout (circular/grid/hierarchical), TopologyDiff, VisualizationExporter (~520 LOC, 56 tests)
+
+### Scope Estimate
+| Category | Modules | Est. LOC | Est. Tests |
+|----------|---------|----------|------------|
+| Identity (Phase 8.1) | 3 | ~1,800 | ~100 |
+| Access Control (Phase 8.2) | 1 | ~750 | ~50 |
+| Transport (Phase 8.1) | 4 | ~2,600 | ~80 |
+| Data/State (Phase 8.1–8.2) | 3 | ~2,200 | ~90 |
+| Resources/Economics (Phase 8.3) | 4 | ~2,400 | ~70 |
+| Infrastructure (Phase 8.4) | 5 | ~1,500 | ~50 |
+| App Ecosystem (Phase 8.5) | 1 | ~600 | ~30 |
+| Naming & Addressing (Phase 8.6) | 2 | ~1,200 | ~60 |
+| Real Transports (Phase 8.7) | 3 | ~2,000 | ~80 |
+| Resource Scheduling (Phase 8.8) | 3 | ~1,800 | ~60 |
+| Advanced Capabilities (Phase 8.9) | — | ~1,500 | ~50 |
+| Kernel Extensions | — | ~300 | ~30 |
+| **Total** | **30 new + 8 ext** | **~18,500–22,000** | **~710** |
 
 ---
 

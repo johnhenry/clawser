@@ -54,6 +54,15 @@ export function buildCaps(kernel, grantedCaps) {
   if (hasAll || granted.has(KERNEL_CAP.SIGNAL)) {
     caps.signal = true; // Signal access marker
   }
+  if (hasAll || granted.has(KERNEL_CAP.MESH)) {
+    caps.mesh = true; // Mesh networking access marker
+  }
+  if (hasAll || granted.has(KERNEL_CAP.PAYMENT)) {
+    caps.payment = true; // Payment channel access marker
+  }
+  if (hasAll || granted.has(KERNEL_CAP.CONSENSUS)) {
+    caps.consensus = true; // Consensus protocol access marker
+  }
 
   // Store the granted set for requireCap checks
   caps._granted = Object.freeze([...granted]);

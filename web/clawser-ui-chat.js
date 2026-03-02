@@ -837,10 +837,7 @@ export async function sendMessage() {
     }
 
     // Check if streaming is supported for the active provider
-    const providerSelect = $('providerSelect');
-    const providerObj = state.providers.get(providerSelect.value.startsWith('acct_')
-      ? loadAccounts().find(a => a.id === providerSelect.value.slice(5))?.service || 'echo'
-      : providerSelect.value);
+    const providerObj = state.providers.get(state.agent.getProvider());
     const canStream = providerObj?.supportsStreaming ?? false;
 
     if (canStream) {

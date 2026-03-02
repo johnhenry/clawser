@@ -1368,7 +1368,7 @@ async function renderAgentEditor(panelBody, agentId) {
     </div>
   `;
 
-  panelBody.querySelector('#aeditTemp')?.addEventListener('input', (e) => { $('aeditTempVal').textContent = e.target.value; });
+  panelBody.querySelector('#aeditTemp')?.addEventListener('input', (e) => { panelBody.querySelector('#aeditTempVal').textContent = e.target.value; });
   panelBody.querySelector('#agentBackBtn')?.addEventListener('click', () => { agentEditingId = null; renderAgentPanel(); });
   panelBody.querySelector('#agentCancelBtn')?.addEventListener('click', () => { agentEditingId = null; renderAgentPanel(); });
 

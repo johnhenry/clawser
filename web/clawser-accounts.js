@@ -34,15 +34,19 @@ export function saveAccounts(list) {
  * @param {{name: string, service: string, apiKey: string, model: string}} opts
  * @returns {Promise<string>} Account ID
  */
-export async function createAccount({ name, service, apiKey, model }) {
+export async function createAccount({ name, service, apiKey, model, baseUrl }) {
   const id = `${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 4)}`;
   const list = loadAccounts();
   // Store key in vault first if unlocked, never write plaintext to localStorage
   if (state.vault && !state.vault.isLocked) {
     await state.vault.store(`apikey-${id}`, apiKey);
-    list.push({ id, name, service, apiKey: '', model, vaultStored: true });
+    const acct = { id, name, service, apiKey: '', model, vaultStored: true };
+    if (baseUrl) acct.baseUrl = baseUrl;
+    list.push(acct);
   } else {
-    list.push({ id, name, service, apiKey, model });
+    const acct = { id, name, service, apiKey, model };
+    if (baseUrl) acct.baseUrl = baseUrl;
+    list.push(acct);
   }
   saveAccounts(list);
   return id;
@@ -174,6 +178,7 @@ export function showAccountEditForm(acct, parentEl) {
     <input type="password" class="edit-key" value="${acct.vaultStored ? '' : esc(acct.apiKey)}" placeholder="${acct.vaultStored ? 'Stored in vault (enter new to replace)' : 'API key'}" />
     <input type="text" class="edit-model" value="${esc(acct.model)}" list="editModelList" placeholder="Model" />
     <datalist id="editModelList">${modelOptions}</datalist>
+    <input type="text" class="edit-baseUrl" value="${esc(acct.baseUrl || '')}" placeholder="Base URL (optional, for CORS proxy)" />
     <div class="acct-form-row">
       <button class="btn-sm edit-save">Save</button>
       <button class="btn-sm edit-cancel" style="background:var(--surface2);border:1px solid var(--border);">Cancel</button>
@@ -184,10 +189,11 @@ export function showAccountEditForm(acct, parentEl) {
     const newName = form.querySelector('.edit-name').value.trim();
     const newKey = form.querySelector('.edit-key').value.trim();
     const newModel = form.querySelector('.edit-model').value.trim();
+    const newBaseUrl = form.querySelector('.edit-baseUrl')?.value?.trim() || '';
     if (!newName || !newModel) return;
     // If vault-stored and no new key entered, keep existing key
     if (!newKey && !acct.vaultStored) return;
-    const updates = { name: newName, model: newModel };
+    const updates = { name: newName, model: newModel, baseUrl: newBaseUrl };
     if (newKey) {
       // Store key directly to vault, don't write plaintext to localStorage
       await storeAccountKey(acct.id, newKey);
@@ -218,12 +224,14 @@ export async function onProviderChange() {
       const apiKey = await resolveAccountKey(acct);
       state.agent.setApiKey(apiKey);
       state.agent.setModel(acct.model);
+      state.agent.setProviderBaseUrl(acct.baseUrl || '');
       $('providerLabel').textContent = acct.name;
     }
   } else {
     state.agent.setProvider(val);
     state.agent.setApiKey('');
     state.agent.setModel(null);
+    state.agent.setProviderBaseUrl('');
     $('providerLabel').textContent = val;
   }
 }
@@ -282,6 +290,21 @@ export async function applyRestoredConfig(savedConfig) {
     }
     await onProviderChange();
     return;
+  }
+
+  // Legacy: try matching an existing account for this provider service
+  if (savedConfig.provider) {
+    const accts = loadAccounts();
+    const matchingAcct = accts.find(a => a.service === savedConfig.provider);
+    if (matchingAcct) {
+      const acctValue = `acct_${matchingAcct.id}`;
+      const validValues = [...providerSelect.options].map(o => o.value);
+      if (validValues.includes(acctValue)) {
+        providerSelect.value = acctValue;
+        await onProviderChange();
+        return;
+      }
+    }
   }
 
   // Legacy built-in provider
@@ -382,6 +405,7 @@ export function initAccountListeners() {
     if (form.classList.contains('visible')) {
       $('acctName').value = '';
       $('acctKey').value = '';
+      if ($('acctBaseUrl')) $('acctBaseUrl').value = '';
       $('acctService').dispatchEvent(new Event('change'));
       $('acctName').focus();
     }
@@ -393,8 +417,9 @@ export function initAccountListeners() {
     const service = $('acctService').value;
     const apiKey = $('acctKey').value.trim();
     const model = $('acctModel').value.trim();
+    const baseUrl = $('acctBaseUrl')?.value?.trim() || '';
     if (!name || !apiKey || !model) return;
-    const id = await createAccount({ name, service, apiKey, model });
+    const id = await createAccount({ name, service, apiKey, model, baseUrl });
     $('acctAddForm').classList.remove('visible');
     await rebuildProviderDropdown();
     renderAccountList();

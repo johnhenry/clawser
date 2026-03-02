@@ -639,6 +639,7 @@ export class ClawserAgent {
   #activeProvider = 'echo';
   #apiKey = '';
   #model = null;
+  #providerBaseUrl = '';
 
   // ── Event log ────────────────────────────────────────────────
   #eventLog = new EventLog();
@@ -963,6 +964,15 @@ export class ClawserAgent {
 
   /** Set the active provider by name */
   setProvider(name) { this.#activeProvider = name; }
+
+  /** Get the active provider name */
+  getProvider() { return this.#activeProvider; }
+
+  /** Set a custom base URL for the active provider (e.g. CORS proxy) */
+  setProviderBaseUrl(url) { this.#providerBaseUrl = url || ''; }
+
+  /** Get the current provider base URL override */
+  getProviderBaseUrl() { return this.#providerBaseUrl; }
 
   /** Set the API key for providers that need one */
   setApiKey(key) { this.#apiKey = key; }
@@ -1382,7 +1392,8 @@ export class ClawserAgent {
       if (this.#providers) {
         const provider = this.#providers.get(this.#activeProvider);
         if (!provider) throw new Error(`Provider not found: ${this.#activeProvider}`);
-        const summary = await provider.chat({ ...originalRequest, messages: followUpMessages }, this.#apiKey, this.#model);
+        const _opts = this.#providerBaseUrl ? { baseUrl: this.#providerBaseUrl } : {};
+        const summary = await provider.chat({ ...originalRequest, messages: followUpMessages }, this.#apiKey, this.#model, _opts);
         if (summary?.content) {
           return { ...summary, tool_calls: [] };
         }
@@ -1500,15 +1511,16 @@ export class ClawserAgent {
         }
       }
 
+      const _providerOpts = this.#providerBaseUrl ? { baseUrl: this.#providerBaseUrl } : {};
       let response;
       try {
         if (this.#fallbackExecutor) {
           const { result } = await this.#fallbackExecutor.execute(
-            (pid, mdl) => this.#providers.get(pid).chat(request, this.#apiKey, mdl)
+            (pid, mdl) => this.#providers.get(pid).chat(request, this.#apiKey, mdl, _providerOpts)
           );
           response = result;
         } else {
-          response = await provider.chat(request, this.#apiKey, this.#model);
+          response = await provider.chat(request, this.#apiKey, this.#model, _providerOpts);
         }
       } catch (e) {
         this.#eventLog.append('error', { message: e.message }, 'system');
@@ -1766,6 +1778,7 @@ export class ClawserAgent {
       if (!this.#providers) throw new Error('No provider available');
       const provider = this.#providers.get(this.#activeProvider);
       if (!provider) throw new Error(`Provider not found: ${this.#activeProvider}`);
+      const _providerOpts = this.#providerBaseUrl ? { baseUrl: this.#providerBaseUrl } : {};
 
       // Response cache lookup
       let cacheKey = null;
@@ -1801,11 +1814,11 @@ export class ClawserAgent {
         try {
           if (this.#fallbackExecutor) {
             const { result } = await this.#fallbackExecutor.execute(
-              (pid, mdl) => this.#providers.get(pid).chat(request, this.#apiKey, mdl)
+              (pid, mdl) => this.#providers.get(pid).chat(request, this.#apiKey, mdl, _providerOpts)
             );
             response = result;
           } else {
-            response = await provider.chat(request, this.#apiKey, this.#model);
+            response = await provider.chat(request, this.#apiKey, this.#model, _providerOpts);
           }
         } catch (fallbackErr) {
           this.#eventLog.append('provider_error', { message: fallbackErr.message }, 'system');
@@ -1967,7 +1980,7 @@ export class ClawserAgent {
       let fullResponse = null;
 
       try {
-        for await (const chunk of provider.chatStream(request, this.#apiKey, this.#model, options)) {
+        for await (const chunk of provider.chatStream(request, this.#apiKey, this.#model, { ...options, ..._providerOpts })) {
           yield chunk;
 
           if (chunk.type === 'text') {
@@ -2240,7 +2253,7 @@ export class ClawserAgent {
               { role: 'user', content: summaryText },
             ],
             tools: [],
-          }, this.#apiKey, this.#model, { max_tokens: 500 });
+          }, this.#apiKey, this.#model, { max_tokens: 500, ...(this.#providerBaseUrl ? { baseUrl: this.#providerBaseUrl } : {}) });
           summary = resp.content;
         } catch (e) {
           this.#onLog(3, `compaction LLM call failed: ${e.message}`);

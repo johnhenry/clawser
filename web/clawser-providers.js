@@ -398,6 +398,7 @@ const ERROR_RULES = [
   [/\b429\b|rate.limit/i,                                    'rate_limit', true],
   [/\b5\d{2}\b|server.error/i,                               'server',     true],
   [/\b401\b|\b403\b|unauthorized|forbidden|auth.*invalid|invalid.*auth|invalid.*key|invalid.*token/i, 'auth', false],
+  [/cors|blocked by cors|cross-origin/i,                     'cors',       false],
   [/network|fetch|ECONNREFUSED|timeout|abort/i,               'network',    true],
   [/\b400\b|\binvalid\b|malformed/i,                          'client',     false],
 ];
@@ -407,7 +408,7 @@ const ERROR_RULES = [
  * Uses a priority table — first matching rule wins. Auth rules are checked
  * before client rules so "invalid token" classifies as auth, not client.
  * @param {Error|string} err
- * @returns {{ category: 'rate_limit'|'server'|'auth'|'network'|'client'|'unknown', retryable: boolean, message: string }}
+ * @returns {{ category: 'rate_limit'|'server'|'auth'|'cors'|'network'|'client'|'unknown', retryable: boolean, message: string }}
  */
 export function classifyError(err) {
   const msg = typeof err === 'string' ? err : err?.message || String(err);
@@ -1076,34 +1077,51 @@ export class OpenAIProvider extends LLMProvider {
     if (!apiKey) throw new Error('OpenAI API key required');
     const model = modelOverride || this.#model;
     const body = buildOpenAIBody(request, model, options);
+    const baseUrl = options.baseUrl || 'https://api.openai.com';
 
-    return withRetry(async () => {
-      const resp = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: JSON.stringify(body),
-        signal: options.signal,
+    try {
+      return await withRetry(async () => {
+        const resp = await fetch(`${baseUrl}/v1/chat/completions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+          body: JSON.stringify(body),
+          signal: options.signal,
+        });
+        if (!resp.ok) throw new Error(`OpenAI ${resp.status}: ${await resp.text()}`);
+        return parseOpenAIResponse(await resp.json(), model);
       });
-      if (!resp.ok) throw new Error(`OpenAI ${resp.status}: ${await resp.text()}`);
-      return parseOpenAIResponse(await resp.json(), model);
-    });
+    } catch (e) {
+      if (e instanceof TypeError && /Failed to fetch|NetworkError|Load failed/i.test(e.message)) {
+        throw new Error(`CORS blocked: OpenAI API doesn't allow direct browser requests. Set a Base URL proxy in your account settings, or connect via wsh to bypass CORS.`);
+      }
+      throw e;
+    }
   }
 
   async *chatStream(request, apiKey, modelOverride, options = {}) {
     if (!apiKey) throw new Error('OpenAI API key required');
     const model = modelOverride || this.#model;
     const body = { ...buildOpenAIBody(request, model, options), stream: true, stream_options: { include_usage: true } };
+    const baseUrl = options.baseUrl || 'https://api.openai.com';
 
-    const resp = await withRetry(async () => {
-      const r = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: JSON.stringify(body),
-        signal: options.signal,
+    let resp;
+    try {
+      resp = await withRetry(async () => {
+        const r = await fetch(`${baseUrl}/v1/chat/completions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+          body: JSON.stringify(body),
+          signal: options.signal,
+        });
+        if (!r.ok) throw new Error(`OpenAI ${r.status}: ${await r.text()}`);
+        return r;
       });
-      if (!r.ok) throw new Error(`OpenAI ${r.status}: ${await r.text()}`);
-      return r;
-    });
+    } catch (e) {
+      if (e instanceof TypeError && /Failed to fetch|NetworkError|Load failed/i.test(e.message)) {
+        throw new Error(`CORS blocked: OpenAI API doesn't allow direct browser requests. Set a Base URL proxy in your account settings, or connect via wsh to bypass CORS.`);
+      }
+      throw e;
+    }
 
     yield* streamOpenAI(resp, model);
   }
@@ -1283,9 +1301,10 @@ export class AnthropicProvider extends LLMProvider {
     if (!apiKey) throw new Error('Anthropic API key required');
     const model = modelOverride || this.#model;
     const body = this.#buildBody(request, model, options);
+    const baseUrl = options.baseUrl || 'https://api.anthropic.com';
 
     return withRetry(async () => {
-      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      const resp = await fetch(`${baseUrl}/v1/messages`, {
         method: 'POST',
         headers: this.#headers(apiKey),
         body: JSON.stringify(body),
@@ -1348,9 +1367,10 @@ export class AnthropicProvider extends LLMProvider {
     if (!apiKey) throw new Error('Anthropic API key required');
     const model = modelOverride || this.#model;
     const body = { ...this.#buildBody(request, model, options), stream: true };
+    const baseUrl = options.baseUrl || 'https://api.anthropic.com';
 
     const resp = await withRetry(async () => {
-      const r = await fetch('https://api.anthropic.com/v1/messages', {
+      const r = await fetch(`${baseUrl}/v1/messages`, {
         method: 'POST',
         headers: this.#headers(apiKey),
         body: JSON.stringify(body),
@@ -1471,35 +1491,53 @@ export class OpenAICompatibleProvider extends LLMProvider {
     const model = modelOverride || this.#defaultModel;
     const body = buildOpenAIBody(request, model, options);
     if (!this.#nativeTools) delete body.tools;
+    const baseUrl = options.baseUrl || this.#baseUrl;
 
-    return withRetry(async () => {
-      const resp = await fetch(`${this.#baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: this.#headers(apiKey),
-        body: JSON.stringify(body),
-        signal: options.signal,
+    const displayName = this.#displayName;
+    try {
+      return await withRetry(async () => {
+        const resp = await fetch(`${baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: this.#headers(apiKey),
+          body: JSON.stringify(body),
+          signal: options.signal,
+        });
+        if (!resp.ok) throw new Error(`${displayName} ${resp.status}: ${await resp.text()}`);
+        return parseOpenAIResponse(await resp.json(), model);
       });
-      if (!resp.ok) throw new Error(`${this.#displayName} ${resp.status}: ${await resp.text()}`);
-      return parseOpenAIResponse(await resp.json(), model);
-    });
+    } catch (e) {
+      if (e instanceof TypeError && /Failed to fetch|NetworkError|Load failed/i.test(e.message)) {
+        throw new Error(`CORS blocked: ${displayName} API doesn't allow direct browser requests. Set a Base URL proxy in your account settings, or connect via wsh to bypass CORS.`);
+      }
+      throw e;
+    }
   }
 
   async *chatStream(request, apiKey, modelOverride, options = {}) {
     const model = modelOverride || this.#defaultModel;
     const body = { ...buildOpenAIBody(request, model, options), stream: true, stream_options: { include_usage: true } };
     if (!this.#nativeTools) delete body.tools;
+    const baseUrl = options.baseUrl || this.#baseUrl;
 
     const displayName = this.#displayName;
-    const resp = await withRetry(async () => {
-      const r = await fetch(`${this.#baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: this.#headers(apiKey),
-        body: JSON.stringify(body),
-        signal: options.signal,
+    let resp;
+    try {
+      resp = await withRetry(async () => {
+        const r = await fetch(`${baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: this.#headers(apiKey),
+          body: JSON.stringify(body),
+          signal: options.signal,
+        });
+        if (!r.ok) throw new Error(`${displayName} ${r.status}: ${await r.text()}`);
+        return r;
       });
-      if (!r.ok) throw new Error(`${displayName} ${r.status}: ${await r.text()}`);
-      return r;
-    });
+    } catch (e) {
+      if (e instanceof TypeError && /Failed to fetch|NetworkError|Load failed/i.test(e.message)) {
+        throw new Error(`CORS blocked: ${displayName} API doesn't allow direct browser requests. Set a Base URL proxy in your account settings, or connect via wsh to bypass CORS.`);
+      }
+      throw e;
+    }
 
     yield* streamOpenAI(resp, model);
   }
