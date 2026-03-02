@@ -764,9 +764,9 @@ Turns Clawser into a first-class node in the BrowserMesh decentralized mesh — 
 - [x] `clawser-mesh-peer.js` — Peer connection manager: discover, connect, lifecycle callbacks, capability advertisement (~390 LOC, tests pass)
 - [x] `clawser-mesh-transport.js` — Unified transport interface: WebRTC + wsh/WebTransport + wsh/WebSocket, negotiation, upgrade. Wraps BrowserMesh `channel-abstraction.md` + `transport-probing.md` (~356 LOC, tests pass)
 - [x] `clawser-mesh-relay.js` — Relay client for NAT traversal and signaling. Wraps BrowserMesh `relay-service.md` (~433 LOC, tests pass)
-- [ ] Kernel extensions: MESH, PAYMENT, CONSENSUS capability tags
-- [ ] base64url migration in `web/packages/wsh/src/auth.mjs`
-- [ ] Float trust migration in `web/clawser-tool-builder.js`
+- [x] Kernel extensions: MESH, PAYMENT, CONSENSUS capability tags (caps.mjs + constants.mjs)
+- [x] base64url migration in `web/packages/wsh/src/auth.mjs` (podId, fingerprintToPodId, podIdToFingerprint)
+- [x] Float trust migration in `web/clawser-tool-builder.js` (DynamicTool.trustLevel float [0.0, 1.0])
 
 ### Phase 8.2: Access Control + Communication
 - [x] `clawser-mesh-acl.js` — Remote access control: scope templates, roster management, invitation tokens, ACLEngine integration. Wraps BrowserMesh `remote-access.md` (~400 LOC, 53 tests)
