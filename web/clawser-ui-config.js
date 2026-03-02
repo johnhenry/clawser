@@ -14,6 +14,7 @@ import { CostTracker } from './clawser-cost-tracker.js';
 import { renderBarChart, renderTimeSeriesChart, renderCostBreakdown } from './clawser-ui-charts.js';
 import { renderIdentityEditor } from './clawser-ui-identity-editor.js';
 import { loadAccounts, resolveAccountKey, SERVICES } from './clawser-accounts.js';
+import { FallbackChain, FallbackExecutor } from './clawser-fallback.js';
 
 // ── Security settings ──────────────────────────────────────────
 /** Apply domain allowlist and max file size from UI inputs to the browser tools and persist. */
@@ -1062,6 +1063,17 @@ export function renderFallbackChainEditor() {
 function _saveFallbackChain() {
   const wsId = state.agent?.getWorkspace() || 'default';
   localStorage.setItem(`clawser_fallback_chain_${wsId}`, JSON.stringify(state.fallbackChain || []));
+  // Update the live FallbackExecutor on the agent
+  try {
+    if (state.agent && state.fallbackChain?.length > 0) {
+      const chain = new FallbackChain({ entries: state.fallbackChain });
+      state.agent.setFallbackExecutor(new FallbackExecutor(chain, {
+        onLog: (lvl, msg) => console.log(`[fallback] ${msg}`),
+      }));
+    } else if (state.agent) {
+      state.agent.setFallbackExecutor(null);
+    }
+  } catch (e) { console.warn('[clawser] Failed to update FallbackExecutor:', e); }
 }
 
 // ── Discovered Tools Panel (Phase 4b) ────────────────────────────

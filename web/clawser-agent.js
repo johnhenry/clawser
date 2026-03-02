@@ -1051,7 +1051,15 @@ export class ClawserAgent {
   applyAgent(agentDef) {
     this.#activeAgent = agentDef;
 
-    // Set provider / model
+    // Set provider / model — prefer accountId if available for credential resolution
+    if (agentDef.accountId && this.#accountResolver) {
+      // Resolve account credentials asynchronously (fire-and-forget; credentials
+      // will be ready before next run() call in practice)
+      this.#accountResolver(agentDef.accountId).then(({ apiKey, baseUrl }) => {
+        if (apiKey) this.#apiKey = apiKey;
+        if (baseUrl) this.#providerBaseUrl = baseUrl;
+      }).catch(() => {});
+    }
     if (agentDef.provider) this.#activeProvider = agentDef.provider;
     if (agentDef.model) this.#model = agentDef.model;
 

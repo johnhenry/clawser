@@ -1717,6 +1717,10 @@ export function initPanelListeners() {
   bindToggle('sandboxToggle', 'sandboxSection', 'sandboxArrow');
   bindToggle('heartbeatToggle', 'heartbeatSection', 'heartbeatArrow');
   bindToggle('cleanConvToggle', 'cleanConvSection', 'cleanConvArrow', () => renderCleanConversationsSection());
+  bindToggle('checkpointToggle', 'checkpointSection', 'checkpointArrow', () => renderCheckpointSection());
+  bindToggle('hooksToggle', 'hooksSection', 'hooksArrow', () => renderHooksSection());
+  bindToggle('discoveredToolsToggle', 'discoveredToolsSection', 'discoveredToolsArrow', () => renderDiscoveredToolsSection());
+  bindToggle('identityEditorToggle', 'identityEditorSection', 'identityEditorArrow', () => initIdentityEditor());
 
   // Autonomy settings
   document.querySelectorAll('input[name="autonomyLevel"]').forEach(r =>

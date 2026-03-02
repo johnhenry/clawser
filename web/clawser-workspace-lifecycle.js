@@ -58,6 +58,30 @@ import { initServerManager, getServerManager } from './clawser-server.js';
 import { registerServerTools } from './clawser-server-tools.js';
 import { renderServerList, initServerPanel } from './clawser-ui-servers.js';
 
+// Phase 7: Remote gateway
+import { GatewayServer } from './clawser-gateway-server.js';
+
+// Phase 8: OAuth + Integration tools
+import { GoogleCalendarListTool, GoogleCalendarCreateTool, GoogleGmailSearchTool, GoogleGmailSendTool, GoogleDriveListTool, GoogleDriveReadTool, GoogleDriveCreateTool } from './clawser-google-tools.js';
+import { NotionSearchTool, NotionCreatePageTool, NotionUpdatePageTool, NotionQueryDatabaseTool } from './clawser-notion-tools.js';
+import { SlackChannelsTool, SlackPostTool, SlackHistoryTool } from './clawser-slack-tools.js';
+import { LinearIssuesTool, LinearCreateIssueTool, LinearUpdateIssueTool } from './clawser-linear-tools.js';
+import { GitHubPRReviewTool, GitHubIssueCreateTool, GitHubCodeSearchTool } from './clawser-integration-github.js';
+import { CalendarAwarenessTool, CalendarFreeBusyTool, CalendarQuickAddTool } from './clawser-integration-calendar.js';
+import { EmailDraftTool, EmailSummarizeTool, EmailTriageTool } from './clawser-integration-email.js';
+import { SlackMonitorTool, SlackDraftResponseTool } from './clawser-integration-slack.js';
+
+// Phase 5: Browser infrastructure
+import { FsObserver } from './clawser-fs-observer.js';
+import { TabViewManager } from './clawser-tab-views.js';
+
+// Phase 9: CORS fetch proxy
+import { ExtCorsFetchTool } from './clawser-cors-fetch.js';
+import { getExtensionClient } from './clawser-extension-tools.js';
+
+// Fallback chain
+import { FallbackChain, FallbackExecutor } from './clawser-fallback.js';
+
 // ── Shell session management ─────────────────────────────────────
 /** Create a fresh shell session for the current workspace. Sources .clawserrc and registers CLI. */
 export async function createShellSession() {
@@ -574,6 +598,63 @@ export async function initWorkspace(wsId, convId) {
       registerServerTools(state.browserTools, () => getActiveWorkspaceId());
     } catch (e) { console.warn('[clawser] Server manager init failed:', e); }
 
+    // Phase 7: Remote Gateway Server
+    try {
+      const gw = new GatewayServer({
+        pairing: state.pairingManager,
+        agent: state.agent,
+        serverManager: getServerManager(),
+      });
+      state.gatewayServer = gw;
+    } catch (e) { console.warn('[clawser] Gateway server init failed:', e); }
+
+    // Phase 8: OAuth integration tools (7 Google + 4 Notion + 3 Slack + 3 Linear = 17)
+    // Tools receive the OAuthManager and call getClient(provider) internally
+    const oauth = state.oauthManager;
+    state.browserTools.register(new GoogleCalendarListTool(oauth));
+    state.browserTools.register(new GoogleCalendarCreateTool(oauth));
+    state.browserTools.register(new GoogleGmailSearchTool(oauth));
+    state.browserTools.register(new GoogleGmailSendTool(oauth));
+    state.browserTools.register(new GoogleDriveListTool(oauth));
+    state.browserTools.register(new GoogleDriveReadTool(oauth));
+    state.browserTools.register(new GoogleDriveCreateTool(oauth));
+    state.browserTools.register(new NotionSearchTool(oauth));
+    state.browserTools.register(new NotionCreatePageTool(oauth));
+    state.browserTools.register(new NotionUpdatePageTool(oauth));
+    state.browserTools.register(new NotionQueryDatabaseTool(oauth));
+    state.browserTools.register(new SlackChannelsTool(oauth));
+    state.browserTools.register(new SlackPostTool(oauth));
+    state.browserTools.register(new SlackHistoryTool(oauth));
+    state.browserTools.register(new LinearIssuesTool(oauth));
+    state.browserTools.register(new LinearCreateIssueTool(oauth));
+    state.browserTools.register(new LinearUpdateIssueTool(oauth));
+
+    // Phase 8: Integration wrappers (3 GitHub + 3 Calendar + 3 Email + 2 Slack = 11)
+    state.browserTools.register(new GitHubPRReviewTool(oauth));
+    state.browserTools.register(new GitHubIssueCreateTool(oauth));
+    state.browserTools.register(new GitHubCodeSearchTool(oauth));
+    state.browserTools.register(new CalendarAwarenessTool(oauth));
+    state.browserTools.register(new CalendarFreeBusyTool(oauth));
+    state.browserTools.register(new CalendarQuickAddTool(oauth));
+    state.browserTools.register(new EmailDraftTool(oauth));
+    state.browserTools.register(new EmailSummarizeTool(oauth));
+    state.browserTools.register(new EmailTriageTool(oauth));
+    state.browserTools.register(new SlackMonitorTool(oauth));
+    state.browserTools.register(new SlackDraftResponseTool(oauth));
+
+    // Phase 9: CORS fetch proxy (1)
+    state.browserTools.register(new ExtCorsFetchTool(getExtensionClient()));
+
+    // Phase 5: FileSystemObserver (optional, Chrome 129+)
+    try {
+      state.fsObserver = new FsObserver();
+    } catch (e) { /* FsObserver unavailable in this browser */ }
+
+    // Phase 5: TabViewManager
+    try {
+      state.tabViewManager = new TabViewManager();
+    } catch (e) { /* Tab views unavailable */ }
+
     state.agent.refreshToolSpecs();
 
     // Wire safety pipeline into tool registry for defense-in-depth
@@ -642,6 +723,22 @@ export async function initWorkspace(wsId, convId) {
     } catch (e) { console.warn('[clawser] identity compile failed', e); }
 
     await setupProviders();
+
+    // Initialize FallbackExecutor from saved chain (uses account resolver wired above)
+    try {
+      const chainRaw = localStorage.getItem(`clawser_fallback_chain_${activeWsId}`);
+      if (chainRaw) {
+        const entries = JSON.parse(chainRaw);
+        if (Array.isArray(entries) && entries.length > 0) {
+          const chain = new FallbackChain({ entries });
+          const executor = new FallbackExecutor(chain, {
+            onLog: (lvl, msg) => console.log(`[fallback] ${msg}`),
+          });
+          state.agent.setFallbackExecutor(executor);
+          state.fallbackChain = entries;
+        }
+      }
+    } catch (e) { console.warn('[clawser] FallbackExecutor init failed:', e); }
 
     await applyRestoredConfig(savedConfig);
 
