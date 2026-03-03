@@ -89,7 +89,7 @@ import { registerSchedulerCli } from './clawser-scheduler-cli.js';
  * Persist current routine state to IndexedDB so background runners
  * (chrome.alarms Tier 1, periodicSync Tier 3) can pick up due routines.
  */
-function syncRoutinesToIDB() {
+async function syncRoutinesToIDB() {
   if (!state.checkpointIDB || !state.routineEngine) return;
   try {
     const routines = state.routineEngine.listRoutines?.() || [];
@@ -101,8 +101,9 @@ function syncRoutinesToIDB() {
       state: r.state || {},
       meta: r.meta || null,
       action: r.action || null,
+      guardrails: r.guardrails || null,
     }));
-    state.checkpointIDB.write('background_routine_state', serialized).catch(() => {});
+    await state.checkpointIDB.write('background_routine_state', serialized);
   } catch { /* best-effort */ }
 }
 
@@ -562,7 +563,7 @@ export async function initWorkspace(wsId, convId) {
     state.browserTools.register(new AuthSwitchProfileTool(state.authProfileManager));
     state.browserTools.register(new AuthStatusTool(state.authProfileManager));
 
-    // Routines (4)
+    // Routines (7)
     state.browserTools.register(new RoutineCreateTool(state.routineEngine));
     state.browserTools.register(new RoutineListTool(state.routineEngine));
     state.browserTools.register(new RoutineDeleteTool(state.routineEngine));

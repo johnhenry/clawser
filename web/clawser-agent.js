@@ -543,7 +543,10 @@ export class AutonomyController {
     if (this.#allowedHours.length === 0) return { blocked: false };
     const hour = new Date(nowMs).getHours();
     for (const range of this.#allowedHours) {
-      if (range.start <= range.end) {
+      if (range.start === range.end) {
+        // Single hour (e.g., 9-9 means only hour 9)
+        if (hour === range.start) return { blocked: false };
+      } else if (range.start < range.end) {
         // Normal range (e.g., 9-17)
         if (hour >= range.start && hour < range.end) return { blocked: false };
       } else {
@@ -1278,7 +1281,8 @@ export class ClawserAgent {
 
       // Autonomy: check if tool is allowed at current level
       const toolObj = this.#browserTools?.get(call.name);
-      if (toolObj && !this.#autonomy.canExecuteTool(toolObj, params)) {
+      const toolSpec = toolObj || { permission: 'network', name: call.name }; // MCP tools default to 'network' permission
+      if (!this.#autonomy.canExecuteTool(toolSpec, params)) {
         result = { success: false, output: '', error: `Blocked: agent is in ${this.#autonomy.level} mode` };
         this.#onToolCall(call.name, params, result);
         results.push({ id: call.id, name: call.name, result });
@@ -2869,7 +2873,7 @@ export class ClawserAgent {
     // When RoutineEngine is set, delegate to it (it handles cron + interval + once via tickCron)
     if (this.#routineEngine) {
       // tickCron is async but tick() is sync for backward compat — fire and forget
-      this.#routineEngine.tickCron(new Date(nowMs));
+      this.#routineEngine.tickCron(new Date(nowMs)).catch(() => {});
       return 0; // RoutineEngine handles execution internally
     }
 

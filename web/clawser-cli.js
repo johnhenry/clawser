@@ -407,7 +407,7 @@ export function registerClawserCli(registry, getAgent, getShell) {
     // Cost is tracked by the autonomy controller
     const autonomy = agent.autonomy;
     if (autonomy) {
-      const aState = autonomy.getState();
+      const aState = autonomy.stats;
       const costCents = aState.costTodayCents ?? 0;
       const costDollars = (costCents / 100).toFixed(4);
       return {

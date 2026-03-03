@@ -537,6 +537,7 @@ export class RoutineEngine {
         if (this.#onNotify) {
           this.#onNotify(routine, `Routine auto-disabled: ${routine.name}`);
         }
+        this.#emitChange();
       }
 
       return 'failure';
@@ -616,6 +617,7 @@ export class RoutineEngine {
     for (const r of data) {
       this.#routines.set(r.id, r);
     }
+    this.#emitChange();
   }
 
   /**

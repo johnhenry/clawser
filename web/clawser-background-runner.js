@@ -71,8 +71,8 @@ export class BackgroundSchedulerRunner {
         }
       }
 
-      // Interval check (via meta)
-      if (r.meta?.scheduleType === 'interval') {
+      // Interval check (via meta) — only for agent-originated routines
+      if (r.meta?.scheduleType === 'interval' && r.meta?.source === 'agent') {
         const lastFired = r.meta.lastFired || 0;
         if (nowMs >= lastFired + (r.meta.intervalMs || 60000)) {
           due.push(r);
@@ -80,8 +80,8 @@ export class BackgroundSchedulerRunner {
         }
       }
 
-      // Once check (via meta)
-      if (r.meta?.scheduleType === 'once' && !r.meta.fired) {
+      // Once check (via meta) — only for agent-originated routines
+      if (r.meta?.scheduleType === 'once' && !r.meta.fired && r.meta?.source === 'agent') {
         if (nowMs >= (r.meta.fireAt || 0)) {
           due.push(r);
           continue;

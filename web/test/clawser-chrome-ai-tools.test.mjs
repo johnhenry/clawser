@@ -13,9 +13,9 @@ function makeStubApi(returnValue = 'stub result') {
     create: async (opts) => {
       const session = {
         opts,
-        write: async (prompt) => { calls.push({ method: 'write', prompt, opts }); return returnValue; },
-        rewrite: async (text) => { calls.push({ method: 'rewrite', text, opts }); return returnValue; },
-        summarize: async (text) => { calls.push({ method: 'summarize', text, opts }); return returnValue; },
+        write: async (prompt, callOpts) => { calls.push({ method: 'write', prompt, opts, callOpts }); return returnValue; },
+        rewrite: async (text, callOpts) => { calls.push({ method: 'rewrite', text, opts, callOpts }); return returnValue; },
+        summarize: async (text, callOpts) => { calls.push({ method: 'summarize', text, opts, callOpts }); return returnValue; },
         destroy: () => { calls.push({ method: 'destroy' }); },
       };
       return session;
@@ -56,6 +56,7 @@ describe('Chrome AI Tools — specs', () => {
     assert.ok(tool.parameters.properties.format);
     assert.ok(tool.parameters.properties.length);
     assert.ok(tool.parameters.properties.sharedContext);
+    assert.ok(tool.parameters.properties.context);
     assert.deepEqual(tool.parameters.required, ['prompt']);
   });
 
@@ -114,6 +115,13 @@ describe('Chrome AI Tools — execution', () => {
     assert.equal(writeCall.opts.sharedContext, 'ctx');
   });
 
+  it('ChromeWriterTool passes per-call context to write()', async () => {
+    const tool = new ChromeWriterTool();
+    await tool.execute({ prompt: 'test', context: 'business email' });
+    const writeCall = apis.writer.calls.find(c => c.method === 'write');
+    assert.deepEqual(writeCall.callOpts, { context: 'business email' });
+  });
+
   it('ChromeRewriterTool.execute rewrites via session', async () => {
     const tool = new ChromeRewriterTool();
     const result = await tool.execute({ text: 'Original text', tone: 'more-formal' });
@@ -122,11 +130,20 @@ describe('Chrome AI Tools — execution', () => {
     assert.ok(apis.rewriter.calls.some(c => c.method === 'rewrite' && c.text === 'Original text'));
   });
 
-  it('ChromeRewriterTool passes context as sharedContext', async () => {
+  it('ChromeRewriterTool passes context as sharedContext and per-call', async () => {
     const tool = new ChromeRewriterTool();
     await tool.execute({ text: 'hello', context: 'Business email' });
     const call = apis.rewriter.calls.find(c => c.method === 'rewrite');
     assert.equal(call.opts.sharedContext, 'Business email');
+    assert.deepEqual(call.callOpts, { context: 'Business email' });
+  });
+
+  it('ChromeSummarizerTool passes per-call context', async () => {
+    const tool = new ChromeSummarizerTool();
+    await tool.execute({ text: 'Long article', context: 'tech audience' });
+    const call = apis.summarizer.calls.find(c => c.method === 'summarize');
+    assert.equal(call.opts.sharedContext, 'tech audience');
+    assert.deepEqual(call.callOpts, { context: 'tech audience' });
   });
 
   it('ChromeSummarizerTool.execute summarizes via session', async () => {

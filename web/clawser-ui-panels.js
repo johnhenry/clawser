@@ -1780,6 +1780,8 @@ export function initPanelListeners() {
     r.addEventListener('change', saveAutonomySettings));
   $('cfgMaxActions')?.addEventListener('change', saveAutonomySettings);
   $('cfgDailyCostLimit')?.addEventListener('change', saveAutonomySettings);
+  $('cfgAllowedHoursStart')?.addEventListener('change', saveAutonomySettings);
+  $('cfgAllowedHoursEnd')?.addEventListener('change', saveAutonomySettings);
 
   // Identity settings
   $('identityFormat')?.addEventListener('change', () => { saveIdentitySettings(); });

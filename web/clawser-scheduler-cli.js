@@ -139,8 +139,31 @@ function cmdAdd(engine, agent, args) {
       if (!delayMs) return { stdout: '', stderr: `Invalid duration: ${args[i + 1]}`, exitCode: 1 };
       i += 2;
     } else if (!cronExpr && scheduleType === 'cron' && !prompt) {
-      cronExpr = args[i];
-      i++;
+      // Cron expression is 5 space-separated fields; if shell split them, greedily collect up to 5
+      const remaining = args.slice(i);
+      // Check if this looks like a quoted 5-field expression or individual cron fields
+      const firstArg = remaining[0];
+      if (firstArg.includes(' ') || remaining.length < 5) {
+        // Already a single token with spaces (quoted), or not enough args for 5 fields + prompt
+        cronExpr = firstArg;
+        i++;
+      } else {
+        // Try to collect 5 fields if they look like cron tokens (digits, *, /, -, ,)
+        const cronFields = [];
+        let j = 0;
+        while (j < 5 && i + j < args.length && /^[\d*\/,\-]+$/.test(remaining[j])) {
+          cronFields.push(remaining[j]);
+          j++;
+        }
+        if (cronFields.length === 5) {
+          cronExpr = cronFields.join(' ');
+          i += 5;
+        } else {
+          // Fallback: treat as single-token cron
+          cronExpr = firstArg;
+          i++;
+        }
+      }
     } else {
       prompt = args.slice(i).join(' ');
       break;

@@ -55,7 +55,7 @@ describe('BackgroundSchedulerRunner — findDueRoutines', () => {
       id: 'r1',
       enabled: true,
       trigger: {},
-      meta: { scheduleType: 'interval', intervalMs: 5000, lastFired: now - 6000 },
+      meta: { source: 'agent', scheduleType: 'interval', intervalMs: 5000, lastFired: now - 6000 },
     }];
     const due = runner.findDueRoutines(routines, now);
     assert.equal(due.length, 1);
@@ -68,7 +68,7 @@ describe('BackgroundSchedulerRunner — findDueRoutines', () => {
       id: 'r1',
       enabled: true,
       trigger: {},
-      meta: { scheduleType: 'interval', intervalMs: 10000, lastFired: now - 2000 },
+      meta: { source: 'agent', scheduleType: 'interval', intervalMs: 10000, lastFired: now - 2000 },
     }];
     const due = runner.findDueRoutines(routines, now);
     assert.equal(due.length, 0);
@@ -81,7 +81,7 @@ describe('BackgroundSchedulerRunner — findDueRoutines', () => {
       id: 'r1',
       enabled: true,
       trigger: {},
-      meta: { scheduleType: 'once', fireAt: now - 1000, fired: false },
+      meta: { source: 'agent', scheduleType: 'once', fireAt: now - 1000, fired: false },
     }];
     const due = runner.findDueRoutines(routines, now);
     assert.equal(due.length, 1);
@@ -94,7 +94,7 @@ describe('BackgroundSchedulerRunner — findDueRoutines', () => {
       id: 'r1',
       enabled: true,
       trigger: {},
-      meta: { scheduleType: 'once', fireAt: now - 1000, fired: true },
+      meta: { source: 'agent', scheduleType: 'once', fireAt: now - 1000, fired: true },
     }];
     const due = runner.findDueRoutines(routines, now);
     assert.equal(due.length, 0);
@@ -176,7 +176,7 @@ describe('BackgroundSchedulerRunner — run', () => {
       name: 'Logged',
       enabled: true,
       trigger: {},
-      meta: { scheduleType: 'interval', intervalMs: 1000, lastFired: 0 },
+      meta: { source: 'agent', scheduleType: 'interval', intervalMs: 1000, lastFired: 0 },
     }]);
 
     await runner.run(now);
@@ -200,7 +200,7 @@ describe('BackgroundSchedulerRunner — run', () => {
       name: 'Once',
       enabled: true,
       trigger: {},
-      meta: { scheduleType: 'once', fireAt: now - 1000, fired: false },
+      meta: { source: 'agent', scheduleType: 'once', fireAt: now - 1000, fired: false },
       state: {},
     }]);
 
@@ -219,7 +219,7 @@ describe('BackgroundSchedulerRunner — run', () => {
       name: 'Interval',
       enabled: true,
       trigger: {},
-      meta: { scheduleType: 'interval', intervalMs: 5000, lastFired: 0 },
+      meta: { source: 'agent', scheduleType: 'interval', intervalMs: 5000, lastFired: 0 },
       state: {},
     }]);
 

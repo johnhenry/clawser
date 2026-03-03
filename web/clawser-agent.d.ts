@@ -105,6 +105,7 @@ export interface AutonomyStats {
   maxActionsPerHour: number;
   costTodayCents: number;
   maxCostPerDayCents: number;
+  allowedHours: Array<{ start: number; end: number }>;
 }
 
 export interface LimitCheckResult {
@@ -125,7 +126,13 @@ export declare class AutonomyController {
   get maxCostPerDayCents(): number;
   set maxCostPerDayCents(v: number);
 
-  canExecuteTool(tool: { permission: string }): boolean;
+  get allowedHours(): Array<{ start: number; end: number }>;
+  set allowedHours(v: Array<{ start: number; end: number }>);
+
+  setPolicyEngine(engine: { evaluateToolCall: (toolName: string, params: object) => { allowed: boolean; reason?: string } } | null): void;
+  get policyEngine(): object | null;
+
+  canExecuteTool(tool: { permission: string; name?: string }, params?: object): boolean;
   needsApproval(tool: { permission: string }): boolean;
   checkLimits(): LimitCheckResult;
   recordAction(): void;

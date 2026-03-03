@@ -80,13 +80,14 @@ export class ChromeWriterTool extends BrowserTool {
         format: { type: 'string', enum: ['plain-text', 'markdown'], description: 'Output format (default: markdown)' },
         length: { type: 'string', enum: ['short', 'medium', 'long'], description: 'Output length (default: medium)' },
         sharedContext: { type: 'string', description: 'Shared context for the writing session' },
+        context: { type: 'string', description: 'Per-call context to guide this specific write' },
       },
       required: ['prompt'],
     };
   }
   get permission() { return 'auto'; }
 
-  async execute({ prompt, tone, format, length, sharedContext }) {
+  async execute({ prompt, tone, format, length, sharedContext, context }) {
     try {
       const createOpts = {};
       if (tone) createOpts.tone = tone;
@@ -95,7 +96,7 @@ export class ChromeWriterTool extends BrowserTool {
       if (sharedContext) createOpts.sharedContext = sharedContext;
 
       const result = await withSession('writer', createOpts, async (session) => {
-        return await session.write(prompt);
+        return await session.write(prompt, context ? { context } : undefined);
       });
       return { success: true, output: result };
     } catch (err) {
@@ -135,7 +136,7 @@ export class ChromeRewriterTool extends BrowserTool {
       if (context) createOpts.sharedContext = context;
 
       const result = await withSession('rewriter', createOpts, async (session) => {
-        return await session.rewrite(text);
+        return await session.rewrite(text, context ? { context } : undefined);
       });
       return { success: true, output: result };
     } catch (err) {
@@ -175,7 +176,7 @@ export class ChromeSummarizerTool extends BrowserTool {
       if (context) createOpts.sharedContext = context;
 
       const result = await withSession('summarizer', createOpts, async (session) => {
-        return await session.summarize(text);
+        return await session.summarize(text, context ? { context } : undefined);
       });
       return { success: true, output: result };
     } catch (err) {

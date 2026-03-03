@@ -11,6 +11,7 @@ export declare class ChromeWriterTool extends BrowserTool {
     format?: 'plain-text' | 'markdown';
     length?: 'short' | 'medium' | 'long';
     sharedContext?: string;
+    context?: string;
   }): Promise<{ success: boolean; output: string; error?: string }>;
 }
 

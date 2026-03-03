@@ -30,7 +30,13 @@ export class AutonomyPresetManager {
   /** @returns {AutonomyPreset[]} All saved presets */
   list() {
     try {
-      return JSON.parse(localStorage.getItem(this.#storageKey) || '[]');
+      const presets = JSON.parse(localStorage.getItem(this.#storageKey) || '[]');
+      // Restore null → Infinity for limits
+      for (const p of presets) {
+        if (p.maxActionsPerHour == null) p.maxActionsPerHour = Infinity;
+        if (p.maxCostPerDayCents == null) p.maxCostPerDayCents = Infinity;
+      }
+      return presets;
     } catch {
       return [];
     }
@@ -57,7 +63,13 @@ export class AutonomyPresetManager {
     } else {
       presets.push(preset);
     }
-    localStorage.setItem(this.#storageKey, JSON.stringify(presets));
+    // Infinity → null for JSON serialization
+    const serializable = presets.map(p => ({
+      ...p,
+      maxActionsPerHour: p.maxActionsPerHour === Infinity ? null : p.maxActionsPerHour,
+      maxCostPerDayCents: p.maxCostPerDayCents === Infinity ? null : p.maxCostPerDayCents,
+    }));
+    localStorage.setItem(this.#storageKey, JSON.stringify(serializable));
     return preset;
   }
 
@@ -67,7 +79,13 @@ export class AutonomyPresetManager {
    * @returns {AutonomyPreset|null}
    */
   load(name) {
-    return this.list().find(p => p.name === name) || null;
+    const preset = this.list().find(p => p.name === name) || null;
+    if (preset) {
+      // Restore null → Infinity on load
+      if (preset.maxActionsPerHour == null) preset.maxActionsPerHour = Infinity;
+      if (preset.maxCostPerDayCents == null) preset.maxCostPerDayCents = Infinity;
+    }
+    return preset;
   }
 
   /**

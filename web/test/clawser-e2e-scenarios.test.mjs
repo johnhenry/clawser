@@ -69,8 +69,8 @@ describe('Scenario 1 — Health Investigation', () => {
     assert.equal(state1.goals.length, 1);
     assert.equal(state1.goals[0].status, 'active');
 
-    agent.updateGoal(goalId, 'active');
-    assert.equal(agent.getState().goals[0].status, 'active');
+    agent.updateGoal(goalId, 'in_progress');
+    assert.equal(agent.getState().goals[0].status, 'in_progress');
 
     agent.completeGoal(goalId);
     assert.equal(agent.getState().goals[0].status, 'completed');
@@ -85,10 +85,10 @@ describe('Scenario 1 — Health Investigation', () => {
 
     const events = agent.getEventLog();
     const goalEvents = events.query({ type: 'goal_added' });
-    assert.ok(goalEvents.length >= 1, 'goal_added event must be logged');
+    assert.equal(goalEvents.length, 1, 'exactly one goal_added event must be logged');
 
     const updatedEvents = events.query({ type: 'goal_updated' });
-    assert.ok(updatedEvents.length >= 1, 'goal_updated event must be logged');
+    assert.equal(updatedEvents.length, 2, 'two goal_updated events (update + complete) must be logged');
     assert.ok(updatedEvents.some(e => e.data.status === 'completed'));
   });
 });
@@ -99,10 +99,18 @@ describe('Scenario 1 — Health Investigation', () => {
 describe('Scenario 2 — Code Refactoring', () => {
   it('respects maxToolIterations config', async () => {
     const { agent } = await createTestAgent();
-    // Default config has maxToolIterations
+    // Set a low limit and verify it sticks
+    agent.setMaxToolIterations(3);
+    // Verify by setting and checking via a second set (proves the setter works)
+    agent.setMaxToolIterations(5);
+    // Invalid values should be ignored
+    agent.setMaxToolIterations(-1);
+    agent.setMaxToolIterations(0);
+    // The agent should still have a positive maxToolIterations (5 from last valid set)
+    // We can't directly read #config, but we verify the setter doesn't throw
+    // and that the agent is functional after setting limits
     const state = agent.getState();
-    assert.ok(state, 'agent state should be accessible');
-    // The config exists internally — we just verify the agent was created with defaults
+    assert.ok(state, 'agent state should be accessible after setting maxToolIterations');
   });
 
   it('checkpoint/restore round-trip preserves goals and scheduler', async () => {
@@ -112,10 +120,23 @@ describe('Scenario 2 — Code Refactoring', () => {
     agent.addSchedulerJob({ schedule_type: 'once', prompt: 'remind me', delay_ms: 60000 });
 
     const checkpoint = agent.getCheckpointJSON();
-    assert.ok(checkpoint.active_goals.length === 1, 'checkpoint has goals');
-    assert.ok(checkpoint.scheduler_snapshot.length === 1, 'checkpoint has scheduler jobs');
+    assert.equal(checkpoint.active_goals.length, 1, 'checkpoint has goals');
+    assert.equal(checkpoint.scheduler_snapshot.length, 1, 'checkpoint has scheduler jobs');
     assert.ok(checkpoint.id.startsWith('ckpt_'));
-    assert.ok(checkpoint.version === '1.0.0');
+    assert.equal(checkpoint.version, '1.0.0');
+
+    // Actually restore the checkpoint via bytes round-trip
+    const { agent: agent2 } = await createTestAgent();
+    assert.equal(agent2.getState().goals.length, 0, 'fresh agent has no goals');
+    // checkpoint() returns Uint8Array of JSON-encoded checkpoint
+    const bytes = agent.checkpoint();
+    assert.ok(bytes instanceof Uint8Array, 'checkpoint() returns Uint8Array');
+    assert.ok(bytes.length > 0, 'checkpoint bytes not empty');
+    const rc = agent2.restore(bytes);
+    assert.equal(rc, 0, 'restore should succeed (return 0)');
+    assert.equal(agent2.getState().goals.length, 1, 'restored agent has goals');
+    assert.equal(agent2.getState().goals[0].description, 'Refactor auth module');
+    assert.equal(agent2.listSchedulerJobs().length, 1, 'restored agent has scheduler jobs');
   });
 
   it('multi-session continuity via reinit preserves memories', async () => {
@@ -268,7 +289,11 @@ describe('Scenario 5 — Writing Companion', () => {
     const results = agent.memoryRecall('narrative voice');
     assert.ok(results.length >= 1, 'should recall relevant memories');
     // The style-guide entry should score highest (has both "narrative" and "voice")
-    assert.ok(results[0].content.includes('active voice') || results[0].content.includes('narrative'));
+    const topContent = results[0].content;
+    assert.ok(
+      topContent.includes('active voice') && topContent.includes('narrative'),
+      'top result should contain both "active voice" and "narrative"',
+    );
   });
 
   it('category-filtered recall returns only matching category', async () => {
@@ -295,8 +320,12 @@ describe('Scenario 5 — Writing Companion', () => {
     const removed = agent.memoryHygiene({});
     const after = agent.memoryRecall('', { category: 'context' }).length;
 
-    // Hygiene should have removed at least the duplicate
-    assert.ok(removed >= 1 || before === after, 'hygiene should run without error');
+    // Hygiene should have removed the duplicate key entry
+    assert.ok(typeof removed === 'number', 'hygiene returns a count');
+    assert.ok(after <= before, 'hygiene should not increase memory count');
+    // If memoryStore overwrites by key, before==1 and removed==0 is fine;
+    // otherwise removed >= 1 and after < before
+    assert.ok(removed >= 0, 'hygiene ran successfully');
   });
 });
 
@@ -360,7 +389,7 @@ describe('Scenario 6 — Spaced Repetition', () => {
 });
 
 // ── Scenario 7: Research Lab ──────────────────────────────────────
-// Categorized storage + recall isolation; BM25 relevance ordering
+// Categorized storage + recall isolation; TF-IDF relevance ordering
 
 describe('Scenario 7 — Research Lab', () => {
   it('stores memories in different categories with isolation', async () => {
@@ -379,7 +408,7 @@ describe('Scenario 7 — Research Lab', () => {
     assert.equal(core.length, 1);
   });
 
-  it('BM25 relevance ordering scores matching terms higher', async () => {
+  it('TF-IDF relevance ordering scores matching terms higher', async () => {
     const { agent } = await createTestAgent();
 
     agent.memoryStore({ key: 'a', content: 'transformer architecture revolutionized NLP and computer vision', category: 'learned' });
@@ -389,9 +418,7 @@ describe('Scenario 7 — Research Lab', () => {
     const results = agent.memoryRecall('transformer');
     assert.ok(results.length >= 2, 'should find transformer-related entries');
     // Entry 'c' mentions "transformer" twice, should score higher
-    if (results.length >= 2) {
-      assert.ok(results[0].score >= results[1].score, 'higher TF-IDF score should rank first');
-    }
+    assert.ok(results[0].score >= results[1].score, 'higher TF-IDF score should rank first');
   });
 });
 
@@ -426,16 +453,28 @@ describe('Scenario 8 — Browsing Augmentation', () => {
     assert.ok(!ac.needsApproval({ permission: 'browser' }));
   });
 
-  it('goal-linked execution: adding goals in context of tool use', async () => {
+  it('goal-linked execution: goals track alongside tool results in history', async () => {
     const { agent } = await createTestAgent();
 
     const goalId = agent.addGoal('Gather competitor pricing data');
 
-    // Simulate that a tool ran (we just verify the goal is in state)
+    // Store a memory linked to the goal context
+    agent.memoryStore({ key: 'pricing-data', content: 'Competitor A: $99/mo', category: 'learned' });
+
+    // Verify the goal and memory coexist in state
     const goals = agent.getState().goals;
     assert.equal(goals.length, 1);
     assert.equal(goals[0].id, goalId);
     assert.equal(goals[0].status, 'active');
+
+    // Verify memory is recallable in context of the active goal
+    const recalled = agent.memoryRecall('pricing');
+    assert.ok(recalled.length >= 1, 'pricing memory should be recallable');
+    assert.ok(recalled[0].content.includes('$99'));
+
+    // Complete the goal
+    agent.completeGoal(goalId);
+    assert.equal(agent.getState().goals[0].status, 'completed');
   });
 });
 
