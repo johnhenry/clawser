@@ -3,7 +3,17 @@
   "private": true,
   "description": "Browser-native AI agent workspace with tools, memory, and goals.",
   "scripts": {
-    "test": "node --import ./web/test/_setup-globals.mjs --test web/test/*.test.mjs",
+    "test": "node web/test/run-tests.mjs --group all",
+    "test:fast": "node web/test/run-tests.mjs --group fast",
+    "test:core": "node web/test/run-tests.mjs --group core",
+    "test:mesh": "node web/test/run-tests.mjs --group mesh",
+    "test:mesh-net": "node web/test/run-tests.mjs --group mesh-net",
+    "test:mesh-sync": "node web/test/run-tests.mjs --group mesh-sync",
+    "test:mesh-identity": "node web/test/run-tests.mjs --group mesh-identity",
+    "test:mesh-apps": "node web/test/run-tests.mjs --group mesh-apps",
+    "test:mesh-ops": "node web/test/run-tests.mjs --group mesh-ops",
+    "test:e2e": "node web/test/run-tests.mjs --group e2e",
+    "test:changed": "node web/test/run-tests.mjs --group changed",
     "test:vitest": "vitest run",
     "test:vitest:watch": "vitest"
   },
