@@ -23,6 +23,7 @@ import { initKeyboardShortcuts } from './clawser-keys.js';
 import { saveConfig } from './clawser-accounts.js';
 
 import { createDefaultRegistry } from './clawser-tools.js';
+import { registerChromeAITools } from './clawser-chrome-ai-tools.js';
 import { createDefaultProviders, ResponseCache } from './clawser-providers.js';
 import { McpManager } from './clawser-mcp.js';
 import { SkillRegistry, SkillRegistryClient } from './clawser-skills.js';
@@ -37,8 +38,10 @@ import { UndoManager } from './clawser-undo.js';
 import { HeartbeatRunner } from './clawser-heartbeat.js';
 import { AuthProfileManager } from './clawser-auth-profiles.js';
 import { MetricsCollector, RingBufferLog } from './clawser-metrics.js';
-import { DaemonController } from './clawser-daemon.js';
+import { DaemonController, CheckpointManager, AwaySummaryBuilder } from './clawser-daemon.js';
 import { RoutineEngine } from './clawser-routines.js';
+import { CheckpointIndexedDB } from './clawser-checkpoint-idb.js';
+import { BackgroundSchedulerRunner } from './clawser-background-runner.js';
 import { OAuthManager } from './clawser-oauth.js';
 import { ToolBuilder } from './clawser-tool-builder.js';
 import { ChannelManager } from './clawser-channels.js';
@@ -65,6 +68,7 @@ state.browserTools = createDefaultRegistry(state.workspaceFs, () => state.shell?
   const wsId = state.workspaceFs.getWorkspace();
   return localStorage.getItem(lsKey.showDotfiles(wsId)) === 'true';
 });
+registerChromeAITools(state.browserTools);
 state.providers = createDefaultProviders();
 state.mcpManager = new McpManager({
   onLog: (level, msg) => console.log(`[mcp] ${msg}`),
@@ -182,8 +186,13 @@ state.heartbeatRunner = new HeartbeatRunner({
 state.authProfileManager = new AuthProfileManager({ vault: state.vault });
 state.metricsCollector = new MetricsCollector();
 state.ringBufferLog = new RingBufferLog(1000);
+state.checkpointIDB = new CheckpointIndexedDB();
 state.daemonController = new DaemonController({
   getStateFn: () => state.agent?.getState(),
+  checkpoints: new CheckpointManager({
+    writeFn: (key, data) => state.checkpointIDB.write(key, data),
+    readFn: (key) => state.checkpointIDB.read(key),
+  }),
 });
 state.routineEngine = new RoutineEngine({
   executeFn: async (routine, triggerEvent) => {
@@ -194,6 +203,10 @@ state.routineEngine = new RoutineEngine({
     }
   },
   onNotify: (routine, message) => addEvent('routine', message),
+  onChange: () => {
+    // Sync routine state to IndexedDB for background runners
+    import('./clawser-workspace-lifecycle.js').then(m => m.syncRoutinesToIDB()).catch(() => {});
+  },
 });
 
 state.oauthManager = new OAuthManager({ vault: state.vault });
@@ -352,6 +365,13 @@ export async function shutdown() {
 
   // Stop daemon
   if (state.daemonController) await quiet(() => state.daemonController.stop());
+  // Sync final routine state to IndexedDB before stopping
+  if (state.routineEngine && state.checkpointIDB) {
+    await quiet(async () => {
+      const { syncRoutinesToIDB } = await import('./clawser-workspace-lifecycle.js');
+      syncRoutinesToIDB();
+    });
+  }
   // Stop routine engine
   if (state.routineEngine) await quiet(() => state.routineEngine.stop());
   // Flush any debounced config writes
@@ -407,6 +427,34 @@ initHomeListeners();
 
   ensureDefaultWorkspace();
   handleRoute();
+
+  // ── Background execution: register periodicSync (Tier 3 fallback) ──
+  try {
+    const reg = await navigator.serviceWorker?.ready;
+    if (reg?.periodicSync) {
+      await reg.periodicSync.register('clawser-scheduler', { minInterval: 60 * 60 * 1000 });
+    }
+  } catch { /* periodicSync not available or permission denied — Tiers 1/2 still work */ }
+
+  // ── "While you were away" summary from background execution log ──
+  try {
+    const log = await state.checkpointIDB.read('background_execution_log');
+    if (Array.isArray(log) && log.length > 0) {
+      const builder = new AwaySummaryBuilder();
+      for (const entry of log) {
+        for (const r of (entry.results || [])) {
+          builder.addEvent({ type: r.result || 'background_run', timestamp: entry.timestamp, routineId: r.routineId });
+        }
+      }
+      const summary = builder.build();
+      if (summary.events.length > 0) {
+        const { addMsg } = await import('./clawser-ui-chat.js');
+        addMsg('system', summary.text);
+      }
+      // Clear the log after presenting it
+      await state.checkpointIDB.delete('background_execution_log');
+    }
+  } catch { /* IDB not available or empty — ignore */ }
 })();
 
 // Auto-save on page unload.

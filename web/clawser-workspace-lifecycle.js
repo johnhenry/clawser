@@ -49,7 +49,7 @@ import { GoalAddTool, GoalUpdateTool, GoalAddArtifactTool, GoalListTool } from '
 import { DaemonStatusTool, DaemonCheckpointTool } from './clawser-daemon.js';
 import { OAuthListTool, OAuthConnectTool, OAuthDisconnectTool, OAuthApiTool } from './clawser-oauth.js';
 import { AuthListProfilesTool, AuthSwitchProfileTool, AuthStatusTool } from './clawser-auth-profiles.js';
-import { RoutineCreateTool, RoutineListTool, RoutineDeleteTool, RoutineRunTool } from './clawser-routines.js';
+import { RoutineCreateTool, RoutineListTool, RoutineDeleteTool, RoutineRunTool, RoutineHistoryTool, RoutineToggleTool, RoutineUpdateTool } from './clawser-routines.js';
 import { SelfRepairStatusTool, SelfRepairConfigureTool } from './clawser-self-repair.js';
 import { UndoTool, UndoStatusTool, RedoTool } from './clawser-undo.js';
 import { IntentClassifyTool, IntentOverrideTool } from './clawser-intent.js';
@@ -82,6 +82,32 @@ import { getExtensionClient } from './clawser-extension-tools.js';
 
 // Fallback chain
 import { FallbackChain, FallbackExecutor } from './clawser-fallback.js';
+import { registerSchedulerCli } from './clawser-scheduler-cli.js';
+
+// ── Routine → IndexedDB sync (background execution) ─────────────
+/**
+ * Persist current routine state to IndexedDB so background runners
+ * (chrome.alarms Tier 1, periodicSync Tier 3) can pick up due routines.
+ */
+function syncRoutinesToIDB() {
+  if (!state.checkpointIDB || !state.routineEngine) return;
+  try {
+    const routines = state.routineEngine.listRoutines?.() || [];
+    const serialized = routines.map(r => ({
+      id: r.id,
+      name: r.name,
+      enabled: r.enabled !== false,
+      trigger: r.trigger || {},
+      state: r.state || {},
+      meta: r.meta || null,
+      action: r.action || null,
+    }));
+    state.checkpointIDB.write('background_routine_state', serialized).catch(() => {});
+  } catch { /* best-effort */ }
+}
+
+// Export for use by other modules (e.g., routine UI after changes)
+export { syncRoutinesToIDB };
 
 // ── Shell session management ─────────────────────────────────────
 /** Create a fresh shell session for the current workspace. Sources .clawserrc and registers CLI. */
@@ -91,6 +117,7 @@ export async function createShellSession() {
   registerClawserCli(state.shell.registry, () => state.agent, () => state.shell);
   registerAndboxCli(state.shell.registry, () => state.agent, () => state.shell);
   registerWshCli(state.shell.registry, () => state.agent, () => state.shell);
+  registerSchedulerCli(state.shell.registry, () => state.routineEngine, () => state.agent);
   // Update terminal session manager's shell reference
   if (state.terminalSessions) {
     state.terminalSessions.setShell(state.shell);
@@ -323,6 +350,9 @@ export async function switchWorkspace(newId, convId) {
   } catch (e) { console.warn('[clawser] routine restore failed', e); }
   state.routineEngine.start();
 
+  // Sync routine state to IndexedDB for background runners (Tier 1/3)
+  syncRoutinesToIDB();
+
   const parts = [`Switched to "${wsName}".`];
   if (wsRestored) parts.push(`Session restored (${$('messages').querySelectorAll('.msg.user, .msg.agent').length} messages).`);
   if (memCount > 0) parts.push(`${memCount} memories loaded.`);
@@ -402,6 +432,9 @@ export async function initWorkspace(wsId, convId) {
     addMsg('system', 'Initializing agent...');
     const rc = state.agent.init({});
     if (rc !== 0) throw new Error(`agent.init returned ${rc}`);
+
+    // Wire RoutineEngine for scheduler delegation
+    state.agent.setRoutineEngine(state.routineEngine);
 
     // Wire account resolver for agent/fallback credential resolution
     state.agent.setAccountResolver(async (accountId) => {
@@ -534,6 +567,9 @@ export async function initWorkspace(wsId, convId) {
     state.browserTools.register(new RoutineListTool(state.routineEngine));
     state.browserTools.register(new RoutineDeleteTool(state.routineEngine));
     state.browserTools.register(new RoutineRunTool(state.routineEngine));
+    state.browserTools.register(new RoutineHistoryTool(state.routineEngine));
+    state.browserTools.register(new RoutineToggleTool(state.routineEngine));
+    state.browserTools.register(new RoutineUpdateTool(state.routineEngine));
 
     // Self-Repair (2)
     state.browserTools.register(new SelfRepairStatusTool(state.selfRepairEngine));
@@ -853,6 +889,9 @@ export async function initWorkspace(wsId, convId) {
       if (savedRoutines) state.routineEngine.fromJSON(savedRoutines);
     } catch (e) { console.warn('[clawser] routine restore failed', e); }
     state.routineEngine.start();
+
+    // Sync routine state to IndexedDB for background runners (Tier 1/3)
+    syncRoutinesToIDB();
 
     await state.skillRegistry.discover(activeWsId);
 

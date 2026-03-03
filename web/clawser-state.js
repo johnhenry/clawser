@@ -161,6 +161,7 @@ export const state = {
     metricsCollector: null,
     ringBufferLog: null,
     daemonController: null,
+    checkpointIDB: null,
     routineEngine: null,
     oauthManager: null,
     identityManager: null,

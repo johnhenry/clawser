@@ -379,6 +379,78 @@ self.addEventListener('install', (event) => {
   self.skipWaiting();
 });
 
+// ── Periodic Background Sync (Tier 3: fallback when no extension, all tabs closed) ──
+self.addEventListener('periodicsync', (event) => {
+  if (event.tag !== 'clawser-scheduler') return;
+  event.waitUntil((async () => {
+    try {
+      const DB_NAME = 'clawser_checkpoints';
+      const STORE = 'checkpoints';
+      const ROUTINE_KEY = 'background_routine_state';
+      const LOG_KEY = 'background_execution_log';
+
+      const db = await new Promise((resolve, reject) => {
+        const req = indexedDB.open(DB_NAME, 1);
+        req.onupgradeneeded = () => {
+          if (!req.result.objectStoreNames.contains(STORE)) req.result.createObjectStore(STORE);
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+
+      const read = (key) => new Promise((resolve) => {
+        const tx = db.transaction(STORE, 'readonly');
+        const r = tx.objectStore(STORE).get(key);
+        r.onsuccess = () => resolve(r.result ?? null);
+        r.onerror = () => resolve(null);
+      });
+      const write = (key, data) => new Promise((resolve) => {
+        const tx = db.transaction(STORE, 'readwrite');
+        tx.objectStore(STORE).put(data, key);
+        tx.oncomplete = () => resolve();
+      });
+
+      const routines = await read(ROUTINE_KEY);
+      if (!Array.isArray(routines) || routines.length === 0) { db.close(); return; }
+
+      const now = Date.now();
+      const results = [];
+      for (const r of routines) {
+        if (!r.enabled) continue;
+        let fire = false;
+        if (r.meta?.scheduleType === 'interval') {
+          if (now >= (r.meta.lastFired || 0) + (r.meta.intervalMs || 60000)) fire = true;
+        }
+        if (r.meta?.scheduleType === 'once' && !r.meta.fired && now >= (r.meta.fireAt || 0)) fire = true;
+        if (r.trigger?.type === 'cron' && r.trigger?.cron) {
+          const lastMin = r.state?.lastCronMinute || 0;
+          if (Math.floor(now / 60000) > lastMin) fire = true;
+        }
+        if (fire) {
+          r.state = r.state || {};
+          r.state.lastRun = now;
+          r.state.lastResult = 'background_sync';
+          r.state.runCount = (r.state.runCount || 0) + 1;
+          if (r.trigger?.type === 'cron') r.state.lastCronMinute = Math.floor(now / 60000);
+          if (r.meta?.scheduleType === 'interval') r.meta.lastFired = now;
+          if (r.meta?.scheduleType === 'once') r.meta.fired = true;
+          results.push({ routineId: r.id, result: 'background_sync' });
+        }
+      }
+      if (results.length > 0) {
+        await write(ROUTINE_KEY, routines);
+        const log = (await read(LOG_KEY)) || [];
+        log.push({ timestamp: now, results });
+        while (log.length > 100) log.shift();
+        await write(LOG_KEY, log);
+      }
+      db.close();
+    } catch (err) {
+      console.warn('[clawser-sw] Periodic sync error:', err);
+    }
+  })());
+});
+
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((names) =>

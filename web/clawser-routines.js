@@ -81,6 +81,7 @@ export function createRoutine(opts = {}) {
       history: [],
       ...(opts.state || {}),
     },
+    meta: opts.meta || null,
   };
 }
 
@@ -162,6 +163,9 @@ export class RoutineEngine {
   /** @type {Function|null} */
   #onLog;
 
+  /** @type {Function|null} */
+  #onChange;
+
   /** @type {number} Cron tick interval in ms */
   #tickInterval;
 
@@ -173,12 +177,14 @@ export class RoutineEngine {
    * @param {Function} [opts.executeFn] - (routine, triggerEvent) => Promise<any>
    * @param {Function} [opts.onNotify] - (routine, message) => void
    * @param {Function} [opts.onLog] - (message) => void
+   * @param {Function} [opts.onChange] - () => void — called after any routine CRUD mutation
    * @param {number} [opts.tickInterval=60000] - Cron check interval
    */
   constructor(opts = {}) {
     this.#executeFn = opts.executeFn || null;
     this.#onNotify = opts.onNotify || null;
     this.#onLog = opts.onLog || null;
+    this.#onChange = opts.onChange || null;
     this.#tickInterval = opts.tickInterval || 60_000;
   }
 
@@ -199,6 +205,7 @@ export class RoutineEngine {
     const routine = createRoutine(opts);
     this.#routines.set(routine.id, routine);
     this.#log(`Routine added: ${routine.id} (${routine.name})`);
+    this.#emitChange();
     return routine;
   }
 
@@ -232,6 +239,7 @@ export class RoutineEngine {
       if (updates[key] !== undefined) routine[key] = updates[key];
     }
     this.#log(`Routine updated: ${id}`);
+    this.#emitChange();
     return true;
   }
 
@@ -242,7 +250,10 @@ export class RoutineEngine {
    */
   removeRoutine(id) {
     const removed = this.#routines.delete(id);
-    if (removed) this.#log(`Routine removed: ${id}`);
+    if (removed) {
+      this.#log(`Routine removed: ${id}`);
+      this.#emitChange();
+    }
     return removed;
   }
 
@@ -256,6 +267,7 @@ export class RoutineEngine {
     const routine = this.#routines.get(id);
     if (!routine) return false;
     routine.enabled = enabled;
+    this.#emitChange();
     return true;
   }
 
@@ -394,6 +406,28 @@ export class RoutineEngine {
         results.push({ routineId: routine.id, result });
       }
     }
+
+    // Also tick agent-originated interval and once routines
+    for (const routine of this.#routines.values()) {
+      if (!routine.enabled) continue;
+      if (!routine.meta?.source) continue; // only meta-bearing routines
+
+      const nowMs = time.getTime ? time.getTime() : Date.now();
+
+      if (routine.meta.scheduleType === 'once' && !routine.meta.fired && nowMs >= routine.meta.fireAt) {
+        routine.meta.fired = true;
+        const result = await this.#enqueue(routine, { type: 'once.fire', time });
+        results.push({ routineId: routine.id, result });
+      } else if (routine.meta.scheduleType === 'interval') {
+        const lastFired = routine.meta.lastFired || 0;
+        if (nowMs >= lastFired + routine.meta.intervalMs) {
+          routine.meta.lastFired = nowMs;
+          const result = await this.#enqueue(routine, { type: 'interval.fire', time });
+          results.push({ routineId: routine.id, result });
+        }
+      }
+    }
+
     return results;
   }
 
@@ -584,12 +618,34 @@ export class RoutineEngine {
     }
   }
 
+  /**
+   * Compute next fire time for a routine.
+   * @param {object} routine
+   * @returns {number|null} Timestamp of next fire, or null if unknown
+   */
+  static nextFireTime(routine) {
+    if (routine.meta?.scheduleType === 'once') {
+      return routine.meta.fired ? null : routine.meta.fireAt;
+    }
+    if (routine.meta?.scheduleType === 'interval') {
+      return (routine.meta.lastFired || 0) + routine.meta.intervalMs;
+    }
+    // For cron routines, we can't easily compute without parsing
+    return null;
+  }
+
   #log(msg) {
     if (this.#onLog) this.#onLog(msg);
   }
 
   #notify(routine, message) {
     if (this.#onNotify) this.#onNotify(routine, message);
+  }
+
+  #emitChange() {
+    if (this.#onChange) {
+      try { this.#onChange(); } catch { /* best-effort */ }
+    }
   }
 }
 

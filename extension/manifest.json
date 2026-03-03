@@ -12,7 +12,8 @@
     "userScripts",
     "webRequest",
     "cookies",
-    "storage"
+    "storage",
+    "alarms"
   ],
   "optional_permissions": ["debugger"],
   "host_permissions": ["<all_urls>"],

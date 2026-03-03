@@ -483,16 +483,24 @@ export class AutonomyController {
   #maxActionsPerHour;
   #maxCostPerDayCents;
 
+  // Time-of-day restrictions: array of {start: hour, end: hour}
+  #allowedHours = [];
+
+  // Optional PolicyEngine integration
+  #policyEngine = null;
+
   /**
    * @param {object} [opts]
    * @param {'readonly'|'supervised'|'full'} [opts.level='supervised']
    * @param {number} [opts.maxActionsPerHour=Infinity]
    * @param {number} [opts.maxCostPerDayCents=Infinity]
+   * @param {Array<{start: number, end: number}>} [opts.allowedHours=[]]
    */
   constructor(opts = {}) {
     if (opts.level && AUTONOMY_LEVELS.includes(opts.level)) this.#level = opts.level;
     this.#maxActionsPerHour = opts.maxActionsPerHour ?? Infinity;
     this.#maxCostPerDayCents = opts.maxCostPerDayCents ?? Infinity;
+    if (Array.isArray(opts.allowedHours)) this.#allowedHours = opts.allowedHours;
   }
 
   static #startOfDay() {
@@ -513,14 +521,57 @@ export class AutonomyController {
   get maxCostPerDayCents() { return this.#maxCostPerDayCents; }
   set maxCostPerDayCents(v) { this.#maxCostPerDayCents = v; }
 
+  /** @returns {Array<{start: number, end: number}>} */
+  get allowedHours() { return this.#allowedHours; }
+  set allowedHours(v) { this.#allowedHours = Array.isArray(v) ? v : []; }
+
+  /**
+   * Set an optional PolicyEngine for tool-call evaluation.
+   * @param {{evaluateToolCall: (toolName: string, params: object) => {allowed: boolean, reason?: string}}|null} engine
+   */
+  setPolicyEngine(engine) { this.#policyEngine = engine; }
+
+  /** @returns {object|null} The currently set PolicyEngine, if any. */
+  get policyEngine() { return this.#policyEngine; }
+
+  /**
+   * Check if the current hour is within allowed time-of-day ranges.
+   * @param {number} [nowMs=Date.now()] - Current time in milliseconds
+   * @returns {{blocked: boolean, limitType?: string, reason?: string}}
+   */
+  #checkTimeOfDay(nowMs = Date.now()) {
+    if (this.#allowedHours.length === 0) return { blocked: false };
+    const hour = new Date(nowMs).getHours();
+    for (const range of this.#allowedHours) {
+      if (range.start <= range.end) {
+        // Normal range (e.g., 9-17)
+        if (hour >= range.start && hour < range.end) return { blocked: false };
+      } else {
+        // Overnight range (e.g., 22-6 means 22,23,0,1,2,3,4,5)
+        if (hour >= range.start || hour < range.end) return { blocked: false };
+      }
+    }
+    return {
+      blocked: true,
+      limitType: 'time_of_day',
+      reason: `Agent blocked: current hour (${hour}) is outside allowed hours.`,
+    };
+  }
+
   /**
    * Check if a tool is allowed at the current autonomy level.
-   * @param {{permission: string}} tool - Tool or spec with a permission field
+   * Delegates to PolicyEngine if set.
+   * @param {{permission: string, name?: string}} tool - Tool or spec with a permission field
+   * @param {object} [params] - Tool call parameters (for policy evaluation)
    * @returns {boolean}
    */
-  canExecuteTool(tool) {
+  canExecuteTool(tool, params) {
     if (this.#level === 'readonly') {
       return READ_PERMISSIONS.has(tool.permission);
+    }
+    if (this.#policyEngine && typeof this.#policyEngine.evaluateToolCall === 'function') {
+      const result = this.#policyEngine.evaluateToolCall(tool.name || '', params || {});
+      if (result && !result.allowed) return false;
     }
     return true;
   }
@@ -538,11 +589,15 @@ export class AutonomyController {
   }
 
   /**
-   * Check rate and cost limits. Resets counters if the time window has elapsed.
-   * @returns {{blocked: boolean, reason?: string}}
+   * Check time-of-day, rate, and cost limits. Resets counters if the time window has elapsed.
+   * @returns {{blocked: boolean, reason?: string, limitType?: string}}
    */
   checkLimits() {
     const now = Date.now();
+
+    // Time-of-day check (first — cheapest check)
+    const timeCheck = this.#checkTimeOfDay(now);
+    if (timeCheck.blocked) return timeCheck;
 
     // Reset hourly counter (aligned to hour boundary)
     if (now - this.#hourStart > 3_600_000) {
@@ -595,6 +650,7 @@ export class AutonomyController {
       maxActionsPerHour: this.#maxActionsPerHour,
       costTodayCents: this.#costTodayCents,
       maxCostPerDayCents: this.#maxCostPerDayCents,
+      allowedHours: this.#allowedHours,
     };
   }
 
@@ -634,6 +690,8 @@ export class ClawserAgent {
   // ── Scheduler ────────────────────────────────────────────────
   #schedulerJobs = [];    // Array<ScheduledJob>
   #schedulerNextId = 1;
+  /** @type {import('./clawser-routines.js').RoutineEngine|null} */
+  #routineEngine = null;
 
   // ── Provider state ───────────────────────────────────────────
   #activeProvider = 'echo';
@@ -1021,7 +1079,15 @@ export class ClawserAgent {
     if (cfg.level) this.#autonomy.level = cfg.level;
     if (cfg.maxActionsPerHour != null) this.#autonomy.maxActionsPerHour = cfg.maxActionsPerHour;
     if (cfg.maxCostPerDayCents != null) this.#autonomy.maxCostPerDayCents = cfg.maxCostPerDayCents;
+    if (cfg.allowedHours != null) this.#autonomy.allowedHours = cfg.allowedHours;
   }
+
+  /**
+   * Set the RoutineEngine for scheduler delegation.
+   * When set, addSchedulerJob/list/remove/pause/resume delegate to the engine.
+   * @param {import('./clawser-routines.js').RoutineEngine} engine
+   */
+  setRoutineEngine(engine) { this.#routineEngine = engine; }
 
   /**
    * Set the fallback executor for provider failover.
@@ -2439,13 +2505,32 @@ export class ClawserAgent {
    * @returns {object}
    */
   getCheckpointJSON() {
+    // When RoutineEngine is set, extract agent-originated routines for backward compat
+    let schedulerSnapshot = this.#schedulerJobs;
+    if (this.#routineEngine) {
+      schedulerSnapshot = this.#routineEngine.listRoutines()
+        .filter(r => r.meta?.source === 'agent')
+        .map(r => ({
+          id: r.id,
+          schedule_type: r.meta.scheduleType,
+          action_type: 'AgentPrompt',
+          prompt: r.action?.prompt || r.name,
+          paused: !r.enabled,
+          fired: r.meta.fired || false,
+          last_fired: r.meta.lastFired || 0,
+          fire_at: r.meta.fireAt || undefined,
+          interval_ms: r.meta.intervalMs || undefined,
+          cron_expr: r.trigger?.cron || undefined,
+          cron: r.trigger?.cron ? ClawserAgent.parseCron(r.trigger.cron) : undefined,
+        }));
+    }
     return {
       id: `ckpt_${Date.now()}`,
       timestamp: Date.now(),
       agent_state: 'Idle',
       session_history: this.#history,
       active_goals: this.#goals,
-      scheduler_snapshot: this.#schedulerJobs,
+      scheduler_snapshot: schedulerSnapshot,
       version: '1.0.0',
     };
   }
@@ -2781,6 +2866,14 @@ export class ClawserAgent {
    * @returns {number} Number of jobs fired
    */
   tick(nowMs = Date.now()) {
+    // When RoutineEngine is set, delegate to it (it handles cron + interval + once via tickCron)
+    if (this.#routineEngine) {
+      // tickCron is async but tick() is sync for backward compat — fire and forget
+      this.#routineEngine.tickCron(new Date(nowMs));
+      return 0; // RoutineEngine handles execution internally
+    }
+
+    // Legacy path
     let fired = 0;
     const nowDate = new Date(nowMs);
 
@@ -2814,13 +2907,45 @@ export class ClawserAgent {
   }
 
   // ── Public Scheduler API ──────────────────────────────────
+  // When a RoutineEngine is set, these delegate to it. Otherwise they use the
+  // internal #schedulerJobs array for backward compatibility.
 
   /**
-   * Add a scheduled job.
-   * @param {object} spec - {schedule_type: 'once'|'interval'|'cron', prompt, fire_at?, interval_ms?, cron_expr?}
+   * Add a scheduled job. Delegates to RoutineEngine when available.
+   * @param {object} spec - {schedule_type: 'once'|'interval'|'cron', prompt, fire_at?, delay_ms?, interval_ms?, cron_expr?}
    * @returns {string} Job ID
    */
   addSchedulerJob(spec) {
+    if (this.#routineEngine) {
+      const meta = { source: 'agent', scheduleType: spec.schedule_type };
+      const trigger = {};
+      if (spec.schedule_type === 'cron') {
+        const cron = ClawserAgent.parseCron(spec.cron_expr);
+        if (!cron) throw new Error(`Invalid cron expression: ${spec.cron_expr}`);
+        trigger.type = 'cron';
+        trigger.cron = spec.cron_expr;
+      } else {
+        trigger.type = 'cron';
+        trigger.cron = null;
+      }
+      if (spec.schedule_type === 'once') {
+        meta.fireAt = spec.fire_at || (Date.now() + (spec.delay_ms || 60000));
+        meta.fired = false;
+      } else if (spec.schedule_type === 'interval') {
+        meta.intervalMs = spec.interval_ms || 60000;
+        meta.lastFired = 0;
+      }
+      const routine = this.#routineEngine.addRoutine({
+        name: spec.prompt?.slice(0, 60) || 'Agent job',
+        trigger,
+        action: { type: 'prompt', prompt: spec.prompt },
+        meta,
+      });
+      this.#eventLog.append('scheduler_added', { id: routine.id, spec }, 'system');
+      return routine.id;
+    }
+
+    // Legacy path
     const id = `job_${this.#schedulerNextId++}`;
     const job = {
       id,
@@ -2849,10 +2974,24 @@ export class ClawserAgent {
   }
 
   /**
-   * List all scheduled jobs.
+   * List all scheduled jobs. Delegates to RoutineEngine when available.
    * @returns {Array<object>}
    */
   listSchedulerJobs() {
+    if (this.#routineEngine) {
+      return this.#routineEngine.listRoutines()
+        .filter(r => r.meta?.source === 'agent')
+        .map(r => ({
+          id: r.id,
+          schedule_type: r.meta.scheduleType,
+          prompt: r.action?.prompt || r.name,
+          paused: !r.enabled,
+          fired: r.meta.fired || false,
+          cron_expr: r.trigger?.cron || null,
+          interval_ms: r.meta.intervalMs || null,
+        }));
+    }
+
     return this.#schedulerJobs.map(j => ({
       id: j.id,
       schedule_type: j.schedule_type,
@@ -2870,6 +3009,7 @@ export class ClawserAgent {
    * @returns {boolean}
    */
   pauseSchedulerJob(id) {
+    if (this.#routineEngine) return this.#routineEngine.setEnabled(id, false);
     const job = this.#schedulerJobs.find(j => j.id === id);
     if (!job) return false;
     job.paused = true;
@@ -2882,6 +3022,7 @@ export class ClawserAgent {
    * @returns {boolean}
    */
   resumeSchedulerJob(id) {
+    if (this.#routineEngine) return this.#routineEngine.setEnabled(id, true);
     const job = this.#schedulerJobs.find(j => j.id === id);
     if (!job) return false;
     job.paused = false;
@@ -2894,6 +3035,11 @@ export class ClawserAgent {
    * @returns {boolean}
    */
   removeSchedulerJob(id) {
+    if (this.#routineEngine) {
+      const removed = this.#routineEngine.removeRoutine(id);
+      if (removed) this.#eventLog.append('scheduler_removed', { id }, 'system');
+      return removed;
+    }
     const idx = this.#schedulerJobs.findIndex(j => j.id === id);
     if (idx >= 0) {
       this.#schedulerJobs.splice(idx, 1);

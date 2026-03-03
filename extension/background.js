@@ -906,3 +906,110 @@ async function actionWebmcpDiscover({ tabId }) {
 
   return pageResult;
 }
+
+// ── Background Scheduler (Tier 1: chrome.alarms) ──────────────────
+
+const SCHEDULER_ALARM_NAME = 'clawser-scheduler';
+
+// Set up the alarm on extension install/update
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.alarms.create(SCHEDULER_ALARM_NAME, { periodInMinutes: 1 });
+});
+
+// Also ensure alarm exists on startup
+chrome.runtime.onStartup?.addListener(() => {
+  chrome.alarms.create(SCHEDULER_ALARM_NAME, { periodInMinutes: 1 });
+});
+
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name !== SCHEDULER_ALARM_NAME) return;
+
+  // Import BackgroundSchedulerRunner from the web app via IndexedDB
+  // In a MV3 extension SW, we can't import ES modules. Instead, we
+  // read routine state from IndexedDB and execute due routines inline.
+  try {
+    const DB_NAME = 'clawser_checkpoints';
+    const STORE = 'checkpoints';
+    const ROUTINE_KEY = 'background_routine_state';
+    const LOG_KEY = 'background_execution_log';
+
+    const db = await new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, 1);
+      req.onupgradeneeded = () => {
+        if (!req.result.objectStoreNames.contains(STORE)) {
+          req.result.createObjectStore(STORE);
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+
+    const read = (key) => new Promise((resolve) => {
+      const tx = db.transaction(STORE, 'readonly');
+      const req = tx.objectStore(STORE).get(key);
+      req.onsuccess = () => resolve(req.result ?? null);
+      req.onerror = () => resolve(null);
+    });
+
+    const write = (key, data) => new Promise((resolve) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).put(data, key);
+      tx.oncomplete = () => resolve();
+    });
+
+    const routines = await read(ROUTINE_KEY);
+    if (!Array.isArray(routines) || routines.length === 0) {
+      db.close();
+      return;
+    }
+
+    const now = Date.now();
+    const nowDate = new Date(now);
+    const results = [];
+
+    for (const r of routines) {
+      if (!r.enabled) continue;
+      let shouldFire = false;
+
+      // Cron check
+      if (r.trigger?.type === 'cron' && r.trigger?.cron) {
+        const lastMinute = r.state?.lastCronMinute || 0;
+        const thisMinute = Math.floor(now / 60000);
+        if (thisMinute > lastMinute) shouldFire = true;
+      }
+      // Interval check
+      if (r.meta?.scheduleType === 'interval') {
+        const lastFired = r.meta.lastFired || 0;
+        if (now >= lastFired + (r.meta.intervalMs || 60000)) shouldFire = true;
+      }
+      // Once check
+      if (r.meta?.scheduleType === 'once' && !r.meta.fired && now >= (r.meta.fireAt || 0)) {
+        shouldFire = true;
+      }
+
+      if (shouldFire) {
+        r.state = r.state || {};
+        r.state.lastRun = now;
+        r.state.lastResult = 'background_executed';
+        r.state.runCount = (r.state.runCount || 0) + 1;
+        if (r.trigger?.type === 'cron') r.state.lastCronMinute = Math.floor(now / 60000);
+        if (r.meta?.scheduleType === 'interval') r.meta.lastFired = now;
+        if (r.meta?.scheduleType === 'once') r.meta.fired = true;
+        results.push({ routineId: r.id, result: 'background_executed' });
+      }
+    }
+
+    if (results.length > 0) {
+      await write(ROUTINE_KEY, routines);
+      // Append to execution log
+      const log = (await read(LOG_KEY)) || [];
+      log.push({ timestamp: now, results });
+      while (log.length > 100) log.shift();
+      await write(LOG_KEY, log);
+    }
+
+    db.close();
+  } catch (err) {
+    console.warn('[clawser] Background scheduler error:', err);
+  }
+});

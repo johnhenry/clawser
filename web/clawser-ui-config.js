@@ -15,6 +15,7 @@ import { renderBarChart, renderTimeSeriesChart, renderCostBreakdown } from './cl
 import { renderIdentityEditor } from './clawser-ui-identity-editor.js';
 import { loadAccounts, resolveAccountKey, SERVICES } from './clawser-accounts.js';
 import { FallbackChain, FallbackExecutor } from './clawser-fallback.js';
+import { AutonomyPresetManager } from './clawser-autonomy-presets.js';
 
 // ── Security settings ──────────────────────────────────────────
 /** Apply domain allowlist and max file size from UI inputs to the browser tools and persist. */
@@ -47,16 +48,32 @@ export function renderAutonomySection() {
   }
   if (saved.maxActions) $('cfgMaxActions').value = saved.maxActions;
   if (saved.dailyCostLimit != null) $('cfgDailyCostLimit').value = saved.dailyCostLimit;
+  // Restore allowed hours
+  if ($('cfgAllowedHoursStart') && saved.allowedHoursStart != null) $('cfgAllowedHoursStart').value = saved.allowedHoursStart;
+  if ($('cfgAllowedHoursEnd') && saved.allowedHoursEnd != null) $('cfgAllowedHoursEnd').value = saved.allowedHoursEnd;
   // Apply saved config to agent's AutonomyController
   if (state.agent && saved.level) {
+    const allowedHours = parseAllowedHoursFromUI(saved);
     state.agent.applyAutonomyConfig({
       level: saved.level || 'supervised',
       maxActionsPerHour: parseInt(saved.maxActions) || Infinity,
       maxCostPerDayCents: parseInt(saved.dailyCostLimit) || Infinity,
+      allowedHours,
     });
   }
+  // Render preset dropdown
+  renderAutonomyPresets(wsId);
   updateCostMeter();
   updateAutonomyBadge();
+}
+
+/** Parse allowed hours from saved config or UI into [{start, end}] array. */
+function parseAllowedHoursFromUI(saved) {
+  const start = parseInt(saved?.allowedHoursStart ?? ($('cfgAllowedHoursStart')?.value || ''));
+  const end = parseInt(saved?.allowedHoursEnd ?? ($('cfgAllowedHoursEnd')?.value || ''));
+  if (isNaN(start) || isNaN(end)) return [];
+  if (start === 0 && end === 0) return []; // 0-0 means "no restriction"
+  return [{ start, end }];
 }
 
 /** Save autonomy settings to localStorage and apply live. */
@@ -65,17 +82,72 @@ export function saveAutonomySettings() {
   const level = document.querySelector('input[name="autonomyLevel"]:checked')?.value || 'supervised';
   const maxActions = parseInt($('cfgMaxActions').value) || 100;
   const dailyCostLimit = parseFloat($('cfgDailyCostLimit').value) || 5;
-  localStorage.setItem(lsKey.autonomy(wsId), JSON.stringify({ level, maxActions, dailyCostLimit }));
+  const allowedHoursStart = $('cfgAllowedHoursStart')?.value || '';
+  const allowedHoursEnd = $('cfgAllowedHoursEnd')?.value || '';
+  const allowedHours = parseAllowedHoursFromUI({ allowedHoursStart, allowedHoursEnd });
+  localStorage.setItem(lsKey.autonomy(wsId), JSON.stringify({ level, maxActions, dailyCostLimit, allowedHoursStart, allowedHoursEnd }));
   // Apply live to agent's AutonomyController
   if (state.agent) {
     state.agent.applyAutonomyConfig({
       level,
       maxActionsPerHour: parseInt(maxActions) || Infinity,
       maxCostPerDayCents: parseInt(dailyCostLimit) || Infinity,
+      allowedHours,
     });
   }
   updateCostMeter();
   updateAutonomyBadge();
+}
+
+/** Render preset save/load/delete controls for autonomy section. */
+function renderAutonomyPresets(wsId) {
+  const container = $('autonomyPresets');
+  if (!container) return;
+  const mgr = new AutonomyPresetManager(wsId);
+  const presets = mgr.list();
+  const options = presets.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
+  container.innerHTML = `
+    <select id="presetSelect"><option value="">-- Presets --</option>${options}</select>
+    <button id="presetLoadBtn" title="Load preset">Load</button>
+    <button id="presetSaveBtn" title="Save current as preset">Save</button>
+    <button id="presetDeleteBtn" title="Delete selected preset">Del</button>
+  `;
+  $('presetLoadBtn')?.addEventListener('click', () => {
+    const name = $('presetSelect')?.value;
+    if (!name || !state.agent) return;
+    if (mgr.apply(name, state.agent)) {
+      // Sync UI from agent stats
+      const s = state.agent.autonomy.stats;
+      const radio = document.querySelector(`input[name="autonomyLevel"][value="${s.level}"]`);
+      if (radio) radio.checked = true;
+      if ($('cfgMaxActions')) $('cfgMaxActions').value = s.maxActionsPerHour === Infinity ? '' : s.maxActionsPerHour;
+      if ($('cfgDailyCostLimit')) $('cfgDailyCostLimit').value = s.maxCostPerDayCents === Infinity ? '' : s.maxCostPerDayCents;
+      if (s.allowedHours?.[0]) {
+        if ($('cfgAllowedHoursStart')) $('cfgAllowedHoursStart').value = s.allowedHours[0].start;
+        if ($('cfgAllowedHoursEnd')) $('cfgAllowedHoursEnd').value = s.allowedHours[0].end;
+      }
+      saveAutonomySettings();
+    }
+  });
+  $('presetSaveBtn')?.addEventListener('click', () => {
+    const name = prompt('Preset name:');
+    if (!name) return;
+    const level = document.querySelector('input[name="autonomyLevel"]:checked')?.value || 'supervised';
+    const maxActionsPerHour = parseInt($('cfgMaxActions')?.value) || Infinity;
+    const maxCostPerDayCents = parseInt($('cfgDailyCostLimit')?.value) || Infinity;
+    const allowedHours = parseAllowedHoursFromUI({
+      allowedHoursStart: $('cfgAllowedHoursStart')?.value,
+      allowedHoursEnd: $('cfgAllowedHoursEnd')?.value,
+    });
+    mgr.save({ name, level, maxActionsPerHour, maxCostPerDayCents, allowedHours });
+    renderAutonomyPresets(wsId);
+  });
+  $('presetDeleteBtn')?.addEventListener('click', () => {
+    const name = $('presetSelect')?.value;
+    if (!name) return;
+    mgr.delete(name);
+    renderAutonomyPresets(wsId);
+  });
 }
 
 /** Update cost meter bar and label. */
@@ -738,7 +810,77 @@ export function refreshDashboard() {
       el.appendChild(d);
     }
   }
+
+  // Scheduler section
+  renderSchedulerDashboard();
 }
+
+/** Render scheduler table in the Dashboard panel. */
+export function renderSchedulerDashboard() {
+  const el = $('dashScheduler');
+  if (!el || !state.routineEngine) return;
+
+  const { RoutineEngine } = /** @type {any} */ (globalThis.__clawser_routines_ref || {});
+  const routines = state.routineEngine.listRoutines();
+  if (routines.length === 0) {
+    el.innerHTML = '<p class="dim">No routines configured.</p>';
+    return;
+  }
+
+  const fmtTime = ts => ts ? new Date(ts).toLocaleTimeString() : '—';
+  const rows = routines.map(r => {
+    const trigger = r.trigger?.cron ? esc(r.trigger.cron)
+      : r.meta?.scheduleType === 'interval' ? `every ${Math.round((r.meta.intervalMs || 0) / 1000)}s`
+      : r.meta?.scheduleType === 'once' ? 'once'
+      : r.trigger?.type === 'event' ? `event(${esc(r.trigger.event || '')})`
+      : 'unknown';
+    const status = r.enabled ? 'active' : 'paused';
+    const statusClass = r.enabled ? 'badge-green' : 'badge-amber';
+    const lastRun = fmtTime(r.state?.lastRun);
+    const runs = r.state?.runCount || 0;
+    const name = esc((r.name || '').slice(0, 30));
+    return `<tr>
+      <td title="${esc(r.id)}">${name}</td>
+      <td><code>${trigger}</code></td>
+      <td><span class="badge ${statusClass}">${status}</span></td>
+      <td>${lastRun}</td>
+      <td>${runs}</td>
+      <td>
+        <button class="btn-sm" data-sched-toggle="${esc(r.id)}" title="${r.enabled ? 'Pause' : 'Resume'}">${r.enabled ? '⏸' : '▶'}</button>
+        <button class="btn-sm" data-sched-run="${esc(r.id)}" title="Run now">⚡</button>
+        <button class="btn-sm btn-danger" data-sched-del="${esc(r.id)}" title="Delete">✕</button>
+      </td>
+    </tr>`;
+  });
+
+  el.innerHTML = `<table class="dash-table">
+    <thead><tr><th>Name</th><th>Trigger</th><th>Status</th><th>Last Run</th><th>Runs</th><th>Actions</th></tr></thead>
+    <tbody>${rows.join('')}</tbody>
+  </table>`;
+
+  // Wire action buttons
+  el.querySelectorAll('[data-sched-toggle]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.schedToggle;
+      const r = state.routineEngine.getRoutine(id);
+      if (r) state.routineEngine.setEnabled(id, !r.enabled);
+      renderSchedulerDashboard();
+    });
+  });
+  el.querySelectorAll('[data-sched-run]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.schedRun;
+      try { await state.routineEngine.triggerManual(id); } catch {}
+      renderSchedulerDashboard();
+    });
+  });
+  el.querySelectorAll('[data-sched-del]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.schedDel;
+      state.routineEngine.removeRoutine(id);
+      renderSchedulerDashboard();
+    });
+  });
 
 // ── API Key Warning Banner (Gap 7.3) ──────────────────────────────
 
