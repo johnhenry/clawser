@@ -618,6 +618,7 @@ export class LLMProvider {
   get requiresApiKey() { return false; }
   get supportsStreaming() { return false; }
   get supportsNativeTools() { return false; }
+  get supportsVision() { return false; }
 
   async isAvailable() { return true; }
 
@@ -901,7 +902,25 @@ export class ChromeAIProvider extends LLMProvider {
  */
 function buildOpenAIBody(request, model, options = {}) {
   const messages = (request.messages || []).map(m => {
-    const msg = { role: m.role, content: m.content ?? null };
+    // Support multimodal content: if content is an array of parts, format for OpenAI vision API
+    let content = m.content ?? null;
+    if (Array.isArray(content)) {
+      content = content.map(part => {
+        if (part.type === 'text') return { type: 'text', text: part.text };
+        if (part.type === 'image_url') return { type: 'image_url', image_url: part.image_url };
+        if (part.type === 'image' && part.source) {
+          // Convert Anthropic-style image to OpenAI image_url format
+          if (part.source.type === 'base64') {
+            return { type: 'image_url', image_url: { url: `data:${part.source.media_type};base64,${part.source.data}` } };
+          }
+          if (part.source.type === 'url') {
+            return { type: 'image_url', image_url: { url: part.source.url } };
+          }
+        }
+        return part; // pass through unknown types
+      });
+    }
+    const msg = { role: m.role, content };
     if (m.tool_call_id) msg.tool_call_id = m.tool_call_id;
     if (m.name) msg.name = m.name;
     // Forward tool_calls on assistant messages (required by OpenAI when tool results follow)
@@ -1072,6 +1091,7 @@ export class OpenAIProvider extends LLMProvider {
   get requiresApiKey() { return true; }
   get supportsStreaming() { return true; }
   get supportsNativeTools() { return true; }
+  get supportsVision() { return true; }
 
   async chat(request, apiKey, modelOverride, options = {}) {
     if (!apiKey) throw new Error('OpenAI API key required');
@@ -1142,6 +1162,7 @@ export class AnthropicProvider extends LLMProvider {
   get requiresApiKey() { return true; }
   get supportsStreaming() { return true; }
   get supportsNativeTools() { return true; }
+  get supportsVision() { return true; }
 
   /**
    * Transform internal message history into Anthropic Messages API format.
@@ -1246,15 +1267,44 @@ export class AnthropicProvider extends LLMProvider {
       }
 
       // User messages and anything else → map to 'user'
+      // Support multimodal content arrays (images + text)
+      let userContent = m.content;
+      if (Array.isArray(m.content)) {
+        // Convert to Anthropic content block format
+        userContent = m.content.map(part => {
+          if (part.type === 'text') return { type: 'text', text: part.text };
+          if (part.type === 'image' && part.source) return part; // already Anthropic format
+          if (part.type === 'image_url' && part.image_url?.url) {
+            // Convert OpenAI-style image_url to Anthropic image format
+            const url = part.image_url.url;
+            if (url.startsWith('data:')) {
+              const match = url.match(/^data:([^;]+);base64,(.+)$/);
+              if (match) {
+                return { type: 'image', source: { type: 'base64', media_type: match[1], data: match[2] } };
+              }
+            }
+            return { type: 'image', source: { type: 'url', url } };
+          }
+          return part; // pass through unknown types
+        });
+      }
+
       if (messages.length > 0 && messages[messages.length - 1].role === 'user') {
         const prev = messages[messages.length - 1];
-        if (typeof prev.content === 'string') {
-          prev.content += '\n\n' + m.content;
-        } else if (Array.isArray(prev.content)) {
-          prev.content.push({ type: 'text', text: m.content });
+        if (typeof prev.content === 'string' && typeof userContent === 'string') {
+          prev.content += '\n\n' + userContent;
+        } else {
+          // Convert to array format for merging
+          const prevParts = typeof prev.content === 'string'
+            ? [{ type: 'text', text: prev.content }]
+            : Array.isArray(prev.content) ? prev.content : [];
+          const newParts = typeof userContent === 'string'
+            ? [{ type: 'text', text: userContent }]
+            : Array.isArray(userContent) ? userContent : [];
+          prev.content = [...prevParts, ...newParts];
         }
       } else {
-        messages.push({ role: 'user', content: m.content });
+        messages.push({ role: 'user', content: userContent });
       }
     }
 

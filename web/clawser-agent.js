@@ -476,12 +476,15 @@ export class AutonomyController {
   #level = 'supervised';
   #actionsThisHour = 0;
   #costTodayCents = 0;
+  #costThisMonthCents = 0;
   #hourStart = Date.now();
   #dayStart = AutonomyController.#startOfDay();
+  #monthStart = AutonomyController.#startOfMonth();
 
   // Configurable limits (Infinity = no limit)
   #maxActionsPerHour;
   #maxCostPerDayCents;
+  #maxCostPerMonthCents;
 
   // Time-of-day restrictions: array of {start: hour, end: hour}
   #allowedHours = [];
@@ -494,17 +497,26 @@ export class AutonomyController {
    * @param {'readonly'|'supervised'|'full'} [opts.level='supervised']
    * @param {number} [opts.maxActionsPerHour=Infinity]
    * @param {number} [opts.maxCostPerDayCents=Infinity]
+   * @param {number} [opts.maxCostPerMonthCents=Infinity]
    * @param {Array<{start: number, end: number}>} [opts.allowedHours=[]]
    */
   constructor(opts = {}) {
     if (opts.level && AUTONOMY_LEVELS.includes(opts.level)) this.#level = opts.level;
     this.#maxActionsPerHour = opts.maxActionsPerHour ?? Infinity;
     this.#maxCostPerDayCents = opts.maxCostPerDayCents ?? Infinity;
+    this.#maxCostPerMonthCents = opts.maxCostPerMonthCents ?? Infinity;
     if (Array.isArray(opts.allowedHours)) this.#allowedHours = opts.allowedHours;
   }
 
   static #startOfDay() {
     const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  }
+
+  static #startOfMonth() {
+    const d = new Date();
+    d.setDate(1);
     d.setHours(0, 0, 0, 0);
     return d.getTime();
   }
@@ -520,6 +532,9 @@ export class AutonomyController {
 
   get maxCostPerDayCents() { return this.#maxCostPerDayCents; }
   set maxCostPerDayCents(v) { this.#maxCostPerDayCents = v; }
+
+  get maxCostPerMonthCents() { return this.#maxCostPerMonthCents; }
+  set maxCostPerMonthCents(v) { this.#maxCostPerMonthCents = v; }
 
   /** @returns {Array<{start: number, end: number}>} */
   get allowedHours() { return this.#allowedHours; }
@@ -614,6 +629,13 @@ export class AutonomyController {
       this.#dayStart = AutonomyController.#startOfDay();
     }
 
+    // Reset monthly counter on month boundary
+    const currentMonthStart = AutonomyController.#startOfMonth();
+    if (currentMonthStart > this.#monthStart) {
+      this.#costThisMonthCents = 0;
+      this.#monthStart = currentMonthStart;
+    }
+
     if (this.#actionsThisHour >= this.#maxActionsPerHour) {
       const resetTime = 3_600_000 - (now - this.#hourStart);
       const minsUntilReset = Math.ceil(resetTime / 60_000);
@@ -636,6 +658,20 @@ export class AutonomyController {
         stats: this.stats,
       };
     }
+    if (this.#costThisMonthCents >= this.#maxCostPerMonthCents) {
+      const nextMonth = new Date();
+      nextMonth.setMonth(nextMonth.getMonth() + 1, 1);
+      nextMonth.setHours(0, 0, 0, 0);
+      const resetTime = nextMonth.getTime() - now;
+      const daysUntilReset = Math.ceil(resetTime / 86_400_000);
+      return {
+        blocked: true,
+        limitType: 'monthly_cost',
+        resetTime,
+        reason: `Monthly cost limit: $${(this.#maxCostPerMonthCents / 100).toFixed(2)}/month exceeded. Resets in ~${daysUntilReset}d.`,
+        stats: this.stats,
+      };
+    }
     return { blocked: false };
   }
 
@@ -643,7 +679,10 @@ export class AutonomyController {
   recordAction() { this.#actionsThisHour++; }
 
   /** Record cost in cents. @param {number} cents */
-  recordCost(cents) { this.#costTodayCents += cents; }
+  recordCost(cents) {
+    this.#costTodayCents += cents;
+    this.#costThisMonthCents += cents;
+  }
 
   /** Get current stats for UI display. */
   get stats() {
@@ -653,6 +692,8 @@ export class AutonomyController {
       maxActionsPerHour: this.#maxActionsPerHour,
       costTodayCents: this.#costTodayCents,
       maxCostPerDayCents: this.#maxCostPerDayCents,
+      costThisMonthCents: this.#costThisMonthCents,
+      maxCostPerMonthCents: this.#maxCostPerMonthCents,
       allowedHours: this.#allowedHours,
     };
   }
@@ -661,8 +702,10 @@ export class AutonomyController {
   reset() {
     this.#actionsThisHour = 0;
     this.#costTodayCents = 0;
+    this.#costThisMonthCents = 0;
     this.#hourStart = Date.now();
     this.#dayStart = AutonomyController.#startOfDay();
+    this.#monthStart = AutonomyController.#startOfMonth();
   }
 }
 
@@ -736,9 +779,14 @@ export class ClawserAgent {
   #metrics = null;
   /** @type {import('./clawser-metrics.js').RingBufferLog|null} */
   #log = null;
+  /** @type {import('./clawser-providers.js').CostLedger|null} */
+  #costLedger = null;
 
   // ── Workspace ────────────────────────────────────────────────
   #workspaceId = 'default';
+
+  // ── Idle timeout tracking ────────────────────────────────────
+  #lastActivityTs = Date.now();
 
   // ── Destroy flag ─────────────────────────────────────────────
   #destroyed = false;
@@ -845,6 +893,7 @@ export class ClawserAgent {
     if (opts.undoManager) agent.#undoManager = opts.undoManager;
     if (opts.metricsCollector) agent.#metrics = opts.metricsCollector;
     if (opts.ringBufferLog) agent.#log = opts.ringBufferLog;
+    if (opts.costLedger) agent.#costLedger = opts.costLedger;
     if (opts.maxResultLength != null) agent.#config.maxResultLength = opts.maxResultLength;
     agent.#onToolCall = opts.onToolCall || (() => {});
 
@@ -1082,6 +1131,7 @@ export class ClawserAgent {
     if (cfg.level) this.#autonomy.level = cfg.level;
     if (cfg.maxActionsPerHour != null) this.#autonomy.maxActionsPerHour = cfg.maxActionsPerHour;
     if (cfg.maxCostPerDayCents != null) this.#autonomy.maxCostPerDayCents = cfg.maxCostPerDayCents;
+    if (cfg.maxCostPerMonthCents != null) this.#autonomy.maxCostPerMonthCents = cfg.maxCostPerMonthCents;
     if (cfg.allowedHours != null) this.#autonomy.allowedHours = cfg.allowedHours;
   }
 
@@ -1224,152 +1274,224 @@ export class ClawserAgent {
   isToolExternal(name) { return true; }
 
   /**
+   * Execute a single tool call with all validation, hooks, safety, and autonomy checks.
+   * @param {{id: string, name: string, arguments: string|object}} call
+   * @returns {Promise<{id: string, name: string, result: object, args?: object, _undoPrev?: object}>}
+   */
+  async #executeSingleToolCall(call) {
+    let params;
+    try {
+      params = typeof call.arguments === 'string'
+        ? JSON.parse(call.arguments || '{}')
+        : call.arguments || {};
+    } catch {
+      const result = { success: false, output: '', error: `Invalid JSON in tool arguments: ${String(call.arguments).slice(0, 200)}` };
+      this.#onToolCall(call.name, {}, result);
+      return { id: call.id, name: call.name, result };
+    }
+
+    let result;
+
+    // Lifecycle hook: beforeToolCall
+    const hookResult = await this.#hooks.run('beforeToolCall', {
+      toolName: call.name,
+      args: params,
+      conversationId: null,
+    });
+    if (hookResult.blocked) {
+      result = { success: false, output: '', error: `Blocked by hook: ${hookResult.reason}` };
+      this.#onToolCall(call.name, params, result);
+      return { id: call.id, name: call.name, result };
+    }
+    // Hooks may modify args
+    if (hookResult.ctx.args !== params) {
+      params = hookResult.ctx.args;
+    }
+
+    // Safety: validate tool call arguments (MCP tools only — browser tools
+    // are validated inside BrowserToolRegistry.execute() to avoid double work)
+    const isBrowserTool = this.#browserTools?.has(call.name);
+    if (!isBrowserTool) {
+      const validation = this.#safety?.validateToolCall(call.name, params) ?? { valid: true, issues: [] };
+      if (!validation.valid) {
+        const msg = validation.issues[0]?.msg || 'Validation failed';
+        this.#eventLog.append('safety_tool_blocked', { tool: call.name, issues: validation.issues }, 'system');
+        this.#metrics?.increment('safety.tool_blocks');
+        result = { success: false, output: '', error: `Safety: ${msg}` };
+        this.#onToolCall(call.name, params, result);
+        return { id: call.id, name: call.name, result };
+      }
+    }
+
+    // Autonomy: check if tool is allowed at current level
+    const toolObj = this.#browserTools?.get(call.name);
+    const toolSpec = toolObj || { permission: 'network', name: call.name }; // MCP tools default to 'network' permission
+    if (!this.#autonomy.canExecuteTool(toolSpec, params)) {
+      result = { success: false, output: '', error: `Blocked: agent is in ${this.#autonomy.level} mode` };
+      this.#onToolCall(call.name, params, result);
+      return { id: call.id, name: call.name, result };
+    }
+
+    // Autonomy: check rate limits before each tool execution
+    const limitCheck = this.#autonomy.checkLimits();
+    if (limitCheck.blocked) {
+      result = { success: false, output: '', error: limitCheck.reason };
+      this.#onToolCall(call.name, params, result);
+      return { id: call.id, name: call.name, result };
+    }
+
+    // Undo: capture previous state before destructive ops
+    let _undoPrev = undefined;
+    if (this.#undoManager) {
+      try {
+        if (call.name === 'agent_memory_forget' && params.id) {
+          const entry = this.#memory?.get(params.id);
+          if (entry) _undoPrev = { key: entry.key, content: entry.content, category: entry.category };
+        } else if ((call.name === 'browser_fs_write' || call.name === 'browser_fs_delete') && params.path) {
+          const tool = this.#browserTools?.get('browser_fs_read');
+          if (tool) {
+            const prev = await tool.execute({ path: params.path }).catch(() => null);
+            if (prev?.success) _undoPrev = { previousContent: prev.output };
+          }
+        } else if (call.name === 'goal_update' && (params.goal_id || params.id)) {
+          const goalId = params.goal_id || params.id;
+          const goal = this.#goals.find(g => g.id === goalId);
+          if (goal) _undoPrev = { previousStatus: goal.status };
+        }
+      } catch { /* best-effort */ }
+    }
+
+    // Tool timeout wrapper
+    const _toolTimeout = this.#config.toolTimeout;
+
+    // 1. Check browser tools first
+    this.#metrics?.increment('tools.calls');
+    this.#metrics?.increment(`tools.by_name.${call.name}`);
+    if (this.#browserTools?.has(call.name)) {
+      this.#onToolCall(call.name, params, null);
+      if (_toolTimeout && _toolTimeout > 0) {
+        result = await Promise.race([
+          this.#browserTools.execute(call.name, params),
+          new Promise((_, rej) => setTimeout(() => rej(new Error(`Tool "${call.name}" timed out after ${_toolTimeout}ms`)), _toolTimeout)),
+        ]).catch(e => ({ success: false, output: '', error: e.message }));
+      } else {
+        result = await this.#browserTools.execute(call.name, params);
+      }
+      this.#autonomy.recordAction();
+      this.#onToolCall(call.name, params, result);
+    }
+    // 2. Check MCP tools
+    else if (this.#mcpManager?.findClient(call.name)) {
+      this.#onToolCall(call.name, params, null);
+      result = await this.#mcpManager.executeTool(call.name, params);
+      this.#autonomy.recordAction();
+      this.#onToolCall(call.name, params, result);
+    }
+    // 3. Unknown tool
+    else {
+      result = { success: false, output: '', error: `Tool not found: ${call.name}` };
+      this.#onToolCall(call.name, params, result);
+    }
+    if (result && !result.success) this.#metrics?.increment('tools.errors');
+
+    // Safety: scan tool output for leaked secrets (MCP tools only —
+    // browser tools are scanned inside BrowserToolRegistry.execute())
+    if (!isBrowserTool && result && result.output && this.#safety) {
+      const scanResult = this.#safety.scanOutput(result.output);
+      if (scanResult.blocked) {
+        this.#eventLog.append('safety_output_blocked', { tool: call.name, findings: scanResult.findings }, 'system');
+        this.#metrics?.increment('safety.output_blocks');
+        result = { success: false, output: '', error: 'Output blocked by safety pipeline (sensitive content detected)' };
+      } else if (scanResult.findings.length > 0) {
+        this.#eventLog.append('safety_output_redacted', { tool: call.name, findings: scanResult.findings }, 'system');
+        this.#metrics?.increment('safety.output_redactions');
+        result = { ...result, output: scanResult.content };
+      }
+    }
+
+    return { id: call.id, name: call.name, result, args: params, _undoPrev };
+  }
+
+  /**
+   * Check if a tool call is safe to execute in parallel (read-only / idempotent).
+   * @param {{name: string}} call
+   * @returns {boolean}
+   */
+  #isParallelSafe(call) {
+    const toolObj = this.#browserTools?.get(call.name);
+    if (!toolObj) return false; // MCP tools default to sequential for safety
+    return READ_PERMISSIONS.has(toolObj.permission);
+  }
+
+  /**
    * Route and execute tool calls to the appropriate handler.
+   * Read-only tools are executed in parallel; write/network tools run sequentially.
    * @param {Array<{id, name, arguments}>} toolCalls
    * @returns {Promise<Array<{id, name, result}>>}
    */
   async #executeToolCalls(toolCalls) {
-    const results = [];
-
-    for (const call of toolCalls) {
-      let params;
-      try {
-        params = typeof call.arguments === 'string'
-          ? JSON.parse(call.arguments || '{}')
-          : call.arguments || {};
-      } catch {
-        const result = { success: false, output: '', error: `Invalid JSON in tool arguments: ${String(call.arguments).slice(0, 200)}` };
-        this.#onToolCall(call.name, {}, result);
-        results.push({ id: call.id, name: call.name, result });
-        continue;
+    // Single tool call — no parallelization overhead
+    if (toolCalls.length <= 1) {
+      const results = [];
+      for (const call of toolCalls) {
+        results.push(await this.#executeSingleToolCall(call));
       }
-
-      let result;
-
-      // Lifecycle hook: beforeToolCall
-      const hookResult = await this.#hooks.run('beforeToolCall', {
-        toolName: call.name,
-        args: params,
-        conversationId: null,
-      });
-      if (hookResult.blocked) {
-        result = { success: false, output: '', error: `Blocked by hook: ${hookResult.reason}` };
-        this.#onToolCall(call.name, params, result);
-        results.push({ id: call.id, name: call.name, result });
-        continue;
-      }
-      // Hooks may modify args
-      if (hookResult.ctx.args !== params) {
-        params = hookResult.ctx.args;
-      }
-
-      // Safety: validate tool call arguments (MCP tools only — browser tools
-      // are validated inside BrowserToolRegistry.execute() to avoid double work)
-      const isBrowserTool = this.#browserTools?.has(call.name);
-      if (!isBrowserTool) {
-        const validation = this.#safety?.validateToolCall(call.name, params) ?? { valid: true, issues: [] };
-        if (!validation.valid) {
-          const msg = validation.issues[0]?.msg || 'Validation failed';
-          this.#eventLog.append('safety_tool_blocked', { tool: call.name, issues: validation.issues }, 'system');
-          this.#metrics?.increment('safety.tool_blocks');
-          result = { success: false, output: '', error: `Safety: ${msg}` };
-          this.#onToolCall(call.name, params, result);
-          results.push({ id: call.id, name: call.name, result });
-          continue;
-        }
-      }
-
-      // Autonomy: check if tool is allowed at current level
-      const toolObj = this.#browserTools?.get(call.name);
-      const toolSpec = toolObj || { permission: 'network', name: call.name }; // MCP tools default to 'network' permission
-      if (!this.#autonomy.canExecuteTool(toolSpec, params)) {
-        result = { success: false, output: '', error: `Blocked: agent is in ${this.#autonomy.level} mode` };
-        this.#onToolCall(call.name, params, result);
-        results.push({ id: call.id, name: call.name, result });
-        continue;
-      }
-
-      // Autonomy: check rate limits before each tool execution
-      const limitCheck = this.#autonomy.checkLimits();
-      if (limitCheck.blocked) {
-        result = { success: false, output: '', error: limitCheck.reason };
-        this.#onToolCall(call.name, params, result);
-        results.push({ id: call.id, name: call.name, result });
-        continue;
-      }
-
-      // Undo: capture previous state before destructive ops
-      let _undoPrev = undefined;
-      if (this.#undoManager) {
-        try {
-          if (call.name === 'agent_memory_forget' && params.id) {
-            const entry = this.#memory?.get(params.id);
-            if (entry) _undoPrev = { key: entry.key, content: entry.content, category: entry.category };
-          } else if ((call.name === 'browser_fs_write' || call.name === 'browser_fs_delete') && params.path) {
-            const tool = this.#browserTools?.get('browser_fs_read');
-            if (tool) {
-              const prev = await tool.execute({ path: params.path }).catch(() => null);
-              if (prev?.success) _undoPrev = { previousContent: prev.output };
-            }
-          } else if (call.name === 'goal_update' && (params.goal_id || params.id)) {
-            const goalId = params.goal_id || params.id;
-            const goal = this.#goals.find(g => g.id === goalId);
-            if (goal) _undoPrev = { previousStatus: goal.status };
-          }
-        } catch { /* best-effort */ }
-      }
-
-      // Tool timeout wrapper
-      const _toolTimeout = this.#config.toolTimeout;
-
-      // 1. Check browser tools first
-      this.#metrics?.increment('tools.calls');
-      this.#metrics?.increment(`tools.by_name.${call.name}`);
-      if (this.#browserTools?.has(call.name)) {
-        this.#onToolCall(call.name, params, null);
-        if (_toolTimeout && _toolTimeout > 0) {
-          result = await Promise.race([
-            this.#browserTools.execute(call.name, params),
-            new Promise((_, rej) => setTimeout(() => rej(new Error(`Tool "${call.name}" timed out after ${_toolTimeout}ms`)), _toolTimeout)),
-          ]).catch(e => ({ success: false, output: '', error: e.message }));
-        } else {
-          result = await this.#browserTools.execute(call.name, params);
-        }
-        this.#autonomy.recordAction();
-        this.#onToolCall(call.name, params, result);
-      }
-      // 2. Check MCP tools
-      else if (this.#mcpManager?.findClient(call.name)) {
-        this.#onToolCall(call.name, params, null);
-        result = await this.#mcpManager.executeTool(call.name, params);
-        this.#autonomy.recordAction();
-        this.#onToolCall(call.name, params, result);
-      }
-      // 3. Unknown tool
-      else {
-        result = { success: false, output: '', error: `Tool not found: ${call.name}` };
-        this.#onToolCall(call.name, params, result);
-      }
-      if (result && !result.success) this.#metrics?.increment('tools.errors');
-
-      // Safety: scan tool output for leaked secrets (MCP tools only —
-      // browser tools are scanned inside BrowserToolRegistry.execute())
-      if (!isBrowserTool && result && result.output && this.#safety) {
-        const scanResult = this.#safety.scanOutput(result.output);
-        if (scanResult.blocked) {
-          this.#eventLog.append('safety_output_blocked', { tool: call.name, findings: scanResult.findings }, 'system');
-          this.#metrics?.increment('safety.output_blocks');
-          result = { success: false, output: '', error: 'Output blocked by safety pipeline (sensitive content detected)' };
-        } else if (scanResult.findings.length > 0) {
-          this.#eventLog.append('safety_output_redacted', { tool: call.name, findings: scanResult.findings }, 'system');
-          this.#metrics?.increment('safety.output_redactions');
-          result = { ...result, output: scanResult.content };
-        }
-      }
-
-      results.push({ id: call.id, name: call.name, result, args: params, _undoPrev });
+      return results;
     }
 
+    // Partition into parallel-safe (read-only) and sequential (write/network)
+    const allParallel = toolCalls.every(c => this.#isParallelSafe(c));
+    const noneParallel = toolCalls.every(c => !this.#isParallelSafe(c));
+
+    // Fast path: all same type
+    if (allParallel) {
+      const settled = await Promise.allSettled(
+        toolCalls.map(call => this.#executeSingleToolCall(call))
+      );
+      return settled.map((s, i) =>
+        s.status === 'fulfilled' ? s.value : {
+          id: toolCalls[i].id, name: toolCalls[i].name,
+          result: { success: false, output: '', error: s.reason?.message || 'Parallel execution failed' },
+        }
+      );
+    }
+
+    if (noneParallel) {
+      const results = [];
+      for (const call of toolCalls) {
+        results.push(await this.#executeSingleToolCall(call));
+      }
+      return results;
+    }
+
+    // Mixed: collect contiguous read-only runs and execute them in parallel,
+    // execute write tools sequentially in order
+    const results = new Array(toolCalls.length);
+    let i = 0;
+    while (i < toolCalls.length) {
+      if (this.#isParallelSafe(toolCalls[i])) {
+        // Collect contiguous parallel-safe calls
+        const batch = [];
+        const indices = [];
+        while (i < toolCalls.length && this.#isParallelSafe(toolCalls[i])) {
+          batch.push(toolCalls[i]);
+          indices.push(i);
+          i++;
+        }
+        const settled = await Promise.allSettled(
+          batch.map(call => this.#executeSingleToolCall(call))
+        );
+        for (let j = 0; j < settled.length; j++) {
+          results[indices[j]] = settled[j].status === 'fulfilled' ? settled[j].value : {
+            id: batch[j].id, name: batch[j].name,
+            result: { success: false, output: '', error: settled[j].reason?.message || 'Parallel execution failed' },
+          };
+        }
+      } else {
+        results[i] = await this.#executeSingleToolCall(toolCalls[i]);
+        i++;
+      }
+    }
     return results;
   }
 
@@ -1518,6 +1640,10 @@ export class ClawserAgent {
     this.#metrics?.increment('agent.runs');
     const _runStart = Date.now();
 
+    // Idle timeout: auto-compact context if resuming after idle period
+    await this.#checkIdleTimeout(_runStart);
+    this.#lastActivityTs = _runStart;
+
     // Autonomy: check limits before starting
     const limitsCheck = this.#autonomy.checkLimits();
     if (limitsCheck.blocked) {
@@ -1665,6 +1791,7 @@ export class ClawserAgent {
         const { estimateCost } = await getProvidersModule();
         const cost = estimateCost(response.model, response.usage);
         this.#autonomy.recordCost(Math.round(cost * 100));
+        this.#costLedger?.record({ model: response.model, provider: this.#activeProvider, inputTokens: response.usage.input_tokens || 0, outputTokens: response.usage.output_tokens || 0, costUsd: cost });
         this.#metrics?.observe('llm.cost_cents', cost * 100);
         // Step 26: Emit kernel trace event for cost tracking
         if (this._kernelIntegration) {
@@ -1833,6 +1960,10 @@ export class ClawserAgent {
     this.#metrics?.increment('agent.runs');
     const _runStart = Date.now();
 
+    // Idle timeout: auto-compact context if resuming after idle period
+    await this.#checkIdleTimeout(_runStart);
+    this.#lastActivityTs = _runStart;
+
     // Autonomy: check limits before starting
     const limitsCheck = this.#autonomy.checkLimits();
     if (limitsCheck.blocked) {
@@ -1989,6 +2120,7 @@ export class ClawserAgent {
             const { estimateCost } = await getProvidersModule();
             const cost = estimateCost(response.model, response.usage);
             this.#autonomy.recordCost(Math.round(cost * 100));
+            this.#costLedger?.record({ model: response.model, provider: this.#activeProvider, inputTokens: response.usage.input_tokens || 0, outputTokens: response.usage.output_tokens || 0, costUsd: cost });
             this.#metrics?.observe('llm.cost_cents', cost * 100);
           } catch { /* best-effort */ }
         }
@@ -2190,6 +2322,7 @@ export class ClawserAgent {
           const { estimateCost } = await getProvidersModule();
           const cost = estimateCost(fullResponse.model, fullResponse.usage);
           this.#autonomy.recordCost(Math.round(cost * 100));
+          this.#costLedger?.record({ model: fullResponse.model, provider: this.#activeProvider, inputTokens: fullResponse.usage.input_tokens || 0, outputTokens: fullResponse.usage.output_tokens || 0, costUsd: cost });
           this.#metrics?.observe('llm.cost_cents', cost * 100);
         } catch { /* best-effort */ }
       }
@@ -2354,6 +2487,36 @@ export class ClawserAgent {
       }
     }
     return total;
+  }
+
+  /**
+   * Check if the agent has been idle beyond the configured timeout.
+   * If so, auto-compact context to free up space for the new interaction.
+   * @param {number} now - Current timestamp in milliseconds
+   * @returns {Promise<void>}
+   */
+  async #checkIdleTimeout(now) {
+    const timeout = this.#config.idleTimeoutMs;
+    if (!timeout || timeout <= 0) return;
+    const elapsed = now - this.#lastActivityTs;
+    if (elapsed > timeout) {
+      this.#eventLog.append('idle_resume', { idleMs: elapsed, timeoutMs: timeout }, 'system');
+      this.#onLog(2, `[idle] Resuming after ${Math.round(elapsed / 60000)}min idle — compacting context`);
+      await this.compactContext();
+    }
+  }
+
+  /** @returns {import('./clawser-providers.js').CostLedger|null} */
+  get costLedger() { return this.#costLedger; }
+
+  /** @returns {number} Milliseconds since last run() or runStream() call. */
+  getIdleTime() {
+    return Date.now() - this.#lastActivityTs;
+  }
+
+  /** @returns {number} Timestamp of last activity. */
+  get lastActivityTs() {
+    return this.#lastActivityTs;
   }
 
   /**

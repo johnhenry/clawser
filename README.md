@@ -32,11 +32,14 @@ Clawser is a pure JavaScript agent platform that runs entirely in the browser. I
 - **Multi-Provider LLM Support** — 3-tier provider system: built-in (OpenAI, Anthropic, Chrome AI, Echo), OpenAI-compatible (Groq, OpenRouter, Together, Fireworks, Mistral, DeepSeek, xAI, Perplexity, Ollama, LM Studio), and ai.matey (24+ backends via CDN)
 - **Dual Tool Calling** — Native structured tool_calls for OpenAI/Anthropic/Groq, code-based execution via Codex for Chrome AI and non-native providers
 - **Streaming** — Progressive token rendering with async generator-based streaming and blinking cursor animation. Falls back to non-streaming for unsupported providers
+- **Vision / Multimodal** — Image input support via content part arrays for OpenAI and Anthropic providers with cross-format normalization
+- **Parallel Tool Execution** — Read-only tools execute concurrently via `Promise.allSettled()`; write tools remain sequential
 - **Context Compaction** — Automatic context window management via LLM-based summarization with truncation fallback. Auto-triggers at ~12K tokens
+- **Session Idle Timeout** — Configurable idle detection with automatic context compaction on resume
 - **Event-Sourced Persistence** — Full conversation history stored as append-only JSONL in OPFS. Fork, replay, export, and reconstruct any conversation
 - **Checkpoint / Restore** — Agent state checkpointed to OPFS with 3-level fallback hierarchy (v2 OPFS dir, v1 OPFS file, v0 binary)
 - **Response Caching** — LRU cache (500 entries, 30-minute TTL) to avoid redundant API calls
-- **Cost Tracking** — Per-model pricing table with `estimateCost()`, session cost meter, and per-conversation cost display
+- **Cost Tracking** — Per-model pricing table with `estimateCost()`, CostLedger with per-model/provider breakdowns, session cost meter, and per-conversation cost display
 - **Error Classification** — 9 error categories with retryability flags for intelligent error handling
 
 ![Configuration — Provider selection, system prompt, and agent state](docs/screenshots/09-config.png)
@@ -66,7 +69,7 @@ Clawser is a pure JavaScript agent platform that runs entirely in the browser. I
 
 ### Autonomy & Safety
 
-- **Autonomy Controls** — Three levels (readonly, supervised, full) with configurable per-hour rate limits and per-day cost limits
+- **Autonomy Controls** — Three levels (readonly, supervised, full) with configurable per-hour rate limits, per-day cost limits, and per-month cost limits
 - **Hook Pipeline** — 6 lifecycle interception points (pre-send, post-send, pre-tool, post-tool, pre-response, post-response)
 - **Safety / Sanitization** — Input sanitization and output scanning to detect and prevent unsafe content
 - **Permission System** — Per-tool permissions (auto, approve, denied) persisted per-workspace in localStorage
@@ -309,13 +312,13 @@ Clawser is built as a set of ES modules with no bundler, no build step, and no n
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for a detailed breakdown.
 
-## Module Map (57 modules, ~31K LOC)
+## Module Map (~148 modules, ~65K LOC)
 
 ### Core Agent
 | Module | LOC | Purpose |
 |--------|-----|---------|
-| `clawser-agent.js` | 2,447 | Agent core: EventLog, HookPipeline, AutonomyController, run/stream loop |
-| `clawser-providers.js` | 1,474 | LLM providers, SSE readers, cost tracking, response cache |
+| `clawser-agent.js` | 3,742 | Agent core: EventLog, HookPipeline, AutonomyController, run/stream loop, parallel tools, idle timeout |
+| `clawser-providers.js` | 1,868 | LLM providers, SSE readers, cost tracking, response cache, CostLedger, vision support |
 | `clawser-codex.js` | 292 | Code execution sandbox via andbox/vimble (30s timeout) |
 | `clawser-agent-ref.js` | 216 | @agent sub-conversation dispatch with recursion guard |
 | `clawser-agent-storage.js` | 395 | Agent definition CRUD, 5 built-in agents, OPFS persistence |
@@ -468,14 +471,20 @@ Schedule tasks with three types:
 
 ## Project Status
 
-Clawser is in **beta**. The core agent, tool system, provider layer, and persistence are production-complete. See [ROADMAP.md](ROADMAP.md) for planned work and [GAPS.md](GAPS.md) for known issues.
+Clawser is in **beta**. All major subsystems are implemented: core agent, ~100 tools, 38+ providers, mesh networking (31 modules), 7 channel adapters, microkernel, hardware support, vision/multimodal, parallel tool execution, cost management (daily + monthly limits + CostLedger), and session idle timeout. See [ROADMAP.md](ROADMAP.md) for planned work and [GAPS.md](GAPS.md) for known issues.
 
 ## Development
 
 No build step required. Edit JS files in `web/` and reload the browser.
 
 **Running tests:**
-Open `web/test.html` in Chrome to run the regression test suite (57 modules, 11K LOC browser-based).
+```bash
+npm test              # All 142+ test files (1830+ tests)
+npm run test:fast     # Core + channels (97 files)
+npm run test:core     # Agent, tools, providers, shell (89 files)
+npm run test:mesh     # Mesh networking (31 files)
+npm run test:changed  # Only files with git changes
+```
 
 **Running benchmarks:**
 Open `web/bench.html` for micro-benchmarks (Codex extraction, EventLog, provider lookups, memory compaction).

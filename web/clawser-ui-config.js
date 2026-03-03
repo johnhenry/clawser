@@ -48,6 +48,8 @@ export function renderAutonomySection() {
   }
   if (saved.maxActions) $('cfgMaxActions').value = saved.maxActions;
   if (saved.dailyCostLimit != null) $('cfgDailyCostLimit').value = saved.dailyCostLimit;
+  if (saved.monthlyCostLimit != null && $('cfgMonthlyCostLimit')) $('cfgMonthlyCostLimit').value = saved.monthlyCostLimit;
+  if (saved.idleTimeoutMin != null && $('cfgIdleTimeout')) $('cfgIdleTimeout').value = saved.idleTimeoutMin;
   // Restore allowed hours
   if ($('cfgAllowedHoursStart') && saved.allowedHoursStart != null) $('cfgAllowedHoursStart').value = saved.allowedHoursStart;
   if ($('cfgAllowedHoursEnd') && saved.allowedHoursEnd != null) $('cfgAllowedHoursEnd').value = saved.allowedHoursEnd;
@@ -58,8 +60,13 @@ export function renderAutonomySection() {
       level: saved.level || 'supervised',
       maxActionsPerHour: parseInt(saved.maxActions) || Infinity,
       maxCostPerDayCents: saved.dailyCostLimit ? Math.round(parseFloat(saved.dailyCostLimit) * 100) : Infinity,
+      maxCostPerMonthCents: saved.monthlyCostLimit ? Math.round(parseFloat(saved.monthlyCostLimit) * 100) : Infinity,
       allowedHours,
     });
+    // Apply idle timeout
+    if (saved.idleTimeoutMin != null) {
+      state.agent.init({ idleTimeoutMs: parseFloat(saved.idleTimeoutMin) * 60000 || 0 });
+    }
   }
   // Render preset dropdown
   renderAutonomyPresets(wsId);
@@ -82,18 +89,25 @@ export function saveAutonomySettings() {
   const level = document.querySelector('input[name="autonomyLevel"]:checked')?.value || 'supervised';
   const maxActions = parseInt($('cfgMaxActions').value) || 100;
   const dailyCostLimit = parseFloat($('cfgDailyCostLimit').value) || 5;
+  const monthlyCostLimit = parseFloat($('cfgMonthlyCostLimit')?.value || '') || 0;
+  const idleTimeoutMin = parseFloat($('cfgIdleTimeout')?.value || '') || 0;
   const allowedHoursStart = $('cfgAllowedHoursStart')?.value || '';
   const allowedHoursEnd = $('cfgAllowedHoursEnd')?.value || '';
   const allowedHours = parseAllowedHoursFromUI({ allowedHoursStart, allowedHoursEnd });
-  localStorage.setItem(lsKey.autonomy(wsId), JSON.stringify({ level, maxActions, dailyCostLimit, allowedHoursStart, allowedHoursEnd }));
+  localStorage.setItem(lsKey.autonomy(wsId), JSON.stringify({ level, maxActions, dailyCostLimit, monthlyCostLimit, idleTimeoutMin, allowedHoursStart, allowedHoursEnd }));
   // Apply live to agent's AutonomyController
   if (state.agent) {
     state.agent.applyAutonomyConfig({
       level,
       maxActionsPerHour: parseInt(maxActions) || Infinity,
       maxCostPerDayCents: dailyCostLimit ? Math.round(parseFloat(dailyCostLimit) * 100) : Infinity,
+      maxCostPerMonthCents: monthlyCostLimit ? Math.round(parseFloat(monthlyCostLimit) * 100) : Infinity,
       allowedHours,
     });
+    // Apply idle timeout
+    if (idleTimeoutMin > 0) {
+      state.agent.init({ idleTimeoutMs: idleTimeoutMin * 60000 });
+    }
   }
   updateCostMeter();
   updateAutonomyBadge();
@@ -122,6 +136,7 @@ function renderAutonomyPresets(wsId) {
       if (radio) radio.checked = true;
       if ($('cfgMaxActions')) $('cfgMaxActions').value = s.maxActionsPerHour === Infinity ? '' : s.maxActionsPerHour;
       if ($('cfgDailyCostLimit')) $('cfgDailyCostLimit').value = s.maxCostPerDayCents === Infinity ? '' : (s.maxCostPerDayCents / 100);
+      if ($('cfgMonthlyCostLimit')) $('cfgMonthlyCostLimit').value = s.maxCostPerMonthCents === Infinity ? '' : (s.maxCostPerMonthCents / 100);
       if (s.allowedHours?.[0]) {
         if ($('cfgAllowedHoursStart')) $('cfgAllowedHoursStart').value = s.allowedHours[0].start;
         if ($('cfgAllowedHoursEnd')) $('cfgAllowedHoursEnd').value = s.allowedHours[0].end;
