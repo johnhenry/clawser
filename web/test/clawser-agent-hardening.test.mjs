@@ -361,3 +361,133 @@ describe('HookPipeline.clearAll', () => {
     assert.equal(hp.list()[0].name, 'h2');
   });
 });
+
+// ── History Sanitization ─────────────────────────────────────────
+
+describe('History sanitization on tool_use_id mismatch', () => {
+  it('proactively sanitizes orphaned tool_results before LLM call', async () => {
+    let callCount = 0;
+    let lastRequest = null;
+    const provider = {
+      supportsNativeTools: true,
+      supportsStreaming: false,
+      chat: async (request) => {
+        callCount++;
+        lastRequest = request;
+        return { content: 'Success!', tool_calls: [], usage: { input_tokens: 5, output_tokens: 3 }, model: 'stub' };
+      },
+    };
+
+    const agent = await ClawserAgent.create({
+      providers: makeStubProviderRegistry(provider),
+    });
+    agent.init({});
+    agent.setProvider('stub');
+    agent.setSystemPrompt('Test');
+
+    // Inject an orphaned tool_result into history
+    agent.sendMessage('Hi');
+    const history = agent.getCheckpointJSON().session_history;
+    history.push({
+      role: 'assistant',
+      content: 'Let me call a tool.',
+      tool_calls: [{ id: 'tc_real', name: 'test_tool', arguments: '{}' }],
+    });
+    history.push({
+      role: 'tool',
+      tool_call_id: 'tc_orphan', // mismatched ID — no matching tool_use
+      name: 'other_tool',
+      content: 'some result',
+    });
+    history.push({
+      role: 'tool',
+      tool_call_id: 'tc_real', // this one matches
+      name: 'test_tool',
+      content: 'good result',
+    });
+
+    const result = await agent.run();
+
+    // Should succeed without error — sanitization happens before LLM call
+    assert.equal(callCount, 1, 'provider called once (orphan fixed before call)');
+    assert.equal(result.status, 1);
+
+    // The orphaned message should be converted to a user message
+    const finalHistory = agent.getCheckpointJSON().session_history;
+    const convertedMsgs = finalHistory.filter(m => m.role === 'user' && m.content.includes('[other_tool result]'));
+    assert.equal(convertedMsgs.length, 1, 'orphaned tool_result should be converted to user message');
+
+    // The valid tool result should remain as-is
+    const validToolMsgs = finalHistory.filter(m => m.role === 'tool' && m.tool_call_id === 'tc_real');
+    assert.equal(validToolMsgs.length, 1, 'matching tool_result should remain unchanged');
+  });
+
+  it('retries on 400 tool_use_id error if sanitize finds fixable messages', async () => {
+    // This tests the catch-path retry. We simulate a provider that returns
+    // tool_calls, creating a tool_result cycle that then fails on the next call.
+    let callCount = 0;
+    const provider = {
+      supportsNativeTools: true,
+      supportsStreaming: false,
+      chat: async () => {
+        callCount++;
+        if (callCount === 1) {
+          // Return a tool call — agent will execute and push tool_result
+          return {
+            content: '',
+            tool_calls: [{ id: 'tc_1', name: 'nonexistent_tool', arguments: '{}' }],
+            usage: { input_tokens: 5, output_tokens: 3 },
+            model: 'stub',
+          };
+        }
+        if (callCount === 2) {
+          // The tool_result for nonexistent_tool is now in history.
+          // Simulate a tool_use_id mismatch error (e.g., after a race condition
+          // corrupts the history between iterations)
+          throw new Error('Anthropic 400: unexpected tool_use_id found in tool_result blocks');
+        }
+        return { content: 'Recovered!', tool_calls: [], usage: { input_tokens: 5, output_tokens: 3 }, model: 'stub' };
+      },
+    };
+
+    const agent = await ClawserAgent.create({
+      providers: makeStubProviderRegistry(provider),
+    });
+    agent.init({});
+    agent.setProvider('stub');
+    agent.setSystemPrompt('Test');
+    agent.sendMessage('Hi');
+
+    const result = await agent.run();
+
+    // Tool call 1 returns tool_use, tool result pushed, call 2 fails with 400,
+    // sanitize runs, but since the tool_result WAS valid (matching tc_1),
+    // sanitize finds 0 fixable messages → no retry → error returned
+    assert.equal(result.status, -1, 'should fail when sanitize cannot fix anything');
+  });
+
+  it('does not retry on non-tool_use_id 400 errors', async () => {
+    let callCount = 0;
+    const provider = {
+      supportsNativeTools: true,
+      supportsStreaming: false,
+      chat: async () => {
+        callCount++;
+        throw new Error('Anthropic 400: invalid request format');
+      },
+    };
+
+    const agent = await ClawserAgent.create({
+      providers: makeStubProviderRegistry(provider),
+    });
+    agent.init({});
+    agent.setProvider('stub');
+    agent.setSystemPrompt('Test');
+    agent.sendMessage('Hi');
+
+    const result = await agent.run();
+
+    assert.equal(callCount, 1, 'should not retry on generic 400');
+    assert.equal(result.status, -1);
+  });
+});

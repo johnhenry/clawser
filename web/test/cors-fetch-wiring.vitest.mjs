@@ -1,15 +1,6 @@
-// Run with: node --import ./web/test/_setup-globals.mjs --test web/test/clawser-cors-fetch.test.mjs
-import { describe, it, beforeEach } from 'node:test';
-import assert from 'node:assert/strict';
-
-// ── Polyfills ────────────────────────────────────────────────────
-if (typeof globalThis.window === 'undefined') {
-  globalThis.window = {
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    postMessage: () => {},
-  };
-}
+// CORS Fetch wiring tests — validates the extension proxy fallback pipeline.
+// Covers: ExtCorsFetchTool, corsFetchFallback, setCorsFetchClient
+import { describe, it, expect, beforeEach } from 'vitest';
 
 const mod = await import('../clawser-cors-fetch.js');
 const { ExtCorsFetchTool, corsFetchFallback, setCorsFetchClient } = mod;
@@ -33,50 +24,53 @@ function makeMockRpc(overrides = {}) {
 describe('ExtCorsFetchTool', () => {
   it('has name ext_cors_fetch', () => {
     const tool = new ExtCorsFetchTool(makeMockRpc());
-    assert.equal(tool.name, 'ext_cors_fetch');
+    expect(tool.name).toBe('ext_cors_fetch');
   });
 
   it('has network permission', () => {
     const tool = new ExtCorsFetchTool(makeMockRpc());
-    assert.equal(tool.permission, 'network');
+    expect(tool.permission).toBe('network');
   });
 
-  it('has a description', () => {
+  it('has a non-empty description', () => {
     const tool = new ExtCorsFetchTool(makeMockRpc());
-    assert.ok(tool.description.length > 0);
+    expect(tool.description.length).toBeGreaterThan(0);
   });
 
   it('execute succeeds with connected rpc', async () => {
     const tool = new ExtCorsFetchTool(makeMockRpc());
     const result = await tool.execute({ url: 'https://example.com' });
-    assert.equal(result.success, true);
-    assert.ok(result.output.includes('200'));
+    expect(result.success).toBe(true);
+    expect(result.output).toContain('200');
   });
 
   it('execute fails when rpc not connected', async () => {
     const tool = new ExtCorsFetchTool(makeMockRpc({ connected: false }));
     const result = await tool.execute({ url: 'https://example.com' });
-    assert.equal(result.success, false);
-    assert.ok(result.error.includes('not connected'));
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('not connected');
   });
 
   it('execute fails when url missing', async () => {
     const tool = new ExtCorsFetchTool(makeMockRpc());
     const result = await tool.execute({});
-    assert.equal(result.success, false);
-    assert.ok(result.error.includes('url'));
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('url');
   });
 
   it('passes method and headers to rpc', async () => {
     let captured;
     const rpc = makeMockRpc({
-      call: async (action, params) => { captured = { action, params }; return { status: 200, body: '' }; },
+      call: async (action, params) => {
+        captured = { action, params };
+        return { status: 200, body: '' };
+      },
     });
     const tool = new ExtCorsFetchTool(rpc);
     await tool.execute({ url: 'https://example.com', method: 'POST', headers: { 'X-Custom': '1' } });
-    assert.equal(captured.action, 'cors_fetch');
-    assert.equal(captured.params.method, 'POST');
-    assert.deepStrictEqual(captured.params.headers, { 'X-Custom': '1' });
+    expect(captured.action).toBe('cors_fetch');
+    expect(captured.params.method).toBe('POST');
+    expect(captured.params.headers).toEqual({ 'X-Custom': '1' });
   });
 });
 
@@ -84,23 +78,18 @@ describe('ExtCorsFetchTool', () => {
 
 describe('corsFetchFallback', () => {
   beforeEach(() => {
-    // Reset client to null before each test
     setCorsFetchClient(null);
-  });
-
-  it('is a function', () => {
-    assert.equal(typeof corsFetchFallback, 'function');
   });
 
   it('returns null when no client set', async () => {
     const result = await corsFetchFallback('https://example.com', {});
-    assert.equal(result, null);
+    expect(result).toBeNull();
   });
 
   it('returns null when client not connected', async () => {
     setCorsFetchClient({ connected: false, call: async () => {} });
     const result = await corsFetchFallback('https://example.com', {});
-    assert.equal(result, null);
+    expect(result).toBeNull();
   });
 
   it('calls client.call with correct args when connected', async () => {
@@ -112,14 +101,18 @@ describe('corsFetchFallback', () => {
         return { status: 200, headers: {}, body: 'ok' };
       },
     });
-    const result = await corsFetchFallback('https://example.com/path', { method: 'POST', headers: { 'X-Foo': 'bar' }, body: 'data' });
-    assert.equal(captured.action, 'cors_fetch');
-    assert.equal(captured.params.url, 'https://example.com/path');
-    assert.equal(captured.params.method, 'POST');
-    assert.deepStrictEqual(captured.params.headers, { 'X-Foo': 'bar' });
-    assert.equal(captured.params.body, 'data');
-    assert.equal(result.status, 200);
-    assert.equal(result.body, 'ok');
+    const result = await corsFetchFallback('https://example.com/path', {
+      method: 'POST',
+      headers: { 'X-Foo': 'bar' },
+      body: 'data',
+    });
+    expect(captured.action).toBe('cors_fetch');
+    expect(captured.params.url).toBe('https://example.com/path');
+    expect(captured.params.method).toBe('POST');
+    expect(captured.params.headers).toEqual({ 'X-Foo': 'bar' });
+    expect(captured.params.body).toBe('data');
+    expect(result.status).toBe(200);
+    expect(result.body).toBe('ok');
   });
 
   it('returns null when client.call throws', async () => {
@@ -128,17 +121,13 @@ describe('corsFetchFallback', () => {
       call: async () => { throw new Error('network failure'); },
     });
     const result = await corsFetchFallback('https://example.com');
-    assert.equal(result, null);
+    expect(result).toBeNull();
   });
 });
 
 // ── 3. setCorsFetchClient ────────────────────────────────────────
 
 describe('setCorsFetchClient', () => {
-  it('is a function', () => {
-    assert.equal(typeof setCorsFetchClient, 'function');
-  });
-
   it('sets the singleton so corsFetchFallback uses it', async () => {
     let called = false;
     setCorsFetchClient({
@@ -146,8 +135,17 @@ describe('setCorsFetchClient', () => {
       call: async () => { called = true; return { status: 200, headers: {}, body: '' }; },
     });
     await corsFetchFallback('https://example.com');
-    assert.equal(called, true);
-    // Clean up
+    expect(called).toBe(true);
     setCorsFetchClient(null);
+  });
+
+  it('can be reset to null', async () => {
+    setCorsFetchClient({
+      connected: true,
+      call: async () => ({ status: 200, headers: {}, body: '' }),
+    });
+    setCorsFetchClient(null);
+    const result = await corsFetchFallback('https://example.com');
+    expect(result).toBeNull();
   });
 });

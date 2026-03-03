@@ -87,6 +87,11 @@ function autoAwait(code) {
     if (inString(offset)) return match;
     return p1 + 'await ' + p2;
   });
+  // await before snake_case aliases (fs_write, fs_read, shell, dom_query, etc.)
+  code = code.replace(/(^|;\s*)(?!await\s)((?:fs_\w+|shell|dom_\w+|web_search|screenshot|zoom)\s*\()/gm, (match, p1, p2, offset) => {
+    if (inString(offset)) return match;
+    return p1 + 'await ' + p2;
+  });
   return code;
 }
 
@@ -200,12 +205,21 @@ export class Codex {
     }
 
     // Short aliases: browser_fetch → fetch, browser_fs_read → fsRead, etc.
+    // Also snake_case aliases for small models (Chrome AI): browser_fs_write → fs_write
+    const declared = new Set(tools.names());
     for (const name of tools.names()) {
       if (name.startsWith('browser_')) {
-        const short = name.slice(8).replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+        const camel = name.slice(8).replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+        const snake = name.slice(8); // e.g. "fs_write"
         // Don't shadow fetch with browser_fetch alias
-        if (short !== 'fetch') {
-          lines.push(`const ${short} = ${name};`);
+        if (camel !== 'fetch') {
+          lines.push(`const ${camel} = ${name};`);
+          declared.add(camel);
+        }
+        // Snake_case alias (e.g. fs_write, fs_read, shell, dom_query)
+        if (snake !== 'fetch' && !declared.has(snake)) {
+          lines.push(`const ${snake} = ${name};`);
+          declared.add(snake);
         }
       }
     }

@@ -13,6 +13,16 @@
 
 import { opfsWalk, opfsWalkDir } from './clawser-opfs.js';
 
+// Lazy import to avoid circular dependency (clawser-cors-fetch.js extends BrowserTool)
+let _corsFetchFallback = null;
+async function getCorsFetchFallback() {
+  if (!_corsFetchFallback) {
+    const mod = await import('./clawser-cors-fetch.js');
+    _corsFetchFallback = mod.corsFetchFallback;
+  }
+  return _corsFetchFallback;
+}
+
 // ── WorkspaceFs — scopes OPFS paths to workspace home ────────────
 
 export class WorkspaceFs {
@@ -343,6 +353,22 @@ export class FetchTool extends BrowserTool {
       }
     } catch { /* server manager not initialized yet — fall through to normal fetch */ }
 
+    // Cross-origin: try extension proxy first to avoid CORS console errors
+    const isCrossOrigin = typeof location !== 'undefined' && parsed.origin !== location.origin;
+    if (isCrossOrigin) {
+      const fallback = await getCorsFetchFallback();
+      const extResp = await fallback(url, { method, headers, body });
+      if (extResp) {
+        const output = JSON.stringify({
+          status: extResp.status,
+          headers: extResp.headers || {},
+          body: (extResp.body || '').length > 50000
+            ? extResp.body.slice(0, 50000) + '\n... (truncated)' : extResp.body,
+        });
+        return { success: extResp.status >= 200 && extResp.status < 400, output };
+      }
+    }
+
     const opts = { method, headers, redirect: 'manual' };
     if (body && method !== 'GET') opts.body = body;
 
@@ -522,10 +548,27 @@ export class DomModifyTool extends BrowserTool {
 
 // ── browser_fs_read / browser_fs_write (OPFS) ────────────────────
 
+/**
+ * Resolve a tool path through shell cwd (if available).
+ * Absolute paths pass through. Relative paths prepend cwd.
+ * Falls back to '/' when no shell state exists.
+ */
+function resolveToolPath(userPath, getShellState) {
+  if (!userPath || userPath === '.') {
+    return getShellState?.()?.cwd || '/';
+  }
+  if (userPath.startsWith('/')) return userPath;
+  const cwd = getShellState?.()?.cwd || '/';
+  const base = cwd === '/' ? '' : cwd;
+  return `${base}/${userPath}`;
+}
+
 export class FsReadTool extends BrowserTool {
   /** @type {WorkspaceFs} */
   #ws;
-  constructor(ws) { super(); this.#ws = ws; }
+  /** @type {Function|null} */
+  #getShellState;
+  constructor(ws, getShellState) { super(); this.#ws = ws; this.#getShellState = getShellState || null; }
 
   get name() { return 'browser_fs_read'; }
   get description() {
@@ -544,7 +587,8 @@ export class FsReadTool extends BrowserTool {
   get idempotent() { return true; }
 
   async execute({ path }) {
-    const resolved = this.#ws.resolve(path);
+    const shellPath = resolveToolPath(path, this.#getShellState);
+    const resolved = this.#ws.resolve(shellPath.replace(/^\//, ''));
     const { dir, name } = await opfsWalk(resolved);
     const fileHandle = await dir.getFileHandle(name);
     const file = await fileHandle.getFile();
@@ -561,10 +605,12 @@ export class FsReadTool extends BrowserTool {
 export class FsWriteTool extends BrowserTool {
   /** @type {WorkspaceFs} */
   #ws;
+  /** @type {Function|null} */
+  #getShellState;
   /** @type {number} Max file size in bytes (default: 10MB) */
   #maxFileSize = 10 * 1024 * 1024;
 
-  constructor(ws) { super(); this.#ws = ws; }
+  constructor(ws, getShellState) { super(); this.#ws = ws; this.#getShellState = getShellState || null; }
 
   get name() { return 'browser_fs_write'; }
   get description() {
@@ -589,8 +635,9 @@ export class FsWriteTool extends BrowserTool {
   setMaxFileSize(bytes) { this.#maxFileSize = bytes; }
 
   async execute({ path, content }) {
-    if (WorkspaceFs.isInternalPath(path)) {
-      return { success: false, output: '', error: `Read-only: ${path} is a system directory` };
+    const shellPath = resolveToolPath(path, this.#getShellState);
+    if (WorkspaceFs.isInternalPath(shellPath)) {
+      return { success: false, output: '', error: `Read-only: ${shellPath} is a system directory` };
     }
     // File size check (use actual byte size, not JS string length)
     const byteSize = new TextEncoder().encode(content).byteLength;
@@ -605,7 +652,7 @@ export class FsWriteTool extends BrowserTool {
       return { success: false, output: '', error: `Storage quota critically low (${quota.percent.toFixed(1)}% used). Free space before writing.` };
     }
 
-    const resolved = this.#ws.resolve(path);
+    const resolved = this.#ws.resolve(shellPath.replace(/^\//, ''));
     const { dir, name: fileName } = await opfsWalk(resolved, { create: true });
     const fileHandle = await dir.getFileHandle(fileName, { create: true });
     const writable = await fileHandle.createWritable();
@@ -644,24 +691,8 @@ export class FsListTool extends BrowserTool {
   get permission() { return 'read'; }
   get idempotent() { return true; }
 
-  /** Resolve a user-supplied path: use shell cwd for relative paths */
-  #resolvePath(userPath) {
-    if (!userPath || userPath === '.') {
-      // Use shell cwd if available
-      const shellState = this.#getShellState?.();
-      const cwd = shellState?.cwd || '/';
-      return cwd;
-    }
-    if (userPath.startsWith('/')) return userPath;
-    // Relative path — prepend shell cwd
-    const shellState = this.#getShellState?.();
-    const cwd = shellState?.cwd || '/';
-    const base = cwd === '/' ? '' : cwd;
-    return `${base}/${userPath}`;
-  }
-
   async execute({ path } = {}) {
-    const shellPath = this.#resolvePath(path);
+    const shellPath = resolveToolPath(path, this.#getShellState);
     // Strip leading / for WorkspaceFs.resolve
     const stripped = shellPath.replace(/^\//, '');
     const resolved = this.#ws.resolve(stripped);
@@ -683,7 +714,9 @@ export class FsListTool extends BrowserTool {
 export class FsDeleteTool extends BrowserTool {
   /** @type {WorkspaceFs} */
   #ws;
-  constructor(ws) { super(); this.#ws = ws; }
+  /** @type {Function|null} */
+  #getShellState;
+  constructor(ws, getShellState) { super(); this.#ws = ws; this.#getShellState = getShellState || null; }
 
   get name() { return 'browser_fs_delete'; }
   get description() {
@@ -702,10 +735,11 @@ export class FsDeleteTool extends BrowserTool {
   get permission() { return 'write'; }
 
   async execute({ path, recursive = false }) {
-    if (WorkspaceFs.isInternalPath(path)) {
-      return { success: false, output: '', error: `Read-only: ${path} is a system directory` };
+    const shellPath = resolveToolPath(path, this.#getShellState);
+    if (WorkspaceFs.isInternalPath(shellPath)) {
+      return { success: false, output: '', error: `Read-only: ${shellPath} is a system directory` };
     }
-    const resolved = this.#ws.resolve(path);
+    const resolved = this.#ws.resolve(shellPath.replace(/^\//, ''));
     const parts = resolved.split('/').filter(Boolean);
     // Prevent deleting workspace root or OPFS root
     if (parts.length === 0) {
@@ -724,7 +758,9 @@ export class FsDeleteTool extends BrowserTool {
 export class FsMkdirTool extends BrowserTool {
   /** @type {WorkspaceFs} */
   #ws;
-  constructor(ws) { super(); this.#ws = ws; }
+  /** @type {Function|null} */
+  #getShellState;
+  constructor(ws, getShellState) { super(); this.#ws = ws; this.#getShellState = getShellState || null; }
 
   get name() { return 'browser_fs_mkdir'; }
   get description() {
@@ -742,7 +778,11 @@ export class FsMkdirTool extends BrowserTool {
   get permission() { return 'write'; }
 
   async execute({ path }) {
-    const resolved = this.#ws.resolve(path);
+    const shellPath = resolveToolPath(path, this.#getShellState);
+    if (WorkspaceFs.isInternalPath(shellPath)) {
+      return { success: false, output: '', error: `Read-only: ${shellPath} is a system directory` };
+    }
+    const resolved = this.#ws.resolve(shellPath.replace(/^\//, ''));
     await opfsWalkDir(resolved, { create: true });
     return { success: true, output: `Created directory ${path}` };
   }
@@ -1199,7 +1239,24 @@ export class WebSearchTool extends BrowserTool {
   async execute({ query, limit = 5 }) {
     // Use DuckDuckGo HTML lite — works without API key
     const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-    const resp = await fetch(url);
+    let resp;
+
+    // Always try extension proxy first (DuckDuckGo is always cross-origin / CORS-blocked)
+    const fallback = await getCorsFetchFallback();
+    const extResp = await fallback(url);
+    if (extResp) {
+      if (extResp.status >= 400) {
+        return { success: false, output: '', error: `Search failed: HTTP ${extResp.status}` };
+      }
+      resp = { ok: true, status: extResp.status, text: async () => extResp.body };
+    } else {
+      // Extension unavailable — try direct fetch
+      try {
+        resp = await fetch(url);
+      } catch {
+        return { success: false, output: '', error: 'Web search failed (CORS blocked and extension unavailable)' };
+      }
+    }
     if (!resp.ok) return { success: false, output: '', error: `Search failed: HTTP ${resp.status}` };
 
     const html = await resp.text();
@@ -1535,10 +1592,11 @@ export function createDefaultRegistry(workspaceFs, getShellState, showDotfiles) 
   registry.register(new FetchTool());
   registry.register(new DomQueryTool());
   registry.register(new DomModifyTool());
-  registry.register(new FsReadTool(workspaceFs));
-  registry.register(new FsWriteTool(workspaceFs));
+  registry.register(new FsReadTool(workspaceFs, getShellState));
+  registry.register(new FsWriteTool(workspaceFs, getShellState));
   registry.register(new FsListTool(workspaceFs, getShellState, showDotfiles));
-  registry.register(new FsDeleteTool(workspaceFs));
+  registry.register(new FsDeleteTool(workspaceFs, getShellState));
+  registry.register(new FsMkdirTool(workspaceFs, getShellState));
   registry.register(new StorageGetTool());
   registry.register(new StorageSetTool());
   registry.register(new StorageListTool());

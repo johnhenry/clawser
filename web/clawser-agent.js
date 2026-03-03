@@ -1481,6 +1481,9 @@ export class ClawserAgent {
         await this.compactContext();
       }
 
+      // Ensure history is well-formed (no orphaned tool_results)
+      this.#sanitizeHistory();
+
       // Build the request
       const useNative = this.#providerHasNativeTools();
       const request = {
@@ -1555,6 +1558,15 @@ export class ClawserAgent {
           response = await provider.chat(request, this.#apiKey, this.#model, _providerOpts);
         }
       } catch (e) {
+        // Recoverable: 400 with tool_use_id mismatch → sanitize history and retry once
+        if (/tool_use_id|tool_result/.test(e.message) && !request._sanitizeRetried) {
+          const fixed = this.#sanitizeHistory();
+          if (fixed > 0) {
+            this.#onLog(3, `Retrying after sanitizing ${fixed} orphaned tool_result(s)`);
+            request._sanitizeRetried = true;
+            continue; // re-enter the while loop with sanitized history
+          }
+        }
         this.#eventLog.append('error', { message: e.message }, 'system');
         this.#metrics?.increment('agent.errors');
         this.#metrics?.observe('agent.run_duration_ms', Date.now() - _runStart);
@@ -1786,6 +1798,9 @@ export class ClawserAgent {
         await this.compactContext();
       }
 
+      // Ensure history is well-formed (no orphaned tool_results)
+      this.#sanitizeHistory();
+
       const useNative = this.#providerHasNativeTools();
       const request = {
         messages: [...this.#history],
@@ -1864,6 +1879,15 @@ export class ClawserAgent {
             response = await provider.chat(request, this.#apiKey, this.#model, _providerOpts);
           }
         } catch (fallbackErr) {
+          // Recoverable: 400 with tool_use_id mismatch → sanitize and retry
+          if (/tool_use_id|tool_result/.test(fallbackErr.message) && !request._sanitizeRetried) {
+            const fixed = this.#sanitizeHistory();
+            if (fixed > 0) {
+              this.#onLog(3, `Retrying non-streaming after sanitizing ${fixed} orphaned tool_result(s)`);
+              request._sanitizeRetried = true;
+              continue;
+            }
+          }
           this.#eventLog.append('provider_error', { message: fallbackErr.message }, 'system');
           this.#onLog(3, `Non-streaming fallback error: ${fallbackErr.message}`);
           this.#metrics?.increment('agent.errors');
@@ -2052,6 +2076,15 @@ export class ClawserAgent {
             model: this.#model || '',
           };
         } else {
+          // Recoverable: 400 with tool_use_id mismatch → sanitize and retry
+          if (/tool_use_id|tool_result/.test(streamErr.message) && !request._sanitizeRetried) {
+            const fixed = this.#sanitizeHistory();
+            if (fixed > 0) {
+              this.#onLog(3, `Retrying stream after sanitizing ${fixed} orphaned tool_result(s)`);
+              request._sanitizeRetried = true;
+              continue; // re-enter the while loop with sanitized history
+            }
+          }
           // No content received — yield error and stop
           this.#metrics?.increment('agent.errors');
           this.#metrics?.observe('agent.run_duration_ms', Date.now() - _runStart);
@@ -2275,9 +2308,19 @@ export class ClawserAgent {
 
     if (conversation.length <= keepRecent) return false;
 
-    // Split into old messages (to summarize) and recent (to keep)
-    const oldMessages = conversation.slice(0, conversation.length - keepRecent);
-    const recentMessages = conversation.slice(conversation.length - keepRecent);
+    // Split into old messages (to summarize) and recent (to keep).
+    // Adjust the split point so we don't break inside a tool-call cycle:
+    // if recentMessages would start with role:'tool', pull the split earlier
+    // to include the preceding assistant message and its tool results together.
+    let splitIdx = conversation.length - keepRecent;
+    while (splitIdx > 0 && conversation[splitIdx]?.role === 'tool') {
+      splitIdx--;
+    }
+    // If we backed up all the way to 0, use original split to avoid empty old
+    if (splitIdx === 0) splitIdx = conversation.length - keepRecent;
+
+    const oldMessages = conversation.slice(0, splitIdx);
+    const recentMessages = conversation.slice(splitIdx);
 
     // Build summary request
     const summaryText = oldMessages
@@ -2332,6 +2375,47 @@ export class ClawserAgent {
     }, 'system');
 
     return true;
+  }
+
+  // ── History sanitization ────────────────────────────────────
+
+  /**
+   * Remove orphaned tool_result messages from history.
+   * A tool_result is orphaned if the immediately preceding assistant message
+   * has no tool_call with a matching id. This can happen when compaction
+   * splits in the middle of a tool-call cycle or when state is corrupted.
+   * Orphaned results are converted to plain user context to preserve info.
+   * @returns {number} Number of messages fixed
+   */
+  #sanitizeHistory() {
+    // Two-pass: identify orphans first, then fix (avoids mutation-during-scan issues)
+    const orphanIndices = [];
+    for (let i = 0; i < this.#history.length; i++) {
+      const m = this.#history[i];
+      if (m.role !== 'tool' || !m.tool_call_id) continue;
+
+      // Walk backward past other tool messages to find the nearest assistant
+      let assistantMsg = null;
+      for (let j = i - 1; j >= 0; j--) {
+        if (this.#history[j].role === 'assistant') { assistantMsg = this.#history[j]; break; }
+        if (this.#history[j].role !== 'tool') break;
+      }
+
+      const hasMatch = assistantMsg?.tool_calls?.some(tc => tc.id === m.tool_call_id);
+      if (!hasMatch) orphanIndices.push(i);
+    }
+
+    // Convert orphans to user context messages so info isn't lost
+    for (const idx of orphanIndices) {
+      const m = this.#history[idx];
+      const label = m.name ? `[${m.name} result]` : '[Tool result]';
+      this.#history[idx] = { role: 'user', content: `${label} ${m.content || ''}` };
+    }
+
+    if (orphanIndices.length > 0) {
+      this.#onLog(3, `sanitizeHistory: fixed ${orphanIndices.length} orphaned tool_result message(s)`);
+    }
+    return orphanIndices.length;
   }
 
   // ── State ───────────────────────────────────────────────────

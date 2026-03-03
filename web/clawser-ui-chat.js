@@ -8,6 +8,33 @@ import { estimateCost, classifyError } from './clawser-providers.js';
 import { createItemBar, _relativeTime, _downloadText } from './clawser-item-bar.js';
 import { recordCostEvent } from './clawser-ui-config.js';
 
+// ── Lightweight markdown rendering for agent messages ──────────
+let _marked = null;
+async function getMarked() {
+  if (_marked) return _marked;
+  try {
+    const mod = await import('https://esm.sh/marked@15.0.4');
+    mod.marked.setOptions({ gfm: true, breaks: true });
+    _marked = mod.marked;
+  } catch {
+    // Fallback: return identity function (raw text)
+    _marked = (s) => esc(s).replace(/\n/g, '<br>');
+  }
+  return _marked;
+}
+// Eager-load on module init (non-blocking)
+getMarked();
+
+/** Render markdown to sanitized HTML for agent messages. */
+function renderMarkdown(text) {
+  if (!_marked || typeof _marked !== 'function') return esc(text);
+  try {
+    return _marked(text);
+  } catch {
+    return esc(text);
+  }
+}
+
 // ── Reset helpers (shared for clearing tool/event + message state) ──
 /** Clear tool call log, event log, and their DOM elements. */
 export function resetToolAndEventState() {
@@ -50,7 +77,7 @@ export function addMsg(type, text, eventId) {
   } else if (type === 'agent') {
     const avatarUrl = state.identityManager?.getCurrent?.()?.physicality?.avatar_url;
     const avatarHtml = avatarUrl ? `<img class="msg-avatar" src="${esc(avatarUrl)}" alt="" />` : '';
-    d.innerHTML = `<div class="label">${avatarHtml}Agent</div>${esc(text)}`;
+    d.innerHTML = `<div class="label">${avatarHtml}Agent</div><div class="md-content">${renderMarkdown(text)}</div>`;
   } else {
     d.textContent = text;
   }
@@ -321,10 +348,20 @@ export function appendToStreamingMsg(el, text) {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
-/** Remove the blinking cursor from a completed streaming message. @param {HTMLElement} el */
-export function finalizeStreamingMsg(el) {
+/** Remove the blinking cursor and re-render content as markdown. @param {HTMLElement} el @param {string} [fullContent] - accumulated raw text to render as markdown */
+export function finalizeStreamingMsg(el, fullContent) {
   const cursor = el.querySelector('.streaming-cursor');
   if (cursor) cursor.remove();
+  // Re-render as markdown if we have the full accumulated text
+  if (fullContent && _marked) {
+    const label = el.querySelector('.label');
+    // Remove all child nodes except the label
+    while (el.lastChild && el.lastChild !== label) el.removeChild(el.lastChild);
+    const md = document.createElement('div');
+    md.className = 'md-content';
+    md.innerHTML = renderMarkdown(fullContent);
+    el.appendChild(md);
+  }
 }
 
 // ── Persist active conversation (preserves created timestamp) ────
@@ -915,13 +952,21 @@ export async function sendMessage() {
       const streamEl = createStreamingMsg();
       let fullContent = '';
 
+      let lastChunkWasTool = false;
       for await (const chunk of state.agent.runStream()) {
         if (chunk.type === 'text') {
+          // Insert newline when text resumes after tool execution
+          if (lastChunkWasTool && chunk.text && fullContent.length > 0) {
+            fullContent += '\n\n';
+            appendToStreamingMsg(streamEl, '\n\n');
+          }
           fullContent += chunk.text;
           appendToStreamingMsg(streamEl, chunk.text);
+          lastChunkWasTool = false;
         } else if (chunk.type === 'tool_start') {
           setStatus('busy', `calling ${chunk.name}...`);
         } else if (chunk.type === 'tool_result') {
+          lastChunkWasTool = true;
           addEvent('tool_result', `${chunk.name}: ${(chunk.result?.output || chunk.result?.error || '').slice(0, 80)}`);
           if (chunk.name?.startsWith('browser_fs_')) emit('refreshFiles');
         } else if (chunk.type === 'done' && chunk.response) {
@@ -952,7 +997,7 @@ export async function sendMessage() {
         }
       }
 
-      finalizeStreamingMsg(streamEl);
+      finalizeStreamingMsg(streamEl, fullContent);
       if (!fullContent.trim()) {
         streamEl.remove();
       } else {

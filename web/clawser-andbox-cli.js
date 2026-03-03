@@ -244,7 +244,8 @@ export function registerAndboxCli(registry, getAgent, getShell) {
     }
 
     try {
-      const code = await shell.fs.readFile(filePath);
+      const resolved = shell.state.resolvePath(filePath);
+      const code = await shell.fs.readFile(resolved);
       return cmdEval(code, flags);
     } catch (e) {
       return { stdout: '', stderr: `Failed to read ${filePath}: ${e.message}\n`, exitCode: 1 };
@@ -258,7 +259,8 @@ export function registerAndboxCli(registry, getAgent, getShell) {
     }
 
     try {
-      const source = await shell.fs.readFile(filePath);
+      const resolved = shell.state.resolvePath(filePath);
+      const source = await shell.fs.readFile(resolved);
       const sb = await ensureSandbox(flags);
       await sb.defineModule(name, source);
       return { stdout: `Module '${name}' defined.\n`, stderr: '', exitCode: 0 };
@@ -274,7 +276,8 @@ export function registerAndboxCli(registry, getAgent, getShell) {
     }
 
     try {
-      const content = await shell.fs.readFile(filePath);
+      const resolved = shell.state.resolvePath(filePath);
+      const content = await shell.fs.readFile(resolved);
       const importMap = JSON.parse(content);
       flags.importMap = importMap;
       // Dispose and recreate sandbox with new import map

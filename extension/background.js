@@ -160,6 +160,9 @@ async function handleAction(action, params) {
     // ── WebMCP ──
     case 'webmcp_discover': return actionWebmcpDiscover(params);
 
+    // ── CORS-free fetch ──
+    case 'cors_fetch': return actionCorsFetch(params);
+
     default:
       throw new Error(`Unknown action: ${action}`);
   }
@@ -206,6 +209,7 @@ function getAvailableCapabilities() {
   if (typeof chrome !== 'undefined' && chrome.scripting) caps.push('scripting');
   if (typeof chrome !== 'undefined' && chrome.cookies) caps.push('cookies');
   if (typeof chrome !== 'undefined' && chrome.webRequest) caps.push('network');
+  caps.push('cors_fetch');
   return caps;
 }
 
@@ -232,6 +236,7 @@ function actionCapabilities() {
     { name: 'evaluate', available: true },
     { name: 'console', available: true },
     { name: 'webmcp', available: true },
+    { name: 'cors_fetch', available: true },
   ];
   return { capabilities: caps, userScriptsAvailable };
 }
@@ -803,6 +808,57 @@ async function actionCookies({ url }) {
       expirationDate: c.expirationDate,
     })),
   };
+}
+
+// -- CORS-free Fetch --
+
+const SSRF_BLOCK_RE = /^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|0\.|169\.254\.|fc|fd|fe80|::ffff:|0x|0177)/i;
+const SSRF_DECIMAL_RE = /^\d+$/;
+
+function isBlockedHost(hostname) {
+  return SSRF_BLOCK_RE.test(hostname) ||
+    SSRF_DECIMAL_RE.test(hostname) ||
+    hostname === 'localhost' || hostname === '::1' || hostname === '[::1]';
+}
+
+const CORS_FETCH_MAX_BODY = 2 * 1024 * 1024; // 2 MB
+
+async function actionCorsFetch({ url, method = 'GET', headers = {}, body }) {
+  if (!url) throw new Error('url is required');
+
+  let parsed;
+  try { parsed = new URL(url); } catch {
+    throw new Error(`Invalid URL: ${url}`);
+  }
+
+  // SSRF check on request URL
+  const hostname = parsed.hostname.toLowerCase();
+  if (isBlockedHost(hostname) || parsed.protocol === 'file:') {
+    throw new Error(`Blocked: fetching private/reserved address "${hostname}" is not allowed`);
+  }
+
+  const opts = { method, headers: headers || {}, redirect: 'follow' };
+  if (body && method !== 'GET') opts.body = body;
+
+  const resp = await fetch(url, opts);
+
+  // Post-redirect SSRF check
+  if (resp.redirected) {
+    const finalHost = new URL(resp.url).hostname.toLowerCase();
+    if (isBlockedHost(finalHost)) {
+      throw new Error(`Redirect to private/reserved address blocked: ${finalHost}`);
+    }
+  }
+
+  const text = await resp.text();
+  const cappedBody = text.length > CORS_FETCH_MAX_BODY
+    ? text.slice(0, CORS_FETCH_MAX_BODY) + '\n... (truncated at 2MB)'
+    : text;
+
+  const respHeaders = {};
+  resp.headers.forEach((v, k) => { respHeaders[k] = v; });
+
+  return { status: resp.status, headers: respHeaders, body: cappedBody };
 }
 
 // -- WebMCP --

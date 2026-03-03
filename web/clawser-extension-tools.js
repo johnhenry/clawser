@@ -6,6 +6,7 @@
 // Tool prefix: ext_  (avoids collision with mock browser_* tools)
 
 import { BrowserTool } from './clawser-tools.js';
+import { opfsWalk } from './clawser-opfs.js';
 
 // ── RPC Client ────────────────────────────────────────────────────
 
@@ -212,6 +213,14 @@ export const CAPABILITY_HINTS = {
   network: 'Ensure the Clawser extension has the "webRequest" permission.',
 };
 
+// ── Constants ─────────────────────────────────────────────────────
+
+/** Maximum tool output size in characters (~25K tokens). Prevents context overflow. */
+const MAX_TOOL_OUTPUT = 100_000;
+
+/** OPFS directory for storing screenshots (avoids polluting workspace). */
+const SCREENSHOT_DIR = 'clawser_screenshots';
+
 // ── Base helper ───────────────────────────────────────────────────
 
 /**
@@ -246,7 +255,11 @@ class ExtTool extends BrowserTool {
     try {
       const result = await this.#rpc.call(action, params);
       if (result?.error) return { success: false, output: '', error: result.error };
-      return { success: true, output: typeof result === 'string' ? result : JSON.stringify(result, null, 2) };
+      let output = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+      if (output.length > MAX_TOOL_OUTPUT) {
+        output = output.slice(0, MAX_TOOL_OUTPUT) + '\n... (truncated — output exceeded 100KB limit)';
+      }
+      return { success: true, output };
     } catch (e) {
       return { success: false, output: '', error: e.message };
     }
@@ -421,7 +434,54 @@ export class ExtScreenshotTool extends ExtTool {
   get permission() { return 'approve'; }
   get requires() { return 'tabs'; }
   async execute({ tabId, format, quality } = {}) {
-    return this._call('screenshot', { tabId, format, quality });
+    // Override _call to avoid putting huge base64 data in the output.
+    // Instead, store the screenshot to OPFS and return a reference.
+    if (!this.rpc.connected) {
+      return { success: false, output: '', error: 'Extension not connected. Install and enable the Clawser Chrome Extension.' };
+    }
+    try {
+      const result = await this.rpc.call('screenshot', { tabId, format, quality });
+      if (result?.error) return { success: false, output: '', error: result.error };
+      const dataUrl = result.dataUrl || '';
+      const fmt = result.format || format || 'png';
+      const sizeBytes = dataUrl.length;
+
+      // Store to OPFS
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      const filename = `screenshot-${ts}.${fmt}`;
+      const opfsPath = `${SCREENSHOT_DIR}/${filename}`;
+      try {
+        const { dir, name } = await opfsWalk(opfsPath, { create: true });
+        const fh = await dir.getFileHandle(name, { create: true });
+        const writable = await fh.createWritable();
+        await writable.write(dataUrl);
+        await writable.close();
+      } catch (storeErr) {
+        // OPFS not available (e.g. in test) — still return metadata
+        return {
+          success: true,
+          output: JSON.stringify({
+            stored: false,
+            format: fmt,
+            sizeBytes,
+            note: `Screenshot captured (${(sizeBytes / 1024).toFixed(0)} KB) but OPFS storage failed: ${storeErr.message}. Data URL not included to prevent context overflow.`,
+          }),
+        };
+      }
+
+      return {
+        success: true,
+        output: JSON.stringify({
+          stored: true,
+          path: opfsPath,
+          format: fmt,
+          sizeBytes,
+          note: `Screenshot saved to OPFS at "${opfsPath}" (${(sizeBytes / 1024).toFixed(0)} KB). Use browser_read or cat to retrieve if needed.`,
+        }),
+      };
+    } catch (e) {
+      return { success: false, output: '', error: e.message };
+    }
   }
 }
 
@@ -464,19 +524,40 @@ export class ExtZoomTool extends ExtTool {
   get permission() { return 'approve'; }
   get requires() { return 'tabs'; }
   async execute({ tabId, x, y, width, height }) {
-    // Take full screenshot then crop client-side via canvas
-    const result = await this.rpc.call('screenshot', { tabId, format: 'png' });
-    if (result?.error) return { success: false, output: '', error: result.error };
+    if (!this.rpc.connected) {
+      return { success: false, output: '', error: 'Extension not connected. Install and enable the Clawser Chrome Extension.' };
+    }
+    try {
+      // Take full screenshot then store to OPFS (same as ExtScreenshotTool)
+      const result = await this.rpc.call('screenshot', { tabId, format: 'png' });
+      if (result?.error) return { success: false, output: '', error: result.error };
+      const dataUrl = result.dataUrl || '';
+      const sizeBytes = dataUrl.length;
 
-    // The cropping happens on the web page side (canvas)
-    return {
-      success: true,
-      output: JSON.stringify({
-        dataUrl: result.dataUrl,
-        crop: { x, y, width, height },
-        note: 'Use canvas to crop this region from the full screenshot.',
-      }),
-    };
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      const filename = `zoom-${ts}.png`;
+      const opfsPath = `${SCREENSHOT_DIR}/${filename}`;
+      try {
+        const { dir, name } = await opfsWalk(opfsPath, { create: true });
+        const fh = await dir.getFileHandle(name, { create: true });
+        const writable = await fh.createWritable();
+        await writable.write(dataUrl);
+        await writable.close();
+      } catch { /* OPFS not available — continue without storing */ }
+
+      return {
+        success: true,
+        output: JSON.stringify({
+          stored: true,
+          path: opfsPath,
+          crop: { x, y, width, height },
+          sizeBytes,
+          note: `Full screenshot saved to "${opfsPath}" (${(sizeBytes / 1024).toFixed(0)} KB). Crop region: ${width}x${height} at (${x},${y}). Use canvas to extract the region.`,
+        }),
+      };
+    } catch (e) {
+      return { success: false, output: '', error: e.message };
+    }
   }
 }
 
@@ -1019,7 +1100,11 @@ export function createExtensionBridge(rpc) {
     try {
       const result = await client.call(extAction, params);
       if (result?.error) return { success: false, output: '', error: result.error };
-      return { success: true, output: typeof result === 'string' ? result : JSON.stringify(result) };
+      let output = typeof result === 'string' ? result : JSON.stringify(result);
+      if (output.length > MAX_TOOL_OUTPUT) {
+        output = output.slice(0, MAX_TOOL_OUTPUT) + '\n... (truncated — output exceeded 100KB limit)';
+      }
+      return { success: true, output };
     } catch (e) {
       return { success: false, output: '', error: e.message };
     }

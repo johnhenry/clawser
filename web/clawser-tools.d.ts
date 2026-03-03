@@ -73,7 +73,7 @@ export declare class DomModifyTool extends BrowserTool {
 }
 
 export declare class FsReadTool extends BrowserTool {
-  constructor(ws: WorkspaceFs);
+  constructor(ws: WorkspaceFs, getShellState?: () => any);
   get name(): string;
   get description(): string;
   get parameters(): object;
@@ -82,7 +82,7 @@ export declare class FsReadTool extends BrowserTool {
 }
 
 export declare class FsWriteTool extends BrowserTool {
-  constructor(ws: WorkspaceFs);
+  constructor(ws: WorkspaceFs, getShellState?: () => any);
   get name(): string;
   get description(): string;
   get parameters(): object;
@@ -92,7 +92,7 @@ export declare class FsWriteTool extends BrowserTool {
 }
 
 export declare class FsListTool extends BrowserTool {
-  constructor(ws: WorkspaceFs);
+  constructor(ws: WorkspaceFs, getShellState?: () => any, showDotfiles?: () => boolean);
   get name(): string;
   get description(): string;
   get parameters(): object;
@@ -101,7 +101,7 @@ export declare class FsListTool extends BrowserTool {
 }
 
 export declare class FsDeleteTool extends BrowserTool {
-  constructor(ws: WorkspaceFs);
+  constructor(ws: WorkspaceFs, getShellState?: () => any);
   get name(): string;
   get description(): string;
   get parameters(): object;
@@ -110,7 +110,7 @@ export declare class FsDeleteTool extends BrowserTool {
 }
 
 export declare class FsMkdirTool extends BrowserTool {
-  constructor(ws: WorkspaceFs);
+  constructor(ws: WorkspaceFs, getShellState?: () => any);
   get name(): string;
   get description(): string;
   get parameters(): object;
@@ -328,4 +328,4 @@ export declare function checkQuota(): Promise<QuotaInfo>;
 
 // ── createDefaultRegistry ──────────────────────────────────────
 
-export declare function createDefaultRegistry(workspaceFs: WorkspaceFs): BrowserToolRegistry;
+export declare function createDefaultRegistry(workspaceFs: WorkspaceFs, getShellState?: () => any, showDotfiles?: () => boolean): BrowserToolRegistry;

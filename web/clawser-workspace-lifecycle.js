@@ -77,7 +77,7 @@ import { FsObserver } from './clawser-fs-observer.js';
 import { TabViewManager } from './clawser-tab-views.js';
 
 // Phase 9: CORS fetch proxy
-import { ExtCorsFetchTool } from './clawser-cors-fetch.js';
+import { ExtCorsFetchTool, setCorsFetchClient } from './clawser-cors-fetch.js';
 import { getExtensionClient } from './clawser-extension-tools.js';
 
 // Fallback chain
@@ -670,6 +670,7 @@ export async function initWorkspace(wsId, convId) {
 
     // Phase 9: CORS fetch proxy (1)
     state.browserTools.register(new ExtCorsFetchTool(getExtensionClient()));
+    setCorsFetchClient(getExtensionClient());
 
     // Phase 5: FileSystemObserver (optional, Chrome 129+)
     try {

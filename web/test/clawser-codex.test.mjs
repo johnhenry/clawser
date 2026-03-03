@@ -160,6 +160,22 @@ describe('autoAwait', () => {
     const result = autoAwait(code);
     assert.equal(result, code);
   });
+
+  it('adds await before snake_case tool aliases (fs_write, fs_read, shell)', () => {
+    assert.ok(autoAwait('fs_write({path: "a.txt", content: "hi"})').includes('await fs_write'));
+    assert.ok(autoAwait('fs_read({path: "a.txt"})').includes('await fs_read'));
+    assert.ok(autoAwait('shell({command: "ls"})').includes('await shell'));
+    assert.ok(autoAwait('dom_query({selector: "h1"})').includes('await dom_query'));
+  });
+
+  it('adds await before web_search and screenshot aliases', () => {
+    assert.ok(autoAwait('web_search({query: "test"})').includes('await web_search'));
+    assert.ok(autoAwait('screenshot({})').includes('await screenshot'));
+  });
+
+  it('does not double-await snake_case aliases', () => {
+    assert.ok(!autoAwait('await fs_write({})').includes('await await'));
+  });
 });
 
 describe('Codex class', () => {
