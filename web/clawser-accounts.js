@@ -15,9 +15,29 @@ export const SERVICES = {
   perplexity: { name: 'Perplexity', defaultModel: 'sonar', models: ['sonar', 'sonar-pro'] },
   ollama: { name: 'Ollama (local)', defaultModel: 'llama3.2', models: ['llama3.2', 'mistral', 'codellama', 'phi3'] },
   lmstudio: { name: 'LM Studio (local)', defaultModel: 'default', models: ['default'] },
+  echo: { name: 'Echo (Test)', defaultModel: '', models: [] },
+  'chrome-ai': { name: 'Chrome AI', defaultModel: 'gemini-nano', models: ['gemini-nano'] },
 };
 
+export const BUILTIN_ACCOUNTS = [
+  { id: 'acct_builtin_echo', name: 'Echo (Test)', service: 'echo', apiKey: '', model: '' },
+  { id: 'acct_builtin_chrome_ai', name: 'Chrome AI', service: 'chrome-ai', apiKey: '', model: 'gemini-nano' },
+];
+
 export const ACCT_KEY = 'clawser_accounts';
+
+/** Seed built-in accounts into localStorage if missing. Idempotent. */
+export function seedBuiltinAccounts() {
+  const list = loadAccounts();
+  let changed = false;
+  for (const builtin of BUILTIN_ACCOUNTS) {
+    if (!list.some(a => a.id === builtin.id)) {
+      list.push({ ...builtin });
+      changed = true;
+    }
+  }
+  if (changed) saveAccounts(list);
+}
 
 /** Load all provider accounts from localStorage. @returns {Array<Object>} */
 export function loadAccounts() {
@@ -59,8 +79,9 @@ export function updateAccount(id, updates) {
   if (acct) { Object.assign(acct, updates); saveAccounts(list); }
 }
 
-/** Remove an account by ID. @param {string} id */
+/** Remove an account by ID. Built-in accounts cannot be deleted. @param {string} id */
 export function deleteAccount(id) {
+  if (id.startsWith('acct_builtin_')) return;
   let list = loadAccounts();
   list = list.filter(a => a.id !== id);
   saveAccounts(list);
@@ -147,8 +168,11 @@ export function renderAccountList() {
         <button class="acct-del" title="Delete">&#x2715;</button>
       </span>
     `;
+    const isBuiltinAcct = acct.id.startsWith('acct_builtin_');
+    if (isBuiltinAcct) d.querySelector('.acct-del').disabled = true;
     d.querySelector('.acct-edit').addEventListener('click', () => showAccountEditForm(acct, d));
     d.querySelector('.acct-del').addEventListener('click', async () => {
+      if (isBuiltinAcct) return;
       if (!await modal.confirm(`Delete account "${acct.name}"?`, { danger: true })) return;
       deleteAccount(acct.id);
       const providerSelect = $('providerSelect');

@@ -13,10 +13,15 @@ export interface Account {
   service: string;
   apiKey: string;
   model: string;
+  baseUrl?: string;
+  vaultStored?: boolean;
 }
 
 export const SERVICES: Readonly<Record<string, ServiceDef>>;
+export const BUILTIN_ACCOUNTS: Readonly<Account[]>;
 export const ACCT_KEY: string;
+
+export function seedBuiltinAccounts(): void;
 
 export function loadAccounts(): Account[];
 export function saveAccounts(list: Account[]): void;

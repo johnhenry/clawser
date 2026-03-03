@@ -4,6 +4,7 @@ export interface AgentDefinition {
   description?: string;
   color?: string;
   icon?: string;
+  /** @deprecated Derived from account; kept for legacy compat */
   provider: string;
   model: string;
   accountId: string | null;
@@ -43,3 +44,5 @@ export class AgentStorage {
 
 export const BUILTIN_AGENTS: AgentDefinition[];
 export function generateAgentId(): string;
+export function resolveAgentProvider(agent: AgentDefinition, accounts: import('./clawser-accounts.d.ts').Account[]): string;
+export function migrateAgentAccounts(accounts: import('./clawser-accounts.d.ts').Account[], storage: AgentStorage): Promise<number>;

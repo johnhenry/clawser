@@ -1051,17 +1051,22 @@ export class ClawserAgent {
   applyAgent(agentDef) {
     this.#activeAgent = agentDef;
 
-    // Set provider / model — prefer accountId if available for credential resolution
+    // Derive provider from account if accountId is set
     if (agentDef.accountId && this.#accountResolver) {
-      // Resolve account credentials asynchronously (fire-and-forget; credentials
-      // will be ready before next run() call in practice)
-      this.#accountResolver(agentDef.accountId).then(({ apiKey, baseUrl }) => {
+      this.#accountResolver(agentDef.accountId).then(({ apiKey, baseUrl, service, model }) => {
+        if (service) this.#activeProvider = service;   // provider FROM account
         if (apiKey) this.#apiKey = apiKey;
         if (baseUrl) this.#providerBaseUrl = baseUrl;
+        if (model && !agentDef.model) this.#model = model;  // account model as default
       }).catch(() => {});
     }
-    if (agentDef.provider) this.#activeProvider = agentDef.provider;
-    if (agentDef.model) this.#model = agentDef.model;
+
+    // Legacy fallback: use agent.provider if no accountId
+    if (!agentDef.accountId && agentDef.provider) {
+      this.#activeProvider = agentDef.provider;
+    }
+
+    if (agentDef.model) this.#model = agentDef.model;  // agent model overrides account
 
     // Set system prompt
     if (agentDef.systemPrompt) this.setSystemPrompt(agentDef.systemPrompt);

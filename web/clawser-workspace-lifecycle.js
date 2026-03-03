@@ -403,14 +403,14 @@ export async function initWorkspace(wsId, convId) {
     const rc = state.agent.init({});
     if (rc !== 0) throw new Error(`agent.init returned ${rc}`);
 
-    // Wire account resolver for fallback chain credential resolution
+    // Wire account resolver for agent/fallback credential resolution
     state.agent.setAccountResolver(async (accountId) => {
       const { loadAccounts, resolveAccountKey } = await import('./clawser-accounts.js');
       const accts = loadAccounts();
       const acct = accts.find(a => a.id === accountId);
-      if (!acct) return { apiKey: '', baseUrl: '' };
+      if (!acct) return { apiKey: '', baseUrl: '', service: '', model: '' };
       const apiKey = await resolveAccountKey(acct);
-      return { apiKey, baseUrl: acct.baseUrl || '' };
+      return { apiKey, baseUrl: acct.baseUrl || '', service: acct.service, model: acct.model };
     });
 
     // Create kernel tenant for this workspace (Step 23)
@@ -577,6 +577,18 @@ export async function initWorkspace(wsId, convId) {
       } catch { wsAgentDir = null; }
       state.agentStorage = new AgentStorage({ globalDir: globalAgentDir, wsDir: wsAgentDir, wsId: activeWsId });
       await state.agentStorage.seedBuiltins();
+
+      // Seed built-in accounts (echo, chrome-ai) and migrate unlinked agents
+      try {
+        const { seedBuiltinAccounts, loadAccounts } = await import('./clawser-accounts.js');
+        const { migrateAgentAccounts } = await import('./clawser-agent-storage.js');
+        seedBuiltinAccounts();
+        if (!localStorage.getItem('clawser_agent_acct_migrated')) {
+          const migrated = await migrateAgentAccounts(loadAccounts(), state.agentStorage);
+          if (migrated > 0) console.log(`[clawser] Migrated ${migrated} agents to accounts`);
+          localStorage.setItem('clawser_agent_acct_migrated', '1');
+        }
+      } catch (e) { console.warn('[clawser] Agent account seeding/migration failed:', e); }
 
       // Register agent tools
       state.browserTools.register(new SwitchAgentTool(state.agentStorage, state.agent));

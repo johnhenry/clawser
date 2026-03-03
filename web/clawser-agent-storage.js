@@ -32,7 +32,7 @@ const BUILTIN_AGENTS = [
     icon: 'echo',
     provider: 'echo',
     model: '',
-    accountId: null,
+    accountId: 'acct_builtin_echo',
     systemPrompt: 'You are an echo bot. Repeat back what the user says.',
     temperature: 0,
     maxTokens: 4096,
@@ -55,7 +55,7 @@ const BUILTIN_AGENTS = [
     icon: 'chip',
     provider: 'chrome-ai',
     model: 'gemini-nano',
-    accountId: null,
+    accountId: 'acct_builtin_chrome_ai',
     systemPrompt: 'You are a helpful assistant running locally in the browser via Chrome AI.',
     temperature: 0.7,
     maxTokens: 4096,
@@ -352,7 +352,7 @@ export class AgentStorage {
     const agent = JSON.parse(json);
     if (!agent || typeof agent !== 'object' || Array.isArray(agent)) throw new Error('Invalid agent: expected an object');
     if (!agent.name || typeof agent.name !== 'string') throw new Error('Invalid agent: missing name');
-    if (!agent.provider || typeof agent.provider !== 'string') throw new Error('Invalid agent: missing provider');
+    if (!agent.provider && !agent.accountId) throw new Error('Invalid agent: missing provider or accountId');
     agent.id = generateAgentId();
     agent.accountId = null;
     agent.createdAt = new Date().toISOString();
@@ -393,6 +393,44 @@ export class AgentStorage {
       console.warn('[AgentStorage] localStorage save failed:', e);
     }
   }
+}
+
+/**
+ * Resolve an agent's provider name from its linked account.
+ * Falls back to agent.provider when no account is linked.
+ * @param {Object} agent - AgentDefinition
+ * @param {Array<Object>} accounts - Account list from loadAccounts()
+ * @returns {string} Provider/service name
+ */
+export function resolveAgentProvider(agent, accounts) {
+  if (agent.accountId) {
+    const acct = accounts.find(a => a.id === agent.accountId);
+    if (acct) return acct.service;
+  }
+  return agent.provider || '';
+}
+
+/**
+ * Migrate agents with provider but no accountId to link them to matching accounts.
+ * @param {Array<Object>} accounts - Account list from loadAccounts()
+ * @param {AgentStorage} storage - AgentStorage instance
+ * @returns {Promise<number>} Number of agents migrated
+ */
+export async function migrateAgentAccounts(accounts, storage) {
+  const all = await storage.listAll();
+  let migrated = 0;
+  for (const agent of all) {
+    if (agent.scope === 'builtin') continue;  // skip built-ins, already wired
+    if (agent.accountId) continue;  // already linked
+    if (!agent.provider) continue;  // nothing to match
+    const match = accounts.find(a => a.service === agent.provider);
+    if (match) {
+      agent.accountId = match.id;
+      await storage.save(agent);
+      migrated++;
+    }
+  }
+  return migrated;
 }
 
 export { BUILTIN_AGENTS, generateAgentId };

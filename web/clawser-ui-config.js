@@ -992,7 +992,7 @@ export function renderFallbackChainEditor() {
     d.dataset.idx = i;
     // Resolve display name: account name if accountId, else raw provider
     const acct = entry.accountId ? accts.find(a => a.id === entry.accountId) : null;
-    const displayName = acct ? acct.name : (entry.provider || 'unknown');
+    const displayName = acct ? acct.name : (entry.providerId || entry.provider || 'unknown');
     const displayModel = acct ? acct.model : (entry.model || '');
     d.innerHTML = `
       <span class="chain-drag-handle">\u2630</span>
@@ -1049,7 +1049,7 @@ export function renderFallbackChainEditor() {
     if (!selected) return;
     chain.push({
       accountId: acctId,
-      provider: selected.service,
+      providerId: selected.service,
       model: selected.model,
       priority: chain.length,
       enabled: true,
@@ -1062,6 +1062,13 @@ export function renderFallbackChainEditor() {
 
 function _saveFallbackChain() {
   const wsId = state.agent?.getWorkspace() || 'default';
+  // Normalize legacy entries: migrate provider → providerId
+  for (const entry of (state.fallbackChain || [])) {
+    if (entry.provider && !entry.providerId) {
+      entry.providerId = entry.provider;
+      delete entry.provider;
+    }
+  }
   localStorage.setItem(`clawser_fallback_chain_${wsId}`, JSON.stringify(state.fallbackChain || []));
   // Update the live FallbackExecutor on the agent
   try {

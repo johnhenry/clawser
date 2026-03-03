@@ -38,8 +38,10 @@ describe('SERVICES', () => {
     }
   });
 
-  it('models array is non-empty for each provider', () => {
+  it('models array is non-empty for API providers', () => {
+    const keyless = ['echo']; // echo has no models by design
     for (const [key, svc] of Object.entries(SERVICES)) {
+      if (keyless.includes(key)) continue;
       assert.ok(svc.models.length > 0, `${key}.models should not be empty`);
     }
   });
