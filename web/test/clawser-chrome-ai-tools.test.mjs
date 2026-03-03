@@ -24,17 +24,24 @@ function makeStubApi(returnValue = 'stub result') {
 }
 
 function installStubApis(overrides = {}) {
-  globalThis.self = globalThis.self || globalThis;
-  self.ai = {
+  // Chrome 138+ exposes Writer/Rewriter/Summarizer as global constructors.
+  // getAPI() checks globalThis first, then falls back to self.ai.
+  const apis = {
     writer: makeStubApi(overrides.writer ?? 'Written content here'),
     rewriter: makeStubApi(overrides.rewriter ?? 'Rewritten content here'),
     summarizer: makeStubApi(overrides.summarizer ?? 'Summary content here'),
   };
-  return self.ai;
+  globalThis.Writer = apis.writer;
+  globalThis.Rewriter = apis.rewriter;
+  globalThis.Summarizer = apis.summarizer;
+  return apis;
 }
 
 function removeStubApis() {
-  if (self.ai) delete self.ai;
+  delete globalThis.Writer;
+  delete globalThis.Rewriter;
+  delete globalThis.Summarizer;
+  if (typeof self !== 'undefined' && self.ai) delete self.ai;
 }
 
 // ── Tool specs ───────────────────────────────────────────────────
@@ -71,7 +78,7 @@ describe('Chrome AI Tools — specs', () => {
     assert.ok(tool.parameters.properties.format);
     assert.deepEqual(tool.parameters.required, ['text']);
     // Verify summary types
-    assert.deepEqual(tool.parameters.properties.type.enum, ['key-points', 'tl;dr', 'teaser', 'headline']);
+    assert.deepEqual(tool.parameters.properties.type.enum, ['key-points', 'tldr', 'teaser', 'headline']);
   });
 });
 
@@ -124,11 +131,11 @@ describe('Chrome AI Tools — execution', () => {
 
   it('ChromeSummarizerTool.execute summarizes via session', async () => {
     const tool = new ChromeSummarizerTool();
-    const result = await tool.execute({ text: 'Long article text...', type: 'tl;dr', length: 'short' });
+    const result = await tool.execute({ text: 'Long article text...', type: 'tldr', length: 'short' });
     assert.ok(result.success);
     assert.equal(result.output, 'Summary content here');
     const call = apis.summarizer.calls.find(c => c.method === 'summarize');
-    assert.equal(call.opts.type, 'tl;dr');
+    assert.equal(call.opts.type, 'tldr');
     assert.equal(call.opts.length, 'short');
   });
 });
@@ -150,17 +157,15 @@ describe('Chrome AI Tools — error handling', () => {
   });
 
   it('returns error when availability check returns unavailable', async () => {
-    globalThis.self = globalThis.self || globalThis;
-    self.ai = {
-      writer: {
-        availability: async () => 'unavailable',
-        create: async () => { throw new Error('should not be called'); },
-      },
+    globalThis.Writer = {
+      availability: async () => 'unavailable',
+      create: async () => { throw new Error('should not be called'); },
     };
     const tool = new ChromeWriterTool();
     const result = await tool.execute({ prompt: 'test' });
     assert.ok(!result.success);
     assert.ok(result.error.includes('unavailable'));
+    delete globalThis.Writer;
   });
 });
 

@@ -951,10 +951,12 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
       req.onerror = () => resolve(null);
     });
 
-    const write = (key, data) => new Promise((resolve) => {
+    const write = (key, data) => new Promise((resolve, reject) => {
       const tx = db.transaction(STORE, 'readwrite');
       tx.objectStore(STORE).put(data, key);
       tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error('Transaction aborted'));
     });
 
     const routines = await read(ROUTINE_KEY);
@@ -967,15 +969,40 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     const nowDate = new Date(now);
     const results = [];
 
+    // Inline cron matching (can't import ES modules in MV3 service worker)
+    function cronFieldMatches(pattern, value) {
+      if (pattern === '*') return true;
+      if (pattern.startsWith('*/')) {
+        const step = parseInt(pattern.slice(2));
+        return step > 0 && value % step === 0;
+      }
+      for (const v of pattern.split(',')) {
+        if (v.includes('-')) {
+          const [a, b] = v.split('-').map(Number);
+          if (value >= a && value <= b) return true;
+        } else if (parseInt(v) === value) return true;
+      }
+      return false;
+    }
+    function cronMatches(expr, date) {
+      const parts = expr.trim().split(/\s+/);
+      if (parts.length < 5) return false;
+      const fields = [date.getMinutes(), date.getHours(), date.getDate(), date.getMonth() + 1, date.getDay()];
+      for (let i = 0; i < 5; i++) {
+        if (!cronFieldMatches(parts[i], fields[i])) return false;
+      }
+      return true;
+    }
+
     for (const r of routines) {
       if (!r.enabled) continue;
       let shouldFire = false;
 
-      // Cron check
+      // Cron check — evaluate the actual cron expression
       if (r.trigger?.type === 'cron' && r.trigger?.cron) {
         const lastMinute = r.state?.lastCronMinute || 0;
         const thisMinute = Math.floor(now / 60000);
-        if (thisMinute > lastMinute) shouldFire = true;
+        if (thisMinute > lastMinute && cronMatches(r.trigger.cron, nowDate)) shouldFire = true;
       }
       // Interval check
       if (r.meta?.scheduleType === 'interval') {
@@ -1011,5 +1038,6 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     db.close();
   } catch (err) {
     console.warn('[clawser] Background scheduler error:', err);
+    try { db?.close(); } catch { /* best-effort */ }
   }
 });

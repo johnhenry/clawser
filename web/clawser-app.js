@@ -41,7 +41,6 @@ import { MetricsCollector, RingBufferLog } from './clawser-metrics.js';
 import { DaemonController, CheckpointManager, AwaySummaryBuilder } from './clawser-daemon.js';
 import { RoutineEngine } from './clawser-routines.js';
 import { CheckpointIndexedDB } from './clawser-checkpoint-idb.js';
-import { BackgroundSchedulerRunner } from './clawser-background-runner.js';
 import { OAuthManager } from './clawser-oauth.js';
 import { ToolBuilder } from './clawser-tool-builder.js';
 import { ChannelManager } from './clawser-channels.js';

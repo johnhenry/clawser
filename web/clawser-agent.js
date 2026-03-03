@@ -1278,7 +1278,7 @@ export class ClawserAgent {
 
       // Autonomy: check if tool is allowed at current level
       const toolObj = this.#browserTools?.get(call.name);
-      if (toolObj && !this.#autonomy.canExecuteTool(toolObj)) {
+      if (toolObj && !this.#autonomy.canExecuteTool(toolObj, params)) {
         result = { success: false, output: '', error: `Blocked: agent is in ${this.#autonomy.level} mode` };
         this.#onToolCall(call.name, params, result);
         results.push({ id: call.id, name: call.name, result });

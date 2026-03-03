@@ -9,6 +9,21 @@
 
 import { BrowserTool } from './clawser-tools.js';
 
+// ── API accessors ────────────────────────────────────────────────
+// Chrome 138+ exposes Writer, Rewriter, Summarizer as global constructors.
+// Fallback to self.ai.* for earlier Chrome versions.
+
+/** @param {'writer'|'rewriter'|'summarizer'} apiName */
+function getAPI(apiName) {
+  const globalMap = { writer: 'Writer', rewriter: 'Rewriter', summarizer: 'Summarizer' };
+  const globalName = globalMap[apiName];
+  // Chrome 138+: global constructors
+  if (typeof globalThis[globalName] !== 'undefined') return globalThis[globalName];
+  // Fallback: self.ai.* (earlier Chrome builds)
+  if (typeof self !== 'undefined' && self.ai?.[apiName]) return self.ai[apiName];
+  return null;
+}
+
 // ── Availability helpers ─────────────────────────────────────────
 
 /**
@@ -17,7 +32,7 @@ import { BrowserTool } from './clawser-tools.js';
  * @returns {Promise<'available'|'downloadable'|'unavailable'>}
  */
 async function checkAvailability(apiName) {
-  const api = typeof self !== 'undefined' && self.ai?.[apiName];
+  const api = getAPI(apiName);
   if (!api || typeof api.availability !== 'function') return 'unavailable';
   try {
     return await api.availability();
@@ -35,7 +50,7 @@ async function checkAvailability(apiName) {
  * @returns {Promise<T>}
  */
 async function withSession(apiName, createOpts, fn) {
-  const api = self.ai?.[apiName];
+  const api = getAPI(apiName);
   if (!api) throw new Error(`Chrome AI ${apiName} API not available`);
   const avail = await checkAvailability(apiName);
   if (avail === 'unavailable') {
@@ -134,14 +149,14 @@ export class ChromeRewriterTool extends BrowserTool {
 export class ChromeSummarizerTool extends BrowserTool {
   get name() { return 'chrome_ai_summarize'; }
   get description() {
-    return 'Summarize text using Chrome\'s on-device Summarizer API. Supports key-points, tl;dr, teaser, and headline types.';
+    return 'Summarize text using Chrome\'s on-device Summarizer API. Supports key-points, tldr, teaser, and headline types.';
   }
   get parameters() {
     return {
       type: 'object',
       properties: {
         text: { type: 'string', description: 'The text to summarize' },
-        type: { type: 'string', enum: ['key-points', 'tl;dr', 'teaser', 'headline'], description: 'Summary type (default: key-points)' },
+        type: { type: 'string', enum: ['key-points', 'tldr', 'teaser', 'headline'], description: 'Summary type (default: key-points)' },
         format: { type: 'string', enum: ['plain-text', 'markdown'], description: 'Output format (default: markdown)' },
         length: { type: 'string', enum: ['short', 'medium', 'long'], description: 'Summary length (default: medium)' },
         context: { type: 'string', description: 'Context to guide summarization' },

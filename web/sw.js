@@ -404,16 +404,44 @@ self.addEventListener('periodicsync', (event) => {
         r.onsuccess = () => resolve(r.result ?? null);
         r.onerror = () => resolve(null);
       });
-      const write = (key, data) => new Promise((resolve) => {
+      const write = (key, data) => new Promise((resolve, reject) => {
         const tx = db.transaction(STORE, 'readwrite');
         tx.objectStore(STORE).put(data, key);
         tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error || new Error('Transaction aborted'));
       });
 
       const routines = await read(ROUTINE_KEY);
       if (!Array.isArray(routines) || routines.length === 0) { db.close(); return; }
 
+      // Inline cron matching (SW can't import ES modules from app)
+      function cronFieldMatches(pattern, value) {
+        if (pattern === '*') return true;
+        if (pattern.startsWith('*/')) {
+          const step = parseInt(pattern.slice(2));
+          return step > 0 && value % step === 0;
+        }
+        for (const v of pattern.split(',')) {
+          if (v.includes('-')) {
+            const [a, b] = v.split('-').map(Number);
+            if (value >= a && value <= b) return true;
+          } else if (parseInt(v) === value) return true;
+        }
+        return false;
+      }
+      function cronMatches(expr, date) {
+        const parts = expr.trim().split(/\s+/);
+        if (parts.length < 5) return false;
+        const fields = [date.getMinutes(), date.getHours(), date.getDate(), date.getMonth() + 1, date.getDay()];
+        for (let i = 0; i < 5; i++) {
+          if (!cronFieldMatches(parts[i], fields[i])) return false;
+        }
+        return true;
+      }
+
       const now = Date.now();
+      const nowDate = new Date(now);
       const results = [];
       for (const r of routines) {
         if (!r.enabled) continue;
@@ -424,7 +452,7 @@ self.addEventListener('periodicsync', (event) => {
         if (r.meta?.scheduleType === 'once' && !r.meta.fired && now >= (r.meta.fireAt || 0)) fire = true;
         if (r.trigger?.type === 'cron' && r.trigger?.cron) {
           const lastMin = r.state?.lastCronMinute || 0;
-          if (Math.floor(now / 60000) > lastMin) fire = true;
+          if (Math.floor(now / 60000) > lastMin && cronMatches(r.trigger.cron, nowDate)) fire = true;
         }
         if (fire) {
           r.state = r.state || {};
@@ -447,6 +475,7 @@ self.addEventListener('periodicsync', (event) => {
       db.close();
     } catch (err) {
       console.warn('[clawser-sw] Periodic sync error:', err);
+      try { db?.close(); } catch { /* best-effort */ }
     }
   })());
 });

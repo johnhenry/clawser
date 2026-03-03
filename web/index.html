@@ -507,6 +507,13 @@
             <input type="number" id="cfgDailyCostLimit" class="cfg-narrow" min="0" step="0.5" value="5" />
           </div>
           <div class="config-group">
+            <label>Allowed Hours</label>
+            <input type="number" id="cfgAllowedHoursStart" class="cfg-narrow" min="0" max="23" placeholder="Start hr" />
+            <span style="margin:0 4px">to</span>
+            <input type="number" id="cfgAllowedHoursEnd" class="cfg-narrow" min="0" max="23" placeholder="End hr" />
+          </div>
+          <div class="config-group" id="autonomyPresets"></div>
+          <div class="config-group">
             <label>Cost Today</label>
             <div class="cost-meter-wrap">
               <div class="cost-meter-bar" id="costMeterBar"></div>

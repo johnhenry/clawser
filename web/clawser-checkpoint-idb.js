@@ -41,8 +41,9 @@ async function withStore(mode, fn) {
     const store = tx.objectStore(STORE_NAME);
     const req = fn(store);
     req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    req.onerror = () => { db.close(); reject(req.error); };
     tx.oncomplete = () => db.close();
+    tx.onabort = () => { db.close(); reject(tx.error || new Error('Transaction aborted')); };
   });
 }
 

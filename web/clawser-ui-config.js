@@ -57,7 +57,7 @@ export function renderAutonomySection() {
     state.agent.applyAutonomyConfig({
       level: saved.level || 'supervised',
       maxActionsPerHour: parseInt(saved.maxActions) || Infinity,
-      maxCostPerDayCents: parseInt(saved.dailyCostLimit) || Infinity,
+      maxCostPerDayCents: saved.dailyCostLimit ? Math.round(parseFloat(saved.dailyCostLimit) * 100) : Infinity,
       allowedHours,
     });
   }
@@ -91,7 +91,7 @@ export function saveAutonomySettings() {
     state.agent.applyAutonomyConfig({
       level,
       maxActionsPerHour: parseInt(maxActions) || Infinity,
-      maxCostPerDayCents: parseInt(dailyCostLimit) || Infinity,
+      maxCostPerDayCents: dailyCostLimit ? Math.round(parseFloat(dailyCostLimit) * 100) : Infinity,
       allowedHours,
     });
   }
@@ -121,7 +121,7 @@ function renderAutonomyPresets(wsId) {
       const radio = document.querySelector(`input[name="autonomyLevel"][value="${s.level}"]`);
       if (radio) radio.checked = true;
       if ($('cfgMaxActions')) $('cfgMaxActions').value = s.maxActionsPerHour === Infinity ? '' : s.maxActionsPerHour;
-      if ($('cfgDailyCostLimit')) $('cfgDailyCostLimit').value = s.maxCostPerDayCents === Infinity ? '' : s.maxCostPerDayCents;
+      if ($('cfgDailyCostLimit')) $('cfgDailyCostLimit').value = s.maxCostPerDayCents === Infinity ? '' : (s.maxCostPerDayCents / 100);
       if (s.allowedHours?.[0]) {
         if ($('cfgAllowedHoursStart')) $('cfgAllowedHoursStart').value = s.allowedHours[0].start;
         if ($('cfgAllowedHoursEnd')) $('cfgAllowedHoursEnd').value = s.allowedHours[0].end;
@@ -134,7 +134,8 @@ function renderAutonomyPresets(wsId) {
     if (!name) return;
     const level = document.querySelector('input[name="autonomyLevel"]:checked')?.value || 'supervised';
     const maxActionsPerHour = parseInt($('cfgMaxActions')?.value) || Infinity;
-    const maxCostPerDayCents = parseInt($('cfgDailyCostLimit')?.value) || Infinity;
+    const costDollars = parseFloat($('cfgDailyCostLimit')?.value);
+    const maxCostPerDayCents = costDollars ? Math.round(costDollars * 100) : Infinity;
     const allowedHours = parseAllowedHoursFromUI({
       allowedHoursStart: $('cfgAllowedHoursStart')?.value,
       allowedHoursEnd: $('cfgAllowedHoursEnd')?.value,
@@ -881,6 +882,7 @@ export function renderSchedulerDashboard() {
       renderSchedulerDashboard();
     });
   });
+}
 
 // ── API Key Warning Banner (Gap 7.3) ──────────────────────────────
 

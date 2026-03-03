@@ -35,7 +35,7 @@ export declare class ChromeSummarizerTool extends BrowserTool {
   get permission(): 'auto';
   execute(params: {
     text: string;
-    type?: 'key-points' | 'tl;dr' | 'teaser' | 'headline';
+    type?: 'key-points' | 'tldr' | 'teaser' | 'headline';
     format?: 'plain-text' | 'markdown';
     length?: 'short' | 'medium' | 'long';
     context?: string;
