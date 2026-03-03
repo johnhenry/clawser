@@ -4,12 +4,10 @@
  * Renders the OPFS file browser for the active workspace with click-to-preview,
  * mount/unmount local directories, mount list rendering, and pagination.
  */
-import { $, esc, state } from './clawser-state.js';
+import { $, esc, state, lsKey } from './clawser-state.js';
+import { WorkspaceFs } from './clawser-tools.js';
 import { modal } from './clawser-modal.js';
 import { addMsg, addErrorMsg } from './clawser-ui-chat.js';
-
-// ── OPFS file browser ──────────────────────────────────────────
-const HIDDEN_DIRS = new Set(['.checkpoints', '.skills', '.conversations']);
 const PAGE_SIZE = 50;
 
 /** Render the OPFS file browser for the active workspace, with click-to-preview.
@@ -48,9 +46,11 @@ export async function refreshFiles(path = '/', el = null) {
     }
 
     // Collect all entries first for pagination
+    const wsId = state.agent?.getWorkspace() || 'default';
+    const showDotfiles = localStorage.getItem(lsKey.showDotfiles(wsId)) === 'true';
     const allEntries = [];
     for await (const [name, handle] of dir) {
-      if (path === '/' && HIDDEN_DIRS.has(name)) continue;
+      if (path === '/' && !showDotfiles && WorkspaceFs.INTERNAL_DIRS.has(name)) continue;
       allEntries.push({ name, handle });
     }
 

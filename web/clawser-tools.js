@@ -32,12 +32,17 @@ export class WorkspaceFs {
     // Decode URL-encoded chars and strip null bytes before filtering
     const decoded = decodeURIComponent(userPath).replace(/\x00/g, '');
     const parts = decoded.replace(/^\//, '').split('/').filter(p => p && p !== '..' && p !== '.');
-    // Block access to internal metadata directories
-    if (parts[0] && /^\.(checkpoints|conversations|skills|agents)$/.test(parts[0])) {
-      return this.homePath; // resolve to workspace root (safe fallback)
-    }
     const clean = parts.join('/');
     return clean ? `${this.homePath}/${clean}` : this.homePath;
+  }
+
+  /** Canonical set of internal system directories at workspace root */
+  static INTERNAL_DIRS = new Set(['.checkpoints', '.conversations', '.skills', '.agents']);
+
+  /** Check if a shell path targets an internal system directory */
+  static isInternalPath(shellPath) {
+    const first = shellPath.replace(/^\//, '').split('/')[0];
+    return WorkspaceFs.INTERNAL_DIRS.has(first);
   }
 }
 
@@ -584,6 +589,9 @@ export class FsWriteTool extends BrowserTool {
   setMaxFileSize(bytes) { this.#maxFileSize = bytes; }
 
   async execute({ path, content }) {
+    if (WorkspaceFs.isInternalPath(path)) {
+      return { success: false, output: '', error: `Read-only: ${path} is a system directory` };
+    }
     // File size check (use actual byte size, not JS string length)
     const byteSize = new TextEncoder().encode(content).byteLength;
     if (byteSize > this.#maxFileSize) {
@@ -615,31 +623,54 @@ export class FsWriteTool extends BrowserTool {
 export class FsListTool extends BrowserTool {
   /** @type {WorkspaceFs} */
   #ws;
-  constructor(ws) { super(); this.#ws = ws; }
+  /** @type {Function|null} */
+  #getShellState;
+  /** @type {Function|null} */
+  #showDotfiles;
+  constructor(ws, getShellState, showDotfiles) { super(); this.#ws = ws; this.#getShellState = getShellState || null; this.#showDotfiles = showDotfiles || null; }
 
   get name() { return 'browser_fs_list'; }
   get description() {
-    return 'List files and directories in the Origin Private File System (OPFS).';
+    return 'List files and directories in the workspace filesystem. Paths are resolved relative to the shell\'s current working directory.';
   }
   get parameters() {
     return {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'Directory path within OPFS (default: "/")' },
+        path: { type: 'string', description: 'Directory path (relative to cwd or absolute with leading /). Default: current directory.' },
       },
     };
   }
   get permission() { return 'read'; }
   get idempotent() { return true; }
 
-  async execute({ path = '/' }) {
-    const resolved = this.#ws.resolve(path);
+  /** Resolve a user-supplied path: use shell cwd for relative paths */
+  #resolvePath(userPath) {
+    if (!userPath || userPath === '.') {
+      // Use shell cwd if available
+      const shellState = this.#getShellState?.();
+      const cwd = shellState?.cwd || '/';
+      return cwd;
+    }
+    if (userPath.startsWith('/')) return userPath;
+    // Relative path — prepend shell cwd
+    const shellState = this.#getShellState?.();
+    const cwd = shellState?.cwd || '/';
+    const base = cwd === '/' ? '' : cwd;
+    return `${base}/${userPath}`;
+  }
+
+  async execute({ path } = {}) {
+    const shellPath = this.#resolvePath(path);
+    // Strip leading / for WorkspaceFs.resolve
+    const stripped = shellPath.replace(/^\//, '');
+    const resolved = this.#ws.resolve(stripped);
     const dir = await opfsWalkDir(resolved);
-    const isRoot = (path === '/' || path === '');
+    const isRoot = (shellPath === '/' || shellPath === '');
+    const showAll = typeof this.#showDotfiles === 'function' ? this.#showDotfiles() : false;
     const entries = [];
     for await (const [name, handle] of dir) {
-      // Hide .checkpoints at workspace root
-      if (isRoot && name === '.checkpoints') continue;
+      if (isRoot && !showAll && WorkspaceFs.INTERNAL_DIRS.has(name)) continue;
       entries.push({
         name,
         kind: handle.kind,
@@ -671,6 +702,9 @@ export class FsDeleteTool extends BrowserTool {
   get permission() { return 'write'; }
 
   async execute({ path, recursive = false }) {
+    if (WorkspaceFs.isInternalPath(path)) {
+      return { success: false, output: '', error: `Read-only: ${path} is a system directory` };
+    }
     const resolved = this.#ws.resolve(path);
     const parts = resolved.split('/').filter(Boolean);
     // Prevent deleting workspace root or OPFS root
@@ -1401,7 +1435,13 @@ export class SwitchAgentTool extends BrowserTool {
     try {
       const all = await this.#storage.listAll();
       if (!params.agent) {
-        const list = all.map(a => ({ name: a.name, id: a.id, provider: `${a.provider}:${a.model || 'default'}`, description: a.description }));
+        const { loadAccounts } = await import('./clawser-accounts.js');
+        const accts = loadAccounts();
+        const list = all.map(a => {
+          const acct = a.accountId ? accts.find(ac => ac.id === a.accountId) : null;
+          const provDisplay = acct ? `${acct.name} (${acct.service})` : (a.provider || 'none');
+          return { name: a.name, id: a.id, provider: provDisplay, model: a.model || 'default', description: a.description };
+        });
         return { success: true, output: JSON.stringify(list, null, 2) };
       }
       const agent = all.find(a =>
@@ -1410,7 +1450,11 @@ export class SwitchAgentTool extends BrowserTool {
       if (!agent) return { success: false, output: '', error: `Agent "${params.agent}" not found.` };
       this.#engine.applyAgent(agent);
       this.#storage.setActive(agent.id);
-      return { success: true, output: `Switched to agent "${agent.name}" (${agent.provider}:${agent.model})${params.reason ? `. Reason: ${params.reason}` : ''}` };
+      const { loadAccounts } = await import('./clawser-accounts.js');
+      const accts = loadAccounts();
+      const switchAcct = agent.accountId ? accts.find(a => a.id === agent.accountId) : null;
+      const switchProv = switchAcct ? switchAcct.name : (agent.provider || 'none');
+      return { success: true, output: `Switched to agent "${agent.name}" (${switchProv}:${agent.model})${params.reason ? `. Reason: ${params.reason}` : ''}` };
     } catch (e) {
       return { success: false, output: '', error: `Switch failed: ${e.message}` };
     }
@@ -1485,7 +1529,7 @@ export async function checkQuota() {
   }
 }
 
-export function createDefaultRegistry(workspaceFs) {
+export function createDefaultRegistry(workspaceFs, getShellState, showDotfiles) {
   const registry = new BrowserToolRegistry();
 
   registry.register(new FetchTool());
@@ -1493,7 +1537,7 @@ export function createDefaultRegistry(workspaceFs) {
   registry.register(new DomModifyTool());
   registry.register(new FsReadTool(workspaceFs));
   registry.register(new FsWriteTool(workspaceFs));
-  registry.register(new FsListTool(workspaceFs));
+  registry.register(new FsListTool(workspaceFs, getShellState, showDotfiles));
   registry.register(new FsDeleteTool(workspaceFs));
   registry.register(new StorageGetTool());
   registry.register(new StorageSetTool());

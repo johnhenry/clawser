@@ -836,28 +836,70 @@ section('Filesystem — FsDeleteTool Guards');
   }
 }
 
-section('Filesystem — FsListTool Hidden Dirs');
+section('Filesystem — FsListTool Hidden Dirs (Read-Only Internal Dirs)');
 
 {
   const ws = new WorkspaceFs();
   ws.setWorkspace('test_hidden');
   const list = new FsListTool(ws);
   const write = new FsWriteTool(ws);
+  const del = new FsDeleteTool(ws);
 
-  // Create a file and .checkpoints dir
+  // Create a visible file via FsWriteTool
   await write.execute({ path: '/visible.txt', content: 'yes' });
-  await write.execute({ path: '/.checkpoints/cp.bin', content: 'hidden' });
 
-  // List root — .checkpoints should be hidden
+  // Create all four internal dirs via direct OPFS (bypasses tool guards)
+  const root = await navigator.storage.getDirectory();
+  const wsDir = await root.getDirectoryHandle('clawser_workspaces', { create: true });
+  const homeDir = await wsDir.getDirectoryHandle('test_hidden', { create: true });
+  for (const dirName of ['.checkpoints', '.conversations', '.skills', '.agents']) {
+    const d = await homeDir.getDirectoryHandle(dirName, { create: true });
+    const f = await d.getFileHandle('test.bin', { create: true });
+    const w = await f.createWritable();
+    await w.write('hidden');
+    await w.close();
+  }
+
+  // ls /.checkpoints — should now return contents (not "Access denied")
+  const r0 = await list.execute({ path: '/.checkpoints' });
+  assert('ls .checkpoints succeeds', r0.success);
+  const cpEntries = JSON.parse(r0.output);
+  assert('ls .checkpoints shows test.bin', cpEntries.some(e => e.name === 'test.bin'));
+
+  // FsWriteTool blocks writes to internal dirs
+  const rw = await write.execute({ path: '/.checkpoints/foo', content: 'x' });
+  assert('write to .checkpoints blocked', !rw.success);
+  assert('write error says Read-only', rw.error.includes('Read-only'));
+
+  // FsDeleteTool blocks deletes in internal dirs
+  const rd = await del.execute({ path: '/.checkpoints/test.bin' });
+  assert('delete in .checkpoints blocked', !rd.success);
+  assert('delete error says Read-only', rd.error.includes('Read-only'));
+
+  // Root listing hides all four internal dirs by default
   const r1 = await list.execute({ path: '/' });
   const entries = JSON.parse(r1.output);
   assert('list hides .checkpoints', !entries.some(e => e.name === '.checkpoints'));
+  assert('list hides .conversations', !entries.some(e => e.name === '.conversations'));
+  assert('list hides .skills', !entries.some(e => e.name === '.skills'));
+  assert('list hides .agents', !entries.some(e => e.name === '.agents'));
   assert('list shows visible files', entries.some(e => e.name === 'visible.txt'));
 
-  // Cleanup
-  const del = new FsDeleteTool(ws);
+  // showDotfiles getter makes internal dirs visible
+  const listWithDots = new FsListTool(ws, null, () => true);
+  const r2 = await listWithDots.execute({ path: '/' });
+  const entriesAll = JSON.parse(r2.output);
+  assert('showDotfiles reveals .checkpoints', entriesAll.some(e => e.name === '.checkpoints'));
+  assert('showDotfiles reveals .conversations', entriesAll.some(e => e.name === '.conversations'));
+  assert('showDotfiles reveals .skills', entriesAll.some(e => e.name === '.skills'));
+  assert('showDotfiles reveals .agents', entriesAll.some(e => e.name === '.agents'));
+  assert('showDotfiles still shows visible files', entriesAll.some(e => e.name === 'visible.txt'));
+
+  // Cleanup visible file via tool, internal dirs via direct OPFS
   await del.execute({ path: '/visible.txt' });
-  await del.execute({ path: '/.checkpoints', recursive: true });
+  for (const dirName of ['.checkpoints', '.conversations', '.skills', '.agents']) {
+    await homeDir.removeEntry(dirName, { recursive: true });
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════

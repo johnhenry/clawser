@@ -17,7 +17,7 @@
  * is ephemeral; filesystem changes persist in OPFS.
  */
 
-import { BrowserTool } from './clawser-tools.js';
+import { BrowserTool, WorkspaceFs } from './clawser-tools.js';
 import { opfsWalk, opfsWalkDir } from './clawser-opfs.js';
 import { registerExtendedBuiltins, registerJqBuiltin } from './clawser-shell-builtins.js';
 
@@ -1040,15 +1040,28 @@ export class ShellFs {
     this.#ws = ws;
   }
 
+  /** Resolve a shell path through WorkspaceFs to an OPFS path. */
+  #resolve(shellPath) {
+    const stripped = shellPath.replace(/^\//, '');
+    return this.#ws.resolve(stripped);
+  }
+
+  /** Throw if the shell path targets an internal read-only directory. */
+  #guardWrite(shellPath) {
+    if (WorkspaceFs.isInternalPath(shellPath)) {
+      throw new Error(`Read-only: ${shellPath} is a system directory`);
+    }
+  }
+
   /** Navigate to a directory handle from a shell path */
   async #getDir(shellPath) {
-    const opfsPath = this.#ws.resolve(shellPath.replace(/^\//, ''));
+    const opfsPath = this.#resolve(shellPath);
     return opfsWalkDir(opfsPath);
   }
 
   /** Get [parentHandle, filename] for a shell path */
   async #getParentAndName(shellPath) {
-    const opfsPath = this.#ws.resolve(shellPath.replace(/^\//, ''));
+    const opfsPath = this.#resolve(shellPath);
     const parts = opfsPath.split('/').filter(Boolean);
     if (parts.length === 0) throw new Error('Invalid path');
     const { dir, name } = await opfsWalk(opfsPath);
@@ -1063,7 +1076,8 @@ export class ShellFs {
   }
 
   async writeFile(path, content) {
-    const opfsPath = this.#ws.resolve(path.replace(/^\//, ''));
+    this.#guardWrite(path);
+    const opfsPath = this.#resolve(path);
     const { dir, name } = await opfsWalk(opfsPath, { create: true });
     const fh = await dir.getFileHandle(name, { create: true });
     const writable = await fh.createWritable();
@@ -1071,31 +1085,38 @@ export class ShellFs {
     await writable.close();
   }
 
-  async listDir(path) {
+  async listDir(path, { showDotfiles = false } = {}) {
     const dir = await this.#getDir(path);
+    const isRoot = (path === '/' || path === '');
     const entries = [];
     for await (const [name, handle] of dir) {
+      if (isRoot && !showDotfiles && WorkspaceFs.INTERNAL_DIRS.has(name)) continue;
       entries.push({ name, kind: handle.kind });
     }
     return entries;
   }
 
   async mkdir(path) {
-    const opfsPath = this.#ws.resolve(path.replace(/^\//, ''));
+    this.#guardWrite(path);
+    const opfsPath = this.#resolve(path);
     await opfsWalkDir(opfsPath, { create: true });
   }
 
   async delete(path, recursive = false) {
+    this.#guardWrite(path);
     const [parent, name] = await this.#getParentAndName(path);
     await parent.removeEntry(name, { recursive });
   }
 
   async copy(src, dst) {
+    this.#guardWrite(dst);
     const content = await this.readFile(src);
     await this.writeFile(dst, content);
   }
 
   async move(src, dst) {
+    this.#guardWrite(src);
+    this.#guardWrite(dst);
     await this.copy(src, dst);
     await this.delete(src);
   }
@@ -1295,8 +1316,9 @@ export function registerBuiltins(registry) {
     const target = paths[0] || '.';
     const resolved = state.resolvePath(target);
     const longFormat = flags.some(f => f.includes('l'));
+    const showAll = flags.some(f => f.includes('a'));
     try {
-      const entries = await fs.listDir(resolved);
+      const entries = await fs.listDir(resolved, { showDotfiles: showAll });
       entries.sort((a, b) => a.name.localeCompare(b.name));
       let lines;
       if (longFormat) {
@@ -1311,7 +1333,7 @@ export function registerBuiltins(registry) {
     } catch {
       return { stdout: '', stderr: `ls: ${target}: No such file or directory`, exitCode: 1 };
     }
-  }, { description: 'List directory contents', category: 'File Operations', usage: 'ls [-l] [PATH]', flags: { '-l': 'Long format' } });
+  }, { description: 'List directory contents', category: 'File Operations', usage: 'ls [-la] [PATH]', flags: { '-l': 'Long format', '-a': 'Show hidden system directories' } });
 
   // ── cat ──
   registry.register('cat', async ({ args, stdin, state, fs }) => {

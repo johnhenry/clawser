@@ -71,6 +71,7 @@ export const lsKey = {
   termSessions:  wsId => `clawser_${LS_VERSION}_terminal_sessions_${wsId}`,
   hooks:         wsId => `clawser_${LS_VERSION}_hooks_${wsId}`,
   peripherals:   wsId => `clawser_${LS_VERSION}_peripherals_${wsId}`,
+  showDotfiles:  wsId => `clawser_${LS_VERSION}_show_dotfiles_${wsId}`,
 };
 
 /**
@@ -85,7 +86,7 @@ export function migrateLocalStorageKeys() {
   const keyPatterns = [
     'memories', 'config', 'tool_perms', 'security', 'skills_enabled',
     'autonomy', 'identity', 'selfrepair', 'sandbox', 'heartbeat',
-    'routines', 'terminal_sessions', 'hooks', 'peripherals',
+    'routines', 'terminal_sessions', 'hooks', 'peripherals', 'show_dotfiles',
   ];
 
   // Collect keys first to avoid skipping when removing during iteration

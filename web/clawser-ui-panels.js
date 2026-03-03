@@ -1197,7 +1197,8 @@ async function toggleAgentPicker() {
   if (!state.agentStorage) return;
   const agents = await state.agentStorage.listAll();
   const activeId = state.agent?.activeAgent?.id;
-  renderAgentPickerDropdown(agents, activeId);
+  const { loadAccounts: loadAcctsForPicker } = await import('./clawser-accounts.js');
+  renderAgentPickerDropdown(agents, activeId, loadAcctsForPicker());
   $('agentPicker')?.classList.add('visible');
   agentPickerVisible = true;
   $('agentPicker')?.querySelector('.agent-search')?.focus();
@@ -1208,7 +1209,7 @@ function closeAgentPicker() {
   agentPickerVisible = false;
 }
 
-function renderAgentPickerDropdown(agents, activeId) {
+function renderAgentPickerDropdown(agents, activeId, accts = []) {
   const picker = $('agentPicker');
   if (!picker) return;
   const ws = agents.filter(a => a.scope === 'workspace');
@@ -1216,7 +1217,9 @@ function renderAgentPickerDropdown(agents, activeId) {
 
   function entry(a) {
     const active = a.id === activeId;
-    const provModel = a.model ? `${a.provider}:${a.model.split('/').pop()}` : a.provider;
+    const pickAcct = a.accountId ? accts.find(ac => ac.id === a.accountId) : null;
+    const pickProv = pickAcct ? pickAcct.name : (a.provider || 'none');
+    const provModel = a.model ? `${pickProv}:${a.model.split('/').pop()}` : pickProv;
     return `<div class="agent-pick-item ${active ? 'active' : ''}" data-id="${esc(a.id)}"><span class="agent-pick-dot" style="background:${safeColor(a.color)}"></span><div class="agent-pick-info"><div class="agent-pick-name">${active ? '\u25cf ' : ''}${esc(a.name)} <span class="agent-pick-model">${esc(provModel)}</span></div><div class="agent-pick-desc">${esc(a.description || '')}</div></div></div>`;
   }
 
@@ -1277,10 +1280,14 @@ export async function renderAgentPanel() {
   const activeId = state.agent?.activeAgent?.id;
   const ws = agents.filter(a => a.scope === 'workspace');
   const global = agents.filter(a => a.scope !== 'workspace');
+  const { loadAccounts: loadAcctsForCards } = await import('./clawser-accounts.js');
+  const allAcctsForCards = loadAcctsForCards();
 
   function renderCard(a) {
     const isActive = a.id === activeId;
-    const provModel = a.model ? `${a.provider}:${a.model.split('/').pop()}` : a.provider;
+    const cardAcct = a.accountId ? allAcctsForCards.find(ac => ac.id === a.accountId) : null;
+    const provLabel = cardAcct ? cardAcct.name : (a.provider || 'none');
+    const provModel = a.model ? `${provLabel}:${a.model.split('/').pop()}` : provLabel;
     const toolSummary = a.tools?.mode === 'all' ? 'all tools' : a.tools?.mode === 'none' ? 'no tools' : `${(a.tools?.list || []).length} tools (${a.tools?.mode})`;
     return `<div class="agent-card ${isActive ? 'active' : ''}" data-id="${esc(a.id)}"><div class="agent-card-header"><span class="agent-card-dot" style="background:${safeColor(a.color)}"></span><span class="agent-card-name">${isActive ? '\u25cf ' : ''}${esc(a.name)}</span><span class="agent-card-model">${esc(provModel)}</span></div><div class="agent-card-desc">${esc(a.description || '')}</div><div class="agent-card-meta">tools: ${toolSummary} \u00b7 ${a.autonomy || 'balanced'}</div><div class="agent-card-actions"><button class="agent-edit-btn" data-id="${esc(a.id)}">Edit</button><button class="agent-dup-btn" data-id="${esc(a.id)}">Duplicate</button>${!isActive ? `<button class="agent-activate-btn" data-id="${esc(a.id)}">Activate</button>` : ''}${a.scope !== 'builtin' ? `<button class="agent-delete-btn" data-id="${esc(a.id)}">Delete</button>` : ''}</div></div>`;
   }
@@ -1370,35 +1377,46 @@ async function renderAgentEditor(panelBody, agentId) {
   }
 
   const isBuiltin = agent.scope === 'builtin';
-  const providerOptions = state.providers?.names ? state.providers.names().map(k => `<option value="${esc(k)}" ${agent.provider === k ? 'selected' : ''}>${esc(k)}</option>`).join('') : '';
+  const { loadAccounts, SERVICES } = await import('./clawser-accounts.js');
+  const allAccounts = loadAccounts();
+  const accountOptions = allAccounts.map(a => {
+    const svcName = SERVICES[a.service]?.name || a.service;
+    return `<option value="${esc(a.id)}" ${agent.accountId === a.id ? 'selected' : ''}>${esc(a.name)} (${esc(svcName)} · ${esc(a.model || 'default')})</option>`;
+  }).join('');
 
   panelBody.innerHTML = `
     <div class="agent-editor">
       <button class="btn-sm agent-back-btn" id="agentBackBtn">\u2190 Back to list</button>
-      <h3>${isBuiltin ? 'View' : (agentId === '__new__' ? 'New' : 'Edit')}: ${esc(agent.name || 'Agent')}</h3>
+      <h3>${isBuiltin ? 'Customize' : (agentId === '__new__' ? 'New' : 'Edit')}: ${esc(agent.name || 'Agent')}</h3>
       <div class="config-group"><label>Name</label><input id="aeditName" type="text" value="${esc(agent.name)}" ${isBuiltin ? 'disabled' : ''} /></div>
       <div class="config-group"><label>Description</label><input id="aeditDesc" type="text" value="${esc(agent.description || '')}" ${isBuiltin ? 'disabled' : ''} /></div>
       <div class="config-group"><label>Color</label><input id="aeditColor" type="color" value="${safeColor(agent.color, '#58a6ff')}" ${isBuiltin ? 'disabled' : ''} /></div>
       <div class="config-group"><label>Scope</label><select id="aeditScope" ${isBuiltin ? 'disabled' : ''}><option value="global" ${agent.scope === 'global' ? 'selected' : ''}>Global</option><option value="workspace" ${agent.scope === 'workspace' ? 'selected' : ''}>This workspace</option></select></div>
-      <div class="config-group"><label>Provider</label><select id="aeditProvider" ${isBuiltin ? 'disabled' : ''}>${providerOptions}</select></div>
-      <div class="config-group"><label>Model</label><input id="aeditModel" type="text" value="${esc(agent.model || '')}" ${isBuiltin ? 'disabled' : ''} /></div>
+      <div class="config-group"><label>Account</label><select id="aeditAccount"><option value="">-- No account --</option>${accountOptions}</select>${!agent.accountId ? '<div style="font-size:10px;color:var(--dim);margin-top:2px;">Select an account to provide API credentials.</div>' : ''}</div>
+      <div class="config-group"><label>Model <span style="font-size:9px;color:var(--dim);">(overrides account default)</span></label><input id="aeditModel" type="text" value="${esc(agent.model || '')}" ${isBuiltin ? 'disabled' : ''} /></div>
       <div class="config-group"><label>System Prompt</label><textarea id="aeditPrompt" rows="4" ${isBuiltin ? 'disabled' : ''}>${esc(agent.systemPrompt || '')}</textarea></div>
       <div class="config-group"><label>Temperature</label><input id="aeditTemp" type="range" min="0" max="2" step="0.1" value="${agent.temperature ?? 0.7}" ${isBuiltin ? 'disabled' : ''} /> <span id="aeditTempVal">${agent.temperature ?? 0.7}</span></div>
       <div class="config-group"><label>Max Tokens</label><input id="aeditMaxTok" type="number" value="${agent.maxTokens || 4096}" ${isBuiltin ? 'disabled' : ''} /></div>
       <div class="config-group"><label>Autonomy</label><select id="aeditAutonomy" ${isBuiltin ? 'disabled' : ''}><option value="full" ${agent.autonomy === 'full' ? 'selected' : ''}>Full</option><option value="balanced" ${agent.autonomy === 'balanced' ? 'selected' : ''}>Balanced</option><option value="cautious" ${agent.autonomy === 'cautious' ? 'selected' : ''}>Cautious</option><option value="manual" ${agent.autonomy === 'manual' ? 'selected' : ''}>Manual</option></select></div>
       <div class="config-group"><label>Tool Mode</label><select id="aeditToolMode" ${isBuiltin ? 'disabled' : ''}><option value="all" ${agent.tools?.mode === 'all' ? 'selected' : ''}>All tools</option><option value="none" ${agent.tools?.mode === 'none' ? 'selected' : ''}>No tools</option><option value="allowlist" ${agent.tools?.mode === 'allowlist' ? 'selected' : ''}>Allowlist</option><option value="blocklist" ${agent.tools?.mode === 'blocklist' ? 'selected' : ''}>Blocklist</option></select></div>
       <div class="config-group"><label>Max Turns/Run</label><input id="aeditMaxTurns" type="number" value="${agent.maxTurnsPerRun || 20}" ${isBuiltin ? 'disabled' : ''} /></div>
-      ${!isBuiltin ? `<div class="btn-row"><button class="btn-sm" id="agentSaveBtn">Save</button><button class="btn-sm btn-surface2" id="agentCancelBtn">Cancel</button>${agentId !== '__new__' ? `<button class="btn-sm btn-danger" id="agentDeleteBtn">Delete</button>` : ''}</div>` : ''}
+      ${!isBuiltin ? `<div class="btn-row"><button class="btn-sm" id="agentSaveBtn">Save</button><button class="btn-sm btn-surface2" id="agentCancelBtn">Cancel</button>${agentId !== '__new__' ? `<button class="btn-sm btn-danger" id="agentDeleteBtn">Delete</button>` : ''}</div>` : `<div class="btn-row"><button class="btn-sm" id="agentSaveBuiltinBtn">Save as Custom Copy</button><button class="btn-sm btn-surface2" id="agentCancelBtn">Back</button></div>`}
     </div>
   `;
 
   panelBody.querySelector('#aeditTemp')?.addEventListener('input', (e) => { panelBody.querySelector('#aeditTempVal').textContent = e.target.value; });
+  panelBody.querySelector('#aeditAccount')?.addEventListener('change', (e) => {
+    const acct = allAccounts.find(a => a.id === e.target.value);
+    if (acct && !$('aeditModel').value.trim()) $('aeditModel').value = acct.model || '';
+  });
   panelBody.querySelector('#agentBackBtn')?.addEventListener('click', () => { agentEditingId = null; renderAgentPanel(); });
   panelBody.querySelector('#agentCancelBtn')?.addEventListener('click', () => { agentEditingId = null; renderAgentPanel(); });
 
   panelBody.querySelector('#agentSaveBtn')?.addEventListener('click', async () => {
     const wsId = state.agent?.getWorkspace() || 'default';
     const scope = $('aeditScope').value;
+    const selectedAcctId = $('aeditAccount').value || null;
+    const selectedAcct = selectedAcctId ? allAccounts.find(a => a.id === selectedAcctId) : null;
     const updated = {
       ...agent,
       name: $('aeditName').value.trim() || 'Untitled Agent',
@@ -1406,7 +1424,8 @@ async function renderAgentEditor(panelBody, agentId) {
       color: $('aeditColor').value,
       scope,
       workspaceId: scope === 'workspace' ? wsId : null,
-      provider: $('aeditProvider').value,
+      accountId: selectedAcctId,
+      provider: selectedAcct?.service || agent.provider,
       model: $('aeditModel').value.trim(),
       systemPrompt: $('aeditPrompt').value,
       temperature: parseFloat($('aeditTemp').value) || 0.7,
@@ -1416,6 +1435,26 @@ async function renderAgentEditor(panelBody, agentId) {
       maxTurnsPerRun: parseInt($('aeditMaxTurns').value) || 20,
     };
     await state.agentStorage.save(updated);
+    agentEditingId = null;
+    renderAgentPanel();
+  });
+
+  panelBody.querySelector('#agentSaveBuiltinBtn')?.addEventListener('click', async () => {
+    const { generateAgentId } = await import('./clawser-agent-storage.js');
+    const selectedAcctId = $('aeditAccount').value || null;
+    const selectedAcct = selectedAcctId ? allAccounts.find(a => a.id === selectedAcctId) : null;
+    const copy = {
+      ...agent,
+      id: generateAgentId(),
+      scope: 'global',
+      workspaceId: null,
+      accountId: selectedAcctId,
+      provider: selectedAcct?.service || agent.provider,
+    };
+    await state.agentStorage.save(copy);
+    // Activate the copy immediately
+    state.agent.applyAgent(copy);
+    state.agentStorage.setActive(copy.id);
     agentEditingId = null;
     renderAgentPanel();
   });
@@ -1468,6 +1507,12 @@ export function initPanelListeners() {
   // File browser
   $('refreshFiles').addEventListener('click', () => refreshFiles());
   $('mountFolder').addEventListener('click', () => mountLocalFolder());
+  $('toggleDotfiles').addEventListener('click', () => {
+    const wsId = state.agent?.getWorkspace() || 'default';
+    const current = localStorage.getItem(lsKey.showDotfiles(wsId)) === 'true';
+    localStorage.setItem(lsKey.showDotfiles(wsId), String(!current));
+    refreshFiles();
+  });
 
   // Memory
   $('memAddToggle').addEventListener('click', () => {

@@ -12,7 +12,7 @@
  *
  * All cross-module coordination flows through the event bus (on/emit).
  */
-import { $, state, on, emit, migrateLocalStorageKeys, configCache } from './clawser-state.js';
+import { $, state, lsKey, on, emit, migrateLocalStorageKeys, configCache } from './clawser-state.js';
 import { ensureDefaultWorkspace } from './clawser-workspaces.js';
 import { initAccountListeners } from './clawser-accounts.js';
 import { initRouterListeners } from './clawser-router.js';
@@ -61,7 +61,10 @@ migrateLocalStorageKeys();
 
 // ── Create service singletons ───────────────────────────────────
 state.workspaceFs = new MountableFs();
-state.browserTools = createDefaultRegistry(state.workspaceFs);
+state.browserTools = createDefaultRegistry(state.workspaceFs, () => state.shell?.state, () => {
+  const wsId = state.workspaceFs.getWorkspace();
+  return localStorage.getItem(lsKey.showDotfiles(wsId)) === 'true';
+});
 state.providers = createDefaultProviders();
 state.mcpManager = new McpManager({
   onLog: (level, msg) => console.log(`[mcp] ${msg}`),
