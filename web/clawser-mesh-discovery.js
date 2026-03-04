@@ -42,10 +42,10 @@ export const SVC_REGISTER = 0xC4;
 export const SVC_LOOKUP = 0xC5;
 
 /** SharedWorker relay register message type. */
-export const RELAY_REGISTER = 0xC6;
+export const RELAY_REGISTER = 0x96;
 
 /** SharedWorker relay query message type. */
-export const RELAY_QUERY = 0xC7;
+export const RELAY_QUERY = 0x97;
 
 // ---------------------------------------------------------------------------
 // DiscoveryRecord

@@ -980,7 +980,7 @@ describe('SharedWorkerRelayStrategy', () => {
   });
 
   it('RELAY_REGISTER and RELAY_QUERY constants exist', () => {
-    assert.equal(RELAY_REGISTER, 0xC6);
-    assert.equal(RELAY_QUERY, 0xC7);
+    assert.equal(RELAY_REGISTER, 0x96);
+    assert.equal(RELAY_QUERY, 0x97);
   });
 });

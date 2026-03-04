@@ -249,9 +249,8 @@ describe('HttpAdapter', () => {
     await adapter.connect(device)
     let received = null
     await adapter.subscribe(device, 'status', (msg) => { received = msg })
-    // The poll interval is set but we won't wait for real timers
-    // Just verify no error was thrown
-    assert.ok(true)
+    // Verify subscribe didn't throw and adapter is still active
+    assert.equal(adapter.active, true)
   })
 
   it('unsubscribe clears interval', async () => {
@@ -368,10 +367,13 @@ describe('IoTBridge', () => {
     assert.ok(bridge)
   })
 
-  it('registerAdapter adds adapter', () => {
+  it('registerAdapter adds adapter and send delegates correctly', async () => {
     bridge.registerAdapter('mqtt', mockAdapter)
-    // No error means success
-    assert.ok(true)
+    const device = new IoTDevice({ deviceId: 'ra1', protocol: 'mqtt' })
+    await bridge.addDevice(device)
+    await bridge.send('ra1', { test: 1 })
+    assert.equal(sent.length, 1)
+    assert.deepEqual(sent[0], { test: 1 })
   })
 
   it('addDevice stores and auto-connects', async () => {
@@ -576,5 +578,131 @@ describe('IoTTelemetry', () => {
     const single = telemetry.export('dev-1')
     assert.ok(single['dev-1'])
     assert.equal(single['dev-2'], undefined)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// IoTBridge wire protocol
+// ---------------------------------------------------------------------------
+
+describe('IoTBridge wire protocol', () => {
+  let bridge
+  let sent
+  let sendFn
+  let mockAdapter
+
+  beforeEach(() => {
+    sent = []
+    sendFn = (targetId, msg) => sent.push({ targetId, msg })
+    mockAdapter = {
+      protocol: 'mqtt',
+      active: false,
+      connect: async () => {},
+      disconnect: async () => {},
+      send: async (_device, payload) => { sent.push({ adapterSend: payload }) },
+      subscribe: async () => {},
+      unsubscribe: async () => {},
+    }
+    bridge = new IoTBridge({ sendFn })
+    bridge.registerAdapter('mqtt', mockAdapter)
+  })
+
+  it('handleMessage IOT_REGISTER adds device', async () => {
+    const device = new IoTDevice({ deviceId: 'r1', protocol: 'mqtt' })
+    await bridge.handleMessage('podB', { type: IOT_REGISTER, device: device.toJSON() })
+    assert.equal(bridge.getDevice('r1').deviceId, 'r1')
+  })
+
+  it('handleMessage IOT_TELEMETRY dispatches telemetry event', async () => {
+    const events = []
+    bridge.onDeviceEvent((ev) => events.push(ev))
+    await bridge.handleMessage('podB', { type: IOT_TELEMETRY, deviceId: 'dev1', data: { temp: 22 } })
+    assert.equal(events.length, 1)
+    assert.equal(events[0].type, 'telemetry')
+    assert.equal(events[0].fromId, 'podB')
+    assert.deepEqual(events[0].data, { temp: 22 })
+  })
+
+  it('handleMessage IOT_COMMAND sends to local device and responds with IOT_STATUS', async () => {
+    const device = new IoTDevice({ deviceId: 'cmd1', protocol: 'mqtt' })
+    await bridge.addDevice(device)
+    sent.length = 0
+    await bridge.handleMessage('podB', { type: IOT_COMMAND, deviceId: 'cmd1', payload: { action: 'on' } })
+    // Should have sent to adapter + sent IOT_STATUS response
+    const adapterSend = sent.find(s => s.adapterSend)
+    assert.ok(adapterSend)
+    assert.deepEqual(adapterSend.adapterSend, { action: 'on' })
+    const statusMsg = sent.find(s => s.msg && s.msg.type === IOT_STATUS)
+    assert.ok(statusMsg)
+    assert.equal(statusMsg.msg.status, 'ok')
+  })
+
+  it('handleMessage IOT_STATUS dispatches status event', async () => {
+    const events = []
+    bridge.onDeviceEvent((ev) => events.push(ev))
+    await bridge.handleMessage('podB', { type: IOT_STATUS, deviceId: 'dev1', status: 'ok' })
+    assert.equal(events.length, 1)
+    assert.equal(events[0].type, 'status')
+    assert.equal(events[0].status, 'ok')
+  })
+
+  it('announceDevice sends IOT_REGISTER to all peers', () => {
+    const device = new IoTDevice({ deviceId: 'ann1', protocol: 'mqtt' })
+    bridge.announceDevice(['podB', 'podC'], device)
+    assert.equal(sent.length, 2)
+    assert.equal(sent[0].msg.type, IOT_REGISTER)
+    assert.equal(sent[0].msg.device.deviceId, 'ann1')
+    assert.equal(sent[1].targetId, 'podC')
+  })
+
+  it('sendCommand sends IOT_COMMAND via sendFn', () => {
+    bridge.sendCommand('podB', 'dev1', { action: 'toggle' })
+    assert.equal(sent.length, 1)
+    assert.equal(sent[0].targetId, 'podB')
+    assert.equal(sent[0].msg.type, IOT_COMMAND)
+    assert.equal(sent[0].msg.deviceId, 'dev1')
+    assert.deepEqual(sent[0].msg.payload, { action: 'toggle' })
+  })
+
+  it('handleMessage ignores unknown type', async () => {
+    await bridge.handleMessage('podB', { type: 0xFF })
+    assert.equal(sent.length, 0)
+  })
+
+  it('works without sendFn (graceful no-op)', () => {
+    const noSendBridge = new IoTBridge()
+    const device = new IoTDevice({ deviceId: 'ns1', protocol: 'mqtt' })
+    // Should not throw
+    noSendBridge.announceDevice(['podB'], device)
+    noSendBridge.sendCommand('podB', 'ns1', { action: 'on' })
+  })
+
+  it('handleMessage IOT_COMMAND with unknown deviceId responds not_found', async () => {
+    await bridge.handleMessage('podB', { type: IOT_COMMAND, deviceId: 'nonexistent', payload: { x: 1 } })
+    const statusMsg = sent.find(s => s.msg && s.msg.type === IOT_STATUS)
+    assert.ok(statusMsg)
+    assert.equal(statusMsg.msg.status, 'not_found')
+    assert.equal(statusMsg.msg.deviceId, 'nonexistent')
+  })
+
+  it('handleMessage IOT_COMMAND reports error status when adapter.send throws', async () => {
+    const failAdapter = {
+      ...mockAdapter,
+      send: async () => { throw new Error('send failed') },
+    }
+    bridge.registerAdapter('mqtt', failAdapter)
+    const device = new IoTDevice({ deviceId: 'fail1', protocol: 'mqtt' })
+    await bridge.addDevice(device)
+    sent.length = 0
+    await bridge.handleMessage('podB', { type: IOT_COMMAND, deviceId: 'fail1', payload: {} })
+    const statusMsg = sent.find(s => s.msg && s.msg.type === IOT_STATUS)
+    assert.ok(statusMsg)
+    assert.equal(statusMsg.msg.status, 'error')
+  })
+
+  it('handleMessage IOT_REGISTER with missing device field is ignored', async () => {
+    const deviceCount = bridge.listDevices().length
+    await bridge.handleMessage('podB', { type: IOT_REGISTER })
+    assert.equal(bridge.listDevices().length, deviceCount)
   })
 })

@@ -20,22 +20,22 @@
 // ---------------------------------------------------------------------------
 
 /** @type {number} */
-export const APP_MANIFEST = 0xD6;
+export const APP_MANIFEST = 0x98;
 
 /** @type {number} */
-export const APP_INSTALL = 0xD7;
+export const APP_INSTALL = 0x99;
 
 /** @type {number} */
-export const APP_UNINSTALL = 0xD8;
+export const APP_UNINSTALL = 0x9A;
 
 /** @type {number} */
-export const APP_STATE_SYNC = 0xD9;
+export const APP_STATE_SYNC = 0x9B;
 
 /** @type {number} */
-export const APP_RPC = 0xDA;
+export const APP_RPC = 0x9C;
 
 /** @type {number} */
-export const APP_EVENT = 0xDB;
+export const APP_EVENT = 0x9D;
 
 // ---------------------------------------------------------------------------
 // Valid permissions

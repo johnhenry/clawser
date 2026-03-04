@@ -20,28 +20,28 @@ import {
 // ---------------------------------------------------------------------------
 
 describe('Wire constants', () => {
-  it('LISTING_PUBLISH equals 0xD0', () => {
-    assert.equal(LISTING_PUBLISH, 0xd0);
+  it('LISTING_PUBLISH equals 0x90', () => {
+    assert.equal(LISTING_PUBLISH, 0x90);
   });
 
-  it('LISTING_QUERY equals 0xD1', () => {
-    assert.equal(LISTING_QUERY, 0xd1);
+  it('LISTING_QUERY equals 0x91', () => {
+    assert.equal(LISTING_QUERY, 0x91);
   });
 
-  it('LISTING_RESPONSE equals 0xD2', () => {
-    assert.equal(LISTING_RESPONSE, 0xd2);
+  it('LISTING_RESPONSE equals 0x92', () => {
+    assert.equal(LISTING_RESPONSE, 0x92);
   });
 
-  it('LISTING_PURCHASE equals 0xD3', () => {
-    assert.equal(LISTING_PURCHASE, 0xd3);
+  it('LISTING_PURCHASE equals 0x93', () => {
+    assert.equal(LISTING_PURCHASE, 0x93);
   });
 
-  it('REVIEW_SUBMIT equals 0xD4', () => {
-    assert.equal(REVIEW_SUBMIT, 0xd4);
+  it('REVIEW_SUBMIT equals 0x94', () => {
+    assert.equal(REVIEW_SUBMIT, 0x94);
   });
 
-  it('REVIEW_QUERY equals 0xD5', () => {
-    assert.equal(REVIEW_QUERY, 0xd5);
+  it('REVIEW_QUERY equals 0x95', () => {
+    assert.equal(REVIEW_QUERY, 0x95);
   });
 });
 

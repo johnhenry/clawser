@@ -661,13 +661,22 @@ export class IoTBridge {
    * @param {object} [opts]
    * @param {Map|Array} [opts.adapters] - Initial adapters as Map or [protocol, adapter] pairs
    */
-  constructor({ adapters } = {}) {
+  /** @type {Function|null} (targetId, msg) => void */
+  #sendFn
+
+  /**
+   * @param {object} [opts]
+   * @param {Map|Array} [opts.adapters] - Initial adapters as Map or [protocol, adapter] pairs
+   * @param {Function} [opts.sendFn] - Send function: (targetId, msg) => {}
+   */
+  constructor({ adapters, sendFn } = {}) {
     if (adapters) {
       const entries = adapters instanceof Map ? adapters.entries() : adapters
       for (const [protocol, adapter] of entries) {
         this.#adapters.set(protocol, adapter)
       }
     }
+    this.#sendFn = sendFn || null
   }
 
   /**
@@ -818,6 +827,17 @@ export class IoTBridge {
   }
 
   /**
+   * Remove a device event callback.
+   * @param {Function} cb
+   * @returns {boolean} True if the callback was found and removed
+   */
+  offDeviceEvent(cb) {
+    const idx = this.#eventCallbacks.indexOf(cb)
+    if (idx !== -1) { this.#eventCallbacks.splice(idx, 1); return true }
+    return false
+  }
+
+  /**
    * Dispatch an event to all registered callbacks.
    * @param {object} event
    */
@@ -825,6 +845,103 @@ export class IoTBridge {
     for (const cb of this.#eventCallbacks) {
       cb(event)
     }
+  }
+
+  // -----------------------------------------------------------------------
+  // Wire protocol
+  // -----------------------------------------------------------------------
+
+  /**
+   * Handle an incoming wire message.
+   * @param {string} fromId - Sender pod ID
+   * @param {object} msg - Message with `type` field
+   */
+  async handleMessage(fromId, msg) {
+    switch (msg.type) {
+      case IOT_REGISTER: {
+        if (msg.device) {
+          const device = msg.device instanceof IoTDevice
+            ? msg.device
+            : IoTDevice.fromJSON(msg.device)
+          await this.addDevice(device)
+        }
+        break
+      }
+
+      case IOT_TELEMETRY: {
+        this.dispatchEvent({
+          type: 'telemetry',
+          fromId,
+          deviceId: msg.deviceId,
+          data: msg.data,
+        })
+        break
+      }
+
+      case IOT_COMMAND: {
+        const device = this.#devices.get(msg.deviceId)
+        let status = device ? 'ok' : 'not_found'
+        if (device) {
+          const adapter = this.#adapters.get(device.protocol)
+          if (adapter) {
+            try {
+              await adapter.send(device, msg.payload)
+            } catch {
+              status = 'error'
+            }
+          }
+        }
+        if (this.#sendFn) {
+          this.#sendFn(fromId, {
+            type: IOT_STATUS,
+            deviceId: msg.deviceId,
+            status,
+          })
+        }
+        break
+      }
+
+      case IOT_STATUS: {
+        this.dispatchEvent({
+          type: 'status',
+          fromId,
+          deviceId: msg.deviceId,
+          status: msg.status,
+        })
+        break
+      }
+
+      default:
+        break
+    }
+  }
+
+  /**
+   * Announce a device to listed peers via IOT_REGISTER.
+   * @param {string[]} peerIds
+   * @param {IoTDevice} device
+   */
+  announceDevice(peerIds, device) {
+    if (!this.#sendFn) return
+    const payload = { type: IOT_REGISTER, device: device.toJSON() }
+    for (const peerId of peerIds) {
+      this.#sendFn(peerId, payload)
+    }
+  }
+
+  /**
+   * Send an IOT_COMMAND to a remote peer.
+   * @param {string} targetPodId
+   * @param {string} deviceId
+   * @param {*} payload
+   */
+  sendCommand(targetPodId, deviceId, payload) {
+    if (!this.#sendFn) return
+    this.#sendFn(targetPodId, {
+      type: IOT_COMMAND,
+      deviceId,
+      payload,
+    })
   }
 }
 

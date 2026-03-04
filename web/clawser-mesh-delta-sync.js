@@ -551,6 +551,14 @@ export class SyncSession {
   }
 
   /**
+   * Number of entries waiting to be confirmed as sent.
+   * @returns {number}
+   */
+  get pendingSendCount() {
+    return this.#pendingSend.length;
+  }
+
+  /**
    * Mark outbound deltas as sent.
    * @param {DeltaEntry[]} sent
    */
@@ -663,7 +671,17 @@ export class SyncCoordinator {
    * @param {Object} [opts.initialState={}]
    * @param {DeltaLog} [opts.log]
    */
-  constructor({ localPodId, initialState = {}, log }) {
+  /** @type {Function|null} (targetId, msg) => void */
+  #sendFn;
+
+  /**
+   * @param {object} opts
+   * @param {string} opts.localPodId
+   * @param {Object} [opts.initialState={}]
+   * @param {DeltaLog} [opts.log]
+   * @param {Function} [opts.sendFn] Send function: (targetId, msg) => {}
+   */
+  constructor({ localPodId, initialState = {}, log, sendFn }) {
     if (!localPodId || typeof localPodId !== 'string') {
       throw new Error('localPodId is required and must be a non-empty string');
     }
@@ -672,6 +690,7 @@ export class SyncCoordinator {
     this.#log = log || new DeltaLog();
     this.#encoder = new DeltaEncoder();
     this.#decoder = new DeltaDecoder();
+    this.#sendFn = sendFn || null;
   }
 
   get localPodId() { return this.#localPodId; }
@@ -776,6 +795,17 @@ export class SyncCoordinator {
   /** Register sync listener. */
   onSync(cb) {
     this.#syncListeners.push(cb);
+  }
+
+  /**
+   * Remove a sync listener.
+   * @param {Function} cb
+   * @returns {boolean} True if the listener was found and removed
+   */
+  offSync(cb) {
+    const idx = this.#syncListeners.indexOf(cb);
+    if (idx !== -1) { this.#syncListeners.splice(idx, 1); return true; }
+    return false;
   }
 
   /** Get stats. */
@@ -901,6 +931,111 @@ export class SyncCoordinator {
    */
   deleteBranch(name) {
     return this.#branches.delete(name);
+  }
+
+  // -----------------------------------------------------------------------
+  // Wire protocol
+  // -----------------------------------------------------------------------
+
+  /**
+   * Handle an incoming wire message.
+   * @param {string} fromId - Sender pod ID
+   * @param {object} msg - Message with `type` field
+   */
+  handleMessage(fromId, msg) {
+    switch (msg.type) {
+      case DELTA_SYNC_REQUEST: {
+        const entries = this.prepareSyncTo(fromId);
+        if (this.#sendFn) {
+          this.#sendFn(fromId, {
+            type: DELTA_SYNC_RESPONSE,
+            entries: entries.map(e => e.toJSON()),
+          });
+        }
+        break;
+      }
+
+      case DELTA_SYNC_RESPONSE: {
+        const entries = (msg.entries || []).map(e =>
+          e instanceof DeltaEntry ? e : DeltaEntry.fromJSON(e)
+        );
+        this.receiveFrom(fromId, entries);
+        if (this.#sendFn) {
+          this.#sendFn(fromId, {
+            type: DELTA_SYNC_ACK,
+            entries: (msg.entries || []),
+          });
+        }
+        break;
+      }
+
+      case DELTA_SYNC_ACK: {
+        const session = this.getSession(fromId);
+        if (session.pendingSendCount === 0) break; // no pending send to confirm
+        const entries = (msg.entries || []).map(e =>
+          e instanceof DeltaEntry ? e : DeltaEntry.fromJSON(e)
+        );
+        session.confirmSent(entries);
+        break;
+      }
+
+      case DELTA_FULL_SNAPSHOT: {
+        if (msg.state) {
+          // Apply as full state replace
+          this.#state = { ...msg.state };
+        } else if (this.#sendFn) {
+          // Send own state snapshot
+          this.#sendFn(fromId, {
+            type: DELTA_FULL_SNAPSHOT,
+            state: { ...this.#state },
+          });
+        }
+        break;
+      }
+
+      case DELTA_BRANCH_CREATE: {
+        if (msg.name && !this.#branches.has(msg.name)) {
+          this.createBranch(msg.name);
+        }
+        break;
+      }
+
+      case DELTA_BRANCH_MERGE: {
+        if (msg.name && this.#branches.has(msg.name)) {
+          this.mergeBranch(msg.name, msg.strategy || 'ours');
+        }
+        break;
+      }
+
+      default:
+        // Unknown message type — ignore
+        break;
+    }
+  }
+
+  /**
+   * Initiate a sync by sending DELTA_SYNC_REQUEST to a remote peer.
+   * @param {string} remotePodId
+   */
+  requestSync(remotePodId) {
+    if (this.#sendFn) {
+      this.#sendFn(remotePodId, { type: DELTA_SYNC_REQUEST });
+    }
+  }
+
+  /**
+   * Broadcast a full state snapshot to listed peers.
+   * @param {string[]} peerIds
+   */
+  broadcastState(peerIds) {
+    if (!this.#sendFn) return;
+    const snapshot = { ...this.#state };
+    for (const peerId of peerIds) {
+      this.#sendFn(peerId, {
+        type: DELTA_FULL_SNAPSHOT,
+        state: snapshot,
+      });
+    }
   }
 
   toJSON() {

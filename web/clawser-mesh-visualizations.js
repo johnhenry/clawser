@@ -703,6 +703,138 @@ export class TopologyDiff {
 /**
  * Serializes visualization layouts for external renderers.
  */
+// ---------------------------------------------------------------------------
+// TopologyBroadcaster
+// ---------------------------------------------------------------------------
+
+/**
+ * Broadcasts and receives topology snapshots and diffs over the mesh wire protocol.
+ */
+export class TopologyBroadcaster {
+  /** @type {string} */
+  #localPodId;
+
+  /** @type {Function} (targetId, msg) => void */
+  #sendFn;
+
+  /** @type {Function[]} */
+  #snapshotListeners = [];
+
+  /** @type {Function[]} */
+  #diffListeners = [];
+
+  /**
+   * @param {object} opts
+   * @param {string} opts.localPodId
+   * @param {Function} opts.sendFn - Send function: (targetId, msg) => {}
+   */
+  constructor({ localPodId, sendFn }) {
+    if (!localPodId || typeof localPodId !== 'string') {
+      throw new Error('localPodId is required and must be a non-empty string');
+    }
+    if (typeof sendFn !== 'function') {
+      throw new Error('sendFn is required and must be a function');
+    }
+    this.#localPodId = localPodId;
+    this.#sendFn = sendFn;
+  }
+
+  /**
+   * Handle an incoming wire message.
+   * @param {string} fromId - Sender pod ID
+   * @param {object} msg - Message with `type` field
+   */
+  handleMessage(fromId, msg) {
+    switch (msg.type) {
+      case TOPOLOGY_SNAPSHOT: {
+        if (!msg.snapshot) break;
+        const snapshot = TopologySnapshot.fromJSON(msg.snapshot);
+        for (const cb of this.#snapshotListeners) cb(fromId, snapshot);
+        break;
+      }
+
+      case TOPOLOGY_DIFF: {
+        if (!msg.diff) break;
+        const diff = TopologyDiff.fromJSON(msg.diff);
+        for (const cb of this.#diffListeners) cb(fromId, diff);
+        break;
+      }
+
+      default:
+        break;
+    }
+  }
+
+  /**
+   * Broadcast a topology snapshot to listed peers.
+   * @param {string[]} peerIds
+   * @param {TopologySnapshot} snapshot
+   */
+  broadcastSnapshot(peerIds, snapshot) {
+    const payload = { type: TOPOLOGY_SNAPSHOT, snapshot: snapshot.toJSON() };
+    for (const peerId of peerIds) {
+      this.#sendFn(peerId, payload);
+    }
+  }
+
+  /**
+   * Broadcast a topology diff to listed peers.
+   * @param {string[]} peerIds
+   * @param {TopologyDiff} diff
+   */
+  broadcastDiff(peerIds, diff) {
+    const payload = { type: TOPOLOGY_DIFF, diff: diff.toJSON() };
+    for (const peerId of peerIds) {
+      this.#sendFn(peerId, payload);
+    }
+  }
+
+  /**
+   * Register a listener for incoming topology snapshots.
+   * @param {Function} cb - (fromId, TopologySnapshot) => void
+   */
+  onSnapshot(cb) {
+    this.#snapshotListeners.push(cb);
+  }
+
+  /**
+   * Remove a snapshot listener.
+   * @param {Function} cb
+   * @returns {boolean} True if the listener was found and removed
+   */
+  offSnapshot(cb) {
+    const idx = this.#snapshotListeners.indexOf(cb);
+    if (idx !== -1) { this.#snapshotListeners.splice(idx, 1); return true; }
+    return false;
+  }
+
+  /**
+   * Register a listener for incoming topology diffs.
+   * @param {Function} cb - (fromId, TopologyDiff) => void
+   */
+  onDiff(cb) {
+    this.#diffListeners.push(cb);
+  }
+
+  /**
+   * Remove a diff listener.
+   * @param {Function} cb
+   * @returns {boolean} True if the listener was found and removed
+   */
+  offDiff(cb) {
+    const idx = this.#diffListeners.indexOf(cb);
+    if (idx !== -1) { this.#diffListeners.splice(idx, 1); return true; }
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// VisualizationExporter
+// ---------------------------------------------------------------------------
+
+/**
+ * Serializes visualization layouts for external renderers.
+ */
 export class VisualizationExporter {
   /**
    * Export a TrustGraphLayout as a node-link JSON format.

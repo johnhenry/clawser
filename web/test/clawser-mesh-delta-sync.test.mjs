@@ -667,3 +667,112 @@ describe('SyncCoordinator Branching', () => {
     assert.equal(coordinator.deleteBranch('nope'), false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// SyncCoordinator wire protocol
+// ---------------------------------------------------------------------------
+
+describe('SyncCoordinator wire protocol', () => {
+  let coordinator;
+  let sent;
+  let sendFn;
+
+  beforeEach(() => {
+    sent = [];
+    sendFn = (targetId, msg) => sent.push({ targetId, msg });
+    coordinator = new SyncCoordinator({ localPodId: 'podA', sendFn });
+  });
+
+  it('handleMessage DELTA_SYNC_REQUEST sends response with entries', () => {
+    coordinator.set('x', 1);
+    coordinator.handleMessage('podB', { type: DELTA_SYNC_REQUEST });
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].targetId, 'podB');
+    assert.equal(sent[0].msg.type, DELTA_SYNC_RESPONSE);
+    assert.ok(Array.isArray(sent[0].msg.entries));
+    assert.ok(sent[0].msg.entries.length > 0);
+  });
+
+  it('handleMessage DELTA_SYNC_RESPONSE applies entries and sends ack', () => {
+    const entry = new DeltaEntry({ key: 'remote', op: 'set', value: 42, origin: 'podB', seq: 1, timestamp: 100 });
+    coordinator.handleMessage('podB', { type: DELTA_SYNC_RESPONSE, entries: [entry.toJSON()] });
+    assert.equal(coordinator.state.remote, 42);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].msg.type, DELTA_SYNC_ACK);
+  });
+
+  it('handleMessage DELTA_SYNC_ACK confirms sent on session', () => {
+    coordinator.set('x', 1);
+    // Prepare a send so the session has pending data
+    coordinator.prepareSyncTo('podB');
+    const entry = new DeltaEntry({ key: 'x', op: 'set', value: 1, origin: 'podA', seq: 1 });
+    coordinator.handleMessage('podB', { type: DELTA_SYNC_ACK, entries: [entry.toJSON()] });
+    const session = coordinator.getSession('podB');
+    assert.ok(session.stats.sent > 0);
+  });
+
+  it('handleMessage DELTA_FULL_SNAPSHOT applies full state replace', () => {
+    coordinator.set('old', 'val');
+    coordinator.handleMessage('podB', { type: DELTA_FULL_SNAPSHOT, state: { newKey: 'newVal' } });
+    assert.equal(coordinator.state.newKey, 'newVal');
+    assert.equal(coordinator.state.old, undefined);
+  });
+
+  it('handleMessage DELTA_FULL_SNAPSHOT sends own state when no msg.state', () => {
+    coordinator.set('x', 99);
+    coordinator.handleMessage('podB', { type: DELTA_FULL_SNAPSHOT });
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].msg.type, DELTA_FULL_SNAPSHOT);
+    assert.equal(sent[0].msg.state.x, 99);
+  });
+
+  it('handleMessage DELTA_BRANCH_CREATE creates branch', () => {
+    coordinator.handleMessage('podB', { type: DELTA_BRANCH_CREATE, name: 'feature' });
+    assert.equal(coordinator.listBranches().length, 1);
+    assert.equal(coordinator.listBranches()[0].name, 'feature');
+  });
+
+  it('handleMessage DELTA_BRANCH_MERGE merges branch', () => {
+    coordinator.createBranch('feature');
+    coordinator.handleMessage('podB', { type: DELTA_BRANCH_MERGE, name: 'feature', strategy: 'ours' });
+    assert.equal(coordinator.listBranches().length, 0);
+  });
+
+  it('requestSync sends DELTA_SYNC_REQUEST via sendFn', () => {
+    coordinator.requestSync('podC');
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].targetId, 'podC');
+    assert.equal(sent[0].msg.type, DELTA_SYNC_REQUEST);
+  });
+
+  it('broadcastState sends DELTA_FULL_SNAPSHOT to all peers', () => {
+    coordinator.set('theme', 'dark');
+    coordinator.broadcastState(['podB', 'podC']);
+    assert.equal(sent.length, 2);
+    assert.equal(sent[0].msg.type, DELTA_FULL_SNAPSHOT);
+    assert.equal(sent[0].msg.state.theme, 'dark');
+    assert.equal(sent[1].targetId, 'podC');
+  });
+
+  it('unknown msg.type is ignored without error', () => {
+    coordinator.handleMessage('podB', { type: 0xFF });
+    assert.equal(sent.length, 0);
+  });
+
+  it('works without sendFn (graceful no-op)', () => {
+    const noSend = new SyncCoordinator({ localPodId: 'podX' });
+    noSend.set('a', 1);
+    // handleMessage should not throw even without sendFn
+    noSend.handleMessage('podB', { type: DELTA_SYNC_REQUEST });
+    noSend.handleMessage('podB', { type: DELTA_FULL_SNAPSHOT });
+    noSend.requestSync('podB');
+    noSend.broadcastState(['podB', 'podC']);
+  });
+
+  it('handleMessage DELTA_SYNC_RESPONSE with missing entries defaults to empty', () => {
+    // Should not throw when entries is undefined
+    coordinator.handleMessage('podB', { type: DELTA_SYNC_RESPONSE });
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].msg.type, DELTA_SYNC_ACK);
+  });
+});

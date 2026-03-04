@@ -16,17 +16,17 @@
 // ---------------------------------------------------------------------------
 
 /** Publish a service listing */
-export const LISTING_PUBLISH = 0xd0;
+export const LISTING_PUBLISH = 0x90;
 /** Query available listings */
-export const LISTING_QUERY = 0xd1;
+export const LISTING_QUERY = 0x91;
 /** Response to a listing query */
-export const LISTING_RESPONSE = 0xd2;
+export const LISTING_RESPONSE = 0x92;
 /** Purchase / subscribe to a service */
-export const LISTING_PURCHASE = 0xd3;
+export const LISTING_PURCHASE = 0x93;
 /** Submit a review for a service */
-export const REVIEW_SUBMIT = 0xd4;
+export const REVIEW_SUBMIT = 0x94;
 /** Query reviews for a service */
-export const REVIEW_QUERY = 0xd5;
+export const REVIEW_QUERY = 0x95;
 
 // ---------------------------------------------------------------------------
 // Valid enumerations

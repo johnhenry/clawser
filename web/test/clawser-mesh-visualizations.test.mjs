@@ -7,6 +7,7 @@ import {
   TopologySnapshot,
   TopologyLayout,
   TopologyDiff,
+  TopologyBroadcaster,
   VisualizationExporter,
   TOPOLOGY_SNAPSHOT,
   TOPOLOGY_DIFF,
@@ -558,5 +559,103 @@ describe('VisualizationExporter', () => {
     const result = exporter.exportDiff(diff);
     assert.equal(result.type, 'topology-diff');
     assert.equal(result.addedNodes.length, 1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TopologyBroadcaster
+// ---------------------------------------------------------------------------
+
+describe('TopologyBroadcaster', () => {
+  let sent;
+  let sendFn;
+  let broadcaster;
+
+  beforeEach(() => {
+    sent = [];
+    sendFn = (targetId, msg) => sent.push({ targetId, msg });
+    broadcaster = new TopologyBroadcaster({ localPodId: 'podA', sendFn });
+  });
+
+  it('constructor requires localPodId and sendFn', () => {
+    assert.throws(() => new TopologyBroadcaster({ sendFn }), /localPodId/);
+    assert.throws(() => new TopologyBroadcaster({ localPodId: 'a' }), /sendFn/);
+  });
+
+  it('broadcastSnapshot sends TOPOLOGY_SNAPSHOT to all peers', () => {
+    const snapshot = new TopologySnapshot({ nodes: [{ id: 'a' }] });
+    broadcaster.broadcastSnapshot(['podB', 'podC'], snapshot);
+    assert.equal(sent.length, 2);
+    assert.equal(sent[0].msg.type, TOPOLOGY_SNAPSHOT);
+    assert.equal(sent[0].targetId, 'podB');
+    assert.equal(sent[1].targetId, 'podC');
+    assert.equal(sent[0].msg.snapshot.nodes[0].id, 'a');
+  });
+
+  it('broadcastDiff sends TOPOLOGY_DIFF to all peers', () => {
+    const diff = new TopologyDiff({ addedNodes: [{ id: 'new' }] });
+    broadcaster.broadcastDiff(['podB'], diff);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].msg.type, TOPOLOGY_DIFF);
+    assert.equal(sent[0].msg.diff.addedNodes[0].id, 'new');
+  });
+
+  it('handleMessage TOPOLOGY_SNAPSHOT calls snapshot listeners', () => {
+    const received = [];
+    broadcaster.onSnapshot((fromId, snapshot) => received.push({ fromId, snapshot }));
+    const snapshot = new TopologySnapshot({ nodes: [{ id: 'x' }] });
+    broadcaster.handleMessage('podB', { type: TOPOLOGY_SNAPSHOT, snapshot: snapshot.toJSON() });
+    assert.equal(received.length, 1);
+    assert.equal(received[0].fromId, 'podB');
+    assert.equal(received[0].snapshot.nodeCount, 1);
+  });
+
+  it('handleMessage TOPOLOGY_DIFF calls diff listeners', () => {
+    const received = [];
+    broadcaster.onDiff((fromId, diff) => received.push({ fromId, diff }));
+    const diff = new TopologyDiff({ removedNodes: [{ id: 'gone' }] });
+    broadcaster.handleMessage('podC', { type: TOPOLOGY_DIFF, diff: diff.toJSON() });
+    assert.equal(received.length, 1);
+    assert.equal(received[0].fromId, 'podC');
+    assert.equal(received[0].diff.removedNodes.length, 1);
+  });
+
+  it('handleMessage unknown type is ignored', () => {
+    const received = [];
+    broadcaster.onSnapshot(() => received.push('snap'));
+    broadcaster.onDiff(() => received.push('diff'));
+    broadcaster.handleMessage('podB', { type: 0xFF });
+    assert.equal(received.length, 0);
+  });
+
+  it('handleMessage TOPOLOGY_SNAPSHOT with missing snapshot field is ignored', () => {
+    const received = [];
+    broadcaster.onSnapshot(() => received.push('snap'));
+    broadcaster.handleMessage('podB', { type: TOPOLOGY_SNAPSHOT });
+    assert.equal(received.length, 0);
+  });
+
+  it('handleMessage TOPOLOGY_DIFF with missing diff field is ignored', () => {
+    const received = [];
+    broadcaster.onDiff(() => received.push('diff'));
+    broadcaster.handleMessage('podB', { type: TOPOLOGY_DIFF });
+    assert.equal(received.length, 0);
+  });
+
+  it('listeners receive proper class instances', () => {
+    let snapInstance = null;
+    let diffInstance = null;
+    broadcaster.onSnapshot((_, s) => { snapInstance = s; });
+    broadcaster.onDiff((_, d) => { diffInstance = d; });
+
+    const snapshot = new TopologySnapshot({ nodes: [{ id: 'n1' }], links: [{ from: 'n1', to: 'n1' }] });
+    broadcaster.handleMessage('podB', { type: TOPOLOGY_SNAPSHOT, snapshot: snapshot.toJSON() });
+    assert.ok(snapInstance instanceof TopologySnapshot);
+    assert.equal(snapInstance.nodeCount, 1);
+
+    const diff = new TopologyDiff({ addedNodes: [{ id: 'x' }] });
+    broadcaster.handleMessage('podB', { type: TOPOLOGY_DIFF, diff: diff.toJSON() });
+    assert.ok(diffInstance instanceof TopologyDiff);
+    assert.equal(diffInstance.addedNodes.length, 1);
   });
 });
