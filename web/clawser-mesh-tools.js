@@ -18,12 +18,28 @@ import { BrowserTool } from './clawser-tools.js';
 export class MeshToolsContext {
   #multiplexer = null;
   #fileTransfer = null;
+  #dhtNode = null;
+  #trainingOrchestrator = null;
+  #iotBridge = null;
+  #iotTelemetry = null;
 
   setMultiplexer(mux) { this.#multiplexer = mux; }
   getMultiplexer() { return this.#multiplexer; }
 
   setFileTransfer(ft) { this.#fileTransfer = ft; }
   getFileTransfer() { return this.#fileTransfer; }
+
+  setDhtNode(node) { this.#dhtNode = node; }
+  getDhtNode() { return this.#dhtNode; }
+
+  setTrainingOrchestrator(orch) { this.#trainingOrchestrator = orch; }
+  getTrainingOrchestrator() { return this.#trainingOrchestrator; }
+
+  setIoTBridge(bridge) { this.#iotBridge = bridge; }
+  getIoTBridge() { return this.#iotBridge; }
+
+  setIoTTelemetry(telemetry) { this.#iotTelemetry = telemetry; }
+  getIoTTelemetry() { return this.#iotTelemetry; }
 }
 
 /** Singleton context for mesh tools. */
@@ -322,6 +338,306 @@ export class MeshFileCancelTool extends BrowserTool {
   }
 }
 
+// ── dht_store ────────────────────────────────────────────────────────
+
+export class DhtStoreTool extends BrowserTool {
+  get name() { return 'dht_store'; }
+  get description() {
+    return 'Store a key-value pair in the distributed hash table (DHT).';
+  }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        key: { type: 'string', description: 'Key to store' },
+        value: { type: 'string', description: 'Value to store' },
+        ttl: { type: 'number', description: 'Time-to-live in milliseconds (optional)' },
+      },
+      required: ['key', 'value'],
+    };
+  }
+  get permission() { return 'network'; }
+
+  async execute({ key, value, ttl }) {
+    try {
+      const dht = meshToolsContext.getDhtNode();
+      if (!dht) {
+        return { success: false, output: '', error: 'DHT node not initialized. Start a mesh session first.' };
+      }
+      dht.store(key, value, ttl);
+      return { success: true, output: `Stored key "${key}" in DHT${ttl ? ` (TTL: ${ttl}ms)` : ''}.` };
+    } catch (err) {
+      return { success: false, output: '', error: `DHT store failed: ${err.message}` };
+    }
+  }
+}
+
+// ── dht_lookup ───────────────────────────────────────────────────────
+
+export class DhtLookupTool extends BrowserTool {
+  get name() { return 'dht_lookup'; }
+  get description() {
+    return 'Look up a value by key in the distributed hash table (DHT).';
+  }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        key: { type: 'string', description: 'Key to look up' },
+      },
+      required: ['key'],
+    };
+  }
+  get permission() { return 'read'; }
+
+  async execute({ key }) {
+    try {
+      const dht = meshToolsContext.getDhtNode();
+      if (!dht) {
+        return { success: false, output: '', error: 'DHT node not initialized. Start a mesh session first.' };
+      }
+      const result = dht.findValue(key);
+      if (result.found) {
+        return { success: true, output: `Key "${key}" = ${JSON.stringify(result.value)}` };
+      }
+      return { success: true, output: `Key "${key}" not found. Closest nodes: ${result.closest.map(c => c.podId).join(', ')}` };
+    } catch (err) {
+      return { success: false, output: '', error: `DHT lookup failed: ${err.message}` };
+    }
+  }
+}
+
+// ── dht_peers ────────────────────────────────────────────────────────
+
+export class DhtPeersTool extends BrowserTool {
+  get name() { return 'dht_peers'; }
+  get description() {
+    return 'List peers in the DHT routing table.';
+  }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        count: { type: 'number', description: 'Max number of peers to return (default: 20)' },
+      },
+    };
+  }
+  get permission() { return 'read'; }
+
+  async execute({ count = 20 } = {}) {
+    try {
+      const dht = meshToolsContext.getDhtNode();
+      if (!dht) {
+        return { success: true, output: 'DHT node not initialized.' };
+      }
+      const peers = dht.findNode(dht.localId || 'self').slice(0, count);
+      if (peers.length === 0) {
+        return { success: true, output: 'No peers in routing table.' };
+      }
+      const lines = peers.map(p => `${p.podId}${p.address ? ' @ ' + p.address : ''}`);
+      return { success: true, output: `DHT peers (${peers.length}):\n${lines.join('\n')}` };
+    } catch (err) {
+      return { success: false, output: '', error: `DHT peers failed: ${err.message}` };
+    }
+  }
+}
+
+// ── gpu_train_start ──────────────────────────────────────────────────
+
+export class GpuTrainStartTool extends BrowserTool {
+  get name() { return 'gpu_train_start'; }
+  get description() {
+    return 'Start a distributed GPU training job across mesh peers.';
+  }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        jobId: { type: 'string', description: 'Unique job identifier' },
+        modelConfig: { type: 'object', description: 'Model architecture configuration' },
+        datasetRef: { type: 'string', description: 'Reference to training dataset' },
+        epochs: { type: 'number', description: 'Number of training epochs (default: 1)' },
+        batchSize: { type: 'number', description: 'Batch size (default: 32)' },
+        learningRate: { type: 'number', description: 'Learning rate (default: 0.001)' },
+        strategy: { type: 'string', description: 'Training strategy: sync_allreduce, async_parameter_server, or federated_avg' },
+        shardCount: { type: 'number', description: 'Number of training shards (default: 1)' },
+      },
+      required: ['jobId', 'modelConfig', 'datasetRef'],
+    };
+  }
+  get permission() { return 'approve'; }
+
+  async execute({ jobId, modelConfig, datasetRef, epochs, batchSize, learningRate, strategy, shardCount }) {
+    try {
+      const orch = meshToolsContext.getTrainingOrchestrator();
+      if (!orch) {
+        return { success: false, output: '', error: 'Training orchestrator not initialized. Start a mesh session first.' };
+      }
+      const { TrainingSpec } = await import('./clawser-mesh-gpu.js');
+      const spec = new TrainingSpec({ jobId, modelConfig, datasetRef, epochs, batchSize, learningRate, strategy, shardCount });
+      const id = orch.startJob(spec);
+      return { success: true, output: `Training job started: ${id}` };
+    } catch (err) {
+      return { success: false, output: '', error: `Training start failed: ${err.message}` };
+    }
+  }
+}
+
+// ── gpu_train_status ─────────────────────────────────────────────────
+
+export class GpuTrainStatusTool extends BrowserTool {
+  get name() { return 'gpu_train_status'; }
+  get description() {
+    return 'Check the status of a distributed GPU training job.';
+  }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        jobId: { type: 'string', description: 'Job identifier to check' },
+      },
+      required: ['jobId'],
+    };
+  }
+  get permission() { return 'read'; }
+
+  async execute({ jobId }) {
+    try {
+      const orch = meshToolsContext.getTrainingOrchestrator();
+      if (!orch) {
+        return { success: false, output: '', error: 'Training orchestrator not initialized.' };
+      }
+      const status = orch.getJobStatus(jobId);
+      if (!status) {
+        return { success: false, output: '', error: `Job ${jobId} not found.` };
+      }
+      return {
+        success: true,
+        output: `Job: ${status.jobId} | Status: ${status.status} | Shards: ${status.completedShards}/${status.shardCount}${status.aggregated ? ' | Aggregated' : ''}`,
+      };
+    } catch (err) {
+      return { success: false, output: '', error: `Status check failed: ${err.message}` };
+    }
+  }
+}
+
+// ── iot_list ─────────────────────────────────────────────────────────
+
+export class IoTListTool extends BrowserTool {
+  get name() { return 'iot_list'; }
+  get description() {
+    return 'List registered IoT devices, optionally filtered by protocol or capability.';
+  }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        protocol: { type: 'string', description: 'Filter by protocol: mqtt, http, direct, coap' },
+        capability: { type: 'string', description: 'Filter by capability: read, write, stream, command' },
+      },
+    };
+  }
+  get permission() { return 'read'; }
+
+  async execute({ protocol, capability } = {}) {
+    try {
+      const bridge = meshToolsContext.getIoTBridge();
+      if (!bridge) {
+        return { success: true, output: 'IoT bridge not initialized.' };
+      }
+      const filter = {};
+      if (protocol) filter.protocol = protocol;
+      if (capability) filter.capability = capability;
+      const devices = bridge.listDevices(Object.keys(filter).length ? filter : undefined);
+      if (devices.length === 0) {
+        return { success: true, output: 'No IoT devices found.' };
+      }
+      const lines = devices.map(d => `${d.deviceId} | ${d.name || '(unnamed)'} | ${d.protocol} | [${d.capabilities.join(',')}]`);
+      return { success: true, output: `ID | NAME | PROTOCOL | CAPABILITIES\n${lines.join('\n')}` };
+    } catch (err) {
+      return { success: false, output: '', error: err.message };
+    }
+  }
+}
+
+// ── iot_send ─────────────────────────────────────────────────────────
+
+export class IoTSendTool extends BrowserTool {
+  get name() { return 'iot_send'; }
+  get description() {
+    return 'Send a command or payload to an IoT device.';
+  }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        deviceId: { type: 'string', description: 'Target device ID' },
+        payload: { type: 'object', description: 'Data payload to send' },
+      },
+      required: ['deviceId', 'payload'],
+    };
+  }
+  get permission() { return 'approve'; }
+
+  async execute({ deviceId, payload }) {
+    try {
+      const bridge = meshToolsContext.getIoTBridge();
+      if (!bridge) {
+        return { success: false, output: '', error: 'IoT bridge not initialized.' };
+      }
+      await bridge.send(deviceId, payload);
+      return { success: true, output: `Payload sent to device ${deviceId}.` };
+    } catch (err) {
+      return { success: false, output: '', error: `IoT send failed: ${err.message}` };
+    }
+  }
+}
+
+// ── iot_telemetry ────────────────────────────────────────────────────
+
+export class IoTTelemetryTool extends BrowserTool {
+  get name() { return 'iot_telemetry'; }
+  get description() {
+    return 'Query telemetry data from an IoT device.';
+  }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        deviceId: { type: 'string', description: 'Device ID to query' },
+        since: { type: 'number', description: 'Start timestamp (optional)' },
+        until: { type: 'number', description: 'End timestamp (optional)' },
+        stats: { type: 'boolean', description: 'Return statistics instead of raw data (default: false)' },
+      },
+      required: ['deviceId'],
+    };
+  }
+  get permission() { return 'read'; }
+
+  async execute({ deviceId, since, until, stats }) {
+    try {
+      const telemetry = meshToolsContext.getIoTTelemetry();
+      if (!telemetry) {
+        return { success: false, output: '', error: 'IoT telemetry not initialized.' };
+      }
+      if (stats) {
+        const s = telemetry.getStats(deviceId);
+        if (!s) {
+          return { success: true, output: `No telemetry data for device ${deviceId}.` };
+        }
+        return { success: true, output: `Device ${deviceId} stats: min=${s.min} max=${s.max} avg=${s.avg.toFixed(2)} count=${s.count} last=${s.last}` };
+      }
+      const samples = telemetry.query(deviceId, since, until);
+      if (samples.length === 0) {
+        return { success: true, output: `No telemetry data for device ${deviceId}.` };
+      }
+      return { success: true, output: `${samples.length} samples for ${deviceId}:\n${samples.map(s => `${new Date(s.ts).toISOString()}: ${s.value}`).join('\n')}` };
+    } catch (err) {
+      return { success: false, output: '', error: `Telemetry query failed: ${err.message}` };
+    }
+  }
+}
+
 // ── Registry helper ──────────────────────────────────────────────────
 
 /**
@@ -341,4 +657,12 @@ export function registerMeshTools(registry, multiplexer, fileTransfer) {
   registry.register(new MeshFileAcceptTool());
   registry.register(new MeshFileListTool());
   registry.register(new MeshFileCancelTool());
+  registry.register(new DhtStoreTool());
+  registry.register(new DhtLookupTool());
+  registry.register(new DhtPeersTool());
+  registry.register(new GpuTrainStartTool());
+  registry.register(new GpuTrainStatusTool());
+  registry.register(new IoTListTool());
+  registry.register(new IoTSendTool());
+  registry.register(new IoTTelemetryTool());
 }

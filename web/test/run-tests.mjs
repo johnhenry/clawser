@@ -17,11 +17,11 @@ const GROUP_PREFIXES = {
 
 // Mesh sub-groups (stems after "clawser-mesh-")
 const MESH_SUBGROUPS = {
-  'mesh-net':      ['peer', 'transport', 'relay', 'gateway', 'websocket', 'discovery', 'swarm'],
+  'mesh-net':      ['peer', 'transport', 'relay', 'gateway', 'websocket', 'discovery', 'swarm', 'dht'],
   'mesh-sync':     ['sync', 'delta-sync', 'streams', 'migration'],
   'mesh-identity': ['identity', 'identity-tools', 'keyring', 'trust', 'acl', 'capabilities'],
   'mesh-apps':     ['apps', 'marketplace', 'payments', 'quotas', 'resources', 'naming'],
-  'mesh-ops':      ['audit', 'consensus', 'scheduler', 'visualizations', 'chat', 'tools', 'files', 'wsh-bridge'],
+  'mesh-ops':      ['audit', 'consensus', 'scheduler', 'visualizations', 'chat', 'tools', 'files', 'wsh-bridge', 'gpu', 'stealth'],
 };
 
 // Meta-groups composed from the above

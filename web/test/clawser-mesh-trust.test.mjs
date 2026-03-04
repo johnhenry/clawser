@@ -524,3 +524,114 @@ describe('TrustGraph.toJSON / fromJSON', () => {
     assert.equal(tg2.pruneExpired(6000), 1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// TrustGraph Reputation Decay
+// ---------------------------------------------------------------------------
+
+describe('TrustGraph Reputation Decay', () => {
+  let tg;
+  beforeEach(() => {
+    tg = new TrustGraph();
+  });
+
+  it('recordInteraction stores timestamp', () => {
+    const before = Date.now();
+    tg.recordInteraction('a', 'b');
+    const after = Date.now();
+    const ts = tg.getLastInteraction('a', 'b');
+    assert.ok(ts >= before && ts <= after);
+  });
+
+  it('getLastInteraction returns null for unknown pairs', () => {
+    assert.equal(tg.getLastInteraction('x', 'y'), null);
+  });
+
+  it('getLastInteraction returns stored timestamp', () => {
+    tg.recordInteraction('a', 'b');
+    const ts = tg.getLastInteraction('a', 'b');
+    assert.equal(typeof ts, 'number');
+    assert.ok(ts > 0);
+  });
+
+  it('getDecayedTrustLevel returns raw trust when no interaction recorded', () => {
+    tg.addEdge('a', 'b', 0.8);
+    // No recordInteraction call — should return raw trust
+    assert.equal(tg.getDecayedTrustLevel('a', 'b'), 0.8);
+  });
+
+  it('getDecayedTrustLevel applies decay based on time elapsed', () => {
+    tg.addEdge('a', 'b', 0.8);
+    const interactionTime = 1_000_000;
+    tg.recordInteraction('a', 'b', interactionTime);
+    const tenDaysMs = 10 * 24 * 60 * 60 * 1000;
+    const now = interactionTime + tenDaysMs;
+
+    const expected = 0.8 * Math.pow(0.99, 10);
+    const decayed = tg.getDecayedTrustLevel('a', 'b', { now });
+    assert.ok(Math.abs(decayed - expected) < 1e-10,
+      `Expected ~${expected}, got ${decayed}`);
+    // Decayed value must be less than raw
+    assert.ok(decayed < 0.8);
+  });
+
+  it('getDecayedTrustLevel uses custom decay rate', () => {
+    tg.addEdge('a', 'b', 1.0);
+    tg.recordInteraction('a', 'b');
+    const ts = tg.getLastInteraction('a', 'b');
+    const oneDayMs = 24 * 60 * 60 * 1000;
+    const now = ts + oneDayMs; // exactly 1 day later
+
+    const decayRate = 0.5;
+    const decayed = tg.getDecayedTrustLevel('a', 'b', { now, decayRate });
+    // 1.0 * 0.5^1 = 0.5
+    assert.ok(Math.abs(decayed - 0.5) < 1e-10,
+      `Expected 0.5, got ${decayed}`);
+  });
+
+  it('applyDecay prunes edges below threshold', () => {
+    // Edge with very low trust that will decay below 0.01
+    tg.addEdge('a', 'b', 0.02);
+    tg.recordInteraction('a', 'b');
+    // Simulate old interaction by manipulating time
+    // 0.02 * 0.99^n < 0.01 when n > ln(0.5)/ln(0.99) ≈ 69 days
+    // We can't easily set the interaction time, so we set a higher trust
+    // and use a different approach: add edge with trust that will survive,
+    // and one that won't
+
+    const tg2 = new TrustGraph();
+    tg2.addEdge('a', 'b', 0.5); // will survive
+    tg2.addEdge('c', 'd', 0.005); // already below 0.01 after any decay
+
+    tg2.recordInteraction('a', 'b');
+    tg2.recordInteraction('c', 'd');
+
+    // Wait concept: use applyDecay — interactions were just now, so
+    // 0.005 * 0.99^0 = 0.005 < 0.01 → pruned immediately
+    // Actually daysSince ≈ 0 so decay ≈ 1.0, so 0.005 * 1.0 = 0.005 < 0.01
+    const pruned = tg2.applyDecay();
+    assert.equal(pruned, 1);
+    assert.equal(tg2.size, 1);
+    assert.notEqual(tg2.getEdge('a', 'b'), null);
+    assert.equal(tg2.getEdge('c', 'd'), null);
+  });
+
+  it('applyDecay respects maxAgeDays', () => {
+    const now = Date.now();
+    const msPerDay = 24 * 60 * 60 * 1000;
+
+    tg.addEdge('a', 'b', 0.9);
+    tg.addEdge('c', 'd', 0.9);
+
+    // 'a|b' interaction was 10 days ago, 'c|d' was 100 days ago
+    tg.recordInteraction('a', 'b', now - 10 * msPerDay);
+    tg.recordInteraction('c', 'd', now - 100 * msPerDay);
+
+    // maxAgeDays=30 should prune only c→d (100 days old > 30)
+    const pruned = tg.applyDecay(30);
+    assert.equal(pruned, 1);
+    assert.equal(tg.size, 1);
+    assert.notEqual(tg.getEdge('a', 'b'), null);
+    assert.equal(tg.getEdge('c', 'd'), null);
+  });
+});

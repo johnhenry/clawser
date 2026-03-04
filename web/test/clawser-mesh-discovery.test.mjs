@@ -9,11 +9,14 @@ import {
   DISCOVERY_GOODBYE,
   SVC_REGISTER,
   SVC_LOOKUP,
+  RELAY_REGISTER,
+  RELAY_QUERY,
   DiscoveryRecord,
   DiscoveryStrategy,
   BroadcastChannelStrategy,
   RelayStrategy,
   ManualStrategy,
+  SharedWorkerRelayStrategy,
   DiscoveryManager,
   ServiceEndpoint,
   ServiceDirectory,
@@ -850,5 +853,134 @@ describe('ServiceDirectory', () => {
     dir.register('chat', () => {});
     dir.unregister('chat');
     assert.deepEqual(calls, ['a:chat', 'b:chat']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SharedWorkerRelayStrategy
+// ---------------------------------------------------------------------------
+
+function createMockSharedWorker() {
+  const port = {
+    messages: [],
+    onmessage: null,
+    postMessage(data) { this.messages.push(data); },
+    start() {},
+    close() {},
+  };
+  return { port };
+}
+
+describe('SharedWorkerRelayStrategy', () => {
+  /** @type {SharedWorkerRelayStrategy} */
+  let strategy;
+  /** @type {ReturnType<typeof createMockSharedWorker>} */
+  let mockWorker;
+
+  beforeEach(() => {
+    mockWorker = createMockSharedWorker();
+    strategy = new SharedWorkerRelayStrategy({
+      createWorkerFn: () => mockWorker,
+    });
+  });
+
+  it('constructor sets type to shared-worker', () => {
+    assert.equal(strategy.type, 'shared-worker');
+  });
+
+  it('start activates the strategy', async () => {
+    await strategy.start();
+    assert.equal(strategy.active, true);
+  });
+
+  it('stop deactivates the strategy', async () => {
+    await strategy.start();
+    await strategy.stop();
+    assert.equal(strategy.active, false);
+  });
+
+  it('announce sends register message via port', async () => {
+    await strategy.start();
+    const record = new DiscoveryRecord({ podId: 'pod-1', label: 'Test' });
+    await strategy.announce(record);
+    assert.equal(mockWorker.port.messages.length, 1);
+    const msg = mockWorker.port.messages[0];
+    assert.equal(msg.type, 'register');
+    assert.equal(msg.podId, 'pod-1');
+    assert.equal(msg.profile.podId, 'pod-1');
+    assert.equal(msg.profile.label, 'Test');
+  });
+
+  it('query returns cached peers', async () => {
+    await strategy.start();
+    // Simulate a peers response from the worker
+    const peerProfile = new DiscoveryRecord({ podId: 'peer-1', capabilities: ['relay'] }).toJSON();
+    mockWorker.port.onmessage({ data: { type: 'peers', peers: [peerProfile] } });
+    const results = await strategy.query();
+    assert.equal(results.length, 1);
+    assert.equal(results[0].podId, 'peer-1');
+  });
+
+  it('handles peers response from worker', async () => {
+    await strategy.start();
+    const peerA = new DiscoveryRecord({ podId: 'a' }).toJSON();
+    const peerB = new DiscoveryRecord({ podId: 'b' }).toJSON();
+    mockWorker.port.onmessage({ data: { type: 'peers', peers: [peerA, peerB] } });
+    const results = await strategy.query();
+    assert.equal(results.length, 2);
+  });
+
+  it('handles announce from worker and fires onDiscovered', async () => {
+    await strategy.start();
+    const discovered = [];
+    strategy.onDiscovered((rec) => discovered.push(rec));
+    const peerProfile = new DiscoveryRecord({ podId: 'new-peer', label: 'New' }).toJSON();
+    mockWorker.port.onmessage({ data: { type: 'announce', record: peerProfile } });
+    assert.equal(discovered.length, 1);
+    assert.equal(discovered[0].podId, 'new-peer');
+    assert.equal(discovered[0].source, 'shared-worker');
+  });
+
+  it('handles relay messages', async () => {
+    await strategy.start();
+    const discovered = [];
+    strategy.onDiscovered((rec) => discovered.push(rec));
+    const payload = new DiscoveryRecord({ podId: 'relayed-peer' }).toJSON();
+    mockWorker.port.onmessage({ data: { type: 'relay', from: 'sender', payload } });
+    assert.equal(discovered.length, 1);
+    assert.equal(discovered[0].podId, 'relayed-peer');
+    assert.equal(discovered[0].source, 'shared-worker');
+  });
+
+  it('stop sends unregister message', async () => {
+    await strategy.start();
+    mockWorker.port.messages = []; // clear any previous messages
+    await strategy.stop();
+    assert.equal(mockWorker.port.messages.length, 1);
+    assert.equal(mockWorker.port.messages[0].type, 'unregister');
+  });
+
+  it('multiple start calls are idempotent', async () => {
+    await strategy.start();
+    const firstPort = mockWorker.port;
+    await strategy.start(); // second call should be a no-op
+    assert.equal(strategy.active, true);
+    // Port should still be the same mock (factory not called twice)
+    assert.equal(firstPort, mockWorker.port);
+  });
+
+  it('query filters by capabilities', async () => {
+    await strategy.start();
+    const peerA = new DiscoveryRecord({ podId: 'a', capabilities: ['relay'] }).toJSON();
+    const peerB = new DiscoveryRecord({ podId: 'b', capabilities: ['storage'] }).toJSON();
+    mockWorker.port.onmessage({ data: { type: 'peers', peers: [peerA, peerB] } });
+    const results = await strategy.query({ capabilities: ['relay'] });
+    assert.equal(results.length, 1);
+    assert.equal(results[0].podId, 'a');
+  });
+
+  it('RELAY_REGISTER and RELAY_QUERY constants exist', () => {
+    assert.equal(RELAY_REGISTER, 0xC6);
+    assert.equal(RELAY_QUERY, 0xC7);
   });
 });

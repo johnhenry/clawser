@@ -44,6 +44,8 @@ export const SANDBOX_LIMITS = Object.freeze({
   },
 });
 
+export const WASM_MAX_PAGES = 256; // 16MB default
+
 // ── CapabilityGate ──────────────────────────────────────────────
 
 /**
@@ -311,6 +313,21 @@ export class WasmSandbox {
   /** @type {Array} Execution log */
   #execLog = [];
 
+  /** @type {WebAssembly.Module|null} Compiled WASM module */
+  #wasmModule = null;
+
+  /** @type {WebAssembly.Instance|null} Instantiated WASM module */
+  #wasmInstance = null;
+
+  /** @type {number[]} Captured fd_write output bytes */
+  #wasmOutput = [];
+
+  /** @type {boolean} Whether proc_exit was called */
+  #procExited = false;
+
+  /** @type {number} Exit code from proc_exit */
+  #exitCode = 0;
+
   /**
    * @param {object} [opts]
    * @param {number} [opts.fuelLimit=1000000]
@@ -377,6 +394,106 @@ export class WasmSandbox {
       this.#execLog.push({ code, args, error: e.message, elapsed: Date.now() - start });
       throw e;
     }
+  }
+
+  /**
+   * Load a WebAssembly module from bytes with WASI stubs.
+   * @param {Uint8Array|ArrayBuffer} wasmBytes - Raw WASM binary
+   * @returns {Promise<void>}
+   */
+  async loadModule(wasmBytes) {
+    if (!this.#active) throw new Error('Sandbox is terminated');
+
+    const memory = new WebAssembly.Memory({ initial: 1, maximum: WASM_MAX_PAGES });
+    this.#wasmOutput = [];
+    this.#procExited = false;
+    this.#exitCode = 0;
+
+    const self = this;
+
+    const wasiImports = {
+      wasi_snapshot_preview1: {
+        fd_write(fd, iovs, iovsLen, nwritten) {
+          // Only capture stdout (fd 1)
+          const mem = self.#wasmInstance?.exports?.memory || memory;
+          const view = new DataView(mem.buffer);
+          const bytes = new Uint8Array(mem.buffer);
+          let totalWritten = 0;
+
+          for (let i = 0; i < iovsLen; i++) {
+            const iovBase = view.getUint32(iovs + i * 8, true);
+            const iovLen = view.getUint32(iovs + i * 8 + 4, true);
+            for (let j = 0; j < iovLen; j++) {
+              self.#wasmOutput.push(bytes[iovBase + j]);
+            }
+            totalWritten += iovLen;
+          }
+
+          // Write number of bytes written
+          view.setUint32(nwritten, totalWritten, true);
+          return 0;
+        },
+
+        clock_time_get(clockId, precision, timePtr) {
+          const mem = self.#wasmInstance?.exports?.memory || memory;
+          const view = new DataView(mem.buffer);
+          const now = BigInt(Date.now()) * 1_000_000n; // ms to ns
+          view.setBigUint64(timePtr, now, true);
+          return 0;
+        },
+
+        proc_exit(code) {
+          self.#procExited = true;
+          self.#exitCode = code;
+        },
+      },
+      env: {
+        memory,
+      },
+    };
+
+    try {
+      this.#wasmModule = await WebAssembly.compile(wasmBytes);
+      this.#wasmInstance = await WebAssembly.instantiate(this.#wasmModule, wasiImports);
+    } catch (e) {
+      this.#wasmModule = null;
+      this.#wasmInstance = null;
+      throw new Error(`WASM load failed: ${e.message}`);
+    }
+  }
+
+  /**
+   * Call an exported function on the loaded WASM module.
+   * @param {string} funcName - Name of the exported function
+   * @param {...any} args - Arguments to pass
+   * @returns {any} Return value from the exported function
+   */
+  callExport(funcName, ...args) {
+    if (!this.#wasmInstance) {
+      throw new Error('No WASM module loaded');
+    }
+
+    const fn = this.#wasmInstance.exports[funcName];
+    if (typeof fn !== 'function') {
+      throw new Error(`Export '${funcName}' is not a function`);
+    }
+
+    return fn(...args);
+  }
+
+  /**
+   * Return captured fd_write output as a string.
+   * @returns {string}
+   */
+  getOutput() {
+    return new TextDecoder().decode(new Uint8Array(this.#wasmOutput));
+  }
+
+  /**
+   * Clear captured output.
+   */
+  resetOutput() {
+    this.#wasmOutput = [];
   }
 
   /**

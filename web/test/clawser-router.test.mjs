@@ -22,7 +22,8 @@ describe('PANELS', () => {
     const expected = [
       'chat', 'tools', 'files', 'memory', 'goals', 'events',
       'skills', 'terminal', 'dashboard', 'servers', 'toolMgmt',
-      'agents', 'config',
+      'agents', 'channels', 'marketplace', 'swarms', 'transfers',
+      'mesh', 'peers', 'remote', 'config',
     ];
     for (const key of expected) {
       assert.ok(key in PANELS, `missing panel key: ${key}`);

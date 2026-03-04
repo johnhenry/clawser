@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import {
   KeyLink,
   SignedKeyLink,
+  SuccessionPolicy,
   MeshKeyring,
   VALID_RELATIONS,
   encodeBase64url,
@@ -904,5 +905,185 @@ describe('SignedKeyLink', () => {
       assert.equal(link.parentSignature, null);
       assert.equal(link.childSignature, null);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SuccessionPolicy
+// ---------------------------------------------------------------------------
+
+describe('SuccessionPolicy', () => {
+  it('constructor validates required fields', () => {
+    assert.throws(() => new SuccessionPolicy({
+      successorId: 'b',
+      inactivityThresholdMs: 1000,
+    }), /primaryId is required/);
+
+    assert.throws(() => new SuccessionPolicy({
+      primaryId: 'a',
+      inactivityThresholdMs: 1000,
+    }), /successorId is required/);
+
+    assert.throws(() => new SuccessionPolicy({
+      primaryId: 'a',
+      successorId: 'b',
+      inactivityThresholdMs: -1,
+    }), /inactivityThresholdMs must be a positive number/);
+
+    assert.throws(() => new SuccessionPolicy({
+      primaryId: 'a',
+      successorId: 'b',
+      inactivityThresholdMs: 1000,
+      action: 'destroy',
+    }), /Invalid action/);
+  });
+
+  it('isArmed returns true when inactive past threshold', () => {
+    const policy = new SuccessionPolicy({
+      primaryId: 'a',
+      successorId: 'b',
+      inactivityThresholdMs: 5000,
+    });
+    // Last active 10000ms ago, threshold is 5000ms -> armed
+    const now = 20000;
+    const lastActive = 10000;
+    assert.equal(policy.isArmed(now, lastActive), true);
+    // No activity ever -> armed
+    assert.equal(policy.isArmed(now, undefined), true);
+  });
+
+  it('isArmed returns false when active within threshold', () => {
+    const policy = new SuccessionPolicy({
+      primaryId: 'a',
+      successorId: 'b',
+      inactivityThresholdMs: 5000,
+    });
+    // Last active 2000ms ago, threshold is 5000ms -> not armed
+    const now = 20000;
+    const lastActive = 18000;
+    assert.equal(policy.isArmed(now, lastActive), false);
+  });
+
+  it('toJSON / fromJSON round-trip', () => {
+    const policy = new SuccessionPolicy({
+      primaryId: 'pod-alpha',
+      successorId: 'pod-beta',
+      inactivityThresholdMs: 60000,
+      action: 'revoke',
+    });
+    const json = policy.toJSON();
+    assert.equal(json.primaryId, 'pod-alpha');
+    assert.equal(json.successorId, 'pod-beta');
+    assert.equal(json.inactivityThresholdMs, 60000);
+    assert.equal(json.action, 'revoke');
+    assert.equal(typeof json.createdAt, 'number');
+
+    const restored = SuccessionPolicy.fromJSON(json);
+    assert.equal(restored.primaryId, 'pod-alpha');
+    assert.equal(restored.successorId, 'pod-beta');
+    assert.equal(restored.inactivityThresholdMs, 60000);
+    assert.equal(restored.action, 'revoke');
+    assert.equal(restored.createdAt, json.createdAt);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MeshKeyring Succession
+// ---------------------------------------------------------------------------
+
+describe('MeshKeyring Succession', () => {
+  let kr;
+  beforeEach(() => {
+    kr = new MeshKeyring();
+  });
+
+  it('setSuccessor creates policy', () => {
+    const policy = kr.setSuccessor('primary', 'backup', 30000, 'transfer');
+    assert.ok(policy instanceof SuccessionPolicy);
+    assert.equal(policy.primaryId, 'primary');
+    assert.equal(policy.successorId, 'backup');
+    assert.equal(policy.inactivityThresholdMs, 30000);
+    assert.equal(policy.action, 'transfer');
+  });
+
+  it('removeSuccessor removes policy', () => {
+    kr.setSuccessor('primary', 'backup', 30000);
+    assert.equal(kr.removeSuccessor('primary'), true);
+    // Removing again returns false
+    assert.equal(kr.removeSuccessor('primary'), false);
+  });
+
+  it('recordActivity updates timestamp', () => {
+    kr.setSuccessor('primary', 'backup', 5000);
+    // No activity recorded yet -> armed
+    const armed1 = kr.checkSuccession(Date.now());
+    assert.equal(armed1.length, 1);
+
+    // Record activity -> no longer armed
+    kr.recordActivity('primary');
+    const armed2 = kr.checkSuccession(Date.now());
+    assert.equal(armed2.length, 0);
+  });
+
+  it('checkSuccession returns armed policies', () => {
+    kr.setSuccessor('podA', 'backupA', 5000);
+    kr.setSuccessor('podB', 'backupB', 10000);
+
+    // Both have no activity -> both armed
+    const armed = kr.checkSuccession(Date.now());
+    assert.equal(armed.length, 2);
+
+    // Record activity for podA, check at a time within threshold
+    kr.recordActivity('podA');
+    const now = Date.now();
+    const armed2 = kr.checkSuccession(now);
+    // podA is active (just recorded), podB has no activity -> only podB armed
+    assert.equal(armed2.length, 1);
+    assert.equal(armed2[0].policy.primaryId, 'podB');
+  });
+
+  it('executeSuccession with transfer re-links children', () => {
+    // Build: primary -> child1, primary -> child2
+    kr.link('primary', 'child1', 'device');
+    kr.link('primary', 'child2', 'delegate');
+    kr.setSuccessor('primary', 'backup', 5000, 'transfer');
+
+    const result = kr.executeSuccession('primary');
+    assert.equal(result.action, 'transfer');
+    assert.equal(result.primaryId, 'primary');
+    assert.equal(result.successorId, 'backup');
+    assert.equal(result.affected, 2);
+
+    // Old links should be gone
+    assert.deepEqual(kr.getChildren('primary'), []);
+
+    // Children should now be under backup
+    const newChildren = kr.getChildren('backup');
+    assert.equal(newChildren.length, 2);
+    const childIds = newChildren.map((l) => l.child).sort();
+    assert.deepEqual(childIds, ['child1', 'child2']);
+
+    // Policy should be removed after execution
+    assert.equal(kr.removeSuccessor('primary'), false);
+  });
+
+  it('executeSuccession with revoke removes all children', () => {
+    kr.link('primary', 'child1', 'device');
+    kr.link('primary', 'child2', 'org');
+    kr.link('primary', 'child3', 'alias');
+    kr.setSuccessor('primary', 'backup', 5000, 'revoke');
+
+    const result = kr.executeSuccession('primary');
+    assert.equal(result.action, 'revoke');
+    assert.equal(result.affected, 3);
+
+    // All children removed
+    assert.deepEqual(kr.getChildren('primary'), []);
+
+    // No links transferred to backup
+    assert.deepEqual(kr.getChildren('backup'), []);
+
+    // Policy should be removed after execution
+    assert.equal(kr.removeSuccessor('primary'), false);
   });
 });

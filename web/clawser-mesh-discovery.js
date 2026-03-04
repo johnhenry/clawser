@@ -41,6 +41,12 @@ export const SVC_REGISTER = 0xC4;
 /** Service lookup message type. */
 export const SVC_LOOKUP = 0xC5;
 
+/** SharedWorker relay register message type. */
+export const RELAY_REGISTER = 0xC6;
+
+/** SharedWorker relay query message type. */
+export const RELAY_QUERY = 0xC7;
+
 // ---------------------------------------------------------------------------
 // DiscoveryRecord
 // ---------------------------------------------------------------------------
@@ -509,6 +515,188 @@ export class ManualStrategy extends DiscoveryStrategy {
       }
     }
     return results;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// SharedWorkerRelayStrategy
+// ---------------------------------------------------------------------------
+
+const WORKER_SCRIPT = `
+  const registry = new Map();
+  const ports = new Map();
+
+  self.onconnect = (e) => {
+    const port = e.ports[0];
+    let connPodId = null;
+
+    port.onmessage = ({ data }) => {
+      if (data.type === 'register') {
+        connPodId = data.podId;
+        registry.set(data.podId, data.profile);
+        ports.set(data.podId, port);
+        // Broadcast to all other ports
+        for (const [id, p] of ports) {
+          if (id !== data.podId) {
+            p.postMessage({ type: 'announce', record: data.profile });
+          }
+        }
+      } else if (data.type === 'query') {
+        const peers = [];
+        for (const [id, profile] of registry) {
+          if (id !== connPodId) peers.push(profile);
+        }
+        port.postMessage({ type: 'peers', peers });
+      } else if (data.type === 'relay' && data.targetPodId) {
+        const target = ports.get(data.targetPodId);
+        if (target) {
+          target.postMessage({ type: 'relay', from: connPodId, payload: data.payload });
+        }
+      } else if (data.type === 'unregister') {
+        if (connPodId) {
+          registry.delete(connPodId);
+          ports.delete(connPodId);
+        }
+      }
+    };
+    port.start();
+  };
+`;
+
+/**
+ * Discovers peers within same-origin tabs using a SharedWorker as relay.
+ * The SharedWorker maintains a peer registry and forwards messages
+ * between connected ports.
+ */
+export class SharedWorkerRelayStrategy extends DiscoveryStrategy {
+  /** @type {Function|null} */
+  #createWorkerFn;
+
+  /** @type {object|null} */
+  #worker = null;
+
+  /** @type {object|null} */
+  #port = null;
+
+  /** @type {Map<string, DiscoveryRecord>} */
+  #peers = new Map();
+
+  /**
+   * @param {object} [opts]
+   * @param {Function} [opts.createWorkerFn] - Injectable factory for testing
+   */
+  constructor({ createWorkerFn } = {}) {
+    super({ type: 'shared-worker' })
+    this.#createWorkerFn = createWorkerFn ?? null
+    this.#peers = new Map()
+  }
+
+  /**
+   * Start the SharedWorker relay strategy.
+   * @returns {Promise<void>}
+   */
+  async start() {
+    if (this.active) return
+
+    const factory = this.#createWorkerFn ?? (() => {
+      const blob = new Blob([WORKER_SCRIPT], { type: 'application/javascript' })
+      const url = URL.createObjectURL(blob)
+      const worker = new SharedWorker(url, 'clawser-mesh-relay')
+      URL.revokeObjectURL(url)
+      return worker
+    })
+
+    this.#worker = factory()
+    this.#port = this.#worker.port
+    this.#port.onmessage = (event) => {
+      this.#handleMessage(event.data)
+    }
+    if (typeof this.#port.start === 'function') {
+      this.#port.start()
+    }
+    this._active = true
+  }
+
+  /**
+   * Stop the SharedWorker relay strategy.
+   * @returns {Promise<void>}
+   */
+  async stop() {
+    if (!this.active) return
+    if (this.#port) {
+      this.#port.postMessage({ type: 'unregister' })
+      if (typeof this.#port.close === 'function') {
+        this.#port.close()
+      }
+      this.#port = null
+    }
+    this.#worker = null
+    this._active = false
+  }
+
+  /**
+   * Announce a record via the SharedWorker relay.
+   * @param {DiscoveryRecord} record
+   * @returns {Promise<void>}
+   */
+  async announce(record) {
+    if (this.#port) {
+      this.#port.postMessage({
+        type: 'register',
+        podId: record.podId,
+        profile: record.toJSON(),
+      })
+    }
+  }
+
+  /**
+   * Query for peers discovered via the SharedWorker relay.
+   * Sends a query to the worker and returns currently cached peers.
+   *
+   * @param {object} [filter]
+   * @returns {Promise<DiscoveryRecord[]>}
+   */
+  async query(filter) {
+    if (this.#port) {
+      this.#port.postMessage({ type: 'query', filter })
+    }
+    const results = []
+    for (const record of this.#peers.values()) {
+      if (!record.isExpired() && record.matchesFilter(filter)) {
+        results.push(record)
+      }
+    }
+    return results
+  }
+
+  /**
+   * Handle an incoming message from the SharedWorker port.
+   * @param {object} data
+   * @private
+   */
+  #handleMessage(data) {
+    if (!data || typeof data !== 'object') return
+
+    if (data.type === 'peers' && Array.isArray(data.peers)) {
+      for (const peerData of data.peers) {
+        const record = DiscoveryRecord.fromJSON(peerData)
+        record.source = 'shared-worker'
+        this.#peers.set(record.podId, record)
+      }
+    } else if (data.type === 'announce' && data.record) {
+      const record = DiscoveryRecord.fromJSON(data.record)
+      record.source = 'shared-worker'
+      this.#peers.set(record.podId, record)
+      this._fireDiscovered(record)
+    } else if (data.type === 'relay') {
+      // Handle relayed payload — if it looks like a discovery record, fire discovered
+      if (data.payload && data.payload.podId) {
+        const record = DiscoveryRecord.fromJSON(data.payload)
+        record.source = 'shared-worker'
+        this.#peers.set(record.podId, record)
+        this._fireDiscovered(record)
+      }
+    }
   }
 }
 

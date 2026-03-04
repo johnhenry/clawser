@@ -385,11 +385,11 @@ describe('MeshFileCancelTool', () => {
 // ---------------------------------------------------------------------------
 
 describe('registerMeshTools', () => {
-  it('registers all 7 tools', () => {
+  it('registers all 15 tools', () => {
     const registered = [];
     const registry = { register(tool) { registered.push(tool); } };
     registerMeshTools(registry);
-    assert.equal(registered.length, 7);
+    assert.equal(registered.length, 15);
     const names = registered.map(t => t.name);
     assert.ok(names.includes('mesh_stream_open'));
     assert.ok(names.includes('mesh_stream_close'));
@@ -398,6 +398,14 @@ describe('registerMeshTools', () => {
     assert.ok(names.includes('mesh_file_accept'));
     assert.ok(names.includes('mesh_file_list'));
     assert.ok(names.includes('mesh_file_cancel'));
+    assert.ok(names.includes('dht_store'));
+    assert.ok(names.includes('dht_lookup'));
+    assert.ok(names.includes('dht_peers'));
+    assert.ok(names.includes('gpu_train_start'));
+    assert.ok(names.includes('gpu_train_status'));
+    assert.ok(names.includes('iot_list'));
+    assert.ok(names.includes('iot_send'));
+    assert.ok(names.includes('iot_telemetry'));
   });
 
   it('sets context when multiplexer and fileTransfer provided', () => {

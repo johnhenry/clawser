@@ -60,6 +60,9 @@ export class TrustGraph {
    */
   #entries = [];
 
+  /** @type {Map<string, number>} keyed by `${fromId}|${toId}` → timestamp */
+  #interactions = new Map();
+
   /** @type {*} */
   #storage;
 
@@ -266,6 +269,100 @@ export class TrustGraph {
       avgLevel,
       scopes: [...scopeSet],
     };
+  }
+
+  // -- Reputation Decay ---------------------------------------------------
+
+  /**
+   * Record an interaction between two peers, updating the timestamp.
+   *
+   * @param {string} fromId
+   * @param {string} toId
+   * @param {number} [timestamp=Date.now()] - Override for testing
+   */
+  recordInteraction(fromId, toId, timestamp) {
+    this.#interactions.set(`${fromId}|${toId}`, timestamp ?? Date.now());
+  }
+
+  /**
+   * Get the timestamp of the last recorded interaction.
+   *
+   * @param {string} fromId
+   * @param {string} toId
+   * @returns {number|null} Timestamp or null if no interaction recorded
+   */
+  getLastInteraction(fromId, toId) {
+    return this.#interactions.get(`${fromId}|${toId}`) ?? null;
+  }
+
+  /**
+   * Get the trust level with time-based decay applied.
+   *
+   * If no interaction has been recorded for this pair, falls back to
+   * the raw `getTrustLevel()` with no decay applied.
+   *
+   * @param {string} fromId
+   * @param {string} toId
+   * @param {object} [opts]
+   * @param {number} [opts.decayRate=0.99] - Daily decay multiplier in (0, 1]
+   * @param {number} [opts.now] - Current time for testing
+   * @returns {number} Decayed trust in [0.0, 1.0]
+   */
+  getDecayedTrustLevel(fromId, toId, opts = {}) {
+    const level = this.getTrustLevel(fromId, toId);
+    const lastInteraction = this.getLastInteraction(fromId, toId);
+    if (lastInteraction === null) return level;
+
+    const now = opts.now ?? Date.now();
+    const decayRate = opts.decayRate ?? 0.99;
+    const daysSince = (now - lastInteraction) / (1000 * 60 * 60 * 24);
+    return level * Math.pow(decayRate, daysSince);
+  }
+
+  /**
+   * Batch-apply decay to all edges, pruning those that fall below threshold.
+   *
+   * For each edge, computes the decayed trust level. If the decayed value is
+   * below 0.01, the edge is pruned. If `maxAgeDays` is provided, edges whose
+   * last interaction is older than that are also pruned.
+   *
+   * @param {number|null} [maxAgeDays=null] - Prune interactions older than this
+   * @returns {number} Number of edges pruned
+   */
+  applyDecay(maxAgeDays = null) {
+    const now = Date.now();
+    const msPerDay = 1000 * 60 * 60 * 24;
+    let pruned = 0;
+
+    this.#entries = this.#entries.filter((entry) => {
+      const key = `${entry.edge.from}|${entry.edge.to}`;
+      const lastInteraction = this.#interactions.get(key);
+
+      // Check maxAgeDays constraint
+      if (maxAgeDays !== null && lastInteraction !== undefined) {
+        const ageDays = (now - lastInteraction) / msPerDay;
+        if (ageDays > maxAgeDays) {
+          this.#interactions.delete(key);
+          pruned++;
+          return false;
+        }
+      }
+
+      // Check decay threshold
+      if (lastInteraction !== undefined) {
+        const daysSince = (now - lastInteraction) / msPerDay;
+        const decayed = entry.edge.value * Math.pow(0.99, daysSince);
+        if (decayed < 0.01) {
+          this.#interactions.delete(key);
+          pruned++;
+          return false;
+        }
+      }
+
+      return true;
+    });
+
+    return pruned;
   }
 
   // -- Maintenance --------------------------------------------------------

@@ -58,6 +58,16 @@ import { registerExtensionTools, initExtensionBadge } from './clawser-extension-
 import { initServerManager, getServerManager } from './clawser-server.js';
 import { registerServerTools } from './clawser-server-tools.js';
 import { renderServerList, initServerPanel } from './clawser-ui-servers.js';
+import { MeshIdentityManager } from './clawser-mesh-identity.js';
+import { IdentityWallet } from './clawser-identity-wallet.js';
+import { PeerRegistry } from './clawser-peer-registry.js';
+import { PeerNode } from './clawser-peer-node.js';
+import { SwarmCoordinator } from './clawser-mesh-swarm.js';
+import { renderSwarmPanel, initSwarmListeners } from './clawser-ui-swarms.js';
+import { renderTransferPanel, initTransferListeners } from './clawser-ui-transfers.js';
+import { renderMeshPanel, initMeshListeners } from './clawser-ui-mesh.js';
+import { renderIdentityWallet, initIdentityWalletListeners, renderContactBook, initContactBookListeners, renderConnectionPanel, initConnectionListeners, renderAuditLog, initAuditLogListeners } from './clawser-ui-peers.js';
+import { renderServiceBrowser, initServiceBrowserListeners, updatePeerBadge } from './clawser-ui-remote.js';
 
 // Phase 7: Remote gateway
 import { GatewayServer } from './clawser-gateway-server.js';
@@ -164,6 +174,51 @@ function registerLazyPanelRenders(renders) {
     };
     el.addEventListener('panel:firstrender', handler, { once: true });
     _deferredRenders.set(panelName, { el, handler });
+  }
+}
+
+// ── P2P Mesh Initialization ─────────────────────────────────────
+/**
+ * Initialize or reinitialize the P2P mesh subsystem.
+ * Creates IdentityWallet, PeerRegistry, PeerNode, and SwarmCoordinator
+ * and attaches them to `state`. Safe to call multiple times — tears down
+ * the previous PeerNode if one exists.
+ */
+async function initMeshSubsystem() {
+  try {
+    // Tear down existing peer node if running
+    if (state.peerNode && state.peerNode.state === 'running') {
+      await state.peerNode.shutdown();
+    }
+
+    // 1. Identity manager (mesh-level, separate from AIEOS identityManager)
+    const meshIdMgr = new MeshIdentityManager();
+
+    // 2. Identity wallet — create identity eagerly so we have a podId
+    const wallet = new IdentityWallet({ identityManager: meshIdMgr });
+    await wallet.createIdentity('default');
+    const defaultId = wallet.getDefault();
+    const podId = defaultId?.podId || 'local';
+
+    // 3. Peer registry with real podId (uses lightweight stubs for trust/acl)
+    const registry = new PeerRegistry({ localPodId: podId });
+
+    // 4. PeerNode orchestrator — boot skips identity creation since one exists
+    const peerNode = new PeerNode({ wallet, registry });
+    await peerNode.boot({ label: 'default' });
+
+    // 5. SwarmCoordinator
+    const swarmCoordinator = new SwarmCoordinator(podId);
+
+    // 6. Attach to state
+    state.peerNode = peerNode;
+    state.swarmCoordinator = swarmCoordinator;
+
+    console.log('[clawser] P2P mesh initialized — podId:', podId);
+  } catch (err) {
+    console.warn('[clawser] P2P mesh init failed (non-fatal):', err.message);
+    state.peerNode = null;
+    state.swarmCoordinator = null;
   }
 }
 
@@ -320,6 +375,7 @@ export async function switchWorkspace(newId, convId) {
   state.marketplace = new SkillMarketplace();
   restoreSavedChannels(state.channelManager);
   updateChannelBadge();
+  await initMeshSubsystem();
   registerLazyPanelRenders({
     tools:    () => renderToolRegistry(),
     goals:    () => renderGoals(),
@@ -335,6 +391,71 @@ export async function switchWorkspace(newId, convId) {
           onInstall: () => renderSkills(),
           onUninstall: () => renderSkills(),
         });
+      }
+    },
+    toolMgmt: () => renderToolManagementPanel(),
+    agents:   () => { renderAgentPanel(); },
+    swarms: () => {
+      const c = $('swarmsContainer');
+      if (!c) return;
+      const podId = state.peerNode?.podId || 'local';
+      const sc = state.swarmCoordinator;
+      c.innerHTML = renderSwarmPanel({ swarms: [], localPodId: podId });
+      initSwarmListeners({
+        onCreate: (opts) => {
+          if (sc) {
+            sc.submitTask(opts.goal, opts.strategy || 'round_robin', {});
+            addMsg('system', `Swarm task submitted: "${opts.goal}"`);
+          }
+        },
+        onRefresh: () => {
+          c.innerHTML = renderSwarmPanel({ swarms: [], localPodId: podId });
+          initSwarmListeners();
+        },
+      });
+    },
+    transfers: () => {
+      const c = $('transfersContainer');
+      if (!c) return;
+      const podId = state.peerNode?.podId || 'local';
+      c.innerHTML = renderTransferPanel({ active: [], history: [], localPodId: podId });
+      initTransferListeners();
+    },
+    mesh: () => {
+      const c = $('meshContainer');
+      if (!c) return;
+      const podId = state.peerNode?.podId || 'local';
+      const peerLabel = state.peerNode?.wallet?.getDefault()?.label || 'This Pod';
+      c.innerHTML = renderMeshPanel({
+        localPod: { podId, label: peerLabel, uptime: 0 },
+        peers: [],
+        resources: [],
+        services: [],
+      });
+      initMeshListeners();
+    },
+    peers: () => {
+      const c = $('peersContainer');
+      if (!c) return;
+      if (state.peerNode) {
+        c.innerHTML = renderIdentityWallet(state.peerNode) + renderContactBook(state.peerNode.wallet) + renderConnectionPanel(state.peerNode) + renderAuditLog(state.peerNode);
+        initIdentityWalletListeners(state.peerNode);
+        initContactBookListeners(state.peerNode.wallet);
+        initConnectionListeners(state.peerNode);
+        initAuditLogListeners(state.peerNode);
+      } else {
+        c.innerHTML = '<div class="peer-empty" style="padding:1.5rem;opacity:0.6">P2P peer subsystem not initialized. Start a mesh session to enable peer management.</div>';
+      }
+    },
+    remote: () => {
+      const c = $('remoteContainer');
+      if (!c) return;
+      if (state.peerNode) {
+        c.innerHTML = renderServiceBrowser(state.serviceBrowser || { discover() { return []; } });
+        if (state.serviceBrowser) initServiceBrowserListeners(state.serviceBrowser);
+        updatePeerBadge(state.peerNode);
+      } else {
+        c.innerHTML = '<div class="rc-empty" style="padding:1.5rem;opacity:0.6">Remote access requires an active peer connection. Start a mesh session first.</div>';
       }
     },
   });
@@ -903,6 +1024,9 @@ export async function initWorkspace(wsId, convId) {
     restoreSavedChannels(state.channelManager);
     updateChannelBadge();
 
+    // ── P2P mesh initialization ──
+    await initMeshSubsystem();
+
     // ── Deferred renders: non-config panels (Gap 11.1) ──
     // These panels keep empty DOM until the user first clicks on them.
     registerLazyPanelRenders({
@@ -922,6 +1046,69 @@ export async function initWorkspace(wsId, convId) {
             onInstall: () => renderSkills(),
             onUninstall: () => renderSkills(),
           });
+        }
+      },
+      swarms: () => {
+        const c = $('swarmsContainer');
+        if (!c) return;
+        const podId = state.peerNode?.podId || 'local';
+        const sc = state.swarmCoordinator;
+        c.innerHTML = renderSwarmPanel({ swarms: [], localPodId: podId });
+        initSwarmListeners({
+          onCreate: (opts) => {
+            if (sc) {
+              sc.submitTask(opts.goal, opts.strategy || 'round_robin', {});
+              addMsg('system', `Swarm task submitted: "${opts.goal}"`);
+            }
+          },
+          onRefresh: () => {
+            c.innerHTML = renderSwarmPanel({ swarms: [], localPodId: podId });
+            initSwarmListeners();
+          },
+        });
+      },
+      transfers: () => {
+        const c = $('transfersContainer');
+        if (!c) return;
+        const podId = state.peerNode?.podId || 'local';
+        c.innerHTML = renderTransferPanel({ active: [], history: [], localPodId: podId });
+        initTransferListeners();
+      },
+      mesh: () => {
+        const c = $('meshContainer');
+        if (!c) return;
+        const podId = state.peerNode?.podId || 'local';
+        const peerLabel = state.peerNode?.wallet?.getDefault()?.label || 'This Pod';
+        c.innerHTML = renderMeshPanel({
+          localPod: { podId, label: peerLabel, uptime: 0 },
+          peers: [],
+          resources: [],
+          services: [],
+        });
+        initMeshListeners();
+      },
+      peers: () => {
+        const c = $('peersContainer');
+        if (!c) return;
+        if (state.peerNode) {
+          c.innerHTML = renderIdentityWallet(state.peerNode) + renderContactBook(state.peerNode.wallet) + renderConnectionPanel(state.peerNode) + renderAuditLog(state.peerNode);
+          initIdentityWalletListeners(state.peerNode);
+          initContactBookListeners(state.peerNode.wallet);
+          initConnectionListeners(state.peerNode);
+          initAuditLogListeners(state.peerNode);
+        } else {
+          c.innerHTML = '<div class="peer-empty" style="padding:1.5rem;opacity:0.6">P2P peer subsystem not initialized. Start a mesh session to enable peer management.</div>';
+        }
+      },
+      remote: () => {
+        const c = $('remoteContainer');
+        if (!c) return;
+        if (state.peerNode) {
+          c.innerHTML = renderServiceBrowser(state.serviceBrowser || { discover() { return []; } });
+          if (state.serviceBrowser) initServiceBrowserListeners(state.serviceBrowser);
+          updatePeerBadge(state.peerNode);
+        } else {
+          c.innerHTML = '<div class="rc-empty" style="padding:1.5rem;opacity:0.6">Remote access requires an active peer connection. Start a mesh session first.</div>';
         }
       },
     });

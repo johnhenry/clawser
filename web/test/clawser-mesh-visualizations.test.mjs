@@ -18,8 +18,8 @@ import {
 
 describe('Wire constants', () => {
   it('has correct hex values', () => {
-    assert.equal(TOPOLOGY_SNAPSHOT, 0xE4);
-    assert.equal(TOPOLOGY_DIFF, 0xE5);
+    assert.equal(TOPOLOGY_SNAPSHOT, 0xE6);
+    assert.equal(TOPOLOGY_DIFF, 0xE7);
   });
 });
 

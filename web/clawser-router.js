@@ -17,6 +17,11 @@ export const PANELS = Object.freeze({
   agents:    { id: 'panelAgents',    btn: 'btnAgents',    label: 'Agents' },
   channels:   { id: 'panelChannels',   btn: 'btnChannels',   label: 'Channels' },
   marketplace: { id: 'panelMarketplace', btn: 'btnMarketplace', label: 'Marketplace' },
+  swarms:    { id: 'panelSwarms',    btn: 'btnSwarms',    label: 'Swarms' },
+  transfers: { id: 'panelTransfers', btn: 'btnTransfers', label: 'Transfers' },
+  mesh:      { id: 'panelMesh',      btn: 'btnMesh',      label: 'Mesh' },
+  peers:     { id: 'panelPeers',    btn: 'btnPeers',    label: 'Peers' },
+  remote:    { id: 'panelRemote',   btn: 'btnRemote',   label: 'Remote' },
   config:    { id: 'panelConfig',    btn: 'btnConfig',    label: 'Config' },
 });
 

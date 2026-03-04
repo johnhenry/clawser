@@ -23,10 +23,10 @@
 // ---------------------------------------------------------------------------
 
 /** Wire type for topology snapshot broadcast. */
-export const TOPOLOGY_SNAPSHOT = 0xE4;
+export const TOPOLOGY_SNAPSHOT = 0xE6;
 
 /** Wire type for topology diff broadcast. */
-export const TOPOLOGY_DIFF = 0xE5;
+export const TOPOLOGY_DIFF = 0xE7;
 
 // ---------------------------------------------------------------------------
 // TrustGraphLayout

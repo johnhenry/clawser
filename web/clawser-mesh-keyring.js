@@ -237,6 +237,82 @@ export class SignedKeyLink extends KeyLink {
 }
 
 // ---------------------------------------------------------------------------
+// SuccessionPolicy
+// ---------------------------------------------------------------------------
+
+/** Valid succession actions. */
+const VALID_SUCCESSION_ACTIONS = ['transfer', 'revoke', 'notify'];
+
+/**
+ * Defines a dead-man's-switch policy: if `primaryId` is inactive
+ * longer than `inactivityThresholdMs`, the chosen action fires.
+ *
+ * @class
+ */
+export class SuccessionPolicy {
+  /**
+   * @param {object} opts
+   * @param {string} opts.primaryId - Identity that must remain active
+   * @param {string} opts.successorId - Identity that takes over
+   * @param {number} opts.inactivityThresholdMs - Inactivity window (ms)
+   * @param {'transfer'|'revoke'|'notify'} [opts.action='transfer']
+   * @param {number} [opts.createdAt]
+   */
+  constructor({ primaryId, successorId, inactivityThresholdMs, action = 'transfer', createdAt }) {
+    if (!primaryId) throw new Error('primaryId is required');
+    if (!successorId) throw new Error('successorId is required');
+    if (typeof inactivityThresholdMs !== 'number' || inactivityThresholdMs <= 0) {
+      throw new Error('inactivityThresholdMs must be a positive number');
+    }
+    if (!VALID_SUCCESSION_ACTIONS.includes(action)) {
+      throw new Error(
+        `Invalid action: ${action}. Must be one of: ${VALID_SUCCESSION_ACTIONS.join(', ')}`
+      );
+    }
+    this.primaryId = primaryId;
+    this.successorId = successorId;
+    this.inactivityThresholdMs = inactivityThresholdMs;
+    this.action = action;
+    this.createdAt = createdAt ?? Date.now();
+  }
+
+  /**
+   * Whether the switch is armed (primary has been inactive too long).
+   *
+   * @param {number} [now=Date.now()]
+   * @param {number|undefined} lastActive - Last activity timestamp
+   * @returns {boolean}
+   */
+  isArmed(now = Date.now(), lastActive) {
+    if (lastActive === undefined || lastActive === null) return true;
+    return (now - lastActive) >= this.inactivityThresholdMs;
+  }
+
+  /**
+   * Serialize to a plain object.
+   * @returns {object}
+   */
+  toJSON() {
+    return {
+      primaryId: this.primaryId,
+      successorId: this.successorId,
+      inactivityThresholdMs: this.inactivityThresholdMs,
+      action: this.action,
+      createdAt: this.createdAt,
+    };
+  }
+
+  /**
+   * Deserialize from a plain object.
+   * @param {object} data
+   * @returns {SuccessionPolicy}
+   */
+  static fromJSON(data) {
+    return new SuccessionPolicy(data);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // MeshKeyring
 // ---------------------------------------------------------------------------
 
@@ -251,6 +327,12 @@ export class MeshKeyring {
 
   /** @type {*} */
   #storage;
+
+  /** @type {Map<string, SuccessionPolicy>} primaryId -> policy */
+  #successions = new Map();
+
+  /** @type {Map<string, number>} podId -> lastActiveTimestamp */
+  #activityLog = new Map();
 
   /**
    * @param {object} [opts]
@@ -486,6 +568,122 @@ export class MeshKeyring {
     }
 
     return { valid: true, chain: relevantChain };
+  }
+
+  // -- Succession / Dead Man's Switch -------------------------------------
+
+  /**
+   * Register a succession policy for a primary identity.
+   *
+   * @param {string} primaryId - Identity that must remain active
+   * @param {string} successorId - Identity that takes over
+   * @param {number} thresholdMs - Inactivity threshold in milliseconds
+   * @param {'transfer'|'revoke'|'notify'} [action='transfer']
+   * @returns {SuccessionPolicy}
+   */
+  setSuccessor(primaryId, successorId, thresholdMs, action = 'transfer') {
+    const policy = new SuccessionPolicy({
+      primaryId,
+      successorId,
+      inactivityThresholdMs: thresholdMs,
+      action,
+    });
+    this.#successions.set(primaryId, policy);
+    return policy;
+  }
+
+  /**
+   * Remove a succession policy.
+   *
+   * @param {string} primaryId
+   * @returns {boolean} true if a policy was removed
+   */
+  removeSuccessor(primaryId) {
+    return this.#successions.delete(primaryId);
+  }
+
+  /**
+   * Record activity for a pod identity (resets the dead-man timer).
+   *
+   * @param {string} podId
+   */
+  recordActivity(podId) {
+    this.#activityLog.set(podId, Date.now());
+  }
+
+  /**
+   * Check all succession policies and return those that are armed.
+   *
+   * @param {number} [now=Date.now()]
+   * @returns {{ policy: SuccessionPolicy, lastActive: number|undefined }[]}
+   */
+  checkSuccession(now = Date.now()) {
+    const armed = [];
+    for (const policy of this.#successions.values()) {
+      const lastActive = this.#activityLog.get(policy.primaryId);
+      if (policy.isArmed(now, lastActive)) {
+        armed.push({ policy, lastActive });
+      }
+    }
+    return armed;
+  }
+
+  /**
+   * Execute a succession policy for the given primary identity.
+   *
+   * - **transfer**: re-links all children of primaryId to successorId,
+   *   removes old links.
+   * - **revoke**: removes all child links of primaryId.
+   * - **notify**: returns a notification signal without modifying links.
+   *
+   * The policy is removed after execution.
+   *
+   * @param {string} primaryId
+   * @returns {{ action: string, primaryId: string, successorId: string, affected: number }}
+   */
+  executeSuccession(primaryId) {
+    const policy = this.#successions.get(primaryId);
+    if (!policy) {
+      throw new Error(`No succession policy for: ${primaryId}`);
+    }
+
+    const children = this.getChildren(primaryId);
+    let affected = 0;
+
+    if (policy.action === 'transfer') {
+      for (const child of children) {
+        this.unlink(primaryId, child.child);
+        // Only re-link if it won't create a self-link or duplicate
+        if (policy.successorId !== child.child) {
+          const existing = this.#links.find(
+            (l) => l.parent === policy.successorId && l.child === child.child
+          );
+          if (!existing) {
+            this.link(policy.successorId, child.child, child.relation, {
+              scope: child.scope || undefined,
+              expires: child.expires || undefined,
+            });
+          }
+        }
+        affected++;
+      }
+    } else if (policy.action === 'revoke') {
+      for (const child of children) {
+        this.unlink(primaryId, child.child);
+        affected++;
+      }
+    } else if (policy.action === 'notify') {
+      affected = children.length;
+    }
+
+    this.#successions.delete(primaryId);
+
+    return {
+      action: policy.action,
+      primaryId: policy.primaryId,
+      successorId: policy.successorId,
+      affected,
+    };
   }
 
   // -- Maintenance --------------------------------------------------------

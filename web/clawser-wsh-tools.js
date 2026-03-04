@@ -601,6 +601,48 @@ export class WshFetchTool extends BrowserTool {
  * Register all wsh tools with a BrowserToolRegistry.
  * @param {import('./clawser-tools.js').BrowserToolRegistry} registry
  */
+// ── wsh_gpu_probe ────────────────────────────────────────────────────
+
+export class WshGpuProbeTool extends BrowserTool {
+  get name() { return 'wsh_gpu_probe'; }
+  get description() {
+    return 'Probe a remote host for GPU capabilities via wsh. Runs nvidia-smi or GPU detection on the remote machine.';
+  }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        host: { type: 'string', description: 'Remote host to probe' },
+      },
+      required: ['host'],
+    };
+  }
+  get permission() { return 'read'; }
+
+  async execute({ host }) {
+    try {
+      const client = await getClient(host);
+      if (!client) {
+        return { success: false, output: '', error: `No active wsh connection to ${host}. Connect first with wsh_connect.` };
+      }
+      const result = await client.exec('nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader 2>/dev/null || echo "NO_GPU"');
+      const output = typeof result === 'string' ? result : (result?.stdout || result?.output || '');
+      if (output.trim() === 'NO_GPU' || !output.trim()) {
+        return {
+          success: true,
+          output: JSON.stringify({ host, hasGpu: false, details: 'No NVIDIA GPU detected on remote host' }),
+        };
+      }
+      return {
+        success: true,
+        output: JSON.stringify({ host, hasGpu: true, details: output.trim() }),
+      };
+    } catch (err) {
+      return { success: false, output: '', error: `GPU probe failed: ${err.message}` };
+    }
+  }
+}
+
 export function registerWshTools(registry) {
   registry.register(new WshConnectTool());
   registry.register(new WshExecTool());
@@ -612,6 +654,7 @@ export function registerWshTools(registry) {
   registry.register(new WshSessionsTool());
   registry.register(new WshMcpCallTool());
   registry.register(new WshFetchTool());
+  registry.register(new WshGpuProbeTool());
 }
 
 /**

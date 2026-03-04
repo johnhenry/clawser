@@ -32,6 +32,12 @@ export const DELTA_SYNC_ACK = 0xE2;
 /** Wire type for full state snapshot (fallback). */
 export const DELTA_FULL_SNAPSHOT = 0xE3;
 
+/** Wire type for branch creation. */
+export const DELTA_BRANCH_CREATE = 0xE4;
+
+/** Wire type for branch merge. */
+export const DELTA_BRANCH_MERGE = 0xE5;
+
 // ---------------------------------------------------------------------------
 // DeltaEntry
 // ---------------------------------------------------------------------------
@@ -342,6 +348,121 @@ export class DeltaDecoder {
 }
 
 // ---------------------------------------------------------------------------
+// DeltaBranch
+// ---------------------------------------------------------------------------
+
+/**
+ * A parallel state timeline branched from the main sync state.
+ * Each branch captures a snapshot at fork point and maintains its
+ * own independent delta log.
+ */
+export class DeltaBranch {
+  #name
+  #snapshot
+  #parentBranch
+  #log
+  #createdAt
+
+  /**
+   * @param {string} name - Branch name
+   * @param {Object} snapshotState - State snapshot at fork point
+   * @param {string|null} [parentBranch] - Parent branch name (null = main)
+   */
+  constructor(name, snapshotState, parentBranch = null) {
+    if (!name || typeof name !== 'string') {
+      throw new Error('Branch name is required and must be a non-empty string')
+    }
+    this.#name = name
+    this.#snapshot = { ...snapshotState }
+    this.#parentBranch = parentBranch
+    this.#log = new DeltaLog()
+    this.#createdAt = Date.now()
+  }
+
+  get name() { return this.#name }
+  get parentBranch() { return this.#parentBranch }
+  get createdAt() { return this.#createdAt }
+  get logSize() { return this.#log.length }
+
+  /**
+   * Apply a set operation on this branch.
+   */
+  apply(key, value, origin = 'branch') {
+    const entry = new DeltaEntry({
+      key,
+      op: 'set',
+      value,
+      origin,
+      vectorClock: this.#log.getVectorClock(),
+    })
+    this.#log.append(entry)
+  }
+
+  /**
+   * Delete a key on this branch.
+   */
+  delete(key, origin = 'branch') {
+    const entry = new DeltaEntry({
+      key,
+      op: 'delete',
+      origin,
+      vectorClock: this.#log.getVectorClock(),
+    })
+    this.#log.append(entry)
+  }
+
+  /**
+   * Get the current state of this branch (snapshot + applied deltas).
+   */
+  getState() {
+    const state = { ...this.#snapshot }
+    const decoder = new DeltaDecoder()
+    return decoder.apply(state, this.#log.toArray())
+  }
+
+  /**
+   * Compute the diff between this branch and another branch (or state).
+   * Returns the set of keys that differ.
+   */
+  diffFrom(otherBranch) {
+    const thisState = this.getState()
+    const otherState = otherBranch instanceof DeltaBranch
+      ? otherBranch.getState()
+      : otherBranch // plain state object
+
+    const allKeys = new Set([...Object.keys(thisState), ...Object.keys(otherState)])
+    const changed = []
+    for (const key of allKeys) {
+      if (JSON.stringify(thisState[key]) !== JSON.stringify(otherState[key])) {
+        changed.push({
+          key,
+          ours: thisState[key],
+          theirs: otherState[key],
+        })
+      }
+    }
+    return changed
+  }
+
+  /**
+   * Get the delta log for this branch.
+   */
+  getLog() {
+    return this.#log
+  }
+
+  toJSON() {
+    return {
+      name: this.#name,
+      snapshot: { ...this.#snapshot },
+      parentBranch: this.#parentBranch,
+      log: this.#log.toJSON(),
+      createdAt: this.#createdAt,
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // SyncSession
 // ---------------------------------------------------------------------------
 
@@ -533,6 +654,9 @@ export class SyncCoordinator {
   /** @type {Function[]} */
   #syncListeners = [];
 
+  /** @type {Map<string, DeltaBranch>} branchName → DeltaBranch */
+  #branches = new Map();
+
   /**
    * @param {object} opts
    * @param {string} opts.localPodId
@@ -673,6 +797,110 @@ export class SyncCoordinator {
       totalReceived,
       totalRounds,
     };
+  }
+
+  // -----------------------------------------------------------------------
+  // Branch management (CRDT parallel state timelines)
+  // -----------------------------------------------------------------------
+
+  /**
+   * Create a new branch with a snapshot of the current state.
+   * @param {string} name - Branch name
+   * @returns {DeltaBranch}
+   */
+  createBranch(name) {
+    if (this.#branches.has(name)) {
+      throw new Error(`Branch "${name}" already exists`);
+    }
+    const branch = new DeltaBranch(name, this.#state);
+    this.#branches.set(name, branch);
+    return branch;
+  }
+
+  /**
+   * List all branches with metadata.
+   * @returns {Array<{ name: string, parentBranch: string|null, logSize: number, createdAt: number }>}
+   */
+  listBranches() {
+    return [...this.#branches.values()].map(b => ({
+      name: b.name,
+      parentBranch: b.parentBranch,
+      logSize: b.logSize,
+      createdAt: b.createdAt,
+    }));
+  }
+
+  /**
+   * Switch to a branch by applying its state as the current state.
+   * @param {string} name - Branch name
+   * @returns {Object} The new current state
+   */
+  switchBranch(name) {
+    const branch = this.#branches.get(name);
+    if (!branch) {
+      throw new Error(`Branch "${name}" does not exist`);
+    }
+    this.#state = branch.getState();
+    return { ...this.#state };
+  }
+
+  /**
+   * Merge a branch back into the main state.
+   * @param {string} name - Branch name
+   * @param {'ours'|'theirs'|'fail'} [strategy='ours'] - Conflict resolution strategy
+   * @returns {{ merged: number, conflicts: Array<{ key: string, ours: *, theirs: * }> }}
+   */
+  mergeBranch(name, strategy = 'ours') {
+    const branch = this.#branches.get(name);
+    if (!branch) {
+      throw new Error(`Branch "${name}" does not exist`);
+    }
+
+    const branchState = branch.getState();
+    const allKeys = new Set([...Object.keys(this.#state), ...Object.keys(branchState)]);
+    const conflicts = [];
+    let merged = 0;
+
+    for (const key of allKeys) {
+      const oursVal = this.#state[key];
+      const theirsVal = branchState[key];
+
+      if (JSON.stringify(oursVal) !== JSON.stringify(theirsVal)) {
+        conflicts.push({ key, ours: oursVal, theirs: theirsVal });
+
+        if (strategy === 'theirs') {
+          if (theirsVal === undefined) {
+            delete this.#state[key];
+          } else {
+            this.#state[key] = theirsVal;
+          }
+          merged++;
+        } else if (strategy === 'fail') {
+          // Collect all conflicts first, then throw
+          continue;
+        } else {
+          // 'ours': keep main state value, count as merged
+          merged++;
+        }
+      }
+    }
+
+    if (strategy === 'fail' && conflicts.length > 0) {
+      const keys = conflicts.map(c => c.key).join(', ');
+      throw new Error(`Merge conflict on keys: ${keys}`);
+    }
+
+    this.#branches.delete(name);
+    return { merged, conflicts };
+  }
+
+  /**
+   * Delete a branch.
+   * @param {string} name - Branch name
+   * @returns {boolean} True if the branch existed and was deleted
+   */
+  deleteBranch(name) {
+    return this.#branches.delete(name);
   }
 
   toJSON() {

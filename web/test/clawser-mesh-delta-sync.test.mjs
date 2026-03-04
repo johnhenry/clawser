@@ -6,12 +6,15 @@ import {
   DeltaLog,
   DeltaEncoder,
   DeltaDecoder,
+  DeltaBranch,
   SyncSession,
   SyncCoordinator,
   DELTA_SYNC_REQUEST,
   DELTA_SYNC_RESPONSE,
   DELTA_SYNC_ACK,
   DELTA_FULL_SNAPSHOT,
+  DELTA_BRANCH_CREATE,
+  DELTA_BRANCH_MERGE,
 } from '../clawser-mesh-delta-sync.js';
 
 // ---------------------------------------------------------------------------
@@ -488,5 +491,179 @@ describe('SyncCoordinator', () => {
     assert.equal(json.localPodId, 'podA');
     assert.equal(json.state.x, 1);
     assert.ok(Array.isArray(json.log));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Wire constants (branch)
+// ---------------------------------------------------------------------------
+
+describe('Branch wire constants', () => {
+  it('has correct hex values', () => {
+    assert.equal(DELTA_BRANCH_CREATE, 0xE4);
+    assert.equal(DELTA_BRANCH_MERGE, 0xE5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DeltaBranch
+// ---------------------------------------------------------------------------
+
+describe('DeltaBranch', () => {
+  it('constructor requires name', () => {
+    assert.throws(() => new DeltaBranch('', {}), /Branch name is required/);
+    assert.throws(() => new DeltaBranch(null, {}), /Branch name is required/);
+  });
+
+  it('apply adds entries to branch log', () => {
+    const branch = new DeltaBranch('feature', { x: 1 });
+    branch.apply('y', 2);
+    branch.apply('z', 3);
+    assert.equal(branch.logSize, 2);
+  });
+
+  it('delete adds delete entries', () => {
+    const branch = new DeltaBranch('feature', { x: 1, y: 2 });
+    branch.delete('x');
+    assert.equal(branch.logSize, 1);
+    const state = branch.getState();
+    assert.equal('x' in state, false);
+    assert.equal(state.y, 2);
+  });
+
+  it('getState returns snapshot + applied deltas', () => {
+    const branch = new DeltaBranch('feature', { a: 1, b: 2 });
+    branch.apply('b', 99);
+    branch.apply('c', 3);
+    const state = branch.getState();
+    assert.equal(state.a, 1);
+    assert.equal(state.b, 99);
+    assert.equal(state.c, 3);
+  });
+
+  it('diffFrom detects changed keys', () => {
+    const branchA = new DeltaBranch('a', { x: 1, y: 2 });
+    branchA.apply('x', 10);
+
+    const branchB = new DeltaBranch('b', { x: 1, y: 2 });
+    branchB.apply('y', 20);
+
+    const diff = branchA.diffFrom(branchB);
+    assert.equal(diff.length, 2);
+    const xDiff = diff.find(d => d.key === 'x');
+    assert.equal(xDiff.ours, 10);
+    assert.equal(xDiff.theirs, 1);
+    const yDiff = diff.find(d => d.key === 'y');
+    assert.equal(yDiff.ours, 2);
+    assert.equal(yDiff.theirs, 20);
+  });
+
+  it('toJSON serializes correctly', () => {
+    const branch = new DeltaBranch('feature', { a: 1 }, 'main');
+    branch.apply('b', 2);
+    const json = branch.toJSON();
+    assert.equal(json.name, 'feature');
+    assert.deepEqual(json.snapshot, { a: 1 });
+    assert.equal(json.parentBranch, 'main');
+    assert.ok(Array.isArray(json.log));
+    assert.equal(json.log.length, 1);
+    assert.ok(json.createdAt > 0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SyncCoordinator Branching
+// ---------------------------------------------------------------------------
+
+describe('SyncCoordinator Branching', () => {
+  let coordinator;
+
+  beforeEach(() => {
+    coordinator = new SyncCoordinator({ localPodId: 'podA', initialState: { x: 1, y: 2 } });
+  });
+
+  it('createBranch creates a branch with current state snapshot', () => {
+    const branch = coordinator.createBranch('feature');
+    assert.equal(branch.name, 'feature');
+    const branchState = branch.getState();
+    assert.equal(branchState.x, 1);
+    assert.equal(branchState.y, 2);
+  });
+
+  it('createBranch throws on duplicate name', () => {
+    coordinator.createBranch('feature');
+    assert.throws(() => coordinator.createBranch('feature'), /already exists/);
+  });
+
+  it('listBranches returns branch metadata', () => {
+    coordinator.createBranch('feature');
+    coordinator.createBranch('experiment');
+    const list = coordinator.listBranches();
+    assert.equal(list.length, 2);
+    const names = list.map(b => b.name);
+    assert.ok(names.includes('feature'));
+    assert.ok(names.includes('experiment'));
+    assert.ok(list[0].createdAt > 0);
+    assert.equal(list[0].logSize, 0);
+  });
+
+  it('switchBranch applies branch state', () => {
+    const branch = coordinator.createBranch('feature');
+    branch.apply('x', 99);
+    branch.apply('z', 3);
+
+    const newState = coordinator.switchBranch('feature');
+    assert.equal(newState.x, 99);
+    assert.equal(newState.y, 2);
+    assert.equal(newState.z, 3);
+    // Coordinator state should also reflect the switch
+    assert.equal(coordinator.state.x, 99);
+  });
+
+  it('switchBranch throws on nonexistent branch', () => {
+    assert.throws(() => coordinator.switchBranch('nope'), /does not exist/);
+  });
+
+  it('mergeBranch with theirs uses branch values', () => {
+    coordinator.createBranch('feature');
+    // Modify branch
+    const branch = coordinator.listBranches().find(b => b.name === 'feature');
+    assert.ok(branch);
+
+    // Use createBranch return value to modify
+    const coord2 = new SyncCoordinator({ localPodId: 'podA', initialState: { x: 1, y: 2 } });
+    const b = coord2.createBranch('feature');
+    b.apply('x', 99);
+    b.apply('z', 3);
+
+    // Modify main state so there is a conflict
+    coord2.set('x', 50);
+
+    const result = coord2.mergeBranch('feature', 'theirs');
+    assert.ok(result.merged > 0);
+    assert.equal(coord2.state.x, 99);
+    assert.equal(coord2.state.z, 3);
+    // Branch should be deleted after merge
+    assert.equal(coord2.listBranches().length, 0);
+  });
+
+  it('mergeBranch with fail throws on conflicts', () => {
+    const b = coordinator.createBranch('feature');
+    b.apply('x', 99);
+    coordinator.set('x', 50);
+
+    assert.throws(() => coordinator.mergeBranch('feature', 'fail'), /Merge conflict/);
+  });
+
+  it('deleteBranch removes the branch', () => {
+    coordinator.createBranch('feature');
+    assert.equal(coordinator.listBranches().length, 1);
+    const result = coordinator.deleteBranch('feature');
+    assert.equal(result, true);
+    assert.equal(coordinator.listBranches().length, 0);
+  });
+
+  it('deleteBranch returns false for nonexistent branch', () => {
+    assert.equal(coordinator.deleteBranch('nope'), false);
   });
 });
