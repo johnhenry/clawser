@@ -1,0 +1,702 @@
+/**
+ * clawser-ui-remote.js -- Remote access UI panels.
+ *
+ * Provides UI for peer-to-peer chat, remote terminal, remote file browser,
+ * and service discovery/browser. Pure render + event binding -- no domain logic.
+ *
+ * Depends on:
+ *   - clawser-state.js ($, esc, state, lsKey)
+ *   - clawser-modal.js (modal)
+ *   - clawser-ui-chat.js (addMsg, addErrorMsg)
+ *   - PeerChat, TerminalClient, FileClient, ServiceBrowser (injected via args)
+ */
+import { $, esc, state, lsKey } from './clawser-state.js'
+import { modal } from './clawser-modal.js'
+import { addMsg, addErrorMsg } from './clawser-ui-chat.js'
+
+// ── Helpers ──────────────────────────────────────────────────────
+
+/** Truncate a hex or ID string for display. */
+function truncId(id, prefixLen = 8, suffixLen = 4) {
+  if (!id || id.length <= prefixLen + suffixLen + 3) return id || ''
+  return `${id.slice(0, prefixLen)}...${id.slice(-suffixLen)}`
+}
+
+/** Format a unix-ms timestamp to a locale time string. */
+function fmtTime(ms) {
+  if (!ms) return ''
+  return new Date(ms).toLocaleTimeString()
+}
+
+/** Format a file size in bytes to human-readable. */
+function fmtSize(bytes) {
+  if (bytes == null) return '--'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1048576).toFixed(1)} MB`
+}
+
+/** File type icon. */
+function fileIcon(type) {
+  return type === 'directory' ? '\u{1F4C1}' : '\u{1F4C4}'
+}
+
+// ── Remote Chat Panel ───────────────────────────────────────────
+
+/**
+ * Render the remote chat panel with message history, input, and controls.
+ *
+ * @param {import('./clawser-peer-chat.js').PeerChat} peerChat
+ * @param {object} session - Session info { sessionId, pubKey, ... }
+ * @returns {string} HTML string
+ */
+export function renderRemoteChat(peerChat, session) {
+  const history = peerChat.getHistory()
+  const localPodId = session.localPodId || ''
+
+  let messagesHtml = ''
+  if (history.length === 0) {
+    messagesHtml = '<div class="rc-empty">No messages yet. Say hello!</div>'
+  } else {
+    for (const msg of history) {
+      const isLocal = msg.from === localPodId
+      const direction = isLocal ? 'rc-msg-sent' : 'rc-msg-received'
+      const verified = msg.verified ? '<span class="rc-verified" title="Signature verified">&#x2713;</span>' : ''
+      messagesHtml += `
+        <div class="rc-msg ${direction}">
+          <div class="rc-msg-header">
+            <span class="rc-msg-from">${esc(truncId(msg.from))}</span>
+            ${verified}
+            <span class="rc-msg-time">${fmtTime(msg.timestamp)}</span>
+          </div>
+          <div class="rc-msg-text">${esc(msg.text || '')}</div>
+        </div>`
+    }
+  }
+
+  return `
+    <div class="rc-panel rc-chat-panel">
+      <div class="rc-panel-header">
+        <span class="rc-panel-title">Chat</span>
+        <span class="rc-panel-peer" title="${esc(session.pubKey || '')}">${esc(truncId(session.pubKey || session.remotePodId || ''))}</span>
+      </div>
+      <div class="rc-messages" id="rcChatMessages">${messagesHtml}</div>
+      <div class="rc-typing-indicator" id="rcTypingIndicator" style="display:none">
+        <span class="rc-typing-dots">...</span> typing
+      </div>
+      <div class="rc-chat-input-row">
+        <input type="text" id="rcChatInput" class="rc-input" placeholder="Type a message..." autocomplete="off" />
+        <button class="btn-sm" id="rcChatSendBtn">Send</button>
+      </div>
+      <div class="rc-chat-controls">
+        <label class="rc-auto-reply-label">
+          <input type="checkbox" id="rcAutoReplyToggle" />
+          Auto-reply (agent)
+        </label>
+      </div>
+    </div>`
+}
+
+/**
+ * Bind event listeners for the remote chat panel.
+ *
+ * @param {import('./clawser-peer-chat.js').PeerChat} peerChat
+ * @param {object} session
+ */
+export function initRemoteChatListeners(peerChat, session) {
+  const input = $('rcChatInput')
+  const sendBtn = $('rcChatSendBtn')
+  const messagesEl = $('rcChatMessages')
+  const typingEl = $('rcTypingIndicator')
+
+  async function sendMessage() {
+    const text = input?.value?.trim()
+    if (!text) return
+    try {
+      await peerChat.sendMessage(text)
+      input.value = ''
+      _appendChatMessage(messagesEl, {
+        from: session.localPodId || '',
+        text,
+        timestamp: Date.now(),
+      }, session.localPodId || '', true)
+    } catch (err) {
+      addErrorMsg(`Send failed: ${err.message}`)
+    }
+  }
+
+  sendBtn?.addEventListener('click', sendMessage)
+  input?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      sendMessage()
+    }
+  })
+
+  // Typing indicator on input
+  let typingTimer = null
+  input?.addEventListener('input', () => {
+    peerChat.sendTyping()
+    clearTimeout(typingTimer)
+  })
+
+  // Listen for incoming messages
+  peerChat.on('message:received', (msg) => {
+    _appendChatMessage(messagesEl, msg, session.localPodId || '', false)
+  })
+
+  // Listen for typing
+  peerChat.on('typing', () => {
+    if (typingEl) {
+      typingEl.style.display = ''
+      clearTimeout(typingTimer)
+      typingTimer = setTimeout(() => {
+        typingEl.style.display = 'none'
+      }, 3000)
+    }
+  })
+
+  // Auto-scroll to bottom
+  if (messagesEl) {
+    messagesEl.scrollTop = messagesEl.scrollHeight
+  }
+}
+
+/** Append a single chat message to the messages container. */
+function _appendChatMessage(container, msg, localPodId, isLocal) {
+  if (!container) return
+  // Remove empty placeholder
+  const empty = container.querySelector('.rc-empty')
+  if (empty) empty.remove()
+
+  const direction = isLocal ? 'rc-msg-sent' : 'rc-msg-received'
+  const verified = msg.verified ? '<span class="rc-verified" title="Signature verified">&#x2713;</span>' : ''
+  const div = document.createElement('div')
+  div.className = `rc-msg ${direction}`
+  div.innerHTML = `
+    <div class="rc-msg-header">
+      <span class="rc-msg-from">${esc(truncId(msg.from))}</span>
+      ${verified}
+      <span class="rc-msg-time">${fmtTime(msg.timestamp)}</span>
+    </div>
+    <div class="rc-msg-text">${esc(msg.text || '')}</div>`
+  container.appendChild(div)
+  container.scrollTop = container.scrollHeight
+}
+
+// ── Remote Terminal Panel ───────────────────────────────────────
+
+/**
+ * Render the remote terminal panel with output area and command input.
+ *
+ * @param {import('./clawser-peer-terminal.js').TerminalClient} terminalClient
+ * @param {object} session - Session info
+ * @returns {string} HTML string
+ */
+export function renderRemoteTerminal(terminalClient, session) {
+  return `
+    <div class="rc-panel rc-terminal-panel">
+      <div class="rc-panel-header">
+        <span class="rc-panel-title">Remote Terminal</span>
+        <span class="rc-panel-peer" title="${esc(session.pubKey || '')}">${esc(truncId(session.pubKey || session.remotePodId || ''))}</span>
+      </div>
+      <div class="rc-terminal-output" id="rcTerminalOutput">
+        <div class="rc-terminal-welcome">Connected to remote shell. Type a command below.</div>
+      </div>
+      <div class="rc-terminal-input-row">
+        <span class="rc-terminal-prompt">$</span>
+        <input type="text" id="rcTerminalInput" class="rc-input rc-terminal-input" placeholder="Enter command..." autocomplete="off" />
+        <button class="btn-sm" id="rcTerminalExecBtn">Run</button>
+      </div>
+    </div>`
+}
+
+/**
+ * Bind event listeners for the remote terminal panel.
+ *
+ * @param {import('./clawser-peer-terminal.js').TerminalClient} terminalClient
+ */
+export function initRemoteTerminalListeners(terminalClient) {
+  const input = $('rcTerminalInput')
+  const execBtn = $('rcTerminalExecBtn')
+  const outputEl = $('rcTerminalOutput')
+
+  /** Command history for up/down arrow navigation. */
+  const cmdHistory = []
+  let historyIdx = -1
+
+  async function executeCommand() {
+    const command = input?.value?.trim()
+    if (!command) return
+
+    // Add to history
+    cmdHistory.push(command)
+    historyIdx = cmdHistory.length
+
+    // Show command in output
+    _appendTerminalLine(outputEl, `$ ${command}`, 'rc-term-cmd')
+    input.value = ''
+
+    try {
+      const result = await terminalClient.execute(command)
+      const output = result?.output ?? result?.result ?? ''
+      const exitCode = result?.exitCode ?? 0
+      if (output) {
+        _appendTerminalLine(outputEl, output, 'rc-term-output')
+      }
+      if (exitCode !== 0) {
+        _appendTerminalLine(outputEl, `Exit code: ${exitCode}`, 'rc-term-error')
+      }
+    } catch (err) {
+      _appendTerminalLine(outputEl, `Error: ${err.message}`, 'rc-term-error')
+    }
+  }
+
+  execBtn?.addEventListener('click', executeCommand)
+  input?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      executeCommand()
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      if (historyIdx > 0) {
+        historyIdx--
+        input.value = cmdHistory[historyIdx] || ''
+      }
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      if (historyIdx < cmdHistory.length - 1) {
+        historyIdx++
+        input.value = cmdHistory[historyIdx] || ''
+      } else {
+        historyIdx = cmdHistory.length
+        input.value = ''
+      }
+    }
+  })
+
+  // Focus the input
+  input?.focus()
+}
+
+/** Append a line to the terminal output. */
+function _appendTerminalLine(container, text, cls = '') {
+  if (!container) return
+  const line = document.createElement('div')
+  line.className = `rc-term-line ${cls}`
+  line.textContent = text
+  container.appendChild(line)
+  container.scrollTop = container.scrollHeight
+}
+
+// ── Remote File Browser Panel ───────────────────────────────────
+
+/**
+ * Render the remote file browser panel with directory listing,
+ * breadcrumbs, and file action buttons.
+ *
+ * @param {import('./clawser-peer-files.js').FileClient} fileClient
+ * @param {object} session - Session info
+ * @returns {string} HTML string
+ */
+export function renderRemoteFiles(fileClient, session) {
+  return `
+    <div class="rc-panel rc-files-panel">
+      <div class="rc-panel-header">
+        <span class="rc-panel-title">Remote Files</span>
+        <span class="rc-panel-peer" title="${esc(session.pubKey || '')}">${esc(truncId(session.pubKey || session.remotePodId || ''))}</span>
+      </div>
+      <div class="rc-files-breadcrumb" id="rcFilesBreadcrumb">
+        <span class="rc-breadcrumb-part rc-breadcrumb-link" data-path="/">/</span>
+      </div>
+      <div class="rc-files-list" id="rcFilesList">
+        <div class="rc-empty">Loading...</div>
+      </div>
+      <div class="rc-files-actions">
+        <button class="btn-sm" id="rcFilesRefreshBtn">Refresh</button>
+        <button class="btn-sm btn-surface2" id="rcFilesUploadBtn">Upload</button>
+      </div>
+    </div>`
+}
+
+/**
+ * Bind event listeners for the remote file browser panel.
+ *
+ * @param {import('./clawser-peer-files.js').FileClient} fileClient
+ */
+export function initRemoteFilesListeners(fileClient) {
+  let currentPath = '/'
+
+  async function loadDirectory(path) {
+    currentPath = path
+    const listEl = $('rcFilesList')
+    if (!listEl) return
+
+    listEl.innerHTML = '<div class="rc-empty">Loading...</div>'
+    _updateBreadcrumb(path)
+
+    try {
+      const entries = await fileClient.listFiles(path)
+      listEl.innerHTML = ''
+
+      if (path !== '/') {
+        const backEl = document.createElement('div')
+        backEl.className = 'rc-file-item rc-file-back'
+        backEl.textContent = '\u{1F4C1} .. (back)'
+        backEl.addEventListener('click', () => {
+          const parentPath = path.replace(/[^/]+\/$/, '') || '/'
+          loadDirectory(parentPath)
+        })
+        listEl.appendChild(backEl)
+      }
+
+      if (!entries || entries.length === 0) {
+        const emptyDiv = document.createElement('div')
+        emptyDiv.className = 'rc-empty'
+        emptyDiv.textContent = 'Empty directory.'
+        listEl.appendChild(emptyDiv)
+        return
+      }
+
+      // Sort: directories first, then alphabetical
+      const sorted = [...entries].sort((a, b) => {
+        if (a.type !== b.type) return a.type === 'directory' ? -1 : 1
+        return (a.name || '').localeCompare(b.name || '')
+      })
+
+      for (const entry of sorted) {
+        const item = document.createElement('div')
+        item.className = 'rc-file-item'
+        item.dataset.path = `${path}${path.endsWith('/') ? '' : '/'}${entry.name}`
+        item.dataset.type = entry.type || 'file'
+        item.innerHTML = `
+          <span class="rc-file-icon">${fileIcon(entry.type)}</span>
+          <span class="rc-file-name">${esc(entry.name)}</span>
+          <span class="rc-file-size">${entry.type === 'directory' ? '--' : fmtSize(entry.size)}</span>
+          <span class="rc-file-actions-inline">
+            ${entry.type !== 'directory' ? `<button class="btn-sm rc-file-download-btn" data-path="${esc(item.dataset.path)}">Download</button>` : ''}
+            <button class="btn-sm btn-danger rc-file-delete-btn" data-path="${esc(item.dataset.path)}">Delete</button>
+          </span>`
+
+        // Click to navigate into directory
+        item.addEventListener('click', (e) => {
+          if (e.target.tagName === 'BUTTON') return
+          if (entry.type === 'directory') {
+            loadDirectory(`${path}${path.endsWith('/') ? '' : '/'}${entry.name}/`)
+          }
+        })
+
+        listEl.appendChild(item)
+      }
+
+    } catch (err) {
+      listEl.innerHTML = `<div class="rc-error">Error: ${esc(err.message)}</div>`
+    }
+  }
+
+  // File action delegation — set up ONCE, not inside loadDirectory
+  $('rcFilesList')?.addEventListener('click', async (e) => {
+    const target = /** @type {HTMLElement} */ (e.target)
+
+    // Download
+    if (target.classList.contains('rc-file-download-btn')) {
+      const filePath = target.dataset.path
+      try {
+        const result = await fileClient.readFile(filePath)
+        const data = result?.data
+        if (data) {
+          const blob = data instanceof Uint8Array
+            ? new Blob([data])
+            : new Blob([data], { type: 'text/plain' })
+          const a = document.createElement('a')
+          const url = URL.createObjectURL(blob)
+          a.href = url
+          a.download = filePath.split('/').pop() || 'download'
+          a.click()
+          setTimeout(() => URL.revokeObjectURL(url), 1000)
+          addMsg('system', `Downloaded: ${filePath}`)
+        }
+      } catch (err) {
+        addErrorMsg(`Download failed: ${err.message}`)
+      }
+      return
+    }
+
+    // Delete
+    if (target.classList.contains('rc-file-delete-btn')) {
+      const filePath = target.dataset.path
+      const confirmed = await modal.confirm(
+        `Delete remote file "${filePath}"?`,
+        { danger: true, okLabel: 'Delete' }
+      )
+      if (!confirmed) return
+      try {
+        await fileClient.deleteFile(filePath)
+        addMsg('system', `Deleted: ${filePath}`)
+        loadDirectory(currentPath)
+      } catch (err) {
+        addErrorMsg(`Delete failed: ${err.message}`)
+      }
+    }
+  })
+
+  // Refresh button
+  $('rcFilesRefreshBtn')?.addEventListener('click', () => loadDirectory(currentPath))
+
+  // Upload button
+  $('rcFilesUploadBtn')?.addEventListener('click', async () => {
+    const filename = await modal.prompt('File name to create:', '')
+    if (!filename) return
+    const content = await modal.prompt('File content:', '')
+    if (content === null) return
+    const fullPath = `${currentPath}${currentPath.endsWith('/') ? '' : '/'}${filename}`
+    try {
+      await fileClient.writeFile(fullPath, content)
+      addMsg('system', `Uploaded: ${fullPath}`)
+      loadDirectory(currentPath)
+    } catch (err) {
+      addErrorMsg(`Upload failed: ${err.message}`)
+    }
+  })
+
+  // Breadcrumb clicks
+  const breadcrumb = $('rcFilesBreadcrumb')
+  breadcrumb?.addEventListener('click', (e) => {
+    const target = /** @type {HTMLElement} */ (e.target)
+    if (target.classList.contains('rc-breadcrumb-link')) {
+      const path = target.dataset.path
+      if (path) loadDirectory(path)
+    }
+  })
+
+  // Initial load
+  loadDirectory('/')
+}
+
+/** Update the breadcrumb display for a given path. */
+function _updateBreadcrumb(path) {
+  const el = $('rcFilesBreadcrumb')
+  if (!el) return
+
+  const parts = path.split('/').filter(Boolean)
+  let html = '<span class="rc-breadcrumb-part rc-breadcrumb-link" data-path="/">/</span>'
+  let accumulated = '/'
+  for (const part of parts) {
+    accumulated += `${part}/`
+    html += ` <span class="rc-breadcrumb-sep">/</span> `
+    html += `<span class="rc-breadcrumb-part rc-breadcrumb-link" data-path="${esc(accumulated)}">${esc(part)}</span>`
+  }
+  el.innerHTML = html
+}
+
+// ── Service Browser Panel ───────────────────────────────────────
+
+/**
+ * Render the service browser panel showing discovered remote services.
+ *
+ * @param {import('./clawser-peer-services.js').ServiceBrowser} serviceBrowser
+ * @returns {string} HTML string
+ */
+export function renderServiceBrowser(serviceBrowser) {
+  const services = serviceBrowser.discover()
+
+  // Collect unique types for filter dropdown
+  const types = new Set()
+  for (const svc of services) {
+    if (svc.type) types.add(svc.type)
+  }
+
+  let tableRows = ''
+  if (services.length === 0) {
+    tableRows = '<tr><td colspan="5" class="rc-empty">No services discovered.</td></tr>'
+  } else {
+    for (const svc of services) {
+      const statusClass = 'rc-svc-online'
+      tableRows += `
+        <tr class="rc-svc-row" data-type="${esc(svc.type || '')}" data-pod="${esc(svc.podId || '')}">
+          <td class="rc-svc-name">${esc(svc.name)}</td>
+          <td class="rc-svc-type"><span class="rc-svc-type-badge">${esc(svc.type || '--')}</span></td>
+          <td class="rc-svc-pod" title="${esc(svc.podId || '')}">${esc(truncId(svc.podId || ''))}</td>
+          <td class="rc-svc-version">${esc(svc.version || '--')}</td>
+          <td class="rc-svc-address" title="${esc(svc.address || '')}">${esc(truncId(svc.address || '', 16, 0))}</td>
+        </tr>`
+    }
+  }
+
+  return `
+    <div class="rc-panel rc-service-browser">
+      <div class="rc-panel-header">
+        <span class="rc-panel-title">Service Browser</span>
+        <span class="rc-panel-count">${services.length} service${services.length === 1 ? '' : 's'}</span>
+      </div>
+      <div class="rc-svc-filters">
+        <select id="rcSvcTypeFilter" class="rc-select">
+          <option value="">All types</option>
+          ${[...types].sort().map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="rc-svc-table-wrap">
+        <table class="rc-svc-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Type</th>
+              <th>Pod</th>
+              <th>Version</th>
+              <th>Address</th>
+            </tr>
+          </thead>
+          <tbody id="rcSvcBody">${tableRows}</tbody>
+        </table>
+      </div>
+    </div>`
+}
+
+/**
+ * Bind event listeners for the service browser panel.
+ *
+ * @param {import('./clawser-peer-services.js').ServiceBrowser} serviceBrowser
+ */
+export function initServiceBrowserListeners(serviceBrowser) {
+  const filterSelect = $('rcSvcTypeFilter')
+  const tbody = $('rcSvcBody')
+
+  function applyFilter() {
+    if (!tbody) return
+    const typeFilter = filterSelect?.value || ''
+    const rows = tbody.querySelectorAll('.rc-svc-row')
+    for (const row of rows) {
+      const type = row.dataset.type || ''
+      row.style.display = (!typeFilter || type === typeFilter) ? '' : 'none'
+    }
+  }
+
+  filterSelect?.addEventListener('change', applyFilter)
+
+  // Listen for new services — only attach once (guard with flag)
+  if (!serviceBrowser._uiListenersBound) {
+    serviceBrowser._uiListenersBound = true
+    serviceBrowser.on('discovered', () => {
+      _refreshServiceBrowser(serviceBrowser)
+    })
+    serviceBrowser.on('lost', () => {
+      _refreshServiceBrowser(serviceBrowser)
+    })
+  }
+}
+
+/** Re-render the service browser panel in place. */
+function _refreshServiceBrowser(serviceBrowser) {
+  const panel = document.querySelector('.rc-service-browser')
+  if (!panel) return
+  panel.outerHTML = renderServiceBrowser(serviceBrowser)
+  // Re-bind DOM listeners but NOT serviceBrowser.on() listeners (already bound)
+  _rebindServiceBrowserDOM(serviceBrowser)
+}
+
+/** Rebind only DOM event listeners (not serviceBrowser.on) after re-render. */
+function _rebindServiceBrowserDOM(serviceBrowser) {
+  const filterSelect = $('rcServiceFilter')
+  const applyFilter = () => {
+    const typeFilter = filterSelect?.value || ''
+    const rows = document.querySelectorAll('.rc-svc-row')
+    for (const row of rows) {
+      const type = row.dataset.type || ''
+      row.style.display = (!typeFilter || type === typeFilter) ? '' : 'none'
+    }
+  }
+  filterSelect?.addEventListener('change', applyFilter)
+}
+
+// ── Remote Session Tabs ─────────────────────────────────────────
+
+/**
+ * Render a tab bar for switching between remote sessions.
+ *
+ * @param {object[]} sessions - Array of session info objects
+ * @param {string} [activeSessionId] - Currently active session ID
+ * @returns {string} HTML string
+ */
+export function renderRemoteSessionTabs(sessions, activeSessionId) {
+  if (!sessions || sessions.length === 0) {
+    return '<div class="rc-session-tabs rc-session-tabs-empty">No remote sessions.</div>'
+  }
+
+  let tabs = ''
+  for (const s of sessions) {
+    const isActive = s.sessionId === activeSessionId
+    const label = truncId(s.pubKey || s.remotePodId || s.sessionId)
+    tabs += `
+      <div class="rc-session-tab ${isActive ? 'rc-session-tab-active' : ''}" data-session-id="${esc(s.sessionId)}">
+        <span class="rc-session-tab-label" title="${esc(s.pubKey || s.sessionId)}">${esc(label)}</span>
+        <button class="rc-session-tab-close" data-session-id="${esc(s.sessionId)}" title="Close session">&times;</button>
+      </div>`
+  }
+
+  return `<div class="rc-session-tabs">${tabs}</div>`
+}
+
+/**
+ * Bind event listeners for session tab bar.
+ *
+ * @param {object} [opts]
+ * @param {Function} [opts.onSelect] - Callback when a tab is selected: (sessionId) => void
+ * @param {Function} [opts.onClose] - Callback when a tab close is clicked: (sessionId) => void
+ */
+export function initRemoteTabListeners(opts = {}) {
+  const container = document.querySelector('.rc-session-tabs')
+  if (!container) return
+
+  container.addEventListener('click', (e) => {
+    const target = /** @type {HTMLElement} */ (e.target)
+
+    // Close button
+    if (target.classList.contains('rc-session-tab-close')) {
+      const sessionId = target.dataset.sessionId
+      if (sessionId && opts.onClose) {
+        opts.onClose(sessionId)
+      }
+      return
+    }
+
+    // Tab selection — walk up to find the tab element
+    const tab = target.closest('.rc-session-tab')
+    if (tab) {
+      const sessionId = tab.dataset.sessionId
+      if (sessionId && opts.onSelect) {
+        // Update active state visually
+        const allTabs = container.querySelectorAll('.rc-session-tab')
+        for (const t of allTabs) t.classList.remove('rc-session-tab-active')
+        tab.classList.add('rc-session-tab-active')
+        opts.onSelect(sessionId)
+      }
+    }
+  })
+}
+
+// ── Peer Status Badge ───────────────────────────────────────────
+
+/**
+ * Update the header badge showing connected peer count.
+ * Looks for an element with id "peerBadge" and updates its text.
+ *
+ * @param {import('./clawser-peer-node.js').PeerNode} peerNode
+ */
+export function updatePeerBadge(peerNode) {
+  const badge = $('peerBadge')
+  if (!badge) return
+
+  if (!peerNode || peerNode.state !== 'running') {
+    badge.textContent = 'offline'
+    badge.className = 'peer-badge-indicator peer-badge-offline'
+    return
+  }
+
+  const peers = peerNode.listPeers()
+  const connected = peers.filter(p => p.status === 'connected').length
+
+  badge.textContent = `${connected} peer${connected === 1 ? '' : 's'}`
+  badge.className = connected > 0
+    ? 'peer-badge-indicator peer-badge-online'
+    : 'peer-badge-indicator peer-badge-idle'
+}

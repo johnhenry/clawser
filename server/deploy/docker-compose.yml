@@ -1,0 +1,29 @@
+version: '3.8'
+services:
+  signaling:
+    build: ..
+    ports:
+      - "8787:8787"
+    environment:
+      - PORT=8787
+      - AUTH_MODE=open
+  relay:
+    build: ..
+    command: node relay/index.mjs
+    ports:
+      - "8788:8788"
+    environment:
+      - PORT=8788
+  kernel:
+    build: ..
+    command: node kernel/index.mjs
+    environment:
+      - SIGNALING_URL=ws://signaling:8787
+      - DATA_DIR=/data
+    volumes:
+      - kernel-data:/data
+    depends_on:
+      - signaling
+      - relay
+volumes:
+  kernel-data:

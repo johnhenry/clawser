@@ -1,0 +1,16 @@
+app = "clawser-signaling"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 8787
+  force_https = true
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 8787
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]

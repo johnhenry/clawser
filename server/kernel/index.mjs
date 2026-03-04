@@ -1,0 +1,548 @@
+/**
+ * Clawser Server-Side Kernel — Always-On Mesh Peer
+ *
+ * Provides the same identity/capability model as browser peers but runs
+ * in Node.js. Can host agent instances, serve files, and run compute jobs.
+ *
+ * This is a standalone Node.js PeerNode that connects to the signaling
+ * server and participates in the mesh network as a first-class peer.
+ *
+ * Env vars:
+ *   SIGNALING_URL — ws:// URL of the signaling server
+ *   DATA_DIR      — root directory for file storage (default ./data)
+ *   AGENT_NAME    — name for the server agent (default 'server-agent')
+ *   POD_LABEL     — human-readable label for this pod (default hostname)
+ */
+
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs'
+import { join, resolve, relative, dirname, basename } from 'node:path'
+import { webcrypto } from 'node:crypto'
+import { hostname } from 'node:os'
+
+// ─── ServerIdentity ──────────────────────────────────────────────────
+
+/**
+ * Simple Ed25519-style identity for server peers.
+ * Uses webcrypto for random ID generation.
+ */
+class ServerIdentity {
+  #podId
+  #label
+  #created
+
+  /**
+   * @param {object} opts
+   * @param {string} opts.podId  — unique peer identifier
+   * @param {string} opts.label  — human-readable label
+   * @param {number} [opts.created] — creation timestamp
+   */
+  constructor({ podId, label, created }) {
+    this.#podId = podId
+    this.#label = label
+    this.#created = created ?? Date.now()
+  }
+
+  /** @returns {string} */
+  get podId() {
+    return this.#podId
+  }
+
+  /** @returns {string} */
+  get label() {
+    return this.#label
+  }
+
+  /** @returns {number} */
+  get created() {
+    return this.#created
+  }
+
+  /**
+   * Generate a new random identity.
+   * @param {string} [label] — human-readable label (default: hostname)
+   * @returns {Promise<ServerIdentity>}
+   */
+  static async generate(label) {
+    const bytes = new Uint8Array(16)
+    webcrypto.getRandomValues(bytes)
+    const podId = 'pod-' + Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
+    return new ServerIdentity({
+      podId,
+      label: label ?? hostname(),
+    })
+  }
+
+  /** @returns {object} */
+  toJSON() {
+    return {
+      podId: this.#podId,
+      label: this.#label,
+      created: this.#created,
+    }
+  }
+
+  /**
+   * Restore an identity from serialized data.
+   * @param {object} data
+   * @returns {ServerIdentity}
+   */
+  static fromJSON(data) {
+    return new ServerIdentity({
+      podId: data.podId,
+      label: data.label,
+      created: data.created,
+    })
+  }
+}
+
+// ─── ServerFileSystem ────────────────────────────────────────────────
+
+/**
+ * File system adapter for server-side storage.
+ * Wraps Node.js fs with a consistent async API matching the browser OPFS pattern.
+ */
+class ServerFileSystem {
+  #rootDir
+
+  /**
+   * @param {string} rootDir — root directory for file storage
+   */
+  constructor(rootDir) {
+    this.#rootDir = resolve(rootDir)
+    if (!existsSync(this.#rootDir)) {
+      mkdirSync(this.#rootDir, { recursive: true })
+    }
+  }
+
+  /** @returns {string} */
+  get rootDir() {
+    return this.#rootDir
+  }
+
+  /**
+   * Resolve a path relative to root, preventing traversal.
+   * @param {string} path
+   * @returns {string}
+   */
+  #resolve(path) {
+    if (path == null) {
+      throw new Error('path is required')
+    }
+    const resolved = resolve(this.#rootDir, String(path))
+    const rel = relative(this.#rootDir, resolved)
+    if (rel.startsWith('..') || resolve(this.#rootDir, rel) !== resolved) {
+      throw new Error('path traversal not allowed')
+    }
+    return resolved
+  }
+
+  /**
+   * List entries in a directory.
+   * @param {string} [path='.']
+   * @returns {Promise<{ name: string, type: string, size: number }[]>}
+   */
+  async list(path = '.') {
+    const dir = this.#resolve(path)
+    if (!existsSync(dir)) return []
+
+    const entries = readdirSync(dir)
+    return entries.map(name => {
+      const full = join(dir, name)
+      const stat = statSync(full)
+      return {
+        name,
+        type: stat.isDirectory() ? 'directory' : 'file',
+        size: stat.size,
+      }
+    })
+  }
+
+  /**
+   * Read a file.
+   * @param {string} path
+   * @returns {Promise<{ data: string, size: number }>}
+   */
+  async read(path) {
+    const full = this.#resolve(path)
+    if (!existsSync(full)) {
+      throw new Error(`file not found: ${path}`)
+    }
+    const data = readFileSync(full, 'utf-8')
+    return { data, size: Buffer.byteLength(data, 'utf-8') }
+  }
+
+  /**
+   * Write a file (creates parent directories).
+   * @param {string} path
+   * @param {string} data
+   * @returns {Promise<{ success: boolean, size: number }>}
+   */
+  async write(path, data) {
+    if (data == null) {
+      throw new Error('data is required for write')
+    }
+    const str = String(data)
+    const size = Buffer.byteLength(str, 'utf-8')
+    // 10MB limit to prevent disk exhaustion
+    if (size > 10 * 1024 * 1024) {
+      throw new Error(`file size ${size} exceeds 10MB limit`)
+    }
+    const full = this.#resolve(path)
+    const dir = dirname(full)
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true })
+    }
+    writeFileSync(full, str, 'utf-8')
+    return { success: true, size }
+  }
+
+  /**
+   * Delete a file.
+   * @param {string} path
+   * @returns {Promise<{ success: boolean }>}
+   */
+  async delete(path) {
+    const full = this.#resolve(path)
+    if (!existsSync(full)) {
+      return { success: false }
+    }
+    const s = statSync(full)
+    if (s.isDirectory()) {
+      return { success: false, error: 'cannot delete directory' }
+    }
+    unlinkSync(full)
+    return { success: true }
+  }
+
+  /**
+   * Get file metadata.
+   * @param {string} path
+   * @returns {Promise<{ name: string, type: string, size: number, modified: number }|null>}
+   */
+  async stat(path) {
+    const full = this.#resolve(path)
+    if (!existsSync(full)) return null
+
+    const s = statSync(full)
+    return {
+      name: basename(full),
+      type: s.isDirectory() ? 'directory' : 'file',
+      size: s.size,
+      modified: s.mtimeMs,
+    }
+  }
+}
+
+// ─── ServerAgent ─────────────────────────────────────────────────────
+
+/**
+ * Simple agent that can respond to messages.
+ * This is a lightweight stub — in production, it would wrap
+ * a full LLM-backed agent with tool calling.
+ */
+class ServerAgent {
+  #name
+  #systemPrompt
+  #memories
+
+  /**
+   * @param {object} opts
+   * @param {string} opts.name
+   * @param {string} [opts.systemPrompt]
+   */
+  constructor({ name, systemPrompt }) {
+    this.#name = name
+    this.#systemPrompt = systemPrompt ?? `You are ${name}, a server-side Clawser agent.`
+    this.#memories = []
+  }
+
+  /** @returns {string} */
+  get name() {
+    return this.#name
+  }
+
+  /** @returns {string} */
+  get systemPrompt() {
+    return this.#systemPrompt
+  }
+
+  /**
+   * Run the agent with a message.
+   * Stub implementation — returns an echo response.
+   * In production, this would call an LLM provider.
+   *
+   * @param {string} message
+   * @returns {Promise<{ response: string, usage?: object }>}
+   */
+  async run(message) {
+    return {
+      response: `[${this.#name}] Received: ${message}`,
+      usage: { input_tokens: 0, output_tokens: 0 },
+    }
+  }
+
+  /**
+   * Execute a tool by name.
+   * Stub implementation with basic built-in tools.
+   *
+   * @param {string} name
+   * @param {object} args
+   * @returns {Promise<{ success: boolean, output: string }>}
+   */
+  async executeTool(name, args) {
+    switch (name) {
+      case 'echo':
+        return { success: true, output: args.text ?? '' }
+      case 'time':
+        return { success: true, output: new Date().toISOString() }
+      case 'info':
+        return { success: true, output: JSON.stringify({ agent: this.#name, tools: ['echo', 'time', 'info'] }) }
+      default:
+        return { success: false, output: `unknown tool: ${name}` }
+    }
+  }
+
+  /**
+   * Search agent memories.
+   * Stub — returns empty array until a memory store is wired up.
+   *
+   * @param {string} query
+   * @returns {object[]}
+   */
+  searchMemories(query) {
+    return this.#memories.filter(m =>
+      m.content && m.content.toLowerCase().includes((query ?? '').toLowerCase())
+    )
+  }
+
+  /**
+   * Add a memory entry.
+   * @param {object} entry — { key, content, category? }
+   */
+  addMemory(entry) {
+    this.#memories.push({
+      id: `mem-${this.#memories.length}`,
+      key: entry.key,
+      content: entry.content,
+      category: entry.category ?? 'learned',
+      timestamp: Date.now(),
+    })
+  }
+}
+
+// ─── PeerNodeServer ──────────────────────────────────────────────────
+
+/**
+ * Server-side PeerNode — always-on mesh peer.
+ *
+ * Maintains a WebSocket connection to the signaling server and
+ * exposes services that other peers can call.
+ */
+class PeerNodeServer {
+  #identity
+  #fileSystem
+  #agent
+  #signalingUrl
+  #state = 'stopped'
+  #connectedPeers = new Set()
+  #services = new Map()
+  #onLog
+  #ws = null
+
+  /**
+   * @param {object} opts
+   * @param {ServerIdentity} opts.identity
+   * @param {string} [opts.dataDir]       — root directory for file storage
+   * @param {string} [opts.signalingUrl]  — signaling server WebSocket URL
+   * @param {string} [opts.agentName]     — name for the built-in agent
+   * @param {(msg: string) => void} [opts.onLog]
+   */
+  constructor({ identity, dataDir, signalingUrl, agentName, onLog }) {
+    this.#identity = identity
+    this.#fileSystem = new ServerFileSystem(dataDir ?? './data')
+    this.#agent = new ServerAgent({ name: agentName ?? 'server-agent' })
+    this.#signalingUrl = signalingUrl ?? null
+    this.#onLog = onLog ?? console.log
+
+    // Register built-in services
+    this.registerService('fs', {
+      list: (args) => this.#fileSystem.list(args?.path),
+      read: (args) => this.#fileSystem.read(args?.path),
+      write: (args) => this.#fileSystem.write(args?.path, args?.data),
+      delete: (args) => this.#fileSystem.delete(args?.path),
+      stat: (args) => this.#fileSystem.stat(args?.path),
+    })
+
+    this.registerService('agent', {
+      run: (args) => this.#agent.run(args?.message),
+      executeTool: (args) => this.#agent.executeTool(args?.name, args?.args ?? {}),
+      searchMemories: (args) => this.#agent.searchMemories(args?.query),
+    })
+  }
+
+  /**
+   * Start the peer node.
+   * Connects to the signaling server if a URL is configured.
+   * @returns {Promise<void>}
+   */
+  async start() {
+    if (this.#state === 'running') return
+    this.#state = 'running'
+    this.#onLog(`[kernel] started: ${this.#identity.podId} (${this.#identity.label})`)
+
+    // Connect to signaling server if configured
+    if (this.#signalingUrl) {
+      this.#onLog(`[kernel] connecting to signaling: ${this.#signalingUrl}`)
+      // In production, would establish WebSocket and register
+      // Omitted here to avoid hard dependency on ws in tests
+    }
+  }
+
+  /**
+   * Stop the peer node.
+   * Disconnects from signaling and cleans up.
+   * @returns {Promise<void>}
+   */
+  async stop() {
+    if (this.#state === 'stopped') return
+    this.#state = 'stopped'
+    this.#connectedPeers.clear()
+
+    if (this.#ws) {
+      this.#ws.close()
+      this.#ws = null
+    }
+
+    this.#onLog(`[kernel] stopped: ${this.#identity.podId}`)
+  }
+
+  /** @returns {string} */
+  get state() {
+    return this.#state
+  }
+
+  /** @returns {string} */
+  get podId() {
+    return this.#identity.podId
+  }
+
+  /** @returns {ServerIdentity} */
+  get identity() {
+    return this.#identity
+  }
+
+  /** @returns {ServerFileSystem} */
+  get fileSystem() {
+    return this.#fileSystem
+  }
+
+  /** @returns {ServerAgent} */
+  get agent() {
+    return this.#agent
+  }
+
+  /**
+   * Register a named service.
+   * @param {string} name
+   * @param {object} handler — map of method names to async functions
+   */
+  registerService(name, handler) {
+    this.#services.set(name, handler)
+  }
+
+  /**
+   * List registered service names.
+   * @returns {string[]}
+   */
+  listServices() {
+    return Array.from(this.#services.keys())
+  }
+
+  /**
+   * Get a registered service.
+   * @param {string} name
+   * @returns {object|undefined}
+   */
+  getService(name) {
+    return this.#services.get(name)
+  }
+
+  /** @returns {string[]} */
+  get connectedPeers() {
+    return Array.from(this.#connectedPeers)
+  }
+
+  /** @returns {object} */
+  toJSON() {
+    return {
+      podId: this.#identity.podId,
+      label: this.#identity.label,
+      state: this.#state,
+      services: this.listServices(),
+      connectedPeers: this.connectedPeers,
+      created: this.#identity.created,
+    }
+  }
+}
+
+// ─── Factory ─────────────────────────────────────────────────────────
+
+/**
+ * Create a server kernel with sensible defaults.
+ *
+ * @param {object} [opts]
+ * @param {ServerIdentity} [opts.identity]  — use existing identity, or generate one
+ * @param {string} [opts.dataDir]           — file storage root
+ * @param {string} [opts.signalingUrl]      — signaling server WebSocket URL
+ * @param {string} [opts.agentName]         — agent name
+ * @param {string} [opts.label]             — pod label
+ * @param {(msg: string) => void} [opts.onLog]
+ * @returns {Promise<PeerNodeServer>}
+ */
+async function createServerKernel(opts = {}) {
+  const identity = opts.identity ?? await ServerIdentity.generate(opts.label)
+  return new PeerNodeServer({
+    identity,
+    dataDir: opts.dataDir,
+    signalingUrl: opts.signalingUrl,
+    agentName: opts.agentName,
+    onLog: opts.onLog,
+  })
+}
+
+// ─── Direct execution ────────────────────────────────────────────────
+
+const isMain = process.argv[1] && (
+  process.argv[1].endsWith('/index.mjs') ||
+  process.argv[1].endsWith('\\index.mjs')
+)
+
+if (isMain) {
+  const env = process.env
+  const kernel = await createServerKernel({
+    dataDir: env.DATA_DIR ?? './data',
+    signalingUrl: env.SIGNALING_URL,
+    agentName: env.AGENT_NAME ?? 'server-agent',
+    label: env.POD_LABEL,
+    onLog: console.log,
+  })
+
+  await kernel.start()
+  console.log(`[kernel] pod: ${kernel.podId}`)
+  console.log(`[kernel] services: ${kernel.listServices().join(', ')}`)
+  console.log(`[kernel] data dir: ${kernel.fileSystem.rootDir}`)
+
+  // Graceful shutdown
+  process.on('SIGINT', async () => {
+    console.log('\n[kernel] shutting down...')
+    await kernel.stop()
+    process.exit(0)
+  })
+
+  process.on('SIGTERM', async () => {
+    await kernel.stop()
+    process.exit(0)
+  })
+}
+
+export { ServerIdentity, ServerFileSystem, ServerAgent, PeerNodeServer, createServerKernel }
