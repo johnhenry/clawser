@@ -67,7 +67,7 @@ import { renderSwarmPanel, initSwarmListeners } from './clawser-ui-swarms.js';
 import { renderTransferPanel, initTransferListeners } from './clawser-ui-transfers.js';
 import { renderMeshPanel, initMeshListeners } from './clawser-ui-mesh.js';
 import { renderIdentityWallet, initIdentityWalletListeners, renderContactBook, initContactBookListeners, renderConnectionPanel, initConnectionListeners, renderAuditLog, initAuditLogListeners } from './clawser-ui-peers.js';
-import { renderServiceBrowser, initServiceBrowserListeners, updatePeerBadge } from './clawser-ui-remote.js';
+import { renderServiceBrowser, updatePeerBadge } from './clawser-ui-remote.js';
 
 // Phase 7: Remote gateway
 import { GatewayServer } from './clawser-gateway-server.js';
@@ -400,8 +400,7 @@ export async function switchWorkspace(newId, convId) {
       if (!c) return;
       const podId = state.peerNode?.podId || 'local';
       const sc = state.swarmCoordinator;
-      c.innerHTML = renderSwarmPanel({ swarms: [], localPodId: podId });
-      initSwarmListeners({
+      const listenerOpts = {
         onCreate: (opts) => {
           if (sc) {
             sc.submitTask(opts.goal, opts.strategy || 'round_robin', {});
@@ -410,9 +409,11 @@ export async function switchWorkspace(newId, convId) {
         },
         onRefresh: () => {
           c.innerHTML = renderSwarmPanel({ swarms: [], localPodId: podId });
-          initSwarmListeners();
+          initSwarmListeners(listenerOpts);
         },
-      });
+      };
+      c.innerHTML = renderSwarmPanel({ swarms: [], localPodId: podId });
+      initSwarmListeners(listenerOpts);
     },
     transfers: () => {
       const c = $('transfersContainer');
@@ -451,8 +452,7 @@ export async function switchWorkspace(newId, convId) {
       const c = $('remoteContainer');
       if (!c) return;
       if (state.peerNode) {
-        c.innerHTML = renderServiceBrowser(state.serviceBrowser || { discover() { return []; } });
-        if (state.serviceBrowser) initServiceBrowserListeners(state.serviceBrowser);
+        c.innerHTML = renderServiceBrowser({ discover() { return []; } });
         updatePeerBadge(state.peerNode);
       } else {
         c.innerHTML = '<div class="rc-empty" style="padding:1.5rem;opacity:0.6">Remote access requires an active peer connection. Start a mesh session first.</div>';
@@ -1053,8 +1053,7 @@ export async function initWorkspace(wsId, convId) {
         if (!c) return;
         const podId = state.peerNode?.podId || 'local';
         const sc = state.swarmCoordinator;
-        c.innerHTML = renderSwarmPanel({ swarms: [], localPodId: podId });
-        initSwarmListeners({
+        const listenerOpts = {
           onCreate: (opts) => {
             if (sc) {
               sc.submitTask(opts.goal, opts.strategy || 'round_robin', {});
@@ -1063,9 +1062,11 @@ export async function initWorkspace(wsId, convId) {
           },
           onRefresh: () => {
             c.innerHTML = renderSwarmPanel({ swarms: [], localPodId: podId });
-            initSwarmListeners();
+            initSwarmListeners(listenerOpts);
           },
-        });
+        };
+        c.innerHTML = renderSwarmPanel({ swarms: [], localPodId: podId });
+        initSwarmListeners(listenerOpts);
       },
       transfers: () => {
         const c = $('transfersContainer');

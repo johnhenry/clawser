@@ -291,6 +291,7 @@ export class MqttAdapter extends IoTProtocolAdapter {
         this.#subscriptions.delete(key)
       }
     }
+    if (this.#connections.size === 0) this._active = false
   }
 
   /**
@@ -432,6 +433,7 @@ export class HttpAdapter extends IoTProtocolAdapter {
       }
     }
     this.#connections.delete(device.deviceId)
+    if (this.#connections.size === 0) this._active = false
   }
 
   /**
@@ -565,6 +567,7 @@ export class DirectAdapter extends IoTProtocolAdapter {
       this.#dataCallbacks.delete(device.deviceId)
       this.#connections.delete(device.deviceId)
     }
+    if (this.#connections.size === 0) this._active = false
   }
 
   /**
