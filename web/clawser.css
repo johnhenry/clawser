@@ -110,29 +110,94 @@ header .dot.error { background:var(--red); }
 .tool-entry .tool-body { padding:6px 10px; color:var(--muted); white-space:pre-wrap; word-break:break-word; display:none; max-height:200px; overflow-y:auto; }
 .tool-entry.expanded .tool-body { display:block; }
 
-/* ── Inline tool calls (in chat) ─────────────────────── */
-.msg.tool-inline {
+/* ── Rich tool cards (in chat) ───────────────────────── */
+.msg.tool-card {
   align-self: stretch; max-width: 100%; padding: 0;
   background: transparent; border: none;
-  border-left: 3px solid var(--accent); margin: 2px 0;
+  border-left: 3px solid var(--accent); margin: 4px 0;
   font-size: 12px; font-family: var(--mono);
+  border-radius: var(--radius);
+  overflow: visible;
+  white-space: normal; line-height: 1.3;
 }
-.msg.tool-inline .tool-inline-head {
-  padding: 4px 10px; display: flex; align-items: center;
-  gap: 6px; cursor: pointer; color: var(--muted);
+.msg.tool-card.pending { border-left-color: var(--orange); }
+.msg.tool-card.ok { border-left-color: var(--green); }
+.msg.tool-card.err { border-left-color: var(--red); }
+
+/* Header bar */
+.msg.tool-card .tc-header {
+  padding: 6px 10px; display: flex; align-items: center;
+  gap: 8px; cursor: pointer; color: var(--muted);
+  background: var(--surface2);
 }
-.msg.tool-inline .tool-inline-head:hover { background: var(--surface2); }
-.msg.tool-inline .ti-icon { font-size: 10px; }
-.msg.tool-inline .ti-icon.pending { color: var(--orange); animation: pulse 1s infinite; }
-.msg.tool-inline .ti-icon.ok { color: var(--green); }
-.msg.tool-inline .ti-icon.err { color: var(--red); }
-.msg.tool-inline .ti-name { color: var(--accent); font-weight: 600; }
-.msg.tool-inline .tool-inline-detail {
-  display: none; padding: 4px 10px 6px; color: var(--muted);
+.msg.tool-card .tc-header:hover { background: var(--surface); }
+.msg.tool-card .tc-icon { display: flex; align-items: center; flex-shrink: 0; }
+.msg.tool-card .tc-status { font-size: 12px; font-weight: 700; }
+.msg.tool-card .tc-status.ok { color: var(--green); }
+.msg.tool-card .tc-status.err { color: var(--red); }
+.msg.tool-card .tc-name { color: var(--accent); font-weight: 600; white-space: nowrap; }
+.msg.tool-card .tc-summary {
+  color: var(--muted); flex: 1; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+.msg.tool-card .tc-meta {
+  display: flex; align-items: center; gap: 6px;
+  flex-shrink: 0; margin-left: auto;
+}
+.msg.tool-card .tc-params-chip {
+  font-size: 10px; color: var(--accent); background: rgba(88,166,255,.1);
+  padding: 1px 6px; border-radius: 10px; cursor: pointer; white-space: nowrap;
+}
+.msg.tool-card .tc-params-chip:hover { background: rgba(88,166,255,.2); }
+.msg.tool-card .tc-duration {
+  font-size: 10px; color: var(--dim); background: var(--surface);
+  padding: 1px 6px; border-radius: 10px; white-space: nowrap;
+}
+
+/* Param key-value pairs */
+.msg.tool-card .tc-params {
+  padding: 6px 10px; border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+.msg.tool-card .tc-param {
+  display: flex; gap: 8px; padding: 1px 0;
+  line-height: 1.4;
+}
+.msg.tool-card .tc-pk {
+  color: var(--purple); flex-shrink: 0; min-width: 0;
+}
+.msg.tool-card .tc-pk::after { content: ':'; color: var(--dim); }
+.msg.tool-card .tc-pv {
+  color: var(--muted); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+
+/* Output preview */
+.msg.tool-card .tc-output {
+  padding: 6px 10px; border-top: 1px solid var(--border);
+  background: var(--bg); display: none;
+}
+.msg.tool-card.expanded .tc-output { display: block; }
+.msg.tool-card .tc-output.tc-output-err { background: rgba(248,81,73,.05); }
+.msg.tool-card .tc-output-lines { max-height: 120px; overflow-y: auto; }
+.msg.tool-card .tc-output.tc-output-expanded .tc-output-lines { max-height: 300px; }
+.msg.tool-card .tc-line {
+  display: flex; gap: 8px; line-height: 1.4;
   white-space: pre-wrap; word-break: break-word;
-  max-height: 150px; overflow-y: auto; border-top: 1px solid var(--border);
 }
-.msg.tool-inline.expanded .tool-inline-detail { display: block; }
+.msg.tool-card .tc-ln {
+  color: var(--dim); min-width: 20px; text-align: right;
+  flex-shrink: 0; user-select: none;
+}
+.msg.tool-card .tc-empty { color: var(--dim); font-style: italic; }
+.msg.tool-card .tc-output-toggle {
+  background: none; border: none; color: var(--accent);
+  font-size: 11px; font-family: var(--mono);
+  cursor: pointer; padding: 3px 0 0; display: block;
+}
+.msg.tool-card .tc-output-toggle:hover { text-decoration: underline; }
+
+/* Spinner (shared) */
 .tool-spinner {
   display: inline-block; width: 10px; height: 10px;
   border: 2px solid var(--orange); border-top-color: transparent;
@@ -260,6 +325,7 @@ header .dot.error { background:var(--red); }
 .acct-edit-form { padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); margin:4px 12px; }
 .acct-edit-form input, .acct-edit-form select { width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--bg); color:var(--text); font-size:11px; font-family:var(--mono); margin-bottom:4px; }
 .acct-edit-form .acct-form-row { display:flex; gap:4px; }
+.input-error { border-color:var(--red, #f85149) !important; box-shadow:0 0 0 1px var(--red, #f85149); }
 
 /* ── Command Palette ────────────────────────────────── */
 .cmd-tool-item { padding:6px 10px; cursor:pointer; border-bottom:1px solid rgba(48,54,61,.4); font-size:var(--text-sm); font-family:var(--mono); }

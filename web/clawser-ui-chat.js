@@ -210,42 +210,167 @@ export function updateSubAgentBlock(id, event) {
   }
 }
 
-// ── Inline tool calls (in chat flow) ────────────────────────────
-/** Add a collapsible tool call inline in the chat flow (pending or complete).
+// ── Rich card tool call helpers ──────────────────────────────────
+
+/** Format a duration in ms to a human-readable string. */
+function formatDuration(ms) {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+  const m = Math.floor(ms / 60000);
+  const s = Math.round((ms % 60000) / 1000);
+  return `${m}m ${s}s`;
+}
+
+/** Generate a smart one-line summary for the tool card header. */
+function toolSummary(name, params, output) {
+  if (!params) params = {};
+  // File ops → show path
+  if (/^fs_(read|write|mkdir|rm|ls)$/.test(name) && params.path)
+    return params.path;
+  // Fetch → hostname
+  if (name === 'fetch_url' && params.url) {
+    try { return new URL(params.url).hostname; } catch { return params.url.slice(0, 50); }
+  }
+  // Search → query
+  if (name === 'web_search' && params.query)
+    return params.query.slice(0, 50);
+  // Codex eval
+  if (name === '_codex_eval') return 'code eval';
+  // Fallback: first non-empty line of output
+  if (output) {
+    const first = String(output).split('\n').find(l => l.trim());
+    if (first) return first.slice(0, 50);
+  }
+  return '';
+}
+
+/** Split output into lines for preview display. */
+function formatToolOutput(output, maxLines = 4) {
+  if (!output) return { lines: [], total: 0, isError: false };
+  const raw = String(output);
+  const all = raw.split('\n');
+  return { lines: all.slice(0, maxLines), total: all.length, isError: false };
+}
+
+/** Render param key-value pairs as HTML. */
+function renderParamPairs(params) {
+  if (!params || typeof params !== 'object' || Array.isArray(params)) return '';
+  return Object.entries(params).map(([k, v]) => {
+    let vs = typeof v === 'string' ? v : JSON.stringify(v);
+    if (vs.length > 80) vs = vs.slice(0, 77) + '…';
+    return `<div class="tc-param"><span class="tc-pk">${esc(k)}</span><span class="tc-pv">${esc(vs)}</span></div>`;
+  }).join('');
+}
+
+/** Normalize params to a plain object (handles string, null, non-objects). */
+function safeParamsObj(params) {
+  if (!params) return {};
+  if (typeof params === 'string') {
+    try { const p = JSON.parse(params); return (p && typeof p === 'object' && !Array.isArray(p)) ? p : {}; } catch { return {}; }
+  }
+  if (typeof params === 'object' && !Array.isArray(params)) return params;
+  return {};
+}
+
+/** Coerce tool output to a string. */
+function safeOutputStr(result) {
+  if (!result) return '';
+  const raw = result.output || result.error || '';
+  return typeof raw === 'string' ? raw : JSON.stringify(raw, null, 2);
+}
+
+/** Attach the "N more lines" toggle button behavior to a card. */
+function _attachOutputToggle(el, outputStr, previewLines, totalLines) {
+  const toggleBtn = el.querySelector('.tc-output-toggle');
+  if (!toggleBtn) return;
+  toggleBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const outputEl = el.querySelector('.tc-output');
+    if (!outputEl) return;
+    const isExpanded = outputEl.classList.toggle('tc-output-expanded');
+    const linesEl = el.querySelector('.tc-output-lines');
+    if (isExpanded) {
+      const allLines = outputStr.split('\n');
+      linesEl.innerHTML = allLines.map((l, i) =>
+        `<div class="tc-line"><span class="tc-ln">${i + 1}</span><span>${esc(l)}</span></div>`
+      ).join('');
+      toggleBtn.textContent = '▾ collapse';
+    } else {
+      linesEl.innerHTML = previewLines.map((l, i) =>
+        `<div class="tc-line"><span class="tc-ln">${i + 1}</span><span>${esc(l)}</span></div>`
+      ).join('');
+      const moreCount = totalLines - previewLines.length;
+      toggleBtn.textContent = `▸ ${moreCount} more line${moreCount === 1 ? '' : 's'}`;
+    }
+  });
+}
+
+// ── Inline tool calls (rich cards in chat flow) ──────────────────
+/** Add a rich tool card inline in the chat flow (pending or complete).
  * @param {string} name @param {Object} params @param {Object|null} result - null for pending
  * @returns {HTMLElement} The tool call element (for later update via updateInlineToolCall)
  */
 export function addInlineToolCall(name, params, result) {
   const messagesEl = $('messages');
   const displayName = name === '_codex_eval' ? 'code eval' : name;
+  const safeParams = safeParamsObj(params);
   const div = document.createElement('div');
-  div.className = 'msg tool-inline';
 
   const isPending = result === null;
   const isOk = !isPending && result?.success !== false;
+  div.className = `msg tool-card ${isPending ? 'pending' : isOk ? 'ok' : 'err'}`;
+  div.dataset.startTime = String(Date.now());
 
-  let iconHtml;
-  if (isPending) {
-    iconHtml = '<span class="tool-spinner"></span>';
-  } else if (isOk) {
-    iconHtml = '<span class="ti-icon ok">✓</span>';
-  } else {
-    iconHtml = '<span class="ti-icon err">✗</span>';
+  const iconHtml = isPending
+    ? '<span class="tool-spinner"></span>'
+    : isOk ? '<span class="tc-status ok">✓</span>' : '<span class="tc-status err">✗</span>';
+
+  const output = isPending ? '' : safeOutputStr(result);
+  const summary = isPending ? 'running…' : esc(toolSummary(name, safeParams, output));
+  const paramCount = Object.keys(safeParams).length;
+
+  const { lines, total } = formatToolOutput(output);
+  const isError = !isPending && !isOk;
+  let outputHtml = '';
+  if (!isPending && output) {
+    const lineHtml = lines.map((l, i) =>
+      `<div class="tc-line"><span class="tc-ln">${i + 1}</span><span>${esc(l)}</span></div>`
+    ).join('');
+    const moreCount = total - lines.length;
+    const toggleHtml = moreCount > 0
+      ? `<button class="tc-output-toggle">▸ ${moreCount} more line${moreCount === 1 ? '' : 's'}</button>` : '';
+    outputHtml = `<div class="tc-output${isError ? ' tc-output-err' : ''}"><div class="tc-output-lines">${lineHtml}</div>${toggleHtml}</div>`;
+  } else if (!isPending) {
+    outputHtml = '<div class="tc-output"><span class="tc-empty">(no output)</span></div>';
   }
 
-  const output = result ? (result.output || result.error || '(empty)') : '(pending)';
-  const truncated = output.length > 300 ? output.slice(0, 300) + '…' : output;
-  const paramStr = params ? JSON.stringify(params, null, 2) : '{}';
+  const paramsHtml = paramCount > 0 ? `<div class="tc-params" style="display:none">${renderParamPairs(safeParams)}</div>` : '';
+  const chipHtml = paramCount > 0 ? `<span class="tc-params-chip">${paramCount} param${paramCount === 1 ? '' : 's'}</span>` : '';
+  const durationHtml = isPending ? '' : '<span class="tc-duration"></span>';
 
-  div.innerHTML = `
-    <div class="tool-inline-head">
-      ${iconHtml}
-      <span class="ti-name">${esc(displayName)}</span>
-      <span class="ti-summary">${isPending ? 'running…' : esc(truncated.split('\n')[0].slice(0, 60))}</span>
-    </div>
-    <div class="tool-inline-detail">Params: ${esc(paramStr)}\n\nResult: ${esc(output)}</div>
-  `;
-  div.querySelector('.tool-inline-head').addEventListener('click', () => div.classList.toggle('expanded'));
+  div.innerHTML =
+    `<div class="tc-header">` +
+    `<span class="tc-icon">${iconHtml}</span>` +
+    `<span class="tc-name">${esc(displayName)}</span>` +
+    `<span class="tc-summary">${summary}</span>` +
+    `<span class="tc-meta">${chipHtml}${durationHtml}</span>` +
+    `</div>` + paramsHtml + outputHtml;
+
+  // Header click → toggle output expansion
+  div.querySelector('.tc-header').addEventListener('click', () => div.classList.toggle('expanded'));
+
+  // Params chip click → toggle params section
+  const chip = div.querySelector('.tc-params-chip');
+  if (chip) {
+    chip.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const paramsEl = div.querySelector('.tc-params');
+      if (paramsEl) paramsEl.style.display = paramsEl.style.display === 'none' ? '' : 'none';
+    });
+  }
+
+  _attachOutputToggle(div, output, lines, total);
+
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
   return div;
@@ -256,27 +381,63 @@ export function updateInlineToolCall(el, name, params, result) {
   if (!el) return;
   const messagesEl = $('messages');
   const displayName = name === '_codex_eval' ? 'code eval' : name;
+  const safeParams = safeParamsObj(params);
   const isOk = result?.success !== false;
+
+  el.className = `msg tool-card ${isOk ? 'ok' : 'err'}`;
+
+  const startTime = parseInt(el.dataset.startTime || '0', 10);
+  const duration = startTime ? Date.now() - startTime : 0;
+
   const iconHtml = isOk
-    ? '<span class="ti-icon ok">✓</span>'
-    : '<span class="ti-icon err">✗</span>';
-  const output = result ? (result.output || result.error || '(empty)') : '(empty)';
-  const truncated = output.length > 300 ? output.slice(0, 300) + '…' : output;
-  const paramStr = params ? JSON.stringify(params, null, 2) : '{}';
+    ? '<span class="tc-status ok">✓</span>'
+    : '<span class="tc-status err">✗</span>';
 
-  const head = el.querySelector('.tool-inline-head');
-  if (!head) return;
-  head.innerHTML = `
-    ${iconHtml}
-    <span class="ti-name">${esc(displayName)}</span>
-    <span class="ti-summary">${esc(truncated.split('\n')[0].slice(0, 60))}</span>
-  `;
-  // Note: click listener from addInlineToolCall still lives on head — no need to re-add
+  const output = safeOutputStr(result);
+  const summary = esc(toolSummary(name, safeParams, output));
+  const paramCount = Object.keys(safeParams).length;
+  const isError = !isOk;
 
-  const detail = el.querySelector('.tool-inline-detail');
-  if (detail) {
-    detail.textContent = `Params: ${paramStr}\n\nResult: ${output}`;
+  const { lines, total } = formatToolOutput(output);
+  let outputHtml = '';
+  if (output) {
+    const lineHtml = lines.map((l, i) =>
+      `<div class="tc-line"><span class="tc-ln">${i + 1}</span><span>${esc(l)}</span></div>`
+    ).join('');
+    const moreCount = total - lines.length;
+    const toggleHtml = moreCount > 0
+      ? `<button class="tc-output-toggle">▸ ${moreCount} more line${moreCount === 1 ? '' : 's'}</button>` : '';
+    outputHtml = `<div class="tc-output${isError ? ' tc-output-err' : ''}"><div class="tc-output-lines">${lineHtml}</div>${toggleHtml}</div>`;
+  } else {
+    outputHtml = '<div class="tc-output"><span class="tc-empty">(no output)</span></div>';
   }
+
+  const paramsHtml = paramCount > 0 ? `<div class="tc-params" style="display:none">${renderParamPairs(safeParams)}</div>` : '';
+  const chipHtml = paramCount > 0 ? `<span class="tc-params-chip">${paramCount} param${paramCount === 1 ? '' : 's'}</span>` : '';
+  const durationHtml = duration > 0 ? `<span class="tc-duration">${formatDuration(duration)}</span>` : '';
+
+  el.innerHTML =
+    `<div class="tc-header">` +
+    `<span class="tc-icon">${iconHtml}</span>` +
+    `<span class="tc-name">${esc(displayName)}</span>` +
+    `<span class="tc-summary">${summary}</span>` +
+    `<span class="tc-meta">${chipHtml}${durationHtml}</span>` +
+    `</div>` + paramsHtml + outputHtml;
+
+  // Re-attach listeners
+  el.querySelector('.tc-header').addEventListener('click', () => el.classList.toggle('expanded'));
+
+  const chip = el.querySelector('.tc-params-chip');
+  if (chip) {
+    chip.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const paramsEl = el.querySelector('.tc-params');
+      if (paramsEl) paramsEl.style.display = paramsEl.style.display === 'none' ? '' : 'none';
+    });
+  }
+
+  _attachOutputToggle(el, output, lines, total);
+
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
@@ -399,7 +560,7 @@ export async function newConversation() {
     await persistActiveConversation();
   }
 
-  state.agent.reinit({});
+  await state.agent.reinit({});
   state.agent.restoreMemories();
   state.agent.setSystemPrompt($('systemPrompt').value);
 
@@ -432,7 +593,7 @@ export async function switchConversation(convId) {
   emit('newShellSession');
   updateCostDisplay();
 
-  state.agent.reinit({});
+  await state.agent.reinit({});
   state.agent.restoreMemories();
   state.agent.setSystemPrompt($('systemPrompt').value);
 
@@ -471,7 +632,7 @@ export async function deleteConversationEntry(convId) {
     setConversation(null, null);
     updateConvNameDisplay();
 
-    state.agent.reinit({});
+    await state.agent.reinit({});
     state.agent.restoreMemories();
     state.agent.setSystemPrompt($('systemPrompt').value);
 
@@ -953,6 +1114,7 @@ export async function sendMessage() {
       let fullContent = '';
 
       let lastChunkWasTool = false;
+      const pendingStreamTools = new Map();
       for await (const chunk of state.agent.runStream()) {
         if (chunk.type === 'text') {
           // Insert newline when text resumes after tool execution
@@ -965,9 +1127,22 @@ export async function sendMessage() {
           lastChunkWasTool = false;
         } else if (chunk.type === 'tool_start') {
           setStatus('busy', `calling ${chunk.name}...`);
+          const parsedArgs = typeof chunk.args === 'string'
+            ? (() => { try { return JSON.parse(chunk.args); } catch { return chunk.args; } })()
+            : (chunk.args || {});
+          const el = addInlineToolCall(chunk.name, parsedArgs, null);
+          if (chunk.id) pendingStreamTools.set(chunk.id, { el, name: chunk.name, params: parsedArgs });
         } else if (chunk.type === 'tool_result') {
           lastChunkWasTool = true;
           addEvent('tool_result', `${chunk.name}: ${(chunk.result?.output || chunk.result?.error || '').slice(0, 80)}`);
+          const pending = chunk.id && pendingStreamTools.get(chunk.id);
+          if (pending) {
+            updateInlineToolCall(pending.el, chunk.name, pending.params, chunk.result);
+            pendingStreamTools.delete(chunk.id);
+            addToolCall(chunk.name, pending.params, chunk.result);
+          } else {
+            addToolCall(chunk.name, {}, chunk.result);
+          }
           if (chunk.name?.startsWith('browser_fs_')) emit('refreshFiles');
         } else if (chunk.type === 'done' && chunk.response) {
           const model = chunk.response.model || state.agent.getModel() || '';

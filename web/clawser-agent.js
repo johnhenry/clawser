@@ -738,6 +738,7 @@ export class ClawserAgent {
   #schedulerNextId = 1;
   /** @type {import('./clawser-routines.js').RoutineEngine|null} */
   #routineEngine = null;
+  #tickCronRunning = false;
 
   // ── Provider state ───────────────────────────────────────────
   #activeProvider = 'echo';
@@ -921,15 +922,17 @@ export class ClawserAgent {
    * Re-initialize the agent (for workspace switching).
    * Clears history, goals, scheduler, event log. Keeps memories.
    * @param {Object} config
-   * @returns {number} 0 on success
+   * @returns {Promise<number>} 0 on success
    */
-  reinit(config = {}) {
-    // Fire onSessionEnd hook if there are messages to end
+  async reinit(config = {}) {
+    // Fire onSessionEnd hook before wiping state so hooks can read current state
     if (this.#history.length > 1) { // more than just system prompt
-      this.#hooks.run('onSessionEnd', {
-        workspaceId: this.#workspaceId,
-        messageCount: this.#history.length,
-      }).catch(() => {}); // fire-and-forget, don't block reinit
+      try {
+        await this.#hooks.run('onSessionEnd', {
+          workspaceId: this.#workspaceId,
+          messageCount: this.#history.length,
+        });
+      } catch (_) { /* hook failure should not block reinit */ }
     }
     this.#history = [];
     this.#goals = [];
@@ -943,13 +946,16 @@ export class ClawserAgent {
 
   /**
    * Clear conversation history. Fires onSessionEnd hook if messages exist.
+   * @returns {Promise<void>}
    */
-  clearHistory() {
+  async clearHistory() {
     if (this.#history.length > 0) {
-      this.#hooks.run('onSessionEnd', {
-        workspaceId: this.#workspaceId,
-        messageCount: this.#history.length,
-      }).catch(() => {}); // fire-and-forget
+      try {
+        await this.#hooks.run('onSessionEnd', {
+          workspaceId: this.#workspaceId,
+          messageCount: this.#history.length,
+        });
+      } catch (_) { /* hook failure should not block clear */ }
     }
     this.#history = [];
     this.#eventLog.clear();
@@ -1166,18 +1172,20 @@ export class ClawserAgent {
    * Apply an agent definition to the engine. Sets provider, model, API key,
    * system prompt, and config overrides from the agent config.
    * @param {Object} agentDef — AgentDefinition from clawser-agent-storage.js
+   * @returns {Promise<void>}
    */
-  applyAgent(agentDef) {
+  async applyAgent(agentDef) {
     this.#activeAgent = agentDef;
 
     // Derive provider from account if accountId is set
     if (agentDef.accountId && this.#accountResolver) {
-      this.#accountResolver(agentDef.accountId).then(({ apiKey, baseUrl, service, model }) => {
+      try {
+        const { apiKey, baseUrl, service, model } = await this.#accountResolver(agentDef.accountId);
         if (service) this.#activeProvider = service;   // provider FROM account
         if (apiKey) this.#apiKey = apiKey;
         if (baseUrl) this.#providerBaseUrl = baseUrl;
         if (model && !agentDef.model) this.#model = model;  // account model as default
-      }).catch(() => {});
+      } catch (_) { /* resolver failed — keep current credentials */ }
     }
 
     // Legacy fallback: use agent.provider if no accountId
@@ -2204,7 +2212,7 @@ export class ClawserAgent {
         for (const tc of response.tool_calls) {
           const name = tc.function?.name || tc.name;
           const args = tc.function?.arguments || tc.arguments || '{}';
-          yield { type: 'tool_start', name, id: tc.id };
+          yield { type: 'tool_start', name, id: tc.id, args };
           this.#eventLog.append('tool_call', { call_id: tc.id, name, arguments: args }, 'agent');
         }
 
@@ -2215,7 +2223,7 @@ export class ClawserAgent {
             content: tr.result.success ? tr.result.output : `Error: ${tr.result.error || 'unknown error'}`,
           });
           this.#eventLog.append('tool_result', { call_id: tr.id, name: tr.name, result: tr.result }, 'system');
-          yield { type: 'tool_result', name: tr.name, result: tr.result };
+          yield { type: 'tool_result', name: tr.name, id: tr.id, result: tr.result };
 
           this.#recordUndoOps(tr);
         }
@@ -2411,6 +2419,7 @@ export class ClawserAgent {
       for (const tc of fullToolCalls) {
         const name = tc.function?.name || tc.name;
         const args = tc.function?.arguments || tc.arguments || '{}';
+        yield { type: 'tool_start', name, id: tc.id, args };
         this.#eventLog.append('tool_call', { call_id: tc.id, name, arguments: args }, 'agent');
       }
 
@@ -2426,7 +2435,7 @@ export class ClawserAgent {
             : `Error: ${tr.result.error || 'unknown error'}`,
         });
         this.#eventLog.append('tool_result', { call_id: tr.id, name: tr.name, result: tr.result }, 'system');
-        yield { type: 'tool_result', name: tr.name, result: tr.result };
+        yield { type: 'tool_result', name: tr.name, id: tr.id, result: tr.result };
 
         this.#recordUndoOps(tr);
       }
@@ -3035,8 +3044,13 @@ export class ClawserAgent {
   tick(nowMs = Date.now()) {
     // When RoutineEngine is set, delegate to it (it handles cron + interval + once via tickCron)
     if (this.#routineEngine) {
-      // tickCron is async but tick() is sync for backward compat — fire and forget
-      this.#routineEngine.tickCron(new Date(nowMs)).catch(() => {});
+      // Re-entry guard: skip if a previous tickCron is still running
+      if (!this.#tickCronRunning) {
+        this.#tickCronRunning = true;
+        this.#routineEngine.tickCron(new Date(nowMs))
+          .catch(e => console.warn('[clawser] tickCron error', e))
+          .finally(() => { this.#tickCronRunning = false; });
+      }
       return 0; // RoutineEngine handles execution internally
     }
 
