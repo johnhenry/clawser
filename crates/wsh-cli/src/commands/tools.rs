@@ -6,6 +6,7 @@
 use anyhow::{Context, Result};
 use tracing::{debug, info};
 
+use crate::commands::common::{connect_client, resolve_target, save_last_session};
 use crate::config::parse_target;
 
 /// List MCP tools available on a remote host.
@@ -18,15 +19,6 @@ pub async fn run(
     let host = host.unwrap_or("localhost");
     info!(host = %host, "discovering MCP tools");
 
-    // Load signing key from keystore.
-    let keystore = wsh_client::KeyStore::default_location()
-        .map_err(|e| anyhow::anyhow!("{e}"))
-        .context("failed to initialize keystore")?;
-    let (_signing_key, _verifying_key) = keystore
-        .load(identity)
-        .map_err(|e| anyhow::anyhow!("{e}"))
-        .with_context(|| format!("failed to load key '{identity}'"))?;
-
     // Parse target (may include user@).
     let (user, resolved_host) = if host.contains('@') {
         parse_target(host)?
@@ -36,52 +28,30 @@ pub async fn run(
             .unwrap_or_else(|_| "root".into());
         (user, host.to_string())
     };
+    let target = format!("{user}@{resolved_host}");
+    let resolved = resolve_target(&target, port, transport)?;
+    debug!(url = %resolved.url, user = %resolved.user, "transport URL");
+    let client = connect_client(&resolved, identity).await?;
+    save_last_session(&resolved, port, identity)?;
 
-    let scheme = match transport {
-        Some("wt") => "https",
-        Some("ws") | None => "ws",
-        Some(other) => anyhow::bail!("unknown transport: {other}"),
-    };
-    let url = format!("{scheme}://{resolved_host}:{port}");
-    debug!(url = %url, user = %user, "transport URL");
+    let tools = wsh_client::mcp::discover_tools(&client)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))
+        .context("failed to discover MCP tools")?;
 
-    // TODO: Full implementation.
-    //
-    //   let client = WshClient::connect(&url, ConnectConfig {
-    //       username: user,
-    //       key_name: Some(identity.to_string()),
-    //       ..Default::default()
-    //   }).await?;
-    //
-    //   let response = client.send_and_wait_public(
-    //       Envelope {
-    //           msg_type: MsgType::McpDiscover,
-    //           payload: Payload::McpDiscover(McpDiscoverPayload {}),
-    //       },
-    //       MsgType::McpTools,
-    //   ).await?;
-    //
-    //   if let Payload::McpTools(tools_payload) = response.payload {
-    //       if tools_payload.tools.is_empty() {
-    //           println!("No MCP tools available on {resolved_host}.");
-    //           return Ok(());
-    //       }
-    //       println!("{:<24} {}", "NAME", "DESCRIPTION");
-    //       println!("{:<24} {}", "----", "-----------");
-    //       for tool in &tools_payload.tools {
-    //           println!("{:<24} {}", tool.name, tool.description);
-    //       }
-    //       println!("\n{} tool(s) available.", tools_payload.tools.len());
-    //   }
-    //   client.disconnect().await?;
+    if tools.is_empty() {
+        println!("No MCP tools available on {resolved_host}.");
+        let _ = client.disconnect().await;
+        return Ok(());
+    }
 
     println!("{:<24} {}", "NAME", "DESCRIPTION");
-    println!(
-        "{:<24} {}",
-        "\u{2500}\u{2500}\u{2500}\u{2500}",
-        "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}"
-    );
-    println!("(no tools — transport not yet implemented)");
+    println!("{:<24} {}", "----", "-----------");
+    for tool in &tools {
+        println!("{:<24} {}", tool.name, tool.description);
+    }
+    println!("\n{} tool(s) available.", tools.len());
+    let _ = client.disconnect().await;
 
     Ok(())
 }

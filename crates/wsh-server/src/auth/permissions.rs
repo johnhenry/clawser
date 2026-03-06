@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 pub enum SessionScope {
     /// Full interactive shell access.
     Shell,
+    /// Non-interactive command execution access.
+    Exec,
     /// Allowed to run a single specified command only.
     Command(String),
     /// Allowed to use MCP tool bridging.
@@ -42,6 +44,7 @@ impl KeyPermissions {
             fingerprint,
             scopes: vec![
                 SessionScope::Shell,
+                SessionScope::Exec,
                 SessionScope::Mcp,
                 SessionScope::FileTransfer,
                 SessionScope::Relay,
@@ -73,6 +76,7 @@ impl KeyPermissions {
 
         let mut allow_pty = true;
         let mut forced_command: Option<String> = None;
+        let mut max_sessions: Option<usize> = None;
         let mut restricted = false;
         let mut permit_pty = false;
         let mut permit_exec = false;
@@ -91,6 +95,7 @@ impl KeyPermissions {
                 // Extract quoted command
                 let cmd = cmd.trim_matches('"').trim_matches('\'');
                 forced_command = Some(cmd.to_string());
+                permit_exec = true;
             } else if opt == "no-pty" {
                 allow_pty = false;
             } else if opt == "restrict" {
@@ -105,6 +110,8 @@ impl KeyPermissions {
                 permit_file = true;
             } else if opt == "permit-relay" {
                 permit_relay = true;
+            } else if let Some(raw) = opt.strip_prefix("max-sessions=") {
+                max_sessions = raw.parse::<usize>().ok().filter(|v| *v > 0);
             }
             // Ignore unknown options (no-agent-forwarding, etc.)
         }
@@ -113,11 +120,10 @@ impl KeyPermissions {
             // Start with nothing, add back permitted scopes
             let mut scopes = Vec::new();
             if permit_pty {
-                allow_pty = true;
                 scopes.push(SessionScope::Shell);
             }
             if permit_exec {
-                scopes.push(SessionScope::Shell);
+                scopes.push(SessionScope::Exec);
             }
             if permit_mcp {
                 scopes.push(SessionScope::Mcp);
@@ -133,15 +139,16 @@ impl KeyPermissions {
             Self {
                 fingerprint,
                 scopes,
-                allow_pty: permit_pty,
+                allow_pty,
                 forced_command,
-                max_sessions: None,
+                max_sessions,
             }
         } else {
             // Non-restricted: start with full access, remove denied scopes
             let mut perms = Self::full_access(fingerprint);
             perms.allow_pty = allow_pty;
             perms.forced_command = forced_command;
+            perms.max_sessions = max_sessions;
             perms
         }
     }
@@ -174,4 +181,32 @@ fn split_options(s: &str) -> Vec<String> {
         parts.push(current);
     }
     parts
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restricted_permit_exec_grants_exec_not_shell() {
+        let p = KeyPermissions::from_options("fp".to_string(), Some("restrict,permit-exec"));
+        assert!(p.has_scope(&SessionScope::Exec));
+        assert!(!p.has_scope(&SessionScope::Shell));
+    }
+
+    #[test]
+    fn command_option_sets_forced_command() {
+        let p = KeyPermissions::from_options(
+            "fp".to_string(),
+            Some("restrict,command=\"/usr/bin/uptime\""),
+        );
+        assert_eq!(p.forced_command.as_deref(), Some("/usr/bin/uptime"));
+        assert!(p.has_scope(&SessionScope::Exec));
+    }
+
+    #[test]
+    fn max_sessions_parsed_when_positive() {
+        let p = KeyPermissions::from_options("fp".to_string(), Some("max-sessions=3"));
+        assert_eq!(p.max_sessions, Some(3));
+    }
 }

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::{mpsc, Mutex, oneshot};
+use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::time;
 
 use wsh_core::codec::{cbor_decode, frame_encode};
@@ -80,6 +80,18 @@ pub struct WshClient {
     connected: Arc<Mutex<bool>>,
     /// Receiver for incoming ReverseConnect notifications (take-once).
     reverse_connect_rx: Arc<Mutex<Option<mpsc::Receiver<Envelope>>>>,
+}
+
+/// Server-provided session summary from `SessionList`.
+#[derive(Debug, Clone)]
+pub struct RemoteSessionInfo {
+    pub session_id: String,
+    pub name: Option<String>,
+    pub username: String,
+    pub fingerprint_short: String,
+    pub created_at_secs: u64,
+    pub idle_secs: u64,
+    pub attached_count: u32,
 }
 
 impl WshClient {
@@ -317,6 +329,39 @@ impl WshClient {
         result
     }
 
+    /// List sessions from the server that are visible to this user.
+    pub async fn list_remote_sessions(&self) -> WshResult<Vec<RemoteSessionInfo>> {
+        let response = self
+            .send_and_wait(
+                Envelope {
+                    msg_type: MsgType::SessionListRequest,
+                    payload: Payload::SessionListRequest(SessionListRequestPayload {}),
+                },
+                MsgType::SessionList,
+            )
+            .await?;
+
+        match response.payload {
+            Payload::SessionList(list) => Ok(list
+                .sessions
+                .into_iter()
+                .map(|s| RemoteSessionInfo {
+                    session_id: s.session_id,
+                    name: s.name,
+                    username: s.username,
+                    fingerprint_short: s.fingerprint_short,
+                    created_at_secs: s.created_at_secs,
+                    idle_secs: s.idle_secs,
+                    attached_count: s.attached_count,
+                })
+                .collect()),
+            Payload::Error(err) => Err(WshError::Channel(err.message)),
+            _ => Err(WshError::InvalidMessage(
+                "unexpected response to SESSION_LIST_REQUEST".into(),
+            )),
+        }
+    }
+
     /// Attach to an existing session (read-only or control mode).
     pub async fn attach_session(&self, session_id: &str, read_only: bool) -> WshResult<()> {
         let token = self
@@ -340,7 +385,37 @@ impl WshClient {
             }),
         };
 
-        self.send_control_message(envelope).await
+        let response = self.send_and_wait(envelope, MsgType::Presence).await?;
+        match response.payload {
+            Payload::Presence(_) => Ok(()),
+            Payload::Error(err) => Err(WshError::Channel(err.message)),
+            _ => Err(WshError::InvalidMessage(
+                "unexpected response to ATTACH".into(),
+            )),
+        }
+    }
+
+    /// Detach from an existing session.
+    pub async fn detach_session(&self, session_id: &str) -> WshResult<()> {
+        let response = self
+            .send_and_wait(
+                Envelope {
+                    msg_type: MsgType::Detach,
+                    payload: Payload::Detach(DetachPayload {
+                        session_id: session_id.to_string(),
+                    }),
+                },
+                MsgType::DetachOk,
+            )
+            .await?;
+        match response.payload {
+            Payload::DetachOk(_) => Ok(()),
+            Payload::DetachFail(fail) => Err(WshError::Channel(fail.reason)),
+            Payload::Error(err) => Err(WshError::Channel(err.message)),
+            _ => Err(WshError::InvalidMessage(
+                "unexpected response to DETACH".into(),
+            )),
+        }
     }
 
     /// Disconnect from the server.
@@ -396,9 +471,7 @@ impl WshClient {
 
         let (server_session_id, server_fingerprints) = match &server_hello.payload {
             Payload::ServerHello(sh) => (sh.session_id.clone(), sh.fingerprints.clone()),
-            _ => {
-                return Err(WshError::InvalidMessage("expected SERVER_HELLO".into()))
-            }
+            _ => return Err(WshError::InvalidMessage("expected SERVER_HELLO".into())),
         };
 
         // Verify host key (TOFU)
@@ -425,8 +498,7 @@ impl WshClient {
                 let keystore = crate::keystore::KeyStore::default_location()?;
                 let (signing_key, verifying_key) = keystore.load(key_name)?;
 
-                let signature =
-                    auth::sign_challenge(&signing_key, &server_session_id, &nonce);
+                let signature = auth::sign_challenge(&signing_key, &server_session_id, &nonce);
                 let public_key = auth::public_key_bytes(&verifying_key);
 
                 Envelope {
@@ -550,6 +622,9 @@ impl WshClient {
         let fail_type = match expected_type {
             MsgType::OpenOk => Some(MsgType::OpenFail),
             MsgType::AuthOk => Some(MsgType::AuthFail),
+            MsgType::DetachOk => Some(MsgType::DetachFail),
+            MsgType::SessionList => Some(MsgType::Error),
+            MsgType::Presence => Some(MsgType::Error),
             _ => None,
         };
 
@@ -725,14 +800,10 @@ impl WshClient {
             // Session exit
             MsgType::Exit => {
                 if let Payload::Exit(exit) = &envelope.payload {
-                    tracing::info!(
-                        "channel {} exited with code {}",
-                        exit.channel_id,
-                        exit.code
-                    );
+                    tracing::info!("channel {} exited with code {}", exit.channel_id, exit.code);
                     let sessions = sessions.lock().await;
                     if let Some(session) = sessions.get(&exit.channel_id) {
-                        session.mark_closed().await;
+                        session.mark_exited(exit.code).await;
                     }
                 }
             }

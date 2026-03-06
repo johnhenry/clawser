@@ -268,7 +268,9 @@ impl WshServer {
             reverse_listener,
             gateway_enabled,
             peer_senders: Arc::new(RwLock::new(HashMap::new())),
-            rate_limits: Arc::new(tokio::sync::Mutex::new(crate::auth::ServerRateLimits::default())),
+            rate_limits: Arc::new(tokio::sync::Mutex::new(
+                crate::auth::ServerRateLimits::default(),
+            )),
             shutdown_tx: tokio::sync::broadcast::channel(1).0,
             guest_tokens: Arc::new(RwLock::new(HashMap::new())),
             session_acls: Arc::new(RwLock::new(HashMap::new())),
@@ -303,8 +305,7 @@ impl WshServer {
             .map_err(|e| WshError::Other(format!("invalid address: {e}")))?;
 
         // Start WebTransport listener
-        let (_endpoint, mut wt_rx) =
-            webtransport::start_listener(quic_addr, tls_config).await?;
+        let (_endpoint, mut wt_rx) = webtransport::start_listener(quic_addr, tls_config).await?;
 
         // Start WebSocket listener
         let mut ws_rx = websocket::start_listener(ws_addr).await?;
@@ -398,27 +399,49 @@ impl WshServer {
                 // GC session-keyed maps for sessions that no longer exist
                 {
                     let active_ids: std::collections::HashSet<String> = gc_sessions
-                        .list().await.iter().map(|s| s.id.clone()).collect();
+                        .list()
+                        .await
+                        .iter()
+                        .map(|s| s.id.clone())
+                        .collect();
                     // session_acls
-                    gc_session_acls.write().await.retain(|sid, _| active_ids.contains(sid));
+                    gc_session_acls
+                        .write()
+                        .await
+                        .retain(|sid, _| active_ids.contains(sid));
                     // rate_control_state
-                    gc_rate_control_state.write().await.retain(|sid, _| active_ids.contains(sid));
+                    gc_rate_control_state
+                        .write()
+                        .await
+                        .retain(|sid, _| active_ids.contains(sid));
                     // copilot_sessions
-                    gc_copilot_sessions.write().await.retain(|sid, _| active_ids.contains(sid));
+                    gc_copilot_sessions
+                        .write()
+                        .await
+                        .retain(|sid, _| active_ids.contains(sid));
                     // channel_sessions
-                    gc_channel_sessions.write().await.retain(|_, sid| active_ids.contains(sid));
+                    gc_channel_sessions
+                        .write()
+                        .await
+                        .retain(|_, sid| active_ids.contains(sid));
                 }
 
                 // GC conn_session_map entries for connections no longer in peer_senders
                 {
                     let senders = gc_peer_senders.read().await;
-                    gc_conn_session_map.write().await.retain(|cid, _| senders.contains_key(cid));
+                    gc_conn_session_map
+                        .write()
+                        .await
+                        .retain(|cid, _| senders.contains_key(cid));
                 }
 
                 // GC relay_pairs entries for connections no longer in peer_senders
                 {
                     let senders = gc_peer_senders.read().await;
-                    gc_relay_pairs.write().await.retain(|cid, _| senders.contains_key(cid));
+                    gc_relay_pairs
+                        .write()
+                        .await
+                        .retain(|cid, _| senders.contains_key(cid));
                 }
 
                 // GC channel-keyed maps (terminal_configs, echo_trackers)
@@ -429,14 +452,16 @@ impl WshServer {
                     let mut configs = gc_terminal_configs.write().await;
                     if configs.len() > 1000 {
                         // Keep only half (arbitrary eviction since we lack age tracking)
-                        let to_remove: Vec<u32> = configs.keys().take(configs.len() / 2).copied().collect();
+                        let to_remove: Vec<u32> =
+                            configs.keys().take(configs.len() / 2).copied().collect();
                         for key in to_remove {
                             configs.remove(&key);
                         }
                     }
                     let mut trackers = gc_echo_trackers.write().await;
                     if trackers.len() > 1000 {
-                        let to_remove: Vec<u32> = trackers.keys().take(trackers.len() / 2).copied().collect();
+                        let to_remove: Vec<u32> =
+                            trackers.keys().take(trackers.len() / 2).copied().collect();
                         for key in to_remove {
                             trackers.remove(&key);
                         }
@@ -572,14 +597,18 @@ impl WshServer {
                         let fail = handshake::build_auth_fail("unknown user");
                         let fail_frame = frame_encode(&fail)?;
                         let _ = send.write_all(&fail_frame).await;
-                        return Err(WshError::AuthFailed("unknown user for password auth".into()));
+                        return Err(WshError::AuthFailed(
+                            "unknown user for password auth".into(),
+                        ));
                     }
                 }
                 None => {
                     let fail = handshake::build_auth_fail("password required");
                     let fail_frame = frame_encode(&fail)?;
                     let _ = send.write_all(&fail_frame).await;
-                    return Err(WshError::AuthFailed("password auth without password".into()));
+                    return Err(WshError::AuthFailed(
+                        "password auth without password".into(),
+                    ));
                 }
             }
         }
@@ -663,10 +692,7 @@ impl WshServer {
     }
 
     /// Handle a WebSocket connection through the auth handshake.
-    async fn handle_websocket(
-        &self,
-        mut conn: websocket::WebSocketConnection,
-    ) -> WshResult<()> {
+    async fn handle_websocket(&self, mut conn: websocket::WebSocketConnection) -> WshResult<()> {
         let remote = conn.remote_addr;
         info!(remote = %remote, "handling WebSocket connection");
 
@@ -739,21 +765,26 @@ impl WshServer {
                         if !handshake::verify_password_hash(password, expected_hash) {
                             let fail = handshake::build_auth_fail("invalid password");
                             let fail_frame = frame_encode(&fail)?;
-                            let _ = websocket::ws_send_binary(&mut conn.ws_stream, &fail_frame).await;
+                            let _ =
+                                websocket::ws_send_binary(&mut conn.ws_stream, &fail_frame).await;
                             return Err(WshError::AuthFailed("invalid password".into()));
                         }
                     } else {
                         let fail = handshake::build_auth_fail("unknown user");
                         let fail_frame = frame_encode(&fail)?;
                         let _ = websocket::ws_send_binary(&mut conn.ws_stream, &fail_frame).await;
-                        return Err(WshError::AuthFailed("unknown user for password auth".into()));
+                        return Err(WshError::AuthFailed(
+                            "unknown user for password auth".into(),
+                        ));
                     }
                 }
                 None => {
                     let fail = handshake::build_auth_fail("password required");
                     let fail_frame = frame_encode(&fail)?;
                     let _ = websocket::ws_send_binary(&mut conn.ws_stream, &fail_frame).await;
-                    return Err(WshError::AuthFailed("password auth without password".into()));
+                    return Err(WshError::AuthFailed(
+                        "password auth without password".into(),
+                    ));
                 }
             }
         }
@@ -1047,11 +1078,7 @@ impl WshServer {
     /// Check whether the caller is the **owner** of a session (no ACL fallback).
     /// Use this for privileged operations like Grant, Revoke, GuestInvite, ShareSession
     /// where only the session creator should be able to act.
-    async fn check_session_owner(
-        &self,
-        session_id: &str,
-        username: &str,
-    ) -> bool {
+    async fn check_session_owner(&self, session_id: &str, username: &str) -> bool {
         self.sessions
             .with_session(session_id, |s| Ok(s.username == username))
             .await
@@ -1060,11 +1087,7 @@ impl WshServer {
 
     /// Dispatch a single decoded message to the appropriate handler.
     /// Check whether the caller owns or has been granted access to a session.
-    async fn check_session_access(
-        &self,
-        session_id: &str,
-        username: &str,
-    ) -> bool {
+    async fn check_session_access(&self, session_id: &str, username: &str) -> bool {
         // Check if user is the session owner
         let is_owner = self
             .sessions
@@ -1152,8 +1175,7 @@ impl WshServer {
                     pairs.remove(&partner_id);
                     warn!(
                         conn_id,
-                        partner_id,
-                        "relay partner sender gone, cleaning up bridge"
+                        partner_id, "relay partner sender gone, cleaning up bridge"
                     );
                 }
             }
@@ -1168,7 +1190,12 @@ impl WshServer {
                 let cid = ctx.conn_id.unwrap_or(0);
                 let _registry_id = self
                     .peer_registry
-                    .register_with_conn_id(fp.clone(), p.username.clone(), p.capabilities.clone(), Some(cid))
+                    .register_with_conn_id(
+                        fp.clone(),
+                        p.username.clone(),
+                        p.capabilities.clone(),
+                        Some(cid),
+                    )
                     .await;
                 info!(
                     fingerprint = %&fp[..8.min(fp.len())],
@@ -1295,7 +1322,10 @@ impl WshServer {
                     }));
                 }
                 // Verify the caller owns or has been granted access to this session
-                if !self.check_session_access(&p.session_id, &ctx.username).await {
+                if !self
+                    .check_session_access(&p.session_id, &ctx.username)
+                    .await
+                {
                     return Ok(Some(Envelope {
                         msg_type: MsgType::Error,
                         payload: Payload::Error(ErrorPayload {
@@ -1315,14 +1345,15 @@ impl WshServer {
                 }
                 // Update conn_session_map so E2E relay is session-scoped
                 if let Some(cid) = ctx.conn_id {
-                    self.conn_session_map.write().await.insert(cid, p.session_id.clone());
+                    self.conn_session_map
+                        .write()
+                        .await
+                        .insert(cid, p.session_id.clone());
                 }
                 // Replay ring buffer contents
                 let replay_data = self
                     .sessions
-                    .with_session(&p.session_id, |s| {
-                        Ok(s.ring_buffer.read_all())
-                    })
+                    .with_session(&p.session_id, |s| Ok(s.ring_buffer.read_all()))
                     .await
                     .unwrap_or_default();
                 if !replay_data.is_empty() {
@@ -1349,6 +1380,59 @@ impl WshServer {
                     }),
                 }))
             }
+            (MsgType::SessionListRequest, Payload::SessionListRequest(_)) => {
+                let all_sessions = self.sessions.list().await;
+                let mut visible = Vec::new();
+                for s in all_sessions {
+                    if self.check_session_access(&s.id, &ctx.username).await {
+                        visible.push(SessionSummary {
+                            session_id: s.id,
+                            name: s.name,
+                            username: s.username,
+                            fingerprint_short: s.fingerprint_short,
+                            created_at_secs: s.created_at_secs,
+                            idle_secs: s.idle_secs,
+                            attached_count: s.attached_count,
+                        });
+                    }
+                }
+                Ok(Some(Envelope {
+                    msg_type: MsgType::SessionList,
+                    payload: Payload::SessionList(SessionListPayload { sessions: visible }),
+                }))
+            }
+            (MsgType::Detach, Payload::Detach(p)) => {
+                if !self
+                    .check_session_access(&p.session_id, &ctx.username)
+                    .await
+                {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::DetachFail,
+                        payload: Payload::DetachFail(DetachFailPayload {
+                            reason: "not authorized to detach from this session".into(),
+                        }),
+                    }));
+                }
+                match self.sessions.detach(&p.session_id).await {
+                    Ok(()) => {
+                        if let Some(cid) = ctx.conn_id {
+                            self.conn_session_map.write().await.remove(&cid);
+                        }
+                        Ok(Some(Envelope {
+                            msg_type: MsgType::DetachOk,
+                            payload: Payload::DetachOk(DetachOkPayload {
+                                session_id: p.session_id.clone(),
+                            }),
+                        }))
+                    }
+                    Err(e) => Ok(Some(Envelope {
+                        msg_type: MsgType::DetachFail,
+                        payload: Payload::DetachFail(DetachFailPayload {
+                            reason: e.to_string(),
+                        }),
+                    })),
+                }
+            }
             (MsgType::Resume, Payload::Resume(p)) => {
                 if let Err(e) = verify_token(&self.secret, &p.session_id, &p.token) {
                     return Ok(Some(Envelope {
@@ -1360,7 +1444,10 @@ impl WshServer {
                     }));
                 }
                 // Verify the caller owns or has been granted access to this session
-                if !self.check_session_access(&p.session_id, &ctx.username).await {
+                if !self
+                    .check_session_access(&p.session_id, &ctx.username)
+                    .await
+                {
                     return Ok(Some(Envelope {
                         msg_type: MsgType::Error,
                         payload: Payload::Error(ErrorPayload {
@@ -1380,14 +1467,15 @@ impl WshServer {
                 }
                 // Update conn_session_map so E2E relay is session-scoped
                 if let Some(cid) = ctx.conn_id {
-                    self.conn_session_map.write().await.insert(cid, p.session_id.clone());
+                    self.conn_session_map
+                        .write()
+                        .await
+                        .insert(cid, p.session_id.clone());
                 }
                 // For resume, replay from last_seq - ring buffer replays all for now
                 let replay_data = self
                     .sessions
-                    .with_session(&p.session_id, |s| {
-                        Ok(s.ring_buffer.read_all())
-                    })
+                    .with_session(&p.session_id, |s| Ok(s.ring_buffer.read_all()))
                     .await
                     .unwrap_or_default();
                 if !replay_data.is_empty() {
@@ -1418,7 +1506,9 @@ impl WshServer {
                 let cols = p.cols.unwrap_or(80);
                 let rows = p.rows.unwrap_or(24);
                 // Look up key options for permission enforcement
-                let key_options = self.authorized_keys.iter()
+                let key_options = self
+                    .authorized_keys
+                    .iter()
                     .find(|k| k.fingerprint == ctx.fingerprint)
                     .and_then(|k| k.options.as_deref());
                 let permissions = crate::auth::permissions::KeyPermissions::from_options(
@@ -1435,14 +1525,25 @@ impl WshServer {
                         }),
                     }));
                 }
-                // Check shell scope for pty/exec
-                if matches!(p.kind, ChannelKind::Pty | ChannelKind::Exec)
+                // Check scope for PTY and Exec separately.
+                if p.kind == ChannelKind::Pty
                     && !permissions.has_scope(&crate::auth::permissions::SessionScope::Shell)
                 {
                     return Ok(Some(Envelope {
                         msg_type: MsgType::OpenFail,
                         payload: Payload::OpenFail(OpenFailPayload {
                             reason: "shell access not permitted for this key".into(),
+                        }),
+                    }));
+                }
+                if p.kind == ChannelKind::Exec
+                    && !permissions.has_scope(&crate::auth::permissions::SessionScope::Exec)
+                    && !permissions.has_scope(&crate::auth::permissions::SessionScope::Shell)
+                {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::OpenFail,
+                        payload: Payload::OpenFail(OpenFailPayload {
+                            reason: "exec access not permitted for this key".into(),
                         }),
                     }));
                 }
@@ -1457,17 +1558,44 @@ impl WshServer {
                         }),
                     }));
                 }
+                // Enforce forced command semantics.
+                if permissions.forced_command.is_some() && p.kind != ChannelKind::Exec {
+                    return Ok(Some(Envelope {
+                        msg_type: MsgType::OpenFail,
+                        payload: Payload::OpenFail(OpenFailPayload {
+                            reason: "key is restricted to forced exec command".into(),
+                        }),
+                    }));
+                }
+                // Enforce key-specific session cap if present.
+                if let Some(max_sessions) = permissions.max_sessions {
+                    let active_for_key =
+                        self.sessions.count_for_fingerprint(&ctx.fingerprint).await;
+                    if active_for_key >= max_sessions {
+                        return Ok(Some(Envelope {
+                            msg_type: MsgType::OpenFail,
+                            payload: Payload::OpenFail(OpenFailPayload {
+                                reason: format!(
+                                    "max sessions for this key reached ({max_sessions})"
+                                ),
+                            }),
+                        }));
+                    }
+                }
 
                 match p.kind {
                     ChannelKind::Pty | ChannelKind::Exec => {
-                        let command = p.command.as_deref();
+                        let effective_command_owned = permissions
+                            .forced_command
+                            .clone()
+                            .or_else(|| p.command.clone());
                         match self
                             .sessions
                             .create(
                                 ctx.username.clone(),
                                 ctx.fingerprint.clone(),
                                 permissions,
-                                command,
+                                effective_command_owned.as_deref(),
                                 cols,
                                 rows,
                                 p.env.as_ref(),
@@ -1477,12 +1605,19 @@ impl WshServer {
                         {
                             Ok(session_id) => {
                                 // Atomic monotonic counter — collision-free channel IDs
-                                let channel_id = self.next_channel_id.fetch_add(1, Ordering::Relaxed);
+                                let channel_id =
+                                    self.next_channel_id.fetch_add(1, Ordering::Relaxed);
                                 // Register channel → session mapping for Close/Resize routing
-                                self.channel_sessions.write().await.insert(channel_id, session_id.clone());
+                                self.channel_sessions
+                                    .write()
+                                    .await
+                                    .insert(channel_id, session_id.clone());
                                 // Update conn_session_map so E2E relay is session-scoped
                                 if let Some(cid) = ctx.conn_id {
-                                    self.conn_session_map.write().await.insert(cid, session_id.clone());
+                                    self.conn_session_map
+                                        .write()
+                                        .await
+                                        .insert(cid, session_id.clone());
                                 }
                                 info!(session_id = %session_id, channel_id, kind = ?p.kind, "channel opened");
                                 Ok(Some(Envelope {
@@ -1543,7 +1678,10 @@ impl WshServer {
 
             // ── Session metadata ────────────────────────────────────
             (MsgType::Rename, Payload::Rename(p)) => {
-                if !self.check_session_access(&p.session_id, &ctx.username).await {
+                if !self
+                    .check_session_access(&p.session_id, &ctx.username)
+                    .await
+                {
                     return Ok(Some(Envelope {
                         msg_type: MsgType::Error,
                         payload: Payload::Error(ErrorPayload {
@@ -1567,10 +1705,16 @@ impl WshServer {
                 }
             }
             (MsgType::Snapshot, Payload::Snapshot(p)) => {
-                if !self.check_session_access(&ctx.session_id, &ctx.username).await {
+                if !self
+                    .check_session_access(&ctx.session_id, &ctx.username)
+                    .await
+                {
                     return Ok(Some(Envelope {
                         msg_type: MsgType::Error,
-                        payload: Payload::Error(ErrorPayload { code: 2, message: "not authorized".into() }),
+                        payload: Payload::Error(ErrorPayload {
+                            code: 2,
+                            message: "not authorized".into(),
+                        }),
                     }));
                 }
                 debug!(label = %p.label, "snapshot recorded");
@@ -1730,7 +1874,10 @@ impl WshServer {
                         )
                         .await;
                 } else {
-                    debug!(channel_id = p.channel_id, "InboundAccept without gateway_id, ignoring");
+                    debug!(
+                        channel_id = p.channel_id,
+                        "InboundAccept without gateway_id, ignoring"
+                    );
                 }
                 Ok(None)
             }
@@ -1742,19 +1889,18 @@ impl WshServer {
             }
 
             // ── Keepalive ───────────────────────────────────────────
-            (MsgType::Ping, Payload::PingPong(p)) => {
-                Ok(Some(Envelope {
-                    msg_type: MsgType::Pong,
-                    payload: Payload::PingPong(PingPongPayload {
-                        id: p.id,
-                    }),
-                }))
-            }
+            (MsgType::Ping, Payload::PingPong(p)) => Ok(Some(Envelope {
+                msg_type: MsgType::Pong,
+                payload: Payload::PingPong(PingPongPayload { id: p.id }),
+            })),
 
             // ── Recording export ──────────────────────────────────
             (MsgType::RecordingExport, Payload::RecordingExport(p)) => {
                 // Verify the caller owns or has access to this session
-                if !self.check_session_access(&p.session_id, &ctx.username).await {
+                if !self
+                    .check_session_access(&p.session_id, &ctx.username)
+                    .await
+                {
                     return Ok(Some(Envelope {
                         msg_type: MsgType::Error,
                         payload: Payload::Error(ErrorPayload {
@@ -1777,30 +1923,29 @@ impl WshServer {
                         }));
                     }
                 };
-                let recording_path = self.recording_dir.as_ref().map(|dir| {
-                    dir.join(format!("{}.jsonl", safe_id))
-                });
+                let recording_path = self
+                    .recording_dir
+                    .as_ref()
+                    .map(|dir| dir.join(format!("{}.jsonl", safe_id)));
 
                 match recording_path {
-                    Some(path) if path.exists() => {
-                        match tokio::fs::read_to_string(&path).await {
-                            Ok(data) => Ok(Some(Envelope {
-                                msg_type: MsgType::RecordingExport,
-                                payload: Payload::RecordingExport(RecordingExportPayload {
-                                    session_id: p.session_id.clone(),
-                                    format: p.format.clone(),
-                                    data: Some(data),
-                                }),
-                            })),
-                            Err(e) => Ok(Some(Envelope {
-                                msg_type: MsgType::Error,
-                                payload: Payload::Error(ErrorPayload {
-                                    code: 1,
-                                    message: format!("failed to read recording: {e}"),
-                                }),
-                            })),
-                        }
-                    }
+                    Some(path) if path.exists() => match tokio::fs::read_to_string(&path).await {
+                        Ok(data) => Ok(Some(Envelope {
+                            msg_type: MsgType::RecordingExport,
+                            payload: Payload::RecordingExport(RecordingExportPayload {
+                                session_id: p.session_id.clone(),
+                                format: p.format.clone(),
+                                data: Some(data),
+                            }),
+                        })),
+                        Err(e) => Ok(Some(Envelope {
+                            msg_type: MsgType::Error,
+                            payload: Payload::Error(ErrorPayload {
+                                code: 1,
+                                message: format!("failed to read recording: {e}"),
+                            }),
+                        })),
+                    },
                     _ => Ok(Some(Envelope {
                         msg_type: MsgType::Error,
                         payload: Payload::Error(ErrorPayload {
@@ -1814,7 +1959,10 @@ impl WshServer {
             // ── Command journal ──────────────────────────────────────
             (MsgType::CommandJournal, Payload::CommandJournal(p)) => {
                 // Verify the caller owns or has access to this session
-                if !self.check_session_access(&p.session_id, &ctx.username).await {
+                if !self
+                    .check_session_access(&p.session_id, &ctx.username)
+                    .await
+                {
                     return Ok(Some(Envelope {
                         msg_type: MsgType::Error,
                         payload: Payload::Error(ErrorPayload {
@@ -1851,7 +1999,8 @@ impl WshServer {
                         "duration_ms": p.duration_ms,
                         "cwd": p.cwd,
                         "timestamp": p.timestamp,
-                    })).unwrap_or_default();
+                    }))
+                    .unwrap_or_default();
                     if let Ok(mut f) = tokio::fs::OpenOptions::new()
                         .create(true)
                         .append(true)
@@ -1885,7 +2034,10 @@ impl WshServer {
             // ── Suspend/resume session ───────────────────────────────
             (MsgType::SuspendSession, Payload::SuspendSession(p)) => {
                 // Check session access
-                if !self.check_session_access(&p.session_id, &ctx.username).await {
+                if !self
+                    .check_session_access(&p.session_id, &ctx.username)
+                    .await
+                {
                     return Ok(Some(Envelope {
                         msg_type: MsgType::Error,
                         payload: Payload::Error(ErrorPayload {
@@ -1908,7 +2060,10 @@ impl WshServer {
 
             // ── Restart PTY ──────────────────────────────────────────
             (MsgType::RestartPty, Payload::RestartPty(p)) => {
-                if !self.check_session_access(&p.session_id, &ctx.username).await {
+                if !self
+                    .check_session_access(&p.session_id, &ctx.username)
+                    .await
+                {
                     return Ok(Some(Envelope {
                         msg_type: MsgType::Error,
                         payload: Payload::Error(ErrorPayload {
@@ -1919,22 +2074,25 @@ impl WshServer {
                 }
                 debug!(session_id = %p.session_id, "PTY restart request");
                 // Restart the shell within the session, preserving session metadata
-                let result = self.sessions.with_session_mut(&p.session_id, |session| {
-                    // Kill the old PTY process
-                    let _ = session.pty.kill();
-                    // Get current size
-                    let (cols, rows) = session.pty.size();
-                    // Spawn new PTY with same size
-                    let new_pty = crate::session::pty::PtyHandle::spawn(
-                        p.command.as_deref(),
-                        cols,
-                        rows,
-                        None,
-                    )?;
-                    session.pty = new_pty;
-                    session.last_activity = std::time::Instant::now();
-                    Ok(())
-                }).await;
+                let result = self
+                    .sessions
+                    .with_session_mut(&p.session_id, |session| {
+                        // Kill the old PTY process
+                        let _ = session.pty.kill();
+                        // Get current size
+                        let (cols, rows) = session.pty.size();
+                        // Spawn new PTY with same size
+                        let new_pty = crate::session::pty::PtyHandle::spawn(
+                            p.command.as_deref(),
+                            cols,
+                            rows,
+                            None,
+                        )?;
+                        session.pty = new_pty;
+                        session.last_activity = std::time::Instant::now();
+                        Ok(())
+                    })
+                    .await;
 
                 match result {
                     Ok(()) => {
@@ -1959,7 +2117,8 @@ impl WshServer {
                         msg_type: MsgType::Error,
                         payload: Payload::Error(ErrorPayload {
                             code: 2,
-                            message: "not authorized to create guest tokens for this session".into(),
+                            message: "not authorized to create guest tokens for this session"
+                                .into(),
                         }),
                     }));
                 }
@@ -2007,7 +2166,10 @@ impl WshServer {
                         drop(tokens);
                         // Update conn_session_map so E2E relay is session-scoped
                         if let Some(cid) = ctx.conn_id {
-                            self.conn_session_map.write().await.insert(cid, session_id.clone());
+                            self.conn_session_map
+                                .write()
+                                .await
+                                .insert(cid, session_id.clone());
                         }
                         // Attach the guest to the session
                         if let Err(e) = self.sessions.attach(&session_id).await {
@@ -2045,14 +2207,12 @@ impl WshServer {
                             }),
                         }))
                     }
-                    None => {
-                        Ok(Some(Envelope {
-                            msg_type: MsgType::AuthFail,
-                            payload: Payload::AuthFail(AuthFailPayload {
-                                reason: "invalid guest token".into(),
-                            }),
-                        }))
-                    }
+                    None => Ok(Some(Envelope {
+                        msg_type: MsgType::AuthFail,
+                        payload: Payload::AuthFail(AuthFailPayload {
+                            reason: "invalid guest token".into(),
+                        }),
+                    })),
                 }
             }
 
@@ -2121,7 +2281,10 @@ impl WshServer {
                     ttl: p.ttl,
                     created: std::time::Instant::now(),
                 };
-                self.share_entries.write().await.insert(share_id.clone(), entry);
+                self.share_entries
+                    .write()
+                    .await
+                    .insert(share_id.clone(), entry);
                 info!(session_id = %p.session_id, share_id = %share_id, "session shared");
                 Ok(Some(Envelope {
                     msg_type: MsgType::ShareSession,
@@ -2195,7 +2358,10 @@ impl WshServer {
             // ── Rate control ──────────────────────────────────────
             (MsgType::RateControl, Payload::RateControl(p)) => {
                 // Verify session access
-                if !self.check_session_access(&p.session_id, &ctx.username).await {
+                if !self
+                    .check_session_access(&p.session_id, &ctx.username)
+                    .await
+                {
                     return Ok(Some(Envelope {
                         msg_type: MsgType::Error,
                         payload: Payload::Error(ErrorPayload {
@@ -2210,13 +2376,19 @@ impl WshServer {
                     policy: p.policy.clone(),
                     queued_bytes: 0,
                 };
-                self.rate_control_state.write().await.insert(p.session_id.clone(), state);
+                self.rate_control_state
+                    .write()
+                    .await
+                    .insert(p.session_id.clone(), state);
                 info!(session_id = %p.session_id, max_bps = p.max_bytes_per_sec, policy = %p.policy, "rate control configured");
                 Ok(None)
             }
 
             (MsgType::RateWarning, Payload::RateWarning(p)) => {
-                if !self.check_session_access(&p.session_id, &ctx.username).await {
+                if !self
+                    .check_session_access(&p.session_id, &ctx.username)
+                    .await
+                {
                     return Ok(Some(Envelope {
                         msg_type: MsgType::Error,
                         payload: Payload::Error(ErrorPayload {
@@ -2236,7 +2408,10 @@ impl WshServer {
             // ── Cross-session linking (jump host) ─────────────────
             (MsgType::SessionLink, Payload::SessionLink(p)) => {
                 // Verify session access
-                if !self.check_session_access(&p.source_session, &ctx.username).await {
+                if !self
+                    .check_session_access(&p.source_session, &ctx.username)
+                    .await
+                {
                     return Ok(Some(Envelope {
                         msg_type: MsgType::Error,
                         payload: Payload::Error(ErrorPayload {
@@ -2259,7 +2434,10 @@ impl WshServer {
 
             (MsgType::SessionUnlink, Payload::SessionUnlink(p)) => {
                 // Verify the caller has session access (defense-in-depth for stub)
-                if !self.check_session_access(&ctx.session_id, &ctx.username).await {
+                if !self
+                    .check_session_access(&ctx.session_id, &ctx.username)
+                    .await
+                {
                     return Ok(Some(Envelope {
                         msg_type: MsgType::Error,
                         payload: Payload::Error(ErrorPayload {
@@ -2275,7 +2453,10 @@ impl WshServer {
             // ── AI co-pilot ────────────────────────────────────────
             (MsgType::CopilotAttach, Payload::CopilotAttach(p)) => {
                 // Verify the caller has access to this session
-                if !self.check_session_access(&p.session_id, &ctx.username).await {
+                if !self
+                    .check_session_access(&p.session_id, &ctx.username)
+                    .await
+                {
                     return Ok(Some(Envelope {
                         msg_type: MsgType::Error,
                         payload: Payload::Error(ErrorPayload {
@@ -2291,7 +2472,10 @@ impl WshServer {
                     peer_tx: ctx.peer_tx.clone(),
                 };
                 let mut sessions = self.copilot_sessions.write().await;
-                sessions.entry(p.session_id.clone()).or_default().push(copilot);
+                sessions
+                    .entry(p.session_id.clone())
+                    .or_default()
+                    .push(copilot);
                 info!(session_id = %p.session_id, model = %p.model, "copilot attached");
                 // Notify the session controller via Presence
                 Ok(Some(Envelope {
@@ -2308,7 +2492,10 @@ impl WshServer {
 
             (MsgType::CopilotSuggest, Payload::CopilotSuggest(p)) => {
                 // Verify the caller has access to this session
-                if !self.check_session_access(&p.session_id, &ctx.username).await {
+                if !self
+                    .check_session_access(&p.session_id, &ctx.username)
+                    .await
+                {
                     return Ok(Some(Envelope {
                         msg_type: MsgType::Error,
                         payload: Payload::Error(ErrorPayload {
@@ -2357,7 +2544,10 @@ impl WshServer {
             // ── E2E encryption ─────────────────────────────────────
             (MsgType::KeyExchange, Payload::KeyExchange(p)) => {
                 // Verify the caller has access to this session before relaying
-                if !self.check_session_access(&p.session_id, &ctx.username).await {
+                if !self
+                    .check_session_access(&p.session_id, &ctx.username)
+                    .await
+                {
                     return Ok(Some(Envelope {
                         msg_type: MsgType::Error,
                         payload: Payload::Error(ErrorPayload {
@@ -2392,7 +2582,10 @@ impl WshServer {
 
             (MsgType::EncryptedFrame, Payload::EncryptedFrame(p)) => {
                 // Verify the caller has access to this session before relaying
-                if !self.check_session_access(&p.session_id, &ctx.username).await {
+                if !self
+                    .check_session_access(&p.session_id, &ctx.username)
+                    .await
+                {
                     return Ok(Some(Envelope {
                         msg_type: MsgType::Error,
                         payload: Payload::Error(ErrorPayload {
@@ -2427,7 +2620,10 @@ impl WshServer {
             // ── Predictive local echo ─────────────────────────────
             (MsgType::EchoAck, Payload::EchoAck(p)) => {
                 // Scope to caller's session (defense-in-depth)
-                if !self.check_session_access(&ctx.session_id, &ctx.username).await {
+                if !self
+                    .check_session_access(&ctx.session_id, &ctx.username)
+                    .await
+                {
                     return Ok(Some(Envelope {
                         msg_type: MsgType::Error,
                         payload: Payload::Error(ErrorPayload {
@@ -2445,13 +2641,20 @@ impl WshServer {
                     pending: 0,
                 });
                 tracker.last_echo_seq = p.echo_seq;
-                debug!(channel_id = p.channel_id, echo_seq = p.echo_seq, "echo ack tracked");
+                debug!(
+                    channel_id = p.channel_id,
+                    echo_seq = p.echo_seq,
+                    "echo ack tracked"
+                );
                 Ok(None)
             }
 
             (MsgType::EchoState, Payload::EchoState(p)) => {
                 // Scope to caller's session (defense-in-depth)
-                if !self.check_session_access(&ctx.session_id, &ctx.username).await {
+                if !self
+                    .check_session_access(&ctx.session_id, &ctx.username)
+                    .await
+                {
                     return Ok(Some(Envelope {
                         msg_type: MsgType::Error,
                         payload: Payload::Error(ErrorPayload {
@@ -2462,43 +2665,76 @@ impl WshServer {
                 }
                 // Update echo tracker with full state
                 let mut trackers = self.echo_trackers.write().await;
-                trackers.insert(p.channel_id, EchoTracker {
-                    last_echo_seq: p.echo_seq,
-                    cursor_x: p.cursor_x,
-                    cursor_y: p.cursor_y,
-                    pending: p.pending,
-                });
-                debug!(channel_id = p.channel_id, echo_seq = p.echo_seq, pending = p.pending, "echo state updated");
+                trackers.insert(
+                    p.channel_id,
+                    EchoTracker {
+                        last_echo_seq: p.echo_seq,
+                        cursor_x: p.cursor_x,
+                        cursor_y: p.cursor_y,
+                        pending: p.pending,
+                    },
+                );
+                debug!(
+                    channel_id = p.channel_id,
+                    echo_seq = p.echo_seq,
+                    pending = p.pending,
+                    "echo state updated"
+                );
                 Ok(None)
             }
 
             // ── Terminal diff sync ──────────────────────────────────
             (MsgType::TermSync, Payload::TermSync(p)) => {
-                if !self.check_session_access(&ctx.session_id, &ctx.username).await {
+                if !self
+                    .check_session_access(&ctx.session_id, &ctx.username)
+                    .await
+                {
                     return Ok(Some(Envelope {
                         msg_type: MsgType::Error,
-                        payload: Payload::Error(ErrorPayload { code: 2, message: "not authorized".into() }),
+                        payload: Payload::Error(ErrorPayload {
+                            code: 2,
+                            message: "not authorized".into(),
+                        }),
                     }));
                 }
-                debug!(channel_id = p.channel_id, frame_seq = p.frame_seq, "term sync");
+                debug!(
+                    channel_id = p.channel_id,
+                    frame_seq = p.frame_seq,
+                    "term sync"
+                );
                 Ok(None)
             }
 
             (MsgType::TermDiff, Payload::TermDiff(p)) => {
-                if !self.check_session_access(&ctx.session_id, &ctx.username).await {
+                if !self
+                    .check_session_access(&ctx.session_id, &ctx.username)
+                    .await
+                {
                     return Ok(Some(Envelope {
                         msg_type: MsgType::Error,
-                        payload: Payload::Error(ErrorPayload { code: 2, message: "not authorized".into() }),
+                        payload: Payload::Error(ErrorPayload {
+                            code: 2,
+                            message: "not authorized".into(),
+                        }),
                     }));
                 }
-                debug!(channel_id = p.channel_id, frame_seq = p.frame_seq, base_seq = p.base_seq, patch_len = p.patch.len(), "term diff");
+                debug!(
+                    channel_id = p.channel_id,
+                    frame_seq = p.frame_seq,
+                    base_seq = p.base_seq,
+                    patch_len = p.patch.len(),
+                    "term diff"
+                );
                 Ok(None)
             }
 
             // ── Horizontal scaling ──────────────────────────────────
             (MsgType::NodeAnnounce, Payload::NodeAnnounce(p)) => {
                 // Only authenticated sessions with valid session owner can announce nodes
-                if !self.check_session_owner(&ctx.session_id, &ctx.username).await {
+                if !self
+                    .check_session_owner(&ctx.session_id, &ctx.username)
+                    .await
+                {
                     return Ok(Some(Envelope {
                         msg_type: MsgType::Error,
                         payload: Payload::Error(ErrorPayload {
@@ -2515,7 +2751,10 @@ impl WshServer {
                     capacity: p.capacity,
                     last_seen: std::time::Instant::now(),
                 };
-                self.cluster_nodes.write().await.insert(p.node_id.clone(), node);
+                self.cluster_nodes
+                    .write()
+                    .await
+                    .insert(p.node_id.clone(), node);
                 info!(node_id = %p.node_id, endpoint = %p.endpoint, load = p.load, capacity = p.capacity, "cluster node registered/updated");
                 Ok(None)
             }
@@ -2601,13 +2840,25 @@ impl WshServer {
             }
 
             (MsgType::FileChunk, Payload::FileChunk(p)) => {
-                if !self.check_session_access(&ctx.session_id, &ctx.username).await {
+                if !self
+                    .check_session_access(&ctx.session_id, &ctx.username)
+                    .await
+                {
                     return Ok(Some(Envelope {
                         msg_type: MsgType::Error,
-                        payload: Payload::Error(ErrorPayload { code: 2, message: "not authorized".into() }),
+                        payload: Payload::Error(ErrorPayload {
+                            code: 2,
+                            message: "not authorized".into(),
+                        }),
                     }));
                 }
-                debug!(channel_id = p.channel_id, offset = p.offset, len = p.data.len(), is_final = p.is_final, "file chunk");
+                debug!(
+                    channel_id = p.channel_id,
+                    offset = p.offset,
+                    len = p.data.len(),
+                    is_final = p.is_final,
+                    "file chunk"
+                );
                 Ok(None)
             }
 
@@ -2618,22 +2869,45 @@ impl WshServer {
                 let (allowed, reason) = match policy.as_ref() {
                     Some(store) => {
                         // Check if the action is explicitly denied in the policy rules
-                        let denied = store.rules.get("deny")
+                        let denied = store
+                            .rules
+                            .get("deny")
                             .and_then(|d| d.as_array())
                             .map(|arr| arr.iter().any(|v| v.as_str() == Some(&p.action)))
                             .unwrap_or(false);
                         if denied {
-                            (false, format!("denied by policy {} v{}", store.policy_id, store.version))
+                            (
+                                false,
+                                format!("denied by policy {} v{}", store.policy_id, store.version),
+                            )
                         } else {
-                            let explicitly_allowed = store.rules.get("allow")
+                            let explicitly_allowed = store
+                                .rules
+                                .get("allow")
                                 .and_then(|a| a.as_array())
-                                .map(|arr| arr.iter().any(|v| v.as_str() == Some(&p.action) || v.as_str() == Some("*")))
+                                .map(|arr| {
+                                    arr.iter().any(|v| {
+                                        v.as_str() == Some(&p.action) || v.as_str() == Some("*")
+                                    })
+                                })
                                 .unwrap_or(false);
                             if explicitly_allowed {
-                                (true, format!("allowed by policy {} v{}", store.policy_id, store.version))
+                                (
+                                    true,
+                                    format!(
+                                        "allowed by policy {} v{}",
+                                        store.policy_id, store.version
+                                    ),
+                                )
                             } else {
                                 // Default-deny when a policy is loaded but action isn't explicitly allowed
-                                (false, format!("not allowed by policy {} v{} (default deny)", store.policy_id, store.version))
+                                (
+                                    false,
+                                    format!(
+                                        "not allowed by policy {} v{} (default deny)",
+                                        store.policy_id, store.version
+                                    ),
+                                )
                             }
                         }
                     }
@@ -2666,7 +2940,9 @@ impl WshServer {
             (MsgType::PolicyUpdate, Payload::PolicyUpdate(p)) => {
                 // Only the server administrator (first authorized key) can update policies.
                 // The first key in authorized_keys is treated as admin.
-                let is_admin = self.authorized_keys.first()
+                let is_admin = self
+                    .authorized_keys
+                    .first()
                     .map(|k| k.fingerprint == ctx.fingerprint)
                     .unwrap_or(false);
                 if !is_admin {
@@ -2692,7 +2968,10 @@ impl WshServer {
             // ── Terminal frontend config ────────────────────────────
             (MsgType::TerminalConfig, Payload::TerminalConfig(p)) => {
                 // Verify the caller has access to their own session
-                if !self.check_session_access(&ctx.session_id, &ctx.username).await {
+                if !self
+                    .check_session_access(&ctx.session_id, &ctx.username)
+                    .await
+                {
                     return Ok(Some(Envelope {
                         msg_type: MsgType::Error,
                         payload: Payload::Error(ErrorPayload {
@@ -2706,7 +2985,10 @@ impl WshServer {
                     frontend: p.frontend.clone(),
                     options: p.options.clone(),
                 };
-                self.terminal_configs.write().await.insert(p.channel_id, config);
+                self.terminal_configs
+                    .write()
+                    .await
+                    .insert(p.channel_id, config);
                 info!(channel_id = p.channel_id, frontend = %p.frontend, "terminal config updated");
                 Ok(None)
             }

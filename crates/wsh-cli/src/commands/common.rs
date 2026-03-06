@@ -1,0 +1,161 @@
+//! Shared connection/session helpers for CLI commands.
+
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use wsh_client::{ConnectConfig, WshClient};
+
+use crate::config::parse_target;
+
+/// Resolved connection details for a target.
+#[derive(Debug, Clone)]
+pub struct ResolvedTarget {
+    pub user: String,
+    pub host: String,
+    pub url: String,
+    pub transport: Option<String>,
+}
+
+/// Persisted "last session" metadata used by session-oriented commands.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LastSession {
+    pub user: String,
+    pub host: String,
+    pub port: u16,
+    pub identity: String,
+    pub transport: Option<String>,
+}
+
+/// Resolve `[user@]host` + transport into a concrete connection URL.
+pub fn resolve_target(target: &str, port: u16, transport: Option<&str>) -> Result<ResolvedTarget> {
+    let (user, host) = parse_target(target)?;
+    let transport = transport.map(ToString::to_string);
+    let scheme = match transport.as_deref() {
+        Some("wt") => "https",
+        Some("ws") | None => "ws",
+        Some(other) => anyhow::bail!("unknown transport: {other}"),
+    };
+    let url = format!("{scheme}://{host}:{port}");
+    Ok(ResolvedTarget {
+        user,
+        host,
+        url,
+        transport,
+    })
+}
+
+/// Connect and authenticate a client for a resolved target.
+pub async fn connect_client(resolved: &ResolvedTarget, identity: &str) -> Result<WshClient> {
+    let client = WshClient::connect(
+        &resolved.url,
+        ConnectConfig {
+            username: resolved.user.clone(),
+            key_name: Some(identity.to_string()),
+            ..Default::default()
+        },
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("{e}"))
+    .with_context(|| format!("failed to connect to {}", resolved.url))?;
+    Ok(client)
+}
+
+/// Save the most recent successful connection for follow-up commands.
+pub fn save_last_session(resolved: &ResolvedTarget, port: u16, identity: &str) -> Result<()> {
+    let entry = LastSession {
+        user: resolved.user.clone(),
+        host: resolved.host.clone(),
+        port,
+        identity: identity.to_string(),
+        transport: resolved.transport.clone(),
+    };
+
+    let path = last_session_path()?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    let json = serde_json::to_vec_pretty(&entry).context("failed to serialize last session")?;
+    std::fs::write(&path, json).with_context(|| format!("failed to write {}", path.display()))?;
+    Ok(())
+}
+
+/// Load the most recent connection metadata, if available.
+pub fn load_last_session() -> Result<Option<LastSession>> {
+    let path = last_session_path()?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content =
+        std::fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
+    let parsed: LastSession = serde_json::from_slice(&content)
+        .with_context(|| format!("failed to parse {}", path.display()))?;
+    Ok(Some(parsed))
+}
+
+/// Persist the currently attached session id for `wsh detach`.
+pub fn save_active_attachment(session_id: &str) -> Result<()> {
+    let path = active_attachment_path()?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    std::fs::write(&path, session_id.as_bytes())
+        .with_context(|| format!("failed to write {}", path.display()))?;
+    Ok(())
+}
+
+/// Load the current attachment marker, if present.
+pub fn load_active_attachment() -> Result<Option<String>> {
+    let path = active_attachment_path()?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content = std::fs::read_to_string(&path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    let trimmed = content.trim().to_string();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(trimmed))
+}
+
+/// Clear the current attachment marker.
+pub fn clear_active_attachment() -> Result<()> {
+    let path = active_attachment_path()?;
+    if path.exists() {
+        std::fs::remove_file(&path)
+            .with_context(|| format!("failed to remove {}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn last_session_path() -> Result<PathBuf> {
+    let home = dirs::home_dir().context("cannot determine home directory")?;
+    Ok(home.join(".wsh").join("last_session.json"))
+}
+
+fn active_attachment_path() -> Result<PathBuf> {
+    let home = dirs::home_dir().context("cannot determine home directory")?;
+    Ok(home.join(".wsh").join("active_attachment"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_target_defaults_to_ws() {
+        let resolved = resolve_target("alice@example.com", 4422, None).unwrap();
+        assert_eq!(resolved.user, "alice");
+        assert_eq!(resolved.host, "example.com");
+        assert_eq!(resolved.url, "ws://example.com:4422");
+    }
+
+    #[test]
+    fn resolve_target_supports_wt() {
+        let resolved = resolve_target("bob@example.com", 4433, Some("wt")).unwrap();
+        assert_eq!(resolved.url, "https://example.com:4433");
+        assert_eq!(resolved.transport.as_deref(), Some("wt"));
+    }
+}

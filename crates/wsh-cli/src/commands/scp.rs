@@ -9,7 +9,9 @@ use std::fs;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use tracing::{debug, info};
+use wsh_client::file_transfer;
 
+use crate::commands::common::{connect_client, resolve_target, save_last_session};
 use crate::config::parse_target;
 
 /// A parsed SCP endpoint — either local or remote.
@@ -66,56 +68,27 @@ async fn upload(
     let metadata = fs::metadata(local_path)
         .with_context(|| format!("cannot stat {}", local_path.display()))?;
     let file_size = metadata.len();
+    let data =
+        fs::read(local_path).with_context(|| format!("cannot read {}", local_path.display()))?;
 
-    // Load signing key from keystore.
-    let keystore = wsh_client::KeyStore::default_location()
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-    let (_signing_key, _verifying_key) = keystore
-        .load(identity)
-        .map_err(|e| anyhow::anyhow!("{e}"))
-        .with_context(|| format!("failed to load key '{identity}'"))?;
+    let target = format!("{user}@{host}");
+    let resolved = resolve_target(&target, port, transport)?;
+    let client = connect_client(&resolved, identity).await?;
+    debug!(url = %resolved.url, file_size, "upload transport URL");
+    save_last_session(&resolved, port, identity)?;
 
-    let scheme = match transport {
-        Some("wt") => "https",
-        Some("ws") | None => "ws",
-        Some(other) => anyhow::bail!("unknown transport: {other}"),
-    };
-    let url = format!("{scheme}://{host}:{port}");
-    debug!(url = %url, file_size, "upload transport URL");
-
-    // TODO: Full implementation using wsh-client file_transfer module.
-    //
-    //   let client = WshClient::connect(&url, ConnectConfig {
-    //       username: user.to_string(),
-    //       key_name: Some(identity.to_string()),
-    //       ..Default::default()
-    //   }).await?;
-    //
-    //   let session = client.open_session(SessionOpts {
-    //       kind: ChannelKind::File,
-    //       ..Default::default()
-    //   }).await?;
-    //
-    //   let file = fs::File::open(local_path)?;
-    //   let mut reader = io::BufReader::new(file);
-    //   let mut buf = vec![0u8; 32768];
-    //   let mut transferred: u64 = 0;
-    //
-    //   loop {
-    //       let n = reader.read(&mut buf)?;
-    //       if n == 0 { break; }
-    //       session.write(&buf[..n]).await?;
-    //       transferred += n as u64;
-    //       print_progress(transferred, file_size);
-    //   }
-    //   session.close().await?;
-    //   client.disconnect().await?;
+    file_transfer::upload(&client, &data, remote_path, |sent, total| {
+        print_progress(sent, total);
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("{e}"))
+    .context("upload failed")?;
 
     println!(
-        "wsh: scp {} -> {user}@{host}:{remote_path} ({}) — transport not yet implemented",
-        local_path.display(),
+        "wsh: uploaded {} to {user}@{host}:{remote_path}",
         format_size(file_size),
     );
+    let _ = client.disconnect().await;
 
     Ok(())
 }
@@ -130,46 +103,32 @@ async fn download(
     identity: &str,
     transport: Option<&str>,
 ) -> Result<()> {
-    // Load signing key from keystore.
-    let keystore = wsh_client::KeyStore::default_location()
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-    let (_signing_key, _verifying_key) = keystore
-        .load(identity)
+    let target = format!("{user}@{host}");
+    let resolved = resolve_target(&target, port, transport)?;
+    let client = connect_client(&resolved, identity).await?;
+    debug!(url = %resolved.url, "download transport URL");
+    save_last_session(&resolved, port, identity)?;
+
+    let data = file_transfer::download(&client, remote_path)
+        .await
         .map_err(|e| anyhow::anyhow!("{e}"))
-        .with_context(|| format!("failed to load key '{identity}'"))?;
+        .context("download failed")?;
 
-    let scheme = match transport {
-        Some("wt") => "https",
-        Some("ws") | None => "ws",
-        Some(other) => anyhow::bail!("unknown transport: {other}"),
-    };
-    let url = format!("{scheme}://{host}:{port}");
-    debug!(url = %url, "download transport URL");
-
-    // TODO: Full implementation using wsh-client file_transfer module.
-    //
-    //   let client = WshClient::connect(&url, ConnectConfig { ... }).await?;
-    //   let (session, file_size) = client.open_file_download(remote_path).await?;
-    //
-    //   let file = fs::File::create(local_path)?;
-    //   let mut writer = io::BufWriter::new(file);
-    //   let mut buf = vec![0u8; 32768];
-    //   let mut transferred: u64 = 0;
-    //
-    //   loop {
-    //       let n = session.read(&mut buf).await?;
-    //       if n == 0 { break; }
-    //       writer.write_all(&buf[..n])?;
-    //       transferred += n as u64;
-    //       print_progress(transferred, file_size);
-    //   }
-    //   writer.flush()?;
-    //   client.disconnect().await?;
-
+    if let Some(parent) = local_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("cannot create {}", parent.display()))?;
+        }
+    }
+    std::fs::write(local_path, &data)
+        .with_context(|| format!("cannot write {}", local_path.display()))?;
+    print_progress(data.len() as u64, data.len() as u64);
     println!(
-        "wsh: scp {user}@{host}:{remote_path} -> {} — transport not yet implemented",
+        "wsh: downloaded {} to {}",
+        format_size(data.len() as u64),
         local_path.display(),
     );
+    let _ = client.disconnect().await;
 
     Ok(())
 }

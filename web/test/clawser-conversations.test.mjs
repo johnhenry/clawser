@@ -51,8 +51,16 @@ describe('loadConversations', () => {
 describe('updateConversationMeta', () => {
   it('does not throw on missing workspace', async () => {
     // OPFS stub in _setup-globals returns {} for getDirectory, so this should handle gracefully
-    await assert.doesNotReject(
-      updateConversationMeta('missing_ws', 'conv1', { name: 'test' })
-    );
+    const origWarn = console.warn;
+    let warned = false;
+    console.warn = () => { warned = true; };
+    try {
+      await assert.doesNotReject(
+        updateConversationMeta('missing_ws', 'conv1', { name: 'test' })
+      );
+    } finally {
+      console.warn = origWarn;
+    }
+    assert.equal(warned, false);
   });
 });

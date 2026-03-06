@@ -48,8 +48,12 @@ export async function loadConversations(wsId) {
  */
 export async function updateConversationMeta(wsId, convId, updates) {
   try {
+    // Some test/browser stubs expose navigator.storage.getDirectory()
+    // but not full OPFS DirectoryHandle APIs. Treat that as a silent no-op.
     const root = await navigator.storage.getDirectory();
+    if (!root || typeof root.getDirectoryHandle !== 'function') return;
     const base = await root.getDirectoryHandle('clawser_workspaces', { create: true });
+    if (!base || typeof base.getDirectoryHandle !== 'function') return;
     const wsDir = await base.getDirectoryHandle(wsId, { create: true });
     const convDir = await wsDir.getDirectoryHandle('.conversations', { create: true });
     const convIdDir = await convDir.getDirectoryHandle(convId, { create: true });
@@ -70,8 +74,8 @@ export async function updateConversationMeta(wsId, convId, updates) {
     const w = await fh.createWritable();
     await w.write(JSON.stringify(meta));
     await w.close();
-  } catch (e) {
-    console.warn('[conversations] updateConversationMeta failed:', e);
+  } catch (_) {
+    // Missing OPFS support or transient storage failures are intentionally ignored.
   }
 }
 

@@ -184,7 +184,11 @@ impl SessionManager {
             .ok_or_else(|| WshError::SessionNotFound(session_id.to_string()))?;
         session.attached_count += 1;
         session.last_activity = Instant::now();
-        info!(session_id, attached = session.attached_count, "client attached");
+        info!(
+            session_id,
+            attached = session.attached_count,
+            "client attached"
+        );
         Ok(())
     }
 
@@ -196,7 +200,11 @@ impl SessionManager {
             .ok_or_else(|| WshError::SessionNotFound(session_id.to_string()))?;
         session.attached_count = session.attached_count.saturating_sub(1);
         session.last_activity = Instant::now();
-        info!(session_id, attached = session.attached_count, "client detached");
+        info!(
+            session_id,
+            attached = session.attached_count,
+            "client detached"
+        );
         Ok(())
     }
 
@@ -291,6 +299,16 @@ impl SessionManager {
     /// Get the number of active sessions.
     pub async fn count(&self) -> usize {
         self.sessions.read().await.len()
+    }
+
+    /// Count active sessions for a specific key fingerprint.
+    pub async fn count_for_fingerprint(&self, fingerprint: &str) -> usize {
+        self.sessions
+            .read()
+            .await
+            .values()
+            .filter(|s| s.fingerprint == fingerprint)
+            .count()
     }
 
     /// Get the default idle timeout in seconds.

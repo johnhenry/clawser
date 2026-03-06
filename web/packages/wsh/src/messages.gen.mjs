@@ -46,6 +46,7 @@ export const MSG = Object.freeze({
   METRICS_REQUEST:   0x3c,
   SUSPEND_SESSION:   0x3d,
   RESTART_PTY:       0x3e,
+  SESSION_LIST_REQUEST: 0x3f,
 
   // Mcp
   MCP_DISCOVER:      0x40,
@@ -59,8 +60,16 @@ export const MSG = Object.freeze({
   REVERSE_PEERS:     0x52,
   REVERSE_CONNECT:   0x53,
 
+  // Session
+  SESSION_LIST:      0x5f,
+  DETACH:            0x60,
+
   // Framing
   WS_DATA:           0x60,
+
+  // Session
+  DETACH_OK:         0x61,
+  DETACH_FAIL:       0x62,
 
   // Gateway
   OPEN_TCP:          0x70,
@@ -137,11 +146,6 @@ export const MSG = Object.freeze({
 
   // Terminal
   TERMINAL_CONFIG:   0x9e,
-
-  // Agent
-  AGENT_CHAT:        0xa0,
-  AGENT_CHAT_CHUNK:  0xa1,
-  AGENT_CHAT_DONE:   0xa2,
 });
 
 // Reverse lookup: number → name
@@ -418,6 +422,10 @@ export function restartPty({ sessionId, command } = {}) {
   return msg;
 }
 
+export function sessionListRequest() {
+  return { type: MSG.SESSION_LIST_REQUEST };
+}
+
 export function mcpDiscover() {
   return { type: MSG.MCP_DISCOVER };
 }
@@ -465,6 +473,34 @@ export function reverseConnect({ targetFingerprint, username } = {}) {
     type: MSG.REVERSE_CONNECT,
     target_fingerprint: targetFingerprint,
     username,
+  };
+}
+
+export function sessionList({ sessions } = {}) {
+  return {
+    type: MSG.SESSION_LIST,
+    sessions,
+  };
+}
+
+export function detach({ sessionId } = {}) {
+  return {
+    type: MSG.DETACH,
+    session_id: sessionId,
+  };
+}
+
+export function detachOk({ sessionId } = {}) {
+  return {
+    type: MSG.DETACH_OK,
+    session_id: sessionId,
+  };
+}
+
+export function detachFail({ reason } = {}) {
+  return {
+    type: MSG.DETACH_FAIL,
+    reason,
   };
 }
 
@@ -837,33 +873,6 @@ export function terminalConfig({ channelId, frontend, options = {} } = {}) {
  */
 export function msgName(typeNum) {
   return MSG_NAMES[typeNum] || `UNKNOWN(0x${typeNum.toString(16)})`;
-}
-
-// ── Agent chat constructors ──────────────────────────────────────────
-
-export function agentChat({ content, sender, channelId } = {}) {
-  return {
-    type: MSG.AGENT_CHAT,
-    content,
-    sender: sender || 'cli',
-    channel_id: channelId || null,
-  };
-}
-
-export function agentChatChunk({ text, channelId } = {}) {
-  return {
-    type: MSG.AGENT_CHAT_CHUNK,
-    text,
-    channel_id: channelId || null,
-  };
-}
-
-export function agentChatDone({ content, channelId } = {}) {
-  return {
-    type: MSG.AGENT_CHAT_DONE,
-    content,
-    channel_id: channelId || null,
-  };
 }
 
 /**

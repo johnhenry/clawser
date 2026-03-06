@@ -38,7 +38,7 @@ pub mod session;
 pub mod transport;
 
 // Re-export primary public types.
-pub use client::{ConnectConfig, WshClient};
+pub use client::{ConnectConfig, RemoteSessionInfo, WshClient};
 pub use keystore::{KeyInfo, KeyStore};
 pub use known_hosts::{HostStatus, KnownHosts};
 pub use session::{SessionInfo, SessionOpts, SessionState, WshSession};

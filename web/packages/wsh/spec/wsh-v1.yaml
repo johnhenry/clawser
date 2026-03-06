@@ -465,6 +465,50 @@ messages:
           required: false
           description: "New command to run (default: user shell)"
 
+    SessionListRequest:
+      code: 0x3f
+      description: >
+        Request a list of sessions visible to the authenticated user.
+        The server replies with SessionList.
+      fields: {}
+
+    SessionList:
+      code: 0x5f
+      description: >
+        Server response to SessionListRequest. Contains summarized
+        metadata for each visible session.
+      fields:
+        sessions:
+          type: "SessionSummary[]"
+          required: true
+
+    Detach:
+      code: 0x60
+      description: >
+        Detach the current client from a specific session.
+      fields:
+        session_id:
+          type: string
+          required: true
+
+    DetachOk:
+      code: 0x61
+      description: >
+        Server acknowledgment for a successful detach operation.
+      fields:
+        session_id:
+          type: string
+          required: true
+
+    DetachFail:
+      code: 0x62
+      description: >
+        Server response when detaching from a session fails.
+      fields:
+        reason:
+          type: string
+          required: true
+
   mcp:
     McpDiscover:
       code: 0x40
@@ -1443,6 +1487,30 @@ nested_types:
       parameters:
         type: json
         default: "{}"
+
+  SessionSummary:
+    fields:
+      session_id:
+        type: string
+        required: true
+      name:
+        type: string
+        required: false
+      username:
+        type: string
+        required: true
+      fingerprint_short:
+        type: string
+        required: true
+      created_at_secs:
+        type: u64
+        required: true
+      idle_secs:
+        type: u64
+        required: true
+      attached_count:
+        type: u32
+        required: true
 
 crypto:
   auth_transcript:

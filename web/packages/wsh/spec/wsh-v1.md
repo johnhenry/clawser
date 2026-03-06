@@ -19,7 +19,7 @@
 - **Version**: `wsh-v1`
 - **Wire format**: CBOR
 - **Framing**: length prefixed be32
-- **Total message types**: 87 (including WS_DATA framing marker)
+- **Total message types**: 92 (including WS_DATA framing marker)
 
 ## Enums
 
@@ -82,6 +82,7 @@ Type: `string`
 | `0x3c` | MetricsRequest | session |
 | `0x3d` | SuspendSession | session |
 | `0x3e` | RestartPty | session |
+| `0x3f` | SessionListRequest | session |
 | `0x40` | McpDiscover | mcp |
 | `0x41` | McpTools | mcp |
 | `0x42` | McpCall | mcp |
@@ -90,7 +91,11 @@ Type: `string`
 | `0x51` | ReverseList | reverse |
 | `0x52` | ReversePeers | reverse |
 | `0x53` | ReverseConnect | reverse |
+| `0x5f` | SessionList | session |
+| `0x60` | Detach | session |
 | `0x60` | WsData | framing |
+| `0x61` | DetachOk | session |
+| `0x62` | DetachFail | session |
 | `0x70` | OpenTcp | gateway |
 | `0x71` | OpenUdp | gateway |
 | `0x72` | ResolveDns | gateway |
@@ -498,6 +503,14 @@ Category: **session**
 | `session_id` | `string` | yes | — |
 | `command` | `string` | no | — |
 
+### SessionListRequest (`0x3f`)
+
+Category: **session**
+
+> >
+
+*No fields.*
+
 ### McpDiscover (`0x40`)
 
 Category: **mcp**
@@ -578,6 +591,26 @@ Category: **reverse**
 | `target_fingerprint` | `string` | yes | — |
 | `username` | `string` | yes | — |
 
+### SessionList (`0x5f`)
+
+Category: **session**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `sessions` | `SessionSummary[]` | yes | — |
+
+### Detach (`0x60`)
+
+Category: **session**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `session_id` | `string` | yes | — |
+
 ### WsData (`0x60`)
 
 Category: **framing**
@@ -585,6 +618,26 @@ Category: **framing**
 > WebSocket multiplexing framing marker, not a CBOR message
 
 *No fields.*
+
+### DetachOk (`0x61`)
+
+Category: **session**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `session_id` | `string` | yes | — |
+
+### DetachFail (`0x62`)
+
+Category: **session**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `reason` | `string` | yes | — |
 
 ### OpenTcp (`0x70`)
 
@@ -1159,6 +1212,18 @@ Category: **terminal**
 | `name` | `string` | yes | — |
 | `description` | `string` | yes | — |
 | `parameters` | `json` | no | `{}` |
+
+### SessionSummary
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `session_id` | `string` | yes | — |
+| `name` | `string` | no | — |
+| `username` | `string` | yes | — |
+| `fingerprint_short` | `string` | yes | — |
+| `created_at_secs` | `u64` | yes | — |
+| `idle_secs` | `u64` | yes | — |
+| `attached_count` | `u32` | yes | — |
 
 ## Crypto Primitives
 

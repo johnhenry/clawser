@@ -44,6 +44,7 @@ pub enum MsgType {
     MetricsRequest = 0x3c,
     SuspendSession = 0x3d,
     RestartPty = 0x3e,
+    SessionListRequest = 0x3f,
 
     McpDiscover = 0x40,
     McpTools = 0x41,
@@ -54,6 +55,11 @@ pub enum MsgType {
     ReverseList = 0x51,
     ReversePeers = 0x52,
     ReverseConnect = 0x53,
+
+    SessionList = 0x5f,
+    Detach = 0x60,
+    DetachOk = 0x61,
+    DetachFail = 0x62,
 
     OpenTcp = 0x70,
     OpenUdp = 0x71,
@@ -159,6 +165,7 @@ impl TryFrom<u8> for MsgType {
             0x3c => Ok(Self::MetricsRequest),
             0x3d => Ok(Self::SuspendSession),
             0x3e => Ok(Self::RestartPty),
+            0x3f => Ok(Self::SessionListRequest),
             0x40 => Ok(Self::McpDiscover),
             0x41 => Ok(Self::McpTools),
             0x42 => Ok(Self::McpCall),
@@ -167,6 +174,10 @@ impl TryFrom<u8> for MsgType {
             0x51 => Ok(Self::ReverseList),
             0x52 => Ok(Self::ReversePeers),
             0x53 => Ok(Self::ReverseConnect),
+            0x5f => Ok(Self::SessionList),
+            0x60 => Ok(Self::Detach),
+            0x61 => Ok(Self::DetachOk),
+            0x62 => Ok(Self::DetachFail),
             0x70 => Ok(Self::OpenTcp),
             0x71 => Ok(Self::OpenUdp),
             0x72 => Ok(Self::ResolveDns),
@@ -289,6 +300,7 @@ pub enum Payload {
     MetricsRequest(MetricsRequestPayload),
     SuspendSession(SuspendSessionPayload),
     RestartPty(RestartPtyPayload),
+    SessionListRequest(SessionListRequestPayload),
     McpDiscover(McpDiscoverPayload),
     McpTools(McpToolsPayload),
     McpCall(McpCallPayload),
@@ -297,6 +309,10 @@ pub enum Payload {
     ReverseList(ReverseListPayload),
     ReversePeers(ReversePeersPayload),
     ReverseConnect(ReverseConnectPayload),
+    SessionList(SessionListPayload),
+    Detach(DetachPayload),
+    DetachOk(DetachOkPayload),
+    DetachFail(DetachFailPayload),
     OpenTcp(OpenTcpPayload),
     OpenUdp(OpenUdpPayload),
     ResolveDns(ResolveDnsPayload),
@@ -583,6 +599,10 @@ pub struct RestartPtyPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionListRequestPayload {
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpDiscoverPayload {
 }
 
@@ -624,6 +644,26 @@ pub struct ReversePeersPayload {
 pub struct ReverseConnectPayload {
     pub target_fingerprint: String,
     pub username: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionListPayload {
+    pub sessions: Vec<SessionSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DetachPayload {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DetachOkPayload {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DetachFailPayload {
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1031,6 +1071,18 @@ pub struct McpToolSpec {
     pub description: String,
     #[serde(default)]
     pub parameters: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSummary {
+    pub session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub username: String,
+    pub fingerprint_short: String,
+    pub created_at_secs: u64,
+    pub idle_secs: u64,
+    pub attached_count: u32,
 }
 
 // ── Helper for optional bytes serde ──────────────────────────────────

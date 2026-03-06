@@ -73,6 +73,8 @@ pub struct WshSession {
     kind: ChannelKind,
     /// Current state.
     state: Arc<Mutex<SessionState>>,
+    /// Last known remote exit code, when available.
+    exit_code: Arc<Mutex<Option<i32>>>,
     /// The data stream for this channel.
     stream: Arc<Mutex<Box<dyn ByteStream>>>,
     /// Sender for control messages (resize, signal, close) — sent to the client's
@@ -109,6 +111,7 @@ impl WshSession {
             channel_id,
             kind,
             state: Arc::new(Mutex::new(SessionState::Open)),
+            exit_code: Arc::new(Mutex::new(None)),
             stream: Arc::new(Mutex::new(stream)),
             control_tx,
         }
@@ -127,6 +130,11 @@ impl WshSession {
     /// Current session state.
     pub async fn state(&self) -> SessionState {
         *self.state.lock().await
+    }
+
+    /// Last known remote process exit code, if one has been reported.
+    pub async fn exit_code(&self) -> Option<i32> {
+        *self.exit_code.lock().await
     }
 
     /// Write data to the session's data stream.
@@ -210,6 +218,15 @@ impl WshSession {
     pub(crate) async fn mark_closed(&self) {
         let mut state = self.state.lock().await;
         *state = SessionState::Closed;
+    }
+
+    /// Mark this session closed with a known remote exit code.
+    pub(crate) async fn mark_exited(&self, code: i32) {
+        {
+            let mut exit = self.exit_code.lock().await;
+            *exit = Some(code);
+        }
+        self.mark_closed().await;
     }
 
     /// Mark this session as open (called when transitioning from a connecting state).

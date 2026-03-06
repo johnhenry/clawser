@@ -196,7 +196,7 @@ Priority: Resilience, observability, and production readiness.
 
 ---
 
-## Phase 5: Remote Execution (wsh) -- COMPLETE
+## Phase 5: Remote Execution (wsh) -- MOSTLY COMPLETE
 
 Priority: Browser-native remote shell, reverse relay, session management, and MCP bridging.
 
@@ -210,6 +210,18 @@ Priority: Browser-native remote shell, reverse relay, session management, and MC
 - [x] Rust CLI (connect, keygen, copy-id, scp, sessions, attach)
 - [x] Browser wsh tools (9 tools)
 - [x] Pairing system (6-digit codes, tokens)
+
+### Rust CLI Status Matrix
+
+| Command | Status | Notes |
+|---------|--------|-------|
+| `wsh connect` | Implemented | PTY open/read/write/resize loop via `wsh-client` |
+| `wsh <host> <cmd...>` / `wsh exec` | Implemented | Exec channel output relay with remote exit-code propagation |
+| `wsh scp` | Implemented | Upload/download via `wsh-client::file_transfer` |
+| `wsh tools` | Implemented | MCP discovery via `wsh-client::mcp::discover_tools` |
+| `wsh sessions` | Implemented (client-local view) | Lists active channels in the current client connection model |
+| `wsh attach` | Implemented | Sends attach request using last successful connection metadata |
+| `wsh detach` | Limited | No long-lived client process registry in this protocol version |
 
 ### Phase 5.1: Gateway & Networking — COMPLETE
 - [x] TCP/UDP proxy, DNS resolution, bidirectional relay

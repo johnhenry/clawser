@@ -7,62 +7,42 @@
 
 use anyhow::{Context, Result};
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use std::io::Write as _;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
+use wsh_client::session::SessionOpts;
+use wsh_core::messages::ChannelKind;
 
-use crate::config::parse_target;
+use crate::commands::common::{connect_client, resolve_target, save_last_session};
 use crate::terminal as term;
 
 /// Run an interactive PTY session against `target` ([user@]host).
-pub async fn run(
-    target: &str,
-    port: u16,
-    identity: &str,
-    transport: Option<&str>,
-) -> Result<()> {
-    let (user, host) = parse_target(target)?;
-    info!(user = %user, host = %host, port, "connecting");
-
-    // Load the signing key from the keystore.
-    let keystore = wsh_client::KeyStore::default_location()
-        .map_err(|e| anyhow::anyhow!("{e}"))
-        .context("failed to initialize keystore")?;
-    let (_signing_key, _verifying_key) = keystore
-        .load(identity)
-        .map_err(|e| anyhow::anyhow!("{e}"))
-        .with_context(|| format!("failed to load key '{identity}'"))?;
-
-    // Determine transport URL.
-    let scheme = match transport {
-        Some("wt") => "https",
-        Some("ws") | None => "ws",
-        Some(other) => anyhow::bail!("unknown transport: {other}"),
-    };
-    let url = format!("{scheme}://{host}:{port}");
-    debug!(url = %url, "transport URL");
-
-    // TODO: Connect using wsh-client transport layer.
-    //
-    //   let client = WshClient::connect(&url, ConnectConfig {
-    //       username: user.clone(),
-    //       key_name: Some(identity.to_string()),
-    //       ..Default::default()
-    //   }).await?;
-    //
-    //   let session = client.open_session(SessionOpts {
-    //       kind: ChannelKind::Pty,
-    //       cols: Some(cols),
-    //       rows: Some(rows),
-    //       ..Default::default()
-    //   }).await?;
+pub async fn run(target: &str, port: u16, identity: &str, transport: Option<&str>) -> Result<()> {
+    let resolved = resolve_target(target, port, transport)?;
+    info!(user = %resolved.user, host = %resolved.host, port, "connecting");
+    debug!(url = %resolved.url, "transport URL");
 
     // Get initial terminal size.
     let (cols, rows) = term::get_terminal_size();
     info!(cols, rows, "terminal size");
 
+    let client = connect_client(&resolved, identity).await?;
+    let session = client
+        .open_session(SessionOpts {
+            kind: ChannelKind::Pty,
+            command: None,
+            cols: Some(cols),
+            rows: Some(rows),
+            env: None,
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))
+        .context("failed to open PTY session")?;
+
+    save_last_session(&resolved, port, identity)?;
+
     // Enter raw mode.
-    let _guard = term::RawModeGuard::enter()
-        .context("failed to enter raw terminal mode")?;
+    let _guard = term::RawModeGuard::enter().context("failed to enter raw terminal mode")?;
 
     // Create channels for coordinating the I/O loop.
     let (tx_input, mut rx_input) = mpsc::channel::<Vec<u8>>(64);
@@ -101,40 +81,36 @@ pub async fn run(
         }
     });
 
-    // Main async I/O loop.
-    // In the full implementation this shuttles bytes between the PTY session
-    // and the terminal. For now we provide the loop skeleton.
-    //
-    //   let mut stdout = std::io::stdout();
-    //   let mut buf = vec![0u8; 8192];
-    //   loop {
-    //       tokio::select! {
-    //           result = session.read(&mut buf) => {
-    //               let n = result?;
-    //               if n == 0 { break; }
-    //               stdout.write_all(&buf[..n])?;
-    //               stdout.flush()?;
-    //           }
-    //           Some(bytes) = rx_input.recv() => {
-    //               session.write(&bytes).await?;
-    //           }
-    //           Some((c, r)) = rx_resize.recv() => {
-    //               session.resize(c, r).await?;
-    //           }
-    //           _ = rx_quit.recv() => { break; }
-    //       }
-    //   }
+    eprintln!("Connected to {}. Press Ctrl+] to exit.\r", resolved.host);
 
-    // Placeholder: wait for the input thread to finish (it will on Ctrl+]).
-    eprintln!("\r\nwsh: transport layer not yet implemented — connect skeleton ready");
-    eprintln!("wsh: press Ctrl+] to exit\r");
+    let mut stdout = std::io::stdout();
+    let mut read_buf = vec![0u8; 8192];
 
     loop {
         tokio::select! {
-            Some(_bytes) = rx_input.recv() => {
-                // Would forward to remote PTY session.
+            result = session.read(&mut read_buf) => {
+                let n = result.map_err(|e| anyhow::anyhow!("{e}"))?;
+                if n == 0 {
+                    break;
+                }
+                stdout
+                    .write_all(&read_buf[..n])
+                    .context("failed to write PTY output to stdout")?;
+                stdout.flush().context("failed to flush stdout")?;
+            }
+            Some(bytes) = rx_input.recv() => {
+                session
+                    .write(&bytes)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))
+                    .context("failed to send input to PTY session")?;
             }
             Some((c, r)) = rx_resize.recv() => {
+                session
+                    .resize(c, r)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))
+                    .context("failed to resize PTY session")?;
                 debug!(cols = c, rows = r, "terminal resized");
             }
             _ = rx_quit.recv() => {
@@ -146,8 +122,10 @@ pub async fn run(
 
     // Cleanup: the RawModeGuard drop will restore terminal mode.
     input_handle.abort();
-    info!("disconnected from {host}");
-    eprintln!("\r\nConnection to {host} closed.");
+    let _ = session.close().await;
+    let _ = client.disconnect().await;
+    info!("disconnected from {}", resolved.host);
+    eprintln!("\r\nConnection to {} closed.", resolved.host);
 
     Ok(())
 }
