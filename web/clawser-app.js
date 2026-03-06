@@ -193,10 +193,35 @@ state.daemonController = new DaemonController({
     readFn: (key) => state.checkpointIDB.read(key),
   }),
 });
+// Routine execution routes through ChannelGateway so scheduled tasks get
+// channel badges, per-channel serialized queuing, and event recording.
+// Each routine gets a virtual channel key 'scheduler:{routineId}' — same
+// routine serializes, different routines run concurrently. Falls back to
+// direct agent.run() if the gateway is unavailable or ingest throws.
 state.routineEngine = new RoutineEngine({
-  executeFn: async (routine, triggerEvent) => {
+  executeFn: async (routine, _triggerEvent) => {
+    const prompt = routine.action?.prompt || routine.name || 'routine';
+    const routineId = routine.id || `unnamed_${Date.now()}`;
+    const routineName = routine.name || routineId;
+    if (state.gateway) {
+      try {
+        // InboundMessage shape expected by ChannelGateway.ingest()
+        return await state.gateway.ingest({
+          id: `routine_${routineId}_${Date.now()}`,
+          channel: 'scheduler',           // maps to CHANNEL_COLORS.scheduler
+          channelId: routineId,
+          sender: { id: 'scheduler', name: routineName, username: null },
+          content: prompt,
+          attachments: [],
+          replyTo: null,
+          timestamp: Date.now(),
+        }, `scheduler:${routineId}`);       // virtual channel key for queue serialization
+      } catch (err) {
+        console.warn('[clawser] routine gateway ingest failed, falling back to direct run:', err.message);
+      }
+    }
+    // Fallback: direct agent run if gateway unavailable or ingest failed
     if (state.agent) {
-      const prompt = routine.action?.prompt || routine.name;
       state.agent.sendMessage(prompt);
       return state.agent.run();
     }
@@ -368,7 +393,7 @@ export async function shutdown() {
   if (state.routineEngine && state.checkpointIDB) {
     await quiet(async () => {
       const { syncRoutinesToIDB } = await import('./clawser-workspace-lifecycle.js');
-      syncRoutinesToIDB();
+      await syncRoutinesToIDB();
     });
   }
   // Stop routine engine

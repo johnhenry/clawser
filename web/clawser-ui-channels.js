@@ -7,6 +7,7 @@
 import { $, esc, state, lsKey } from './clawser-state.js';
 import { CHANNEL_TYPES } from './clawser-channels.js';
 import { getActiveWorkspaceId } from './clawser-workspaces.js';
+import { TabWatcherPlugin, SITE_PROFILES } from './clawser-channel-tabwatch.js';
 
 // ── Channel type → required fields ─────────────────────────────
 
@@ -236,10 +237,141 @@ export function showChannelForm(existing = null) {
   });
 }
 
+// ── Tab Watcher UI ──────────────────────────────────────────────
+
+/** @type {Map<number, TabWatcherPlugin>} Active tab watchers by tab ID */
+const _activeWatchers = new Map();
+
+/**
+ * Render the Watch Tab section into the channels panel.
+ * Shows active watchers and a button to start watching a new tab.
+ */
+export function renderTabWatcherSection() {
+  const container = $('tabWatcherContainer');
+  if (!container) return;
+
+  let html = '';
+
+  // Active watchers
+  if (_activeWatchers.size > 0) {
+    html += '<div class="channel-section-label">Active Watchers</div>';
+    for (const [tabId, watcher] of _activeWatchers) {
+      const profile = watcher.siteProfile || 'custom';
+      html += `
+        <div class="channel-card">
+          <div class="channel-card-header">
+            <span class="channel-icon">👁</span>
+            <span class="channel-name">Tab ${tabId}</span>
+            <span class="channel-type-badge">${esc(profile)}</span>
+            <span class="channel-status channel-status-on">watching</span>
+          </div>
+          <div class="channel-card-actions">
+            <button class="btn-sm btn-danger tab-watch-stop-btn" data-tab-id="${tabId}">Stop</button>
+          </div>
+        </div>
+      `;
+    }
+  }
+
+  // Start watcher form
+  html += `
+    <div class="channel-section-label">Watch a Tab</div>
+    <div class="config-group">
+      <label>Tab ID</label>
+      <input type="number" id="tabWatchTabId" placeholder="Tab ID from ext_tabs_list" />
+    </div>
+    <div class="config-group">
+      <label>Site Profile</label>
+      <select id="tabWatchProfile">
+        <option value="">Custom</option>
+        ${Object.keys(SITE_PROFILES).map(k => `<option value="${k}">${SITE_PROFILES[k].name}</option>`).join('')}
+      </select>
+    </div>
+    <div id="tabWatchCustomField" class="config-group">
+      <label>Container Selector</label>
+      <input type="text" id="tabWatchSelector" placeholder="CSS selector for message container" />
+    </div>
+    <button class="btn-sm" id="tabWatchStartBtn">Start Watching</button>
+  `;
+
+  container.innerHTML = html;
+
+  // Profile change hides/shows custom selector field
+  const profileSelect = $('tabWatchProfile');
+  const customField = $('tabWatchCustomField');
+  if (profileSelect && customField) {
+    const toggle = () => {
+      customField.style.display = profileSelect.value ? 'none' : '';
+    };
+    profileSelect.addEventListener('change', toggle);
+    toggle();
+  }
+
+  // Start button
+  $('tabWatchStartBtn')?.addEventListener('click', async () => {
+    const tabIdInput = $('tabWatchTabId');
+    const tabId = parseInt(tabIdInput?.value, 10);
+    if (!tabId || isNaN(tabId)) return;
+
+    const profile = profileSelect?.value || null;
+    const selector = !profile ? $('tabWatchSelector')?.value?.trim() : null;
+
+    if (!profile && !selector) return;
+
+    try {
+      const { getExtensionClient } = await import('./clawser-extension-tools.js');
+      const rpc = getExtensionClient();
+
+      const watcher = new TabWatcherPlugin({
+        tabId,
+        rpc,
+        siteProfile: profile || undefined,
+        selector: selector || undefined,
+      });
+
+      await watcher.start();
+      _activeWatchers.set(tabId, watcher);
+
+      // Register with gateway
+      if (state.gateway) {
+        const channelId = `ext:${tabId}`;
+        state.gateway.register(channelId, watcher, { scope: 'shared' });
+        state.gateway.start(channelId);
+      }
+
+      renderTabWatcherSection();
+    } catch (err) {
+      console.error('[tab-watcher] start failed:', err);
+    }
+  });
+
+  // Stop buttons
+  container.querySelectorAll('.tab-watch-stop-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const tabId = parseInt(btn.dataset.tabId, 10);
+      const watcher = _activeWatchers.get(tabId);
+      if (watcher) {
+        await watcher.stop();
+        _activeWatchers.delete(tabId);
+
+        if (state.gateway) {
+          state.gateway.unregister(`ext:${tabId}`);
+        }
+
+        renderTabWatcherSection();
+      }
+    });
+  });
+}
+
+/** Get active tab watchers (for testing/diagnostics). */
+export function getActiveWatchers() { return _activeWatchers; }
+
 /**
  * Initialize the Channels panel event listeners.
  * Called from initPanelListeners.
  */
 export function initChannelPanelListeners() {
   $('channelNewBtn')?.addEventListener('click', () => showChannelForm(null));
+  renderTabWatcherSection();
 }

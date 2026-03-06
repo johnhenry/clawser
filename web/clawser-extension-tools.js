@@ -1001,6 +1001,66 @@ export class ExtWebmcpDiscoverTool extends ExtTool {
   }
 }
 
+// ── Tab Watch (3) ─────────────────────────────────────────────────
+
+export class ExtWatchTabTool extends ExtTool {
+  get name() { return 'ext_watch_tab'; }
+  get description() { return 'Start watching a browser tab for new messages. Uses a MutationObserver on the DOM. Supports site profiles: slack, gmail, discord, or a custom CSS selector.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        tabId: { type: 'number', description: 'Tab ID to watch' },
+        siteProfile: { type: 'string', enum: ['slack', 'gmail', 'discord'], description: 'Pre-built site profile with known selectors' },
+        selector: { type: 'string', description: 'Custom CSS selector for the message container (alternative to siteProfile)' },
+      },
+      required: ['tabId'],
+    };
+  }
+  get permission() { return 'approve'; }
+  get requires() { return 'scripting'; }
+  async execute({ tabId, siteProfile, selector }) {
+    if (!siteProfile && !selector) {
+      return { success: false, output: '', error: 'Either siteProfile or selector is required' };
+    }
+    return this._call('tab_watch_start', { tabId, siteProfile, selector });
+  }
+}
+
+export class ExtWatchPollTool extends ExtTool {
+  get name() { return 'ext_watch_poll'; }
+  get description() { return 'Poll for new messages from a watched tab. Returns buffered messages since last poll.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        tabId: { type: 'number', description: 'Tab ID to poll' },
+      },
+      required: ['tabId'],
+    };
+  }
+  get permission() { return 'read'; }
+  get requires() { return 'scripting'; }
+  async execute({ tabId }) { return this._call('tab_watch_poll', { tabId }); }
+}
+
+export class ExtWatchStopTool extends ExtTool {
+  get name() { return 'ext_watch_stop'; }
+  get description() { return 'Stop watching a tab for new messages. Removes the MutationObserver and clears the buffer.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        tabId: { type: 'number', description: 'Tab ID to stop watching' },
+      },
+      required: ['tabId'],
+    };
+  }
+  get permission() { return 'approve'; }
+  get requires() { return 'scripting'; }
+  async execute({ tabId }) { return this._call('tab_watch_stop', { tabId }); }
+}
+
 // ── Registration ──────────────────────────────────────────────────
 
 /**
@@ -1066,6 +1126,11 @@ export function registerExtensionTools(registry, rpc) {
 
   // WebMCP (1)
   registry.register(new ExtWebmcpDiscoverTool(client));
+
+  // Tab Watch (3)
+  registry.register(new ExtWatchTabTool(client));
+  registry.register(new ExtWatchPollTool(client));
+  registry.register(new ExtWatchStopTool(client));
 }
 
 /**

@@ -46,6 +46,8 @@ Each event has the following structure:
 | `context_compacted` | `system` | `{ from_tokens, to_tokens, messages_removed }` | Context window was compacted |
 | `autonomy_blocked` | `system` | `{ reason }` | Action blocked by autonomy controller |
 | `cache_hit` | `system` | `{ hash }` | Response served from cache |
+| `channel_inbound` | `user` | `{ channelId, channel, sender, content, tenantId }` | Inbound message from a channel (gateway) |
+| `channel_outbound` | `agent` | `{ channelId, content }` | Outbound response to a channel (gateway, content truncated to 500 chars) |
 | `error` | `system` | `{ message, stack? }` | Runtime error recorded |
 
 ## JSONL Format

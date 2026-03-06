@@ -137,6 +137,11 @@ export const MSG = Object.freeze({
 
   // Terminal
   TERMINAL_CONFIG:   0x9e,
+
+  // Agent
+  AGENT_CHAT:        0xa0,
+  AGENT_CHAT_CHUNK:  0xa1,
+  AGENT_CHAT_DONE:   0xa2,
 });
 
 // Reverse lookup: number → name
@@ -832,6 +837,33 @@ export function terminalConfig({ channelId, frontend, options = {} } = {}) {
  */
 export function msgName(typeNum) {
   return MSG_NAMES[typeNum] || `UNKNOWN(0x${typeNum.toString(16)})`;
+}
+
+// ── Agent chat constructors ──────────────────────────────────────────
+
+export function agentChat({ content, sender, channelId } = {}) {
+  return {
+    type: MSG.AGENT_CHAT,
+    content,
+    sender: sender || 'cli',
+    channel_id: channelId || null,
+  };
+}
+
+export function agentChatChunk({ text, channelId } = {}) {
+  return {
+    type: MSG.AGENT_CHAT_CHUNK,
+    text,
+    channel_id: channelId || null,
+  };
+}
+
+export function agentChatDone({ content, channelId } = {}) {
+  return {
+    type: MSG.AGENT_CHAT_DONE,
+    content,
+    channel_id: channelId || null,
+  };
 }
 
 /**

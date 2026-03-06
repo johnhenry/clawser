@@ -123,6 +123,8 @@ Schedule a task to compact my context every 2 hours
 
 The agent uses `agent_schedule_add` with the appropriate schedule type.
 
+When a routine or scheduled job executes, its messages appear in the chat panel with a green **scheduler** badge. Each routine serializes per-routine (the same routine won't overlap), but different routines can run concurrently.
+
 Manage jobs:
 
 ```

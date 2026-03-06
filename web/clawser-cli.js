@@ -331,13 +331,13 @@ export function registerClawserCli(registry, getAgent, getShell) {
 
   // ── Subcommand: clear ───────────────────────────────────────
 
-  function cmdClear() {
+  async function cmdClear() {
     const agent = getAgent();
     if (!agent) {
       return { stdout: '', stderr: 'No agent available', exitCode: 1 };
     }
 
-    agent.reinit({});
+    await agent.reinit({});
     return { stdout: 'Conversation cleared.\n', stderr: '', exitCode: 0 };
   }
 

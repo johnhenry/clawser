@@ -17,6 +17,12 @@ Clawser is a browser-native AI agent platform built as pure ES modules with no b
 │  └──────────┬───────────────────────────────────────────────────┘│
 │             │                                                    │
 │  ┌──────────┴──────────────────────────────────────────────────┐│
+│  │              ChannelGateway (clawser-gateway.js)            ││
+│  │  Per-channel queues · Scope isolation · Scheduler lane      ││
+│  │  tenantId threading · Response routing                      ││
+│  └──────────┬─────────────────────────────────────────────────┘│
+│             │                                                    │
+│  ┌──────────┴──────────────────────────────────────────────────┐│
 │  │                    ClawserAgent                              ││
 │  │  ┌──────────┐ ┌───────────┐ ┌──────────┐ ┌──────────────┐  ││
 │  │  │ EventLog │ │ Hook      │ │ Autonomy │ │ Memory/Goals │  ││
@@ -294,6 +300,23 @@ User Input
   → Update cost meter [ui]
 ```
 
+### Channel Ingest (Gateway)
+```
+Channel Plugin / Scheduler / WSH / Mesh
+  → ChannelGateway.ingest(message, channelId, { tenantId? })
+      → Normalize message (createInboundMessage)
+      → onIngest callback (UI display)
+      → Resolve tenantId (per-ingest override > gateway default)
+      → ChannelQueue.enqueue(channelId, ...)  [per-channel serial]
+          → agent.sendMessage(text, { source, tenantId })
+          → agent.recordEvent('channel_inbound', ...)
+          → agent.runStream() / agent.run()
+          → ChannelGateway.respond(channelId, text, originalMsg)
+              → Plugin sendMessage (if registered)
+              → agent.recordEvent('channel_outbound', ...)
+              → onRespond callback (UI display, always fires)
+```
+
 ### Workspace Initialization
 ```
 handleRoute()
@@ -304,6 +327,8 @@ handleRoute()
       → Create shell session + terminal session manager
       → Restore config, memories, conversations (event log → checkpoint fallback)
       → Build provider chain, start daemon/routines
+      → Create ChannelGateway (agent, tenantId from kernel)
+      → Wire gateway to WSH incoming sessions
       → Discover skills, render UI
       → Set status "ready"
 ```
@@ -324,6 +349,8 @@ index.html
        ├─ clawser-providers.js (LLM providers)
        ├─ clawser-tools.js (browser tools)
        ├─ clawser-mcp.js (MCP client)
+       ├─ clawser-gateway.js (channel gateway, per-channel queues, tenantId)
+       │    └─ clawser-channels.js (channel plugins, message normalization)
        ├─ clawser-skills.js (skills system)
        ├─ clawser-shell.js + clawser-shell-builtins.js
        ├─ clawser-cli.js (CLI subcommands)

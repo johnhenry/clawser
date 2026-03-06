@@ -31,11 +31,15 @@ export function getKernelBridge() { return _kernelBridge; }
 let _toolRegistry = null;
 /** @type {object|null} */
 let _mcpClient = null;
+/** @type {import('./clawser-gateway.js').ChannelGateway|null} */
+let _agentGateway = null;
 
 /** Inject the tool registry (replaces globalThis.__clawserToolRegistry reads). */
 export function setToolRegistry(registry) { _toolRegistry = registry; }
 /** Inject the MCP client (replaces globalThis.__clawserMcpClient reads). */
 export function setMcpClient(client) { _mcpClient = client; }
+/** Inject the channel gateway for agent chat routing. */
+export function setAgentGateway(gateway) { _agentGateway = gateway; }
 
 // ── Incoming session tracking ────────────────────────────────────────
 
@@ -181,6 +185,62 @@ class IncomingSession {
       case MSG.SIGNAL: {
         // CLI is sending a signal (e.g., SIGINT).
         console.log('[wsh:incoming] Signal from peer:', msg.signal);
+        break;
+      }
+
+      case MSG.AGENT_CHAT: {
+        // CLI wants to chat with the agent.
+        const content = msg.content || '';
+        const sender = msg.sender || this.username;
+        console.log('[wsh:incoming] AgentChat from peer:', sender);
+
+        const { agentChatChunk, agentChatDone } = await import('./packages-wsh.js');
+
+        if (_agentGateway && _agentGateway.agent) {
+          try {
+            const agent = _agentGateway.agent;
+            agent.sendMessage(content, { source: `wsh:${this.username}` });
+
+            let responseText = '';
+            if (typeof agent.runStream === 'function') {
+              for await (const chunk of agent.runStream()) {
+                if (chunk.type === 'text') {
+                  responseText += chunk.text;
+                  await this._sendReply(agentChatChunk({
+                    text: chunk.text,
+                    channelId: msg.channel_id,
+                  }));
+                } else if (chunk.type === 'done') {
+                  if (chunk.response?.data) responseText = chunk.response.data;
+                  break;
+                } else if (chunk.type === 'error') {
+                  responseText = `Error: ${chunk.error}`;
+                  break;
+                }
+              }
+            } else {
+              const result = await agent.run();
+              responseText = result.data || '';
+            }
+
+            await this._sendReply(agentChatDone({
+              content: responseText,
+              channelId: msg.channel_id,
+            }));
+          } catch (err) {
+            console.error('[wsh:incoming] AgentChat error:', err);
+            await this._sendReply(agentChatDone({
+              content: `Error: ${err.message}`,
+              channelId: msg.channel_id,
+            }));
+          }
+        } else {
+          console.warn('[wsh:incoming] No agent gateway available for AgentChat');
+          await this._sendReply(agentChatDone({
+            content: 'No agent available in this workspace.',
+            channelId: msg.channel_id,
+          }));
+        }
         break;
       }
 

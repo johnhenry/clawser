@@ -8,7 +8,7 @@ Append-only JSONL event log for conversation persistence.
 
 **Storage:** OPFS at `clawser_workspaces/{wsId}/.conversations/{convId}/events.jsonl`
 
-**Event types:** `user_message`, `agent_message`, `tool_call`, `tool_result`, `tool_result_truncated`, `error`, `autonomy_blocked`, `cache_hit`, `context_compacted`, `memory_stored`, `memory_forgotten`, `goal_added`, `goal_updated`, `scheduler_added`, `scheduler_fired`, `scheduler_removed`, `safety_input_flag`, `safety_tool_blocked`, `safety_output_blocked`, `safety_output_redacted`, `provider_error`, `stream_error`
+**Event types:** `user_message`, `agent_message`, `tool_call`, `tool_result`, `tool_result_truncated`, `error`, `autonomy_blocked`, `cache_hit`, `context_compacted`, `memory_stored`, `memory_forgotten`, `goal_added`, `goal_updated`, `scheduler_added`, `scheduler_fired`, `scheduler_removed`, `safety_input_flag`, `safety_tool_blocked`, `safety_output_blocked`, `safety_output_redacted`, `provider_error`, `stream_error`, `channel_inbound`, `channel_outbound`
 
 **Compaction:** When token count exceeds ~12K tokens, older messages are summarized into a single `system` event containing the conversation summary. This keeps context manageable while preserving essential history.
 
@@ -116,6 +116,24 @@ Supports three schedule types:
 
 **Cron parser:** `ClawserAgent.parseCron(expr)` returns `{ minute, hour, dom, month, dow }` arrays. Supports `*`, ranges (`1-5`), lists (`1,3,5`), and steps (`*/5`).
 
+**Execution:** `RoutineEngine.executeFn` routes through `ChannelGateway.ingest()` with `channel: 'scheduler'` and a virtual channel key `scheduler:{routineId}`. This provides per-routine serialization, event recording, and UI badge rendering. Falls back to direct `agent.run()` if the gateway is unavailable.
+
+## ChannelGateway (clawser-gateway.js)
+
+Central hub connecting channel plugins, scheduler routines, WSH, and mesh sessions to the agent.
+
+**ChannelQueue:** Per-channel serialized task queue. Tasks for the same channel ID run sequentially (via `#drain()` loop); tasks for different channel IDs run concurrently. The queue map is keyed by `channelId` — for scheduler routines, this is `scheduler:{routineId}`.
+
+**Scope modes:** `isolated` (separate conversation), `shared` (shared conversation), `shared:group-name` (named group). Stored per-channel at registration time. Currently informational — scope-switching is planned but all channels currently share the active conversation.
+
+**Tenant context:** The gateway stores a default `#tenantId` set at construction (from `KernelIntegration.getWorkspaceTenantId(wsId)`) and updated via `setTenantId()` on workspace switch. Individual `ingest()` calls can override with `{ tenantId }` in opts. Resolution: explicit value (including `null`) overrides the default; `undefined` (omitted) falls through to the default. The resolved tenant ID flows to `agent.sendMessage()` opts and `channel_inbound` event data.
+
+**respond() behavior:** Always fires `onRespond` callback and records `channel_outbound` event, regardless of whether the channel has a registered plugin. This is how plugin-less virtual channels (scheduler, direct WSH) still appear in the chat UI.
+
+**Event types recorded:**
+- `channel_inbound` — on message ingest. Data: `{ channelId, channel, sender, content, tenantId }`. Source: `user`.
+- `channel_outbound` — on response routing. Data: `{ channelId, content }` (truncated to 500 chars). Source: `agent`.
+
 ## Workspace Isolation
 
 Each workspace gets:
@@ -149,6 +167,7 @@ Stack-based undo/redo with per-turn checkpoints.
 ## Related Files
 
 - `web/clawser-agent.js` — EventLog, HookPipeline, context compaction, scheduler
+- `web/clawser-gateway.js` — ChannelGateway, ChannelQueue, CHANNEL_COLORS, CHANNEL_SCOPES
 - `web/clawser-codex.js` — Sandboxed JS execution
 - `web/clawser-providers.js` — LLM provider tiers, SSE parsing, cost tracking
 - `web/clawser-tools.js` — Tool registry, permissions, domain allowlist

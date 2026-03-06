@@ -1,27 +1,31 @@
 // clawser-embed.js — Embedding API
 //
-// ClawserEmbed: Drop-in class for embedding the Clawser agent into any web app.
-// Provides a simple event-driven API for messaging and lifecycle.
+// EmbeddedPod: Drop-in class for embedding the Clawser agent into any web app.
+// Extends Pod with container rendering, messaging, and lazy agent init.
+// Re-exports as ClawserEmbed for backward compatibility.
 
-// ── ClawserEmbed ────────────────────────────────────────────────
+import { Pod } from './packages/pod/src/pod.mjs'
+
+// ── EmbeddedPod ────────────────────────────────────────────────
 
 /**
- * Embeddable Clawser agent interface.
+ * Embeddable Clawser agent pod.
  * Provides a minimal API for integrating the agent into external web apps.
+ * Extends Pod for identity, discovery, and peer messaging.
  */
-export class ClawserEmbed {
-  #config;
-  #listeners = new Map();
+export class EmbeddedPod extends Pod {
+  #config
 
   /**
-   * @param {object} config
-   * @param {string} config.containerId - DOM element ID to render into
+   * @param {object} [config]
+   * @param {string} [config.containerId] - DOM element ID to render into
    * @param {string} [config.provider] - Default LLM provider
    * @param {string} [config.model] - Default model
    * @param {object} [config.tools] - Tool configuration overrides
    * @param {object} [config.theme] - UI theme overrides
    */
   constructor(config = {}) {
+    super()
     this.#config = {
       containerId: config.containerId || 'clawser',
       provider: config.provider || null,
@@ -29,10 +33,10 @@ export class ClawserEmbed {
       tools: config.tools || {},
       theme: config.theme || {},
       ...config,
-    };
+    }
   }
 
-  get config() { return { ...this.#config }; }
+  get config() { return { ...this.#config } }
 
   /**
    * Send a message to the agent.
@@ -41,43 +45,14 @@ export class ClawserEmbed {
    * @returns {Promise<{ content: string, toolCalls?: Array }>}
    */
   async sendMessage(text, opts = {}) {
-    this.emit('message_sent', { text, ...opts });
     // In a real implementation, this would route to the agent
-    return { content: '', toolCalls: [] };
+    return { content: '', toolCalls: [] }
   }
 
-  /**
-   * Register an event listener.
-   * @param {string} event - Event name
-   * @param {Function} fn - Callback
-   */
-  on(event, fn) {
-    if (!this.#listeners.has(event)) this.#listeners.set(event, []);
-    this.#listeners.get(event).push(fn);
-  }
-
-  /**
-   * Remove an event listener.
-   * @param {string} event - Event name
-   * @param {Function} fn - Callback to remove
-   */
-  off(event, fn) {
-    const listeners = this.#listeners.get(event);
-    if (!listeners) return;
-    const idx = listeners.indexOf(fn);
-    if (idx !== -1) listeners.splice(idx, 1);
-  }
-
-  /**
-   * Emit an event to all registered listeners.
-   * @param {string} event - Event name
-   * @param {*} data - Event data
-   */
-  emit(event, data) {
-    const listeners = this.#listeners.get(event);
-    if (!listeners) return;
-    for (const fn of listeners) {
-      fn(data);
-    }
+  _onMessage(msg) {
+    // Subclass hook — forward pod messages to the event bus
   }
 }
+
+/** Backward-compatible alias */
+export const ClawserEmbed = EmbeddedPod

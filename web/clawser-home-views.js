@@ -76,7 +76,7 @@ export function renderHomeAccountList() {
     `;
     d.querySelector('.acct-del').addEventListener('click', async () => {
       if (!await modal.confirm(`Delete account "${acct.name}"?`, { danger: true })) return;
-      deleteAccount(acct.id);
+      await deleteAccount(acct.id);
       renderHomeAccountList();
     });
     el.appendChild(d);

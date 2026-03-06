@@ -385,7 +385,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for a detailed breakdown.
 | `clawser-vault.js` | Encrypted credential storage |
 | `clawser-oauth.js` | OAuth authentication flows |
 | `clawser-accounts.js` | Provider account management |
-| `clawser-channels.js` | Communication channels |
+| `clawser-gateway.js` | Channel gateway — per-channel queues, scope isolation, scheduler lane, tenantId |
+| `clawser-channels.js` | Communication channel plugins |
 | `clawser-git.js` | Git behavior integration |
 | `clawser-hardware.js` | Hardware capability detection |
 | `clawser-remote.js` | Remote pairing sessions |

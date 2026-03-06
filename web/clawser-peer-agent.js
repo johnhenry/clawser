@@ -55,6 +55,9 @@ const ACTION_CAPABILITY = Object.freeze({
  * Incoming requests are validated against capability requirements before
  * execution. The remote peer must hold the appropriate capability on the
  * session (agent:chat, agent:tools, agent:memory).
+ *
+ * When a ChannelGateway is provided, CHAT actions are routed through
+ * the gateway for unified queuing, event recording, and UI mirroring.
  */
 export class AgentHost {
   /** @type {object} PeerSession */
@@ -67,6 +70,9 @@ export class AgentHost {
    *   searchMemories(query) -> MemoryEntry[]
    */
   #agent
+
+  /** @type {import('./clawser-gateway.js').ChannelGateway|null} */
+  #gateway
 
   /** @type {object|null} { recordUsage(peerId, usage) } */
   #costTracker
@@ -81,10 +87,11 @@ export class AgentHost {
    * @param {object} opts
    * @param {object} opts.session - PeerSession instance
    * @param {object} opts.agent - Agent interface with run/executeTool/searchMemories
+   * @param {import('./clawser-gateway.js').ChannelGateway} [opts.gateway] - Channel gateway for unified routing
    * @param {object} [opts.costTracker] - Cost tracker with recordUsage(peerId, usage)
    * @param {Function} [opts.onLog] - Logging callback
    */
-  constructor({ session, agent, costTracker, onLog }) {
+  constructor({ session, agent, costTracker, gateway, onLog }) {
     if (!session) {
       throw new Error('session is required')
     }
@@ -94,12 +101,16 @@ export class AgentHost {
 
     this.#session = session
     this.#agent = agent
+    this.#gateway = gateway || null
     this.#costTracker = costTracker || null
     this.#onLog = onLog || (() => {})
 
     // Register handler on session for 'agent' service type
     this.#session.registerHandler('agent', (envelope) => this.#handleRequest(envelope))
   }
+
+  /** Set or replace the gateway reference. */
+  setGateway(gateway) { this.#gateway = gateway }
 
   // -- Request handling (private) -------------------------------------------
 
@@ -150,23 +161,50 @@ export class AgentHost {
           }
 
           this.#onLog(2, `Agent chat request from ${this.#session.remotePodId}`)
-          const chatResult = await this.#agent.run(message)
-          this.#requestCount++
 
-          response.success = true
-          response.result = {
-            response: chatResult.response,
-          }
-          if (chatResult.usage) {
-            response.result.usage = chatResult.usage
-          }
+          if (this.#gateway) {
+            // Route through gateway for unified queuing, event recording, and UI mirroring
+            const channelId = `mesh:${this.#session.remotePodId}`
+            const gatewayResponse = await this.#gateway.ingest({
+              id: `peer_${requestId || Date.now()}`,
+              channel: 'mesh',
+              channelId: this.#session.remotePodId,
+              sender: {
+                id: this.#session.remotePodId,
+                name: this.#session.remotePodId,
+                username: null,
+              },
+              content: message,
+              attachments: [],
+              replyTo: null,
+              timestamp: Date.now(),
+            }, channelId)
+            this.#requestCount++
 
-          // Track cost attribution
-          if (this.#costTracker && chatResult.usage) {
-            try {
-              this.#costTracker.recordUsage(this.#session.remotePodId, chatResult.usage)
-            } catch {
-              /* cost tracking errors do not propagate */
+            response.success = true
+            response.result = {
+              response: gatewayResponse,
+            }
+          } else {
+            // Direct agent call (original behavior)
+            const chatResult = await this.#agent.run(message)
+            this.#requestCount++
+
+            response.success = true
+            response.result = {
+              response: chatResult.response,
+            }
+            if (chatResult.usage) {
+              response.result.usage = chatResult.usage
+            }
+
+            // Track cost attribution
+            if (this.#costTracker && chatResult.usage) {
+              try {
+                this.#costTracker.recordUsage(this.#session.remotePodId, chatResult.usage)
+              } catch {
+                /* cost tracking errors do not propagate */
+              }
             }
           }
           break
@@ -462,4 +500,48 @@ export class AgentClient {
       timeout: this.#timeout,
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Factory helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Create an AgentHost wired to a ChannelGateway for unified routing.
+ *
+ * Registers a lightweight mesh plugin on the gateway so outbound responses
+ * route back through the session transport. Returns the AgentHost instance.
+ *
+ * @param {object} session - PeerSession instance
+ * @param {object} agent - Agent with run/executeTool/searchMemories
+ * @param {import('./clawser-gateway.js').ChannelGateway} gateway - Channel gateway
+ * @param {Function} [onLog] - Logging callback
+ * @returns {AgentHost}
+ */
+export function bridgePeerAgent(session, agent, gateway, onLog) {
+  const channelId = `mesh:${session.remotePodId}`
+
+  // Register a lightweight plugin on the gateway for this peer
+  // so gateway.respond() can send outbound messages via the session.
+  const plugin = {
+    running: true,
+    start() { this.running = true },
+    stop() { this.running = false },
+    onMessage() {}, // Inbound handled by AgentHost, not plugin polling
+    async sendMessage(text) {
+      try {
+        session.send('agent', {
+          success: true,
+          result: { response: text },
+        })
+        return true
+      } catch {
+        return false
+      }
+    },
+  }
+
+  gateway.register(channelId, plugin, { scope: 'shared' })
+
+  return new AgentHost({ session, agent, gateway, onLog })
 }

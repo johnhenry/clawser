@@ -875,6 +875,7 @@ input[type="range"] { width:100%; accent-color:var(--accent); }
 .msg-fork { display:none; cursor:pointer; margin-left:6px; font-size:var(--text-sm); color:var(--dim); vertical-align:middle; }
 .msg.user:hover .msg-fork { display:inline; }
 .msg-fork:hover { color:var(--accent); }
+.channel-badge { display:inline-block; padding:1px 6px; border-radius:3px; font-size:10px; color:#fff; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; vertical-align:middle; margin-right:4px; }
 .term-fork { display:none; cursor:pointer; margin-left:6px; font-size:11px; color:var(--dim); }
 .terminal-cmd:hover .term-fork { display:inline; }
 .term-fork:hover { color:var(--accent); }
@@ -1138,6 +1139,7 @@ dialog.skill-dialog::backdrop { background:rgba(0,0,0,0.7); }
 .channel-card-actions { display:flex; gap:4px; margin-top:6px; }
 .channel-card-actions button { font-size:11px; padding:1px 6px; }
 .channel-empty { text-align:center; color:var(--muted); padding:24px 12px; font-size:13px; }
+.channel-section-label { padding:8px 12px; border-top:1px solid var(--border); font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; margin-top:8px; }
 
 /* ── SharedWorker config ──────────────────────────────────────── */
 .sw-status-row { display:flex; align-items:center; gap:8px; padding:4px 0; }

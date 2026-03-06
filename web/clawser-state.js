@@ -72,6 +72,7 @@ export const lsKey = {
   hooks:         wsId => `clawser_${LS_VERSION}_hooks_${wsId}`,
   peripherals:   wsId => `clawser_${LS_VERSION}_peripherals_${wsId}`,
   showDotfiles:  wsId => `clawser_${LS_VERSION}_show_dotfiles_${wsId}`,
+  modelConfig:   wsId => `clawser_${LS_VERSION}_model_config_${wsId}`,
 };
 
 /**
@@ -167,6 +168,7 @@ export const state = {
     identityManager: null,
     peerNode: null,
     swarmCoordinator: null,
+    modelManager: null,
   },
 
   /** Feature module singletons (set by clawser-app.js) */
@@ -215,7 +217,7 @@ export const state = {
 // ── Backward-compatible flat aliases (deprecated — use state.ui.X, state.services.X, etc.) ──
 for (const [ns, fields] of [
   ['ui', ['isSending', 'currentRoute', 'switchingViaRouter', 'slashSelectedIdx', 'pendingImportBlob', 'cmdSelectedSpec']],
-  ['services', ['agent', 'providers', 'browserTools', 'mcpManager', 'vault', 'workspaceFs', 'responseCache', 'shell', 'skillRegistry', 'intentRouter', 'inputSanitizer', 'toolCallValidator', 'safetyPipeline', 'providerHealth', 'modelRouter', 'stuckDetector', 'selfRepairEngine', 'undoManager', 'heartbeatRunner', 'authProfileManager', 'metricsCollector', 'ringBufferLog', 'daemonController', 'routineEngine', 'oauthManager', 'identityManager', 'peerNode', 'swarmCoordinator']],
+  ['services', ['agent', 'providers', 'browserTools', 'mcpManager', 'vault', 'workspaceFs', 'responseCache', 'shell', 'skillRegistry', 'intentRouter', 'inputSanitizer', 'toolCallValidator', 'safetyPipeline', 'providerHealth', 'modelRouter', 'stuckDetector', 'selfRepairEngine', 'undoManager', 'heartbeatRunner', 'authProfileManager', 'metricsCollector', 'ringBufferLog', 'daemonController', 'routineEngine', 'oauthManager', 'identityManager', 'peerNode', 'swarmCoordinator', 'modelManager']],
   ['features', ['toolBuilder', 'channelManager', 'delegateManager', 'gitBehavior', 'gitMemory', 'automationManager', 'sandboxManager', 'peripheralManager', 'pairingManager', 'goalManager', 'skillRegistryClient', 'terminalSessions', 'agentStorage']],
   ['session', ['sessionCost', 'activeConversationId', 'activeConversationName', 'activeSkillPrompts', 'toolCallLog', 'eventLog', 'eventCount', 'pendingInlineTools']],
 ]) {

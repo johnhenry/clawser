@@ -163,6 +163,11 @@ async function handleAction(action, params) {
     // ── CORS-free fetch ──
     case 'cors_fetch': return actionCorsFetch(params);
 
+    // ── Tab Watch ──
+    case 'tab_watch_start': return actionTabWatchStart(params);
+    case 'tab_watch_poll': return actionTabWatchPoll(params);
+    case 'tab_watch_stop': return actionTabWatchStop(params);
+
     default:
       throw new Error(`Unknown action: ${action}`);
   }
@@ -906,6 +911,179 @@ async function actionWebmcpDiscover({ tabId }) {
 
   return pageResult;
 }
+
+// ── Tab Watch ─────────────────────────────────────────────────────
+
+/** @type {Set<number>} Tab IDs currently being watched */
+const watchedTabs = new Set();
+
+/**
+ * Start watching a tab for new DOM nodes under a selector.
+ * Injects a MutationObserver that buffers new text content.
+ */
+async function actionTabWatchStart({ tabId, selector, siteProfile }) {
+  const tid = await resolveTabId({ tabId });
+
+  // Resolve selector from site profile if provided
+  const sel = selector || SITE_PROFILES[siteProfile]?.containerSelector;
+  if (!sel) throw new Error('selector or valid siteProfile is required');
+
+  const profile = siteProfile ? (SITE_PROFILES[siteProfile] || null) : null;
+  const msgSelector = profile?.messageSelector || null;
+  const senderSelector = profile?.senderSelector || null;
+
+  await executeInTab(tid, (containerSel, msgSel, senderSel) => {
+    // Clean up any existing watcher
+    if (window.__clawserWatchObserver) {
+      window.__clawserWatchObserver.disconnect();
+    }
+    window.__clawserWatchBuffer = [];
+    window.__clawserWatchSeen = window.__clawserWatchSeen || new Set();
+
+    const container = document.querySelector(containerSel);
+    if (!container) {
+      window.__clawserWatchBuffer.push({
+        text: `[watch-error] Container not found: ${containerSel}`,
+        sender: 'system',
+        timestamp: Date.now(),
+      });
+      return { started: false, error: `Container not found: ${containerSel}` };
+    }
+
+    // Snapshot existing children so we only report NEW messages
+    if (msgSel) {
+      container.querySelectorAll(msgSel).forEach(el => {
+        window.__clawserWatchSeen.add(el);
+      });
+    } else {
+      for (const child of container.children) {
+        window.__clawserWatchSeen.add(child);
+      }
+    }
+
+    function extractMessage(node) {
+      if (window.__clawserWatchSeen.has(node)) return null;
+      window.__clawserWatchSeen.add(node);
+
+      const text = node.textContent?.trim() || '';
+      let sender = 'unknown';
+
+      if (senderSel) {
+        const senderEl = node.querySelector(senderSel);
+        if (senderEl) sender = senderEl.textContent?.trim() || 'unknown';
+      }
+
+      if (!text) return null;
+      return { text: text.slice(0, 2000), sender, timestamp: Date.now() };
+    }
+
+    window.__clawserWatchObserver = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+          if (node.nodeType !== 1) continue; // Element nodes only
+
+          if (msgSel) {
+            // Site profile mode: check if the added node IS a message,
+            // then check descendants. querySelectorAll only matches
+            // descendants, so we check the node itself separately.
+            if (node.matches?.(msgSel)) {
+              const msg = extractMessage(node);
+              if (msg) window.__clawserWatchBuffer.push(msg);
+            }
+            for (const target of node.querySelectorAll(msgSel)) {
+              const msg = extractMessage(target);
+              if (msg) window.__clawserWatchBuffer.push(msg);
+            }
+          } else {
+            // Custom selector mode: the added node itself is the message
+            const msg = extractMessage(node);
+            if (msg) window.__clawserWatchBuffer.push(msg);
+          }
+        }
+      }
+      // Cap buffer
+      if (window.__clawserWatchBuffer.length > 100) {
+        window.__clawserWatchBuffer.splice(0, window.__clawserWatchBuffer.length - 100);
+      }
+    });
+
+    window.__clawserWatchObserver.observe(container, { childList: true, subtree: !!msgSel });
+    return { started: true };
+  }, [sel, msgSelector, senderSelector]);
+
+  watchedTabs.add(tid);
+  return { tabId: tid, watching: true, selector: sel, siteProfile: siteProfile || null };
+}
+
+/**
+ * Poll buffered messages from a watched tab.
+ */
+async function actionTabWatchPoll({ tabId }) {
+  const tid = await resolveTabId({ tabId });
+
+  const messages = await executeInTab(tid, () => {
+    const buf = window.__clawserWatchBuffer || [];
+    const copy = [...buf];
+    buf.length = 0;
+    return copy;
+  });
+
+  return { tabId: tid, messages: messages || [] };
+}
+
+/**
+ * Stop watching a tab — disconnect observer and clean up.
+ */
+async function actionTabWatchStop({ tabId }) {
+  const tid = await resolveTabId({ tabId });
+
+  await executeInTab(tid, () => {
+    if (window.__clawserWatchObserver) {
+      window.__clawserWatchObserver.disconnect();
+      window.__clawserWatchObserver = null;
+    }
+    window.__clawserWatchBuffer = [];
+    window.__clawserWatchSeen = null;
+  });
+
+  watchedTabs.delete(tid);
+  return { tabId: tid, watching: false };
+}
+
+/**
+ * Site profile presets — DOM selectors for popular web apps.
+ * NOTE: Duplicated in web/clawser-channel-tabwatch.js (which uses inputSelector/sendMethod
+ * for outbound responses). Extension service workers can't import ES modules, so the
+ * duplication is intentional. Keep both copies in sync when updating selectors.
+ */
+const SITE_PROFILES = {
+  slack: {
+    containerSelector: '[data-qa="slack_kit_list"]',
+    messageSelector: '[data-qa="virtual-list-item"]',
+    senderSelector: '[data-qa="message_sender_name"]',
+    inputSelector: '[data-qa="message_input"] [contenteditable]',
+    sendMethod: 'enter',
+  },
+  gmail: {
+    containerSelector: 'table.F.cf.zt',
+    messageSelector: 'tr.zA',
+    senderSelector: '.yW .yP, .yW .zF',
+    inputSelector: '.Am.Al.editable',
+    sendMethod: 'ctrl+enter',
+  },
+  discord: {
+    containerSelector: 'ol[data-list-id="chat-messages"]',
+    messageSelector: 'li[id^="chat-messages-"]',
+    senderSelector: 'h3 span[class*="username"]',
+    inputSelector: 'div[role="textbox"]',
+    sendMethod: 'enter',
+  },
+};
+
+// Clean up watch state when tabs close
+chrome.tabs.onRemoved.addListener((tabId) => {
+  watchedTabs.delete(tabId);
+});
 
 // ── Background Scheduler (Tier 1: chrome.alarms) ──────────────────
 

@@ -1236,8 +1236,11 @@ export class ClawserAgent {
   /**
    * Push a user message to history and record a user_message event.
    * @param {string} text
+   * @param {object} [opts] - Optional metadata
+   * @param {string} [opts.source] - Source channel identifier (e.g. 'telegram', 'wsh', 'scheduler:routine_1')
+   * @param {string|null} [opts.tenantId] - Kernel tenant ID for resource tracking (defaults to null)
    */
-  sendMessage(text) {
+  sendMessage(text, opts) {
     // Fire onSessionStart on the first user message
     const userMsgCount = this.#history.filter(m => m.role === 'user').length;
     if (userMsgCount === 0) {
@@ -1245,7 +1248,8 @@ export class ClawserAgent {
         .catch(() => {}); // fire-and-forget
     }
     this.#history.push({ role: 'user', content: text });
-    this.#eventLog.append('user_message', { content: text }, 'user');
+    const source = opts?.source || 'user';
+    this.#eventLog.append('user_message', { content: text, source, tenantId: opts?.tenantId ?? null }, source);
   }
 
   /**

@@ -206,7 +206,7 @@ describe('onSessionEnd hook wiring', () => {
 
     agent.sendMessage('Hello');
     await agent.run();
-    agent.reinit({});
+    await agent.reinit({});
 
     assert.equal(fired.length, 1);
     assert.ok(fired[0].messageCount > 0);
@@ -226,7 +226,7 @@ describe('onSessionEnd hook wiring', () => {
     });
 
     agent.sendMessage('Hello');
-    agent.clearHistory();
+    await agent.clearHistory();
 
     assert.equal(fired.length, 1);
     assert.ok(fired[0].messageCount >= 1);
@@ -246,7 +246,7 @@ describe('onSessionEnd hook wiring', () => {
     });
 
     // No messages sent — reinit on fresh agent shouldn't fire
-    agent.reinit({});
+    await agent.reinit({});
     assert.equal(fired.length, 0);
   });
 
@@ -266,7 +266,7 @@ describe('onSessionEnd hook wiring', () => {
     agent.sendMessage('Hello');
     await agent.run();
     // History should have system + user + assistant = 3 messages
-    agent.clearHistory();
+    await agent.clearHistory();
 
     assert.equal(fired.length, 1);
     // The hook must receive the count BEFORE clearing, not 0
@@ -288,7 +288,7 @@ describe('onSessionEnd hook wiring', () => {
 
     agent.sendMessage('Hello');
     await agent.run();
-    agent.reinit({});
+    await agent.reinit({});
 
     assert.equal(fired.length, 1);
     assert.ok(fired[0].messageCount >= 3, `Expected >=3 but got ${fired[0].messageCount}`);
@@ -320,7 +320,7 @@ describe('beforeOutbound on cached responses', () => {
     assert.equal(fired.length, 1);
 
     // Reset history so second call has same cache key (system + user "Hi")
-    agent.reinit({});
+    await agent.reinit({});
     agent.setSystemPrompt('You are a test agent.');
 
     // Second call — should hit cache AND still fire beforeOutbound
@@ -353,7 +353,7 @@ describe('beforeOutbound on cached responses', () => {
     assert.equal(fired.length, 1);
 
     // Reset history so second call has same cache key
-    agent.reinit({});
+    await agent.reinit({});
     agent.setSystemPrompt('You are a test agent.');
 
     // Second call — cache hit should still fire beforeOutbound

@@ -53,7 +53,7 @@ describe('Scenario 1 — Health Investigation', () => {
     assert.equal(agent.memoryRecall('', { category: 'user' }).length, 2);
 
     // Simulate new session
-    agent.reinit({});
+    await agent.reinit({});
 
     // Memories survive reinit
     const recalled = agent.memoryRecall('', { category: 'user' });
@@ -145,13 +145,13 @@ describe('Scenario 2 — Code Refactoring', () => {
     agent.memoryStore({ key: 'refactor-plan', content: 'Split AuthService into AuthN and AuthZ', category: 'core' });
 
     // Session 2
-    agent.reinit({});
+    await agent.reinit({});
     const recalled = agent.memoryRecall('refactor auth');
     assert.ok(recalled.length >= 1, 'memory should survive reinit');
     assert.ok(recalled[0].content.includes('AuthService'));
 
     // Session 3
-    agent.reinit({});
+    await agent.reinit({});
     const recalled2 = agent.memoryRecall('refactor');
     assert.ok(recalled2.length >= 1, 'memory should survive multiple reinits');
   });

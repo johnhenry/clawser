@@ -7,6 +7,7 @@ Feature modules extend the core agent with specialized capabilities. Each module
 | Module | File | Tools | Description |
 |--------|------|-------|-------------|
 | Tool Builder | `clawser-tool-builder.js` | `tool_create`, `tool_edit`, `tool_delete`, `tool_list` | Dynamic tool creation at runtime |
+| Channel Gateway | `clawser-gateway.js` | — | Central hub orchestrating channel plugins, scheduler lane, and mesh sessions into the agent. Per-channel serialized queuing, scope isolation, tenantId threading, response routing. |
 | Multi-Channel | `clawser-channels.js` | `channel_create`, `channel_list`, `channel_send`, `channel_receive` | Cross-tab and WebSocket messaging |
 | Delegation | `clawser-delegate.js` | `agent_delegate` | Sub-agent task delegation |
 | Git | `clawser-git.js` | `git_status`, `git_diff`, `git_commit`, `git_log`, `git_recall` | Git-aware operations via OPFS |

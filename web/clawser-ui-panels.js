@@ -26,7 +26,7 @@ export { refreshFiles, mountLocalFolder, renderMountList } from './clawser-ui-fi
 export { renderMemoryResults, doMemorySearch } from './clawser-ui-memory.js';
 export { renderGoals, toggleGoalExpand } from './clawser-ui-goals.js';
 export { renderMarketplace } from './clawser-ui-marketplace.js';
-export { renderChannelPanel, updateChannelBadge, initChannelPanelListeners, restoreSavedChannels } from './clawser-ui-channels.js';
+export { renderChannelPanel, updateChannelBadge, initChannelPanelListeners, restoreSavedChannels, renderTabWatcherSection } from './clawser-ui-channels.js';
 export { renderSwarmPanel, initSwarmListeners } from './clawser-ui-swarms.js';
 export { renderTransferPanel, initTransferListeners } from './clawser-ui-transfers.js';
 export { renderMeshPanel, initMeshListeners } from './clawser-ui-mesh.js';
@@ -1236,7 +1236,7 @@ function renderAgentPickerDropdown(agents, activeId, accts = []) {
     el.addEventListener('click', async () => {
       const agent = agents.find(a => a.id === el.dataset.id);
       if (!agent || !state.agent) return;
-      state.agent.applyAgent(agent);
+      await state.agent.applyAgent(agent);
       state.agentStorage.setActive(agent.id);
       updateAgentLabel(agent);
       closeAgentPicker();
@@ -1321,7 +1321,7 @@ export async function renderAgentPanel() {
     btn.addEventListener('click', async () => {
       const agent = await state.agentStorage.load(btn.dataset.id);
       if (!agent || !state.agent) return;
-      state.agent.applyAgent(agent);
+      await state.agent.applyAgent(agent);
       state.agentStorage.setActive(agent.id);
       updateAgentLabel(agent);
       renderAgentPanel();
@@ -1456,7 +1456,7 @@ async function renderAgentEditor(panelBody, agentId) {
     };
     await state.agentStorage.save(copy);
     // Activate the copy immediately
-    state.agent.applyAgent(copy);
+    await state.agent.applyAgent(copy);
     state.agentStorage.setActive(copy.id);
     agentEditingId = null;
     renderAgentPanel();

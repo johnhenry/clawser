@@ -37,6 +37,7 @@ Clawser is a **beta-quality** browser-native AI agent platform. The core runtime
 | **0.1.0-beta** | 9 feature module integrations with 36 new agent tools. Phase 2 UI/agent loop wiring for all 30 blocks. |
 | **Phase 7** | Virtual Server subsystem — SW fetch intercept, ServerManager, function/static/proxy handlers, 8 agent tools, FetchTool auto-routing, kernel svc:// integration, Servers UI panel |
 | **Phase 8** | BrowserMesh integration — 30 new modules for decentralized mesh: identity, trust, CRDT sync, P2P transport, naming, real transports, resource scheduling, payments, consensus, swarm coordination |
+| **OpenClaw Final** | Channel Gateway (`clawser-gateway.js`) — scheduler/routine lane through gateway, kernel tenantId threading, per-channel serialized queues, virtual channel keys, 105 gateway tests |
 
 ---
 

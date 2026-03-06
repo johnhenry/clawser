@@ -32,6 +32,7 @@ All source files are in `web/` and follow the naming pattern `clawser-{domain}.j
 - **clawser-codex.js** — Code-based tool execution via vimble sandbox
 - **clawser-skills.js** — SkillParser, SkillStorage, SkillRegistry
 - **clawser-shell.js** — Virtual shell with tokenizer, parser, command registry
+- **clawser-gateway.js** — ChannelGateway: per-channel queues, scope isolation, scheduler lane, tenantId threading
 - **clawser-mcp.js** — MCP client for external tool servers
 - **clawser-state.js** — Global state, event bus, config cache
 - **clawser-app.js** — Top-level orchestrator, workspace lifecycle

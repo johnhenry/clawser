@@ -1505,7 +1505,7 @@ export class SwitchAgentTool extends BrowserTool {
         a.name.toLowerCase() === params.agent.toLowerCase() || a.id === params.agent
       );
       if (!agent) return { success: false, output: '', error: `Agent "${params.agent}" not found.` };
-      this.#engine.applyAgent(agent);
+      await this.#engine.applyAgent(agent);
       this.#storage.setActive(agent.id);
       const { loadAccounts } = await import('./clawser-accounts.js');
       const accts = loadAccounts();

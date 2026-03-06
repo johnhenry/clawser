@@ -35,6 +35,8 @@ import { SkillMarketplace } from './clawser-marketplace.js';
 import { MountListTool, MountResolveTool } from './clawser-mount.js';
 import { ToolBuildTool, ToolTestTool, ToolListCustomTool, ToolEditTool, ToolRemoveTool } from './clawser-tool-builder.js';
 import { ChannelListTool, ChannelSendTool, ChannelHistoryTool } from './clawser-channels.js';
+import { ChannelGateway } from './clawser-gateway.js';
+import { bridgePeerAgent } from './clawser-peer-agent.js';
 import { DelegateTool } from './clawser-delegate.js';
 import { GitStatusTool, GitDiffTool, GitLogTool, GitCommitTool, GitBranchTool, GitRecallTool } from './clawser-git.js';
 import { BrowserOpenTool, BrowserReadPageTool, BrowserClickTool, BrowserFillTool, BrowserWaitTool, BrowserEvaluateTool, BrowserListTabsTool, BrowserCloseTabTool } from './clawser-browser-auto.js';
@@ -93,6 +95,26 @@ import { getExtensionClient } from './clawser-extension-tools.js';
 // Fallback chain
 import { FallbackChain, FallbackExecutor } from './clawser-fallback.js';
 import { registerSchedulerCli } from './clawser-scheduler-cli.js';
+import { ModelManager, ModelRegistry, ModelCache } from './clawser-models.js';
+import { ModelListTool, ModelPullTool, ModelRemoveTool, ModelStatusTool, TranscribeTool, SpeakTool, CaptionTool, OcrTool, DetectObjectsTool, ClassifyImageTool, ClassifyTextTool } from './clawser-model-tools.js';
+import { registerModelCli } from './clawser-model-cli.js';
+
+// ── Mesh agent bridge helper ─────────────────────────────────────
+/**
+ * Create an AgentHost for a PeerSession, wired through the ChannelGateway.
+ * Call this when establishing a PeerSession to enable agent queries from the peer.
+ *
+ * @param {import('./clawser-peer-session.js').PeerSession} session
+ * @returns {import('./clawser-peer-agent.js').AgentHost|null}
+ */
+export function createMeshAgentHost(session) {
+  if (!state.agent || !state.gateway) {
+    console.warn('[clawser] Cannot create mesh agent host — agent or gateway not available');
+    return null;
+  }
+  return bridgePeerAgent(session, state.agent, state.gateway,
+    (level, msg) => console.log(`[mesh-agent] ${msg}`));
+}
 
 // ── Routine → IndexedDB sync (background execution) ─────────────
 /**
@@ -129,6 +151,7 @@ export async function createShellSession() {
   registerAndboxCli(state.shell.registry, () => state.agent, () => state.shell);
   registerWshCli(state.shell.registry, () => state.agent, () => state.shell);
   registerSchedulerCli(state.shell.registry, () => state.routineEngine, () => state.agent);
+  registerModelCli(state.shell.registry, () => state.modelManager);
   // Update terminal session manager's shell reference
   if (state.terminalSessions) {
     state.terminalSessions.setShell(state.shell);
@@ -265,7 +288,7 @@ export async function switchWorkspace(newId, convId) {
   } catch (e) { console.warn('[clawser] routine save failed', e); }
 
   // Reset agent state
-  state.agent.reinit({});
+  await state.agent.reinit({});
   state.agent.setWorkspace(newId);
   setActiveWorkspaceId(newId);
   touchWorkspace(newId);
@@ -375,6 +398,11 @@ export async function switchWorkspace(newId, convId) {
   state.marketplace = new SkillMarketplace();
   restoreSavedChannels(state.channelManager);
   updateChannelBadge();
+  // Update gateway tenant ID so subsequent ingests are attributed to the
+  // new workspace's kernel tenant. Falls back to null when kernel is absent.
+  if (state.gateway) {
+    state.gateway.setTenantId(_kernelIntegration?.getWorkspaceTenantId(newId) || null);
+  }
   await initMeshSubsystem();
   registerLazyPanelRenders({
     tools:    () => renderToolRegistry(),
@@ -463,9 +491,10 @@ export async function switchWorkspace(newId, convId) {
   updateState();
 
   // Restart daemon and routine engine for new workspace
-  state.daemonController.start().then(started => {
+  try {
+    const started = await state.daemonController.start();
     if (started) updateDaemonBadge(state.daemonController.phase);
-  }).catch(() => {});
+  } catch (e) { console.warn('[clawser] daemon start failed on switch', e); }
   try {
     const savedRoutines = JSON.parse(localStorage.getItem(lsKey.routines(newId)) || 'null');
     if (savedRoutines) state.routineEngine.fromJSON(savedRoutines);
@@ -473,7 +502,7 @@ export async function switchWorkspace(newId, convId) {
   state.routineEngine.start();
 
   // Sync routine state to IndexedDB for background runners (Tier 1/3)
-  syncRoutinesToIDB();
+  await syncRoutinesToIDB();
 
   const parts = [`Switched to "${wsName}".`];
   if (wsRestored) parts.push(`Session restored (${$('messages').querySelectorAll('.msg.user, .msg.agent').length} messages).`);
@@ -593,6 +622,22 @@ export async function initWorkspace(wsId, convId) {
     // Mount (2)
     state.browserTools.register(new MountListTool(state.workspaceFs));
     state.browserTools.register(new MountResolveTool(state.workspaceFs));
+
+    // Local AI Models (11)
+    if (!state.modelManager) {
+      state.modelManager = new ModelManager();
+    }
+    state.browserTools.register(new ModelListTool(state.modelManager));
+    state.browserTools.register(new ModelPullTool(state.modelManager));
+    state.browserTools.register(new ModelRemoveTool(state.modelManager));
+    state.browserTools.register(new ModelStatusTool(state.modelManager));
+    state.browserTools.register(new TranscribeTool(state.modelManager));
+    state.browserTools.register(new SpeakTool(state.modelManager));
+    state.browserTools.register(new CaptionTool(state.modelManager));
+    state.browserTools.register(new OcrTool(state.modelManager));
+    state.browserTools.register(new DetectObjectsTool(state.modelManager));
+    state.browserTools.register(new ClassifyImageTool(state.modelManager));
+    state.browserTools.register(new ClassifyTextTool(state.modelManager));
 
     // Tool Builder (5)
     state.browserTools.register(new ToolBuildTool(state.toolBuilder));
@@ -765,7 +810,7 @@ export async function initWorkspace(wsId, convId) {
       // Restore active agent
       const activeAgent = await state.agentStorage.getActive();
       if (activeAgent) {
-        state.agent.applyAgent(activeAgent);
+        await state.agent.applyAgent(activeAgent);
         updateAgentLabel(activeAgent);
       }
     } catch (e) {
@@ -1001,9 +1046,10 @@ export async function initWorkspace(wsId, convId) {
     } catch (e) { console.warn('[clawser] modelRouter buildDefaults failed', e); }
 
     // Start daemon controller (B4)
-    state.daemonController.start().then(started => {
-      if (started) updateDaemonBadge(state.daemonController.phase);
-    }).catch(e => console.warn('[clawser] daemon start failed', e));
+    try {
+      const daemonStarted = await state.daemonController.start();
+      if (daemonStarted) updateDaemonBadge(state.daemonController.phase);
+    } catch (e) { console.warn('[clawser] daemon start failed', e); }
 
     // Start routine engine (B5)
     try {
@@ -1013,7 +1059,7 @@ export async function initWorkspace(wsId, convId) {
     state.routineEngine.start();
 
     // Sync routine state to IndexedDB for background runners (Tier 1/3)
-    syncRoutinesToIDB();
+    await syncRoutinesToIDB();
 
     await state.skillRegistry.discover(activeWsId);
 
@@ -1023,6 +1069,28 @@ export async function initWorkspace(wsId, convId) {
     // Restore saved channels
     restoreSavedChannels(state.channelManager);
     updateChannelBadge();
+
+    // ── Channel Gateway ──
+    // Central hub for all inbound channel messages → agent → outbound responses.
+    // tenantId comes from the kernel integration so each message is attributable
+    // to the workspace's kernel tenant for resource tracking and isolation.
+    state.gateway = new ChannelGateway({
+      agent: state.agent,
+      tenantId: _kernelIntegration?.getWorkspaceTenantId(wsId) || null,
+      onIngest: (channelId, msg) => {
+        addMsg('user', msg.content, null, channelId);
+      },
+      onRespond: (channelId, text) => {
+        addMsg('agent', text, null, channelId);
+      },
+      onLog: (msg) => console.log(`[gateway] ${msg}`),
+    });
+
+    // Wire gateway to WSH incoming sessions
+    try {
+      const { setAgentGateway } = await import('./clawser-wsh-incoming.js');
+      setAgentGateway(state.gateway);
+    } catch (e) { console.warn('[clawser] gateway→wsh wire failed', e); }
 
     // ── P2P mesh initialization ──
     await initMeshSubsystem();

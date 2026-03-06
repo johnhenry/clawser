@@ -428,3 +428,135 @@ describe('AgentClient', () => {
     })
   })
 })
+
+// ---------------------------------------------------------------------------
+// Tests — AgentHost with ChannelGateway
+// ---------------------------------------------------------------------------
+
+import { bridgePeerAgent } from '../clawser-peer-agent.js'
+
+describe('AgentHost with gateway', () => {
+  it('routes chat through gateway when provided', async () => {
+    const session = createMockSession()
+    const agent = createMockAgent()
+
+    // Create a mock gateway
+    const ingestCalls = []
+    const mockGateway = {
+      async ingest(msg, channelId) {
+        ingestCalls.push({ msg, channelId })
+        return 'gateway response'
+      },
+      register() {},
+    }
+
+    const host = new AgentHost({ session, agent, gateway: mockGateway })
+
+    // Send a chat request
+    session._simulateIncoming({
+      payload: { action: 'chat', message: 'hello via gateway', requestId: 'req-gw' },
+    })
+
+    await new Promise((r) => setTimeout(r, 30))
+
+    // Verify gateway was called
+    assert.equal(ingestCalls.length, 1)
+    assert.equal(ingestCalls[0].msg.content, 'hello via gateway')
+    assert.equal(ingestCalls[0].msg.channel, 'mesh')
+    assert.ok(ingestCalls[0].channelId.startsWith('mesh:'))
+
+    // Verify response was sent back
+    const sent = session._transport.sent
+    const response = sent.find(s => s.payload?.requestId === 'req-gw')
+    assert.ok(response)
+    assert.equal(response.payload.success, true)
+    assert.equal(response.payload.result.response, 'gateway response')
+  })
+
+  it('falls back to direct agent.run when no gateway', async () => {
+    const session = createMockSession()
+    const agent = createMockAgent()
+    const host = new AgentHost({ session, agent })
+
+    session._simulateIncoming({
+      payload: { action: 'chat', message: 'direct call', requestId: 'req-direct' },
+    })
+
+    await new Promise((r) => setTimeout(r, 20))
+
+    const sent = session._transport.sent
+    const response = sent.find(s => s.payload?.requestId === 'req-direct')
+    assert.ok(response)
+    assert.equal(response.payload.success, true)
+    assert.equal(response.payload.result.response, 'Echo: direct call')
+  })
+
+  it('setGateway updates gateway reference', async () => {
+    const session = createMockSession()
+    const agent = createMockAgent()
+    const host = new AgentHost({ session, agent })
+
+    let gwCalled = false
+    host.setGateway({
+      async ingest() { gwCalled = true; return 'gw' },
+      register() {},
+    })
+
+    session._simulateIncoming({
+      payload: { action: 'chat', message: 'test', requestId: 'req-set' },
+    })
+
+    await new Promise((r) => setTimeout(r, 20))
+    assert.ok(gwCalled)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Tests — bridgePeerAgent factory
+// ---------------------------------------------------------------------------
+
+describe('bridgePeerAgent', () => {
+  it('creates AgentHost with gateway and registers mesh plugin', () => {
+    const session = createMockSession()
+    const agent = createMockAgent()
+
+    const registeredChannels = []
+    const mockGateway = {
+      register(channelId, plugin, config) {
+        registeredChannels.push({ channelId, plugin, config })
+      },
+      async ingest() { return 'bridged' },
+    }
+
+    const host = bridgePeerAgent(session, agent, mockGateway)
+    assert.ok(host instanceof AgentHost)
+
+    // Verify mesh plugin was registered on gateway
+    assert.equal(registeredChannels.length, 1)
+    assert.ok(registeredChannels[0].channelId.startsWith('mesh:'))
+    assert.ok(registeredChannels[0].plugin.running)
+    assert.equal(typeof registeredChannels[0].plugin.sendMessage, 'function')
+  })
+
+  it('mesh plugin sends response via session', async () => {
+    const session = createMockSession()
+    const agent = createMockAgent()
+
+    let registeredPlugin = null
+    const mockGateway = {
+      register(channelId, plugin) { registeredPlugin = plugin },
+      async ingest() { return 'response' },
+    }
+
+    bridgePeerAgent(session, agent, mockGateway)
+    assert.ok(registeredPlugin)
+
+    // Call sendMessage on the plugin
+    const ok = await registeredPlugin.sendMessage('hello from agent')
+    assert.ok(ok)
+
+    // Verify it sent through session transport
+    const sent = session._transport.sent
+    assert.ok(sent.length >= 1)
+  })
+})

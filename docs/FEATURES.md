@@ -33,6 +33,10 @@ Each routine enforces configurable guardrails:
 
 Routines are auto-disabled after 5 consecutive failures. Run history (last 50) is stored per routine.
 
+### Execution Path
+
+Routine execution flows through `ChannelGateway.ingest()` rather than calling the agent directly. Each routine is assigned a virtual channel key `scheduler:{routineId}`, which provides per-routine serialization (the same routine cannot run concurrently) while allowing different routines to execute in parallel. Routine messages appear in the chat UI with a green `scheduler` badge. If the gateway is unavailable, execution falls back to a direct `agent.run()` call.
+
 **Tools**: `routine_create`, `routine_list`, `routine_delete`, `routine_run`
 
 ---
@@ -59,13 +63,22 @@ By default, sub-agents only have access to `read` and `internal` permission tool
 
 ## Channels
 
-**File**: `web/clawser-channels.js`
+**Files**: `web/clawser-channels.js` (plugins), `web/clawser-gateway.js` (gateway)
 
-Bridges external messaging services to the agent via a WebSocket bridge server.
+Bridges external messaging services and internal systems to the agent via a centralized `ChannelGateway`.
 
 ### Supported Channels
 
-webhook, telegram, discord, slack, matrix, email, irc
+webhook, telegram, discord, slack, matrix, email, irc, wsh, mesh, scheduler
+
+### Channel Gateway
+
+All channel plugins are registered with and managed by `ChannelGateway` in `clawser-gateway.js`. The gateway provides:
+
+- **Per-channel serialized queuing** — messages for the same channel run one at a time; different channels run concurrently
+- **Scope isolation** — `isolated` (separate context), `shared` (shared context), `shared:group-name` (grouped)
+- **Response routing** — agent responses are formatted per-channel and sent back via the originating plugin
+- **Virtual channels** — plugin-less channels (like `scheduler`) still get event recording, `onRespond` callbacks, and UI badge rendering
 
 ### Access Control
 
@@ -75,11 +88,20 @@ Each channel has configurable allowlists:
 
 ### Message Flow
 
-1. External message arrives via WebSocket
-2. Normalized to standard format: `{ id, channel, channelId, sender, content, attachments, replyTo, timestamp }`
-3. Checked against allowlists via `isMessageAllowed()`
-4. Formatted for agent context via `formatForAgent()`
-5. Outbound messages formatted per-channel: Telegram HTML, Slack mrkdwn, Discord markdown
+1. External message arrives via plugin (WebSocket, polling, etc.) or internal trigger (scheduler)
+2. Plugin fires `onMessage` → `ChannelGateway.ingest()`
+3. Normalized to standard format: `{ id, channel, channelId, sender, content, attachments, replyTo, timestamp }`
+4. Checked against allowlists via `isMessageAllowed()` (for external channels)
+5. Queued per-channel for serialized processing
+6. Agent receives message via `sendMessage()` with channel source and tenant context
+7. Agent runs via `runStream()` (or `run()` fallback)
+8. `respond()` routes reply back to the originating channel plugin
+9. `onRespond` callback fires for UI display (always, even for plugin-less channels)
+10. Outbound messages formatted per-channel: Telegram HTML, Slack mrkdwn, Discord markdown
+
+### Scheduler Lane
+
+Routines from `RoutineEngine` route through the gateway as virtual `scheduler` channels. Each routine gets the channel key `scheduler:{routineId}` — the same routine serializes (no concurrent runs), but different routines run concurrently. Scheduler messages appear in chat with a green badge (`#7CB342`).
 
 **Tools**: `channel_list`, `channel_send`, `channel_history`
 

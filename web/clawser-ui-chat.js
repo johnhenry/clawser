@@ -60,15 +60,36 @@ export function setStatus(statusState, text) {
   $('statusText').textContent = text;
 }
 
+// ── Channel badge colors ────────────────────────────────────────
+// UI-local copy of CHANNEL_COLORS from clawser-gateway.js.
+// Keep in sync when adding or changing channel types.
+/** @type {Record<string, string>} */
+const CHANNEL_BADGE_COLORS = {
+  telegram: '#2AABEE', discord: '#5865F2', slack: '#4A154B',
+  email: '#EA4335', matrix: '#0DBD8B', irc: '#999', relay: '#FF9800',
+  wsh: '#FF6D00', mesh: '#00BCD4', dom: '#666', ext: '#9C27B0',
+  scheduler: '#7CB342',  // cron/routine lane (virtual channel, no plugin)
+};
+
 // ── Message display ─────────────────────────────────────────────
-/** Append a message to the chat panel and auto-scroll. @param {'user'|'agent'|'system'|'error'} type @param {string} text @param {string} [eventId] - Event ID for fork-from-point (user messages only) */
-export function addMsg(type, text, eventId) {
+/** Append a message to the chat panel and auto-scroll.
+ * @param {'user'|'agent'|'system'|'error'} type
+ * @param {string} text
+ * @param {string} [eventId] - Event ID for fork-from-point (user messages only)
+ * @param {string} [source] - Channel source identifier for badge rendering
+ */
+export function addMsg(type, text, eventId, source) {
   const messagesEl = $('messages');
   const d = document.createElement('div');
   d.className = `msg ${type}`;
+
+  // Build channel badge HTML if source is provided
+  const badgeHtml = source ? _channelBadge(source) : '';
+
   if (type === 'user') {
     if (eventId) d.dataset.eventId = eventId;
-    d.innerHTML = `<div class="label">You<span class="msg-fork" title="Fork from here">\u2442</span></div>${esc(text)}`;
+    const label = source ? `${badgeHtml} ${esc(source)}` : 'You';
+    d.innerHTML = `<div class="label">${label}<span class="msg-fork" title="Fork from here">\u2442</span></div>${esc(text)}`;
     d.querySelector('.msg-fork').addEventListener('click', (e) => {
       e.stopPropagation();
       const evtId = d.dataset.eventId;
@@ -77,12 +98,25 @@ export function addMsg(type, text, eventId) {
   } else if (type === 'agent') {
     const avatarUrl = state.identityManager?.getCurrent?.()?.physicality?.avatar_url;
     const avatarHtml = avatarUrl ? `<img class="msg-avatar" src="${esc(avatarUrl)}" alt="" />` : '';
-    d.innerHTML = `<div class="label">${avatarHtml}Agent</div><div class="md-content">${renderMarkdown(text)}</div>`;
+    const agentLabel = source ? `${avatarHtml}${badgeHtml} Agent` : `${avatarHtml}Agent`;
+    d.innerHTML = `<div class="label">${agentLabel}</div><div class="md-content">${renderMarkdown(text)}</div>`;
   } else {
     d.textContent = text;
   }
   messagesEl.appendChild(d);
   messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+/**
+ * Build a small colored badge span for a channel source.
+ * Splits on ':' to extract the base channel (e.g. 'scheduler:routine_1' → 'scheduler').
+ * @param {string} source - Channel source identifier
+ * @returns {string} HTML string for the badge
+ */
+function _channelBadge(source) {
+  const base = source.includes(':') ? source.split(':')[0] : source;
+  const color = CHANNEL_BADGE_COLORS[base] || '#888';
+  return `<span class="channel-badge" style="background:${color}" title="${esc(source)}">${esc(base)}</span>`;
 }
 
 /**

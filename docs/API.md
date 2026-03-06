@@ -39,7 +39,7 @@ static async create(opts) => ClawserAgent
 
 | Method | Signature | Returns | Description |
 |--------|-----------|---------|-------------|
-| `sendMessage` | `sendMessage(text)` | `void` | Push a user message onto history and event log. |
+| `sendMessage` | `sendMessage(text, opts?)` | `void` | Push a user message onto history and event log. `opts.source` sets channel origin; `opts.tenantId` sets kernel tenant for resource tracking. |
 | `run` | `async run()` | `{ status, data }` | Execute the agent loop (up to 20 tool iterations). Returns final response. |
 | `runStream` | `async *runStream(options?)` | `AsyncGenerator<StreamChunk>` | Streaming variant. Yields `{ type, ... }` chunks. |
 
@@ -302,6 +302,74 @@ Virtual shell with AST-based parsing and OPFS file operations.
 **Supporting classes**: `ShellState`, `CommandRegistry`, `ShellFs`, `MemoryFs`
 
 **Exported utilities**: `tokenize(input)`, `parse(input)`, `normalizePath(p)`
+
+---
+
+## ChannelGateway
+
+**File**: `web/clawser-gateway.js`
+
+Central gateway orchestrating channel plugins, scheduler routines, and P2P mesh sessions into the agent. Provides per-channel serialized queuing, scope isolation, and response routing.
+
+### Constructor
+
+```js
+new ChannelGateway({ agent, tenantId?, onIngest?, onRespond?, onLog? })
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `agent` | `object` | ClawserAgent instance |
+| `tenantId` | `string\|null` | Default kernel tenant ID for resource tracking |
+| `onIngest` | `Function` | `(channelId, message) => void` — called on inbound message |
+| `onRespond` | `Function` | `(channelId, text) => void` — called on outbound response |
+| `onLog` | `Function` | `(msg) => void` — logging callback |
+
+### Channel Lifecycle
+
+| Method | Signature | Returns | Description |
+|--------|-----------|---------|-------------|
+| `register` | `register(channelId, plugin, config?)` | `void` | Register a channel plugin. `config.scope`: `'isolated'` \| `'shared'` \| `'shared:group'`. |
+| `unregister` | `unregister(channelId)` | `boolean` | Remove a channel plugin. Stops it first if active. |
+| `start` | `start(channelId)` | `void` | Activate a plugin and wire its `onMessage` to `ingest()`. |
+| `stop` | `stop(channelId)` | `void` | Deactivate a plugin. |
+| `startAll` | `startAll()` | `void` | Start all registered channels. |
+| `stopAll` | `stopAll()` | `void` | Stop all running channels. |
+| `destroy` | `destroy()` | `void` | Stop all channels, clear state, null agent reference. |
+
+### Messaging
+
+| Method | Signature | Returns | Description |
+|--------|-----------|---------|-------------|
+| `ingest` | `async ingest(message, channelId, opts?)` | `Promise<string>` | Ingest inbound message. Queues per-channel, runs agent, returns response text. `opts.tenantId` overrides the gateway default. |
+| `respond` | `async respond(channelId, text, originalMsg?)` | `Promise<void>` | Route response to channel plugin. Always fires `onRespond` and records outbound event, even for plugin-less virtual channels. |
+
+### Accessors
+
+| Method | Signature | Returns | Description |
+|--------|-----------|---------|-------------|
+| `setAgent` | `setAgent(agent)` | `void` | Replace agent reference. |
+| `setTenantId` | `setTenantId(tenantId)` | `void` | Update default tenant ID (e.g. on workspace switch). |
+| `agent` | (getter) | `object\|null` | Current agent reference. |
+| `getChannel` | `getChannel(channelId)` | `{plugin, config, scope}\|undefined` | Get a registered channel entry. |
+| `listChannels` | `listChannels()` | `string[]` | All registered channel IDs. |
+| `listChannelStatus` | `listChannelStatus()` | `Array<{id, scope, active}>` | All channels with status. |
+| `isActive` | `isActive(channelId)` | `boolean` | Whether a channel is running. |
+| `activeCount` | (getter) | `number` | Number of running channels. |
+| `channelCount` | (getter) | `number` | Number of registered channels. |
+
+### Exported Constants
+
+| Constant | Type | Description |
+|----------|------|-------------|
+| `CHANNEL_SCOPES` | `{ISOLATED, SHARED}` | Scope mode enum. Runtime also allows `'shared:group-name'`. |
+| `CHANNEL_COLORS` | `Record<string, string>` | Canonical badge colors per channel type (hex). Includes `scheduler` for cron/routine virtual channels. |
+
+### Exported Classes
+
+| Class | Description |
+|-------|-------------|
+| `ChannelQueue` | Per-channel serialized task queue. Same-channel tasks serial, cross-channel concurrent. Methods: `enqueue(channelId, task)`, `isProcessing(channelId)`, `pendingChannels` (getter), `clear()`. |
 
 ---
 

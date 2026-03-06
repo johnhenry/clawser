@@ -110,7 +110,7 @@ export async function executeAgentRef(agentDef, message, opts = {}) {
   });
 
   // Apply the referenced agent's configuration
-  subEngine.applyAgent(agentDef);
+  await subEngine.applyAgent(agentDef);
 
   // Send the message and run
   subEngine.sendMessage(message);

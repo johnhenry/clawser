@@ -79,15 +79,19 @@ export function updateAccount(id, updates) {
   if (acct) { Object.assign(acct, updates); saveAccounts(list); }
 }
 
-/** Remove an account by ID. Built-in accounts cannot be deleted. @param {string} id */
-export function deleteAccount(id) {
+/** Remove an account by ID. Built-in accounts cannot be deleted.
+ * @param {string} id
+ * @returns {Promise<void>}
+ */
+export async function deleteAccount(id) {
   if (id.startsWith('acct_builtin_')) return;
   let list = loadAccounts();
   list = list.filter(a => a.id !== id);
   saveAccounts(list);
-  // Also remove from vault if available
+  // Also remove key from vault — await to prevent orphaned secrets
   if (state.vault && !state.vault.isLocked) {
-    state.vault.delete(`apikey-${id}`).catch(() => {});
+    try { await state.vault.delete(`apikey-${id}`); }
+    catch (e) { console.warn('[clawser] vault key cleanup failed for', id, e); }
   }
 }
 
@@ -174,7 +178,7 @@ export function renderAccountList() {
     d.querySelector('.acct-del').addEventListener('click', async () => {
       if (isBuiltinAcct) return;
       if (!await modal.confirm(`Delete account "${acct.name}"?`, { danger: true })) return;
-      deleteAccount(acct.id);
+      await deleteAccount(acct.id);
       const providerSelect = $('providerSelect');
       if (providerSelect.value === `acct_${acct.id}`) {
         providerSelect.value = providerSelect.options[0]?.value || 'echo';
@@ -442,7 +446,17 @@ export function initAccountListeners() {
     const apiKey = $('acctKey').value.trim();
     const model = $('acctModel').value.trim();
     const baseUrl = $('acctBaseUrl')?.value?.trim() || '';
-    if (!name || !apiKey || !model) return;
+    // Validate required fields with visual feedback
+    const missing = [];
+    for (const [el, val, label] of [[$('acctName'), name, 'Name'], [$('acctKey'), apiKey, 'API Key'], [$('acctModel'), model, 'Model']]) {
+      if (!val) { el.classList.add('input-error'); missing.push(label); }
+      else el.classList.remove('input-error');
+    }
+    if (missing.length) return;
+    // Clear error styling on input
+    for (const el of [$('acctName'), $('acctKey'), $('acctModel')]) {
+      el.addEventListener('input', () => el.classList.remove('input-error'), { once: true });
+    }
     const id = await createAccount({ name, service, apiKey, model, baseUrl });
     $('acctAddForm').classList.remove('visible');
     await rebuildProviderDropdown();

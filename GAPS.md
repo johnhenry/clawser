@@ -5,6 +5,8 @@
 **Severity levels**: CRITICAL (blocks usage), HIGH (significant quality impact), MEDIUM (polish), LOW (nice-to-have)
 
 > **Update 2026-02-24 (final)**: All gaps resolved across three systematic implementation passes. 52 gaps from the original audit, 27 from the first implementation pass, and 3 final polish items (critical path tests, lazy panel rendering, benchmark regression detection).
+>
+> **Update 2026-03-05 (post-final)**: Two remaining OpenClaw architecture gaps closed: (1) Cron/routine lane — `RoutineEngine.executeFn` now routes through `ChannelGateway.ingest()` instead of calling the agent directly, giving scheduler messages per-channel serialization, event recording, and green UI badges; (2) Kernel tenant context — `tenantId` threaded from kernel integration through gateway constructor/ingest/processMessage into agent event log for resource tracking.
 
 ---
 
