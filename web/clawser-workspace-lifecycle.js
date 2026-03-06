@@ -60,11 +60,7 @@ import { registerExtensionTools, initExtensionBadge } from './clawser-extension-
 import { initServerManager, getServerManager } from './clawser-server.js';
 import { registerServerTools } from './clawser-server-tools.js';
 import { renderServerList, initServerPanel } from './clawser-ui-servers.js';
-import { MeshIdentityManager } from './clawser-mesh-identity.js';
-import { IdentityWallet } from './clawser-identity-wallet.js';
-import { PeerRegistry } from './clawser-peer-registry.js';
-import { PeerNode } from './clawser-peer-node.js';
-import { SwarmCoordinator } from './clawser-mesh-swarm.js';
+import { ClawserPod } from './clawser-pod.js';
 import { renderSwarmPanel, initSwarmListeners } from './clawser-ui-swarms.js';
 import { renderTransferPanel, initTransferListeners } from './clawser-ui-transfers.js';
 import { renderMeshPanel, initMeshListeners } from './clawser-ui-mesh.js';
@@ -202,42 +198,24 @@ function registerLazyPanelRenders(renders) {
 
 // ── P2P Mesh Initialization ─────────────────────────────────────
 /**
- * Initialize or reinitialize the P2P mesh subsystem.
- * Creates IdentityWallet, PeerRegistry, PeerNode, and SwarmCoordinator
- * and attaches them to `state`. Safe to call multiple times — tears down
- * the previous PeerNode if one exists.
+ * Initialize or reinitialize the P2P mesh subsystem via ClawserPod.
+ * Creates a Pod (identity, discovery, messaging) then layers on
+ * PeerNode + SwarmCoordinator. Safe to call multiple times.
  */
 async function initMeshSubsystem() {
   try {
-    // Tear down existing peer node if running
-    if (state.peerNode && state.peerNode.state === 'running') {
-      await state.peerNode.shutdown();
+    // Boot pod if not already running
+    if (!state.pod) {
+      state.pod = new ClawserPod();
+      await state.pod.boot({ discoveryTimeout: 500 });
     }
 
-    // 1. Identity manager (mesh-level, separate from AIEOS identityManager)
-    const meshIdMgr = new MeshIdentityManager();
-
-    // 2. Identity wallet — create identity eagerly so we have a podId
-    const wallet = new IdentityWallet({ identityManager: meshIdMgr });
-    await wallet.createIdentity('default');
-    const defaultId = wallet.getDefault();
-    const podId = defaultId?.podId || 'local';
-
-    // 3. Peer registry with real podId (uses lightweight stubs for trust/acl)
-    const registry = new PeerRegistry({ localPodId: podId });
-
-    // 4. PeerNode orchestrator — boot skips identity creation since one exists
-    const peerNode = new PeerNode({ wallet, registry });
-    await peerNode.boot({ label: 'default' });
-
-    // 5. SwarmCoordinator
-    const swarmCoordinator = new SwarmCoordinator(podId);
-
-    // 6. Attach to state
+    // Layer mesh networking on top of the pod
+    const { peerNode, swarmCoordinator } = await state.pod.initMesh();
     state.peerNode = peerNode;
     state.swarmCoordinator = swarmCoordinator;
 
-    console.log('[clawser] P2P mesh initialized — podId:', podId);
+    console.log('[clawser] P2P mesh initialized via ClawserPod — podId:', state.pod.podId);
   } catch (err) {
     console.warn('[clawser] P2P mesh init failed (non-fatal):', err.message);
     state.peerNode = null;

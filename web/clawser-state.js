@@ -166,6 +166,7 @@ export const state = {
     routineEngine: null,
     oauthManager: null,
     identityManager: null,
+    pod: null,
     peerNode: null,
     swarmCoordinator: null,
     modelManager: null,

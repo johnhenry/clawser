@@ -168,6 +168,9 @@ async function handleAction(action, params) {
     case 'tab_watch_poll': return actionTabWatchPoll(params);
     case 'tab_watch_stop': return actionTabWatchStop(params);
 
+    // ── Pod Injection ──
+    case 'inject_pod': return actionInjectPod(params);
+
     default:
       throw new Error(`Unknown action: ${action}`);
   }
@@ -1219,3 +1222,20 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     try { db?.close(); } catch { /* best-effort */ }
   }
 });
+
+// ── Pod Injection ───────────────────────────────────────────────
+
+/**
+ * Inject a lightweight Pod into a target tab's MAIN world.
+ * The pod-inject.js IIFE bootstraps an InjectedPod with BroadcastChannel
+ * discovery and a visual overlay indicator.
+ */
+async function actionInjectPod({ tabId }) {
+  if (!tabId) throw new Error('inject_pod requires tabId');
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ['pod-inject.js'],
+    world: 'MAIN',
+  });
+  return { ok: true, tabId };
+}
