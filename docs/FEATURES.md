@@ -356,6 +356,40 @@ Remote command execution, file transfer, PTY management, and CORS proxy via the 
 
 ---
 
+## Pod Architecture
+
+**Package**: `web/packages/pod/`
+**Integration**: `web/clawser-pod.js`, `web/clawser-embed.js`
+
+A Pod is any browser execution context that can execute code, receive messages, and be discovered/addressed. Clawser itself is a pod (`ClawserPod`). Arbitrary pages become pods via Chrome extension injection (`InjectedPod`). Developers embed pods into apps via `EmbeddedPod`.
+
+### Pod Variants
+
+| Class | File | Use Case |
+|-------|------|----------|
+| `Pod` | `packages/pod/src/pod.mjs` | Base class — identity, discovery, messaging |
+| `ClawserPod` | `clawser-pod.js` | Full workspace with mesh networking |
+| `InjectedPod` | `packages/pod/src/injected-pod.mjs` | Lightweight, injected into arbitrary pages |
+| `EmbeddedPod` | `clawser-embed.js` | Developer API for building pods into apps |
+
+### Boot Sequence
+
+Six phases: Install Runtime (Ed25519 identity generation) → Install Listeners → Self-Classification → Parent Handshake (`POD_HELLO`/`POD_HELLO_ACK`, 1s timeout) → Peer Discovery (BroadcastChannel, 2s timeout) → Role Finalization (autonomous/child/peer).
+
+### Capabilities Detection
+
+`detectCapabilities(globalThis)` returns a `PodCapabilities` object covering:
+- **Messaging**: postMessage, MessageChannel, BroadcastChannel, SharedWorker, ServiceWorker
+- **Network**: fetch, WebSocket, WebTransport, WebRTC
+- **Storage**: IndexedDB, Cache API, OPFS
+- **Compute**: WASM, SharedArrayBuffer, OffscreenCanvas
+
+### Extension Injection
+
+The `inject_pod` extension action injects `pod-inject.js` (IIFE bundle) into any tab's MAIN world. The injected pod shows a visual overlay indicator and connects to same-origin pods via BroadcastChannel. Regenerate bundle: `bash web/packages/pod/build.sh`.
+
+---
+
 ## Self-Repair
 
 **File**: `web/clawser-self-repair.js`

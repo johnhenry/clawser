@@ -27,6 +27,7 @@ These are standalone packages in `web/packages/` with their own READMEs:
 
 | Package | Path | Description |
 |---------|------|-------------|
+| **pod** | `web/packages/pod/` | Pod base class — 6-phase boot sequence (identity, discovery, messaging), zero Clawser deps. Extended by ClawserPod, InjectedPod, EmbeddedPod |
 | **andbox** | `web/packages/andbox/` | Worker-based sandboxed JS runtime with RPC capabilities, import maps, and capability gating |
 | **wsh** | `web/packages/wsh/` | Web Shell — browser-native remote command execution over WebTransport/WebSocket with Ed25519 auth |
 | **ai-matey-middleware-andbox** | `web/packages/ai-matey-middleware-andbox/` | ai.matey middleware for LLM code extraction → andbox execution |

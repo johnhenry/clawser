@@ -164,6 +164,20 @@ Stack-based undo/redo with per-turn checkpoints.
 
 **Limits:** Configurable `maxHistory` (default 20). Oldest checkpoints discarded when exceeded.
 
+## Pod Subsystem (packages/pod/ + clawser-pod.js)
+
+The Pod base class has zero Clawser dependencies. It imports only `PodIdentity` from `packages/mesh-primitives/src/identity.mjs` for Ed25519 key generation.
+
+**Boot lifecycle:** `idle → booting → ready → shutdown`. Boot runs 6 phases sequentially. If any phase throws, state resets to `idle` and `error` event fires.
+
+**Discovery protocol:** Pods announce themselves on a BroadcastChannel (default: `pod-discovery`). When a pod receives `POD_HELLO`, it responds with `POD_HELLO_ACK` and registers the peer. `POD_GOODBYE` removes a peer. Late arrivals after initial discovery are handled by the persistent `onmessage` listener.
+
+**Message routing:** `POD_MESSAGE`, `POD_RPC_REQUEST`, and `POD_RPC_RESPONSE` are delivered to the target pod via BroadcastChannel. Messages addressed to `'*'` (broadcast) are delivered to all peers. The `_onMessage()` hook allows subclasses to handle incoming messages.
+
+**ClawserPod.initMesh():** Creates `MeshIdentityManager` → `IdentityWallet` → `PeerRegistry` → `PeerNode` → `SwarmCoordinator` and returns `{ peerNode, swarmCoordinator }`. These are attached to `state.peerNode` and `state.swarmCoordinator` by `initMeshSubsystem()` in workspace lifecycle.
+
+**Runtime marker:** `globalThis[Symbol.for('pod.runtime')]` stores `{ podId, kind, capabilities, pod }`. The extension injection IIFE checks this to prevent double-injection.
+
 ## Related Files
 
 - `web/clawser-agent.js` — EventLog, HookPipeline, context compaction, scheduler
@@ -175,3 +189,6 @@ Stack-based undo/redo with per-turn checkpoints.
 - `web/clawser-memory.js` — Memory categories, embeddings, BM25
 - `web/clawser-daemon.js` — Daemon state machine, checkpoints, tab coordination
 - `web/clawser-undo.js` — Undo/redo stack
+- `web/packages/pod/src/pod.mjs` — Pod base class (boot, discovery, messaging)
+- `web/clawser-pod.js` — ClawserPod (Pod + mesh networking)
+- `web/clawser-embed.js` — EmbeddedPod (embeddable pod for external apps)

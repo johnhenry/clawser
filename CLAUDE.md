@@ -33,6 +33,8 @@ All source files are in `web/` and follow the naming pattern `clawser-{domain}.j
 - **clawser-skills.js** — SkillParser, SkillStorage, SkillRegistry
 - **clawser-shell.js** — Virtual shell with tokenizer, parser, command registry
 - **clawser-gateway.js** — ChannelGateway: per-channel queues, scope isolation, scheduler lane, tenantId threading
+- **clawser-pod.js** — ClawserPod: Pod base class + mesh networking (PeerNode, SwarmCoordinator)
+- **clawser-embed.js** — EmbeddedPod: embeddable pod for external apps (backward-compat: ClawserEmbed)
 - **clawser-mcp.js** — MCP client for external tool servers
 - **clawser-state.js** — Global state, event bus, config cache
 - **clawser-app.js** — Top-level orchestrator, workspace lifecycle

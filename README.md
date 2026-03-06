@@ -390,10 +390,13 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for a detailed breakdown.
 | `clawser-git.js` | Git behavior integration |
 | `clawser-hardware.js` | Hardware capability detection |
 | `clawser-remote.js` | Remote pairing sessions |
+| `clawser-pod.js` | ClawserPod — Pod base class + mesh networking (PeerNode, SwarmCoordinator) |
+| `clawser-embed.js` | EmbeddedPod — embeddable pod for external apps (backward-compat: ClawserEmbed) |
 
 ### Internal Packages (`web/packages/`)
 | Package | Purpose |
 |---------|---------|
+| [`pod`](web/packages/pod/) | Pod base class — 6-phase boot (identity, discovery, messaging), zero Clawser deps, extended by ClawserPod/InjectedPod/EmbeddedPod |
 | [`andbox`](web/packages/andbox/) | Worker-based sandboxed JS runtime — RPC capabilities, import maps, capability gating, timeouts |
 | [`wsh`](web/packages/wsh/) | Web Shell — browser-native remote command execution over WebTransport/WebSocket with Ed25519 auth, CBOR protocol, 33 message types |
 | [`ai-matey-middleware-andbox`](web/packages/ai-matey-middleware-andbox/) | ai.matey middleware for LLM code extraction → andbox execution |

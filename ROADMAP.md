@@ -200,14 +200,14 @@ Priority: Resilience, observability, and production readiness.
 
 Priority: Browser-native remote shell, reverse relay, session management, and MCP bridging.
 
-### Phase 5.0: Protocol & Transport — COMPLETE
+### Phase 5.0: Protocol & Transport — MOSTLY COMPLETE
 - [x] CBOR control channel with BE32 framing
 - [x] Ed25519 pubkey auth (authorized_keys)
 - [x] WebTransport + WebSocket fallback
 - [x] 50+ message types (codegen from YAML spec)
 - [x] Ping/pong keepalive
 - [x] JS client library (connect, auth, sessions, file transfer, MCP)
-- [x] Rust CLI (connect, keygen, copy-id, scp, sessions, attach)
+- [ ] Rust CLI fully complete (`copy-id` still stubbed; other major commands implemented)
 - [x] Browser wsh tools (9 tools)
 - [x] Pairing system (6-digit codes, tokens)
 
@@ -219,9 +219,10 @@ Priority: Browser-native remote shell, reverse relay, session management, and MC
 | `wsh <host> <cmd...>` / `wsh exec` | Implemented | Exec channel output relay with remote exit-code propagation |
 | `wsh scp` | Implemented | Upload/download via `wsh-client::file_transfer` |
 | `wsh tools` | Implemented | MCP discovery via `wsh-client::mcp::discover_tools` |
-| `wsh sessions` | Implemented (client-local view) | Lists active channels in the current client connection model |
-| `wsh attach` | Implemented | Sends attach request using last successful connection metadata |
-| `wsh detach` | Limited | No long-lived client process registry in this protocol version |
+| `wsh sessions` | Implemented | Server-backed visible-session listing via protocol `SessionListRequest/SessionList` |
+| `wsh attach` | Implemented | Attach request/ack flow using last successful connection metadata |
+| `wsh detach` | Implemented (marker-based) | Explicit protocol detach via last attached session marker |
+| `wsh copy-id` | Limited | Transport path still placeholder/stub |
 
 ### Phase 5.1: Gateway & Networking — COMPLETE
 - [x] TCP/UDP proxy, DNS resolution, bidirectional relay
@@ -248,16 +249,16 @@ Priority: Browser-native remote shell, reverse relay, session management, and MC
 ### Phase 5.6: Client Enhancements — COMPLETE
 - [x] URL read-only attach, session list/attach/scp/connect commands
 
-### Phase 5.7: Protocol Extensions — COMPLETE
+### Phase 5.7: Protocol Extensions — PARTIALLY COMPLETE
 - [x] Recording export, snapshots, command journal, device labels
-- [x] Background jobs, metrics, idle suspend, PTY restart, ghostty-web
-- [x] Guest sessions, multi-attach, compression, rate control
-- [x] Cross-session linking, copilot mode, E2E encryption
+- [ ] Background jobs, metrics, idle suspend, PTY restart, ghostty-web (`SuspendSession` path still returns not-implemented)
+- [ ] Guest sessions, multi-attach, compression, rate control (compression path currently rejects as not implemented)
+- [ ] Cross-session linking, copilot mode, E2E encryption (session linking path currently returns not implemented)
 - [x] Predictive echo, diff-based sync, horizontal scaling, shared sessions
-- [x] Structured file channel, policy engine
+- [ ] Structured file channel, policy engine (`FileOp` path currently returns not implemented)
 
-### Phase 5.8–5.12: Audit Fixes — COMPLETE
-See [AUDIT.md](AUDIT.md) for detailed security audit fix log (5 rounds, all resolved).
+### Phase 5.8–5.12: Audit Fixes — MOSTLY COMPLETE
+See [AUDIT.md](AUDIT.md) for detailed security audit fix log; runtime implementation gaps in Phase 5.7 are still open.
 
 ---
 
@@ -825,6 +826,20 @@ Turns Clawser into a first-class node in the BrowserMesh decentralized mesh — 
 - [x] `clawser-mesh-capabilities.js` — CapabilityToken (unforgeable, attenuate/revoke), CapabilityChain (verify monotonicity), CapabilityValidator (revokeTree cascade), WasmSandboxPolicy, WasmSandbox state machine, SandboxRegistry (~530 LOC, 72 tests)
 - [x] `clawser-mesh-delta-sync.js` — DeltaEntry, DeltaLog (append-only, auto-compaction), DeltaEncoder/Decoder (set/delete/merge ops), SyncSession, SyncCoordinator (multi-peer) (~480 LOC, 54 tests)
 - [x] `clawser-mesh-visualizations.js` — TrustGraphLayout (force-directed), TrustHeatmap, TopologySnapshot, TopologyLayout (circular/grid/hierarchical), TopologyDiff, VisualizationExporter (~520 LOC, 56 tests)
+
+### Phase 8.10: Pod Abstraction
+- [x] `web/packages/pod/src/pod.mjs` — Pod base class: 6-phase boot sequence (identity, discovery, messaging), zero Clawser deps, Ed25519 identity via mesh-primitives, BroadcastChannel peer discovery, role finalization (~300 LOC, 16 tests)
+- [x] `web/packages/pod/src/detect-kind.mjs` — Classify execution context into 8 pod kinds: service-worker, shared-worker, worker, worklet, server, iframe, spawned, window (~55 LOC, 10 tests)
+- [x] `web/packages/pod/src/capabilities.mjs` — Detect messaging/network/storage/compute capabilities from globalThis (~65 LOC, 7 tests)
+- [x] `web/packages/pod/src/messages.mjs` — Wire protocol constants and factories: POD_HELLO, POD_HELLO_ACK, POD_GOODBYE, POD_MESSAGE, POD_RPC_REQUEST, POD_RPC_RESPONSE (~135 LOC, 7 tests)
+- [x] `web/packages/pod/src/injected-pod.mjs` — InjectedPod: page text/structured extraction, visual overlay, extension bridge (~155 LOC)
+- [x] `web/clawser-pod.js` — ClawserPod extends Pod: wraps PeerNode + SwarmCoordinator via initMesh() (~75 LOC)
+- [x] `web/clawser-embed.js` — EmbeddedPod extends Pod: embeddable developer API, backward-compat ClawserEmbed alias (~60 LOC, 6 tests)
+- [x] `extension/pod-inject.js` — Generated IIFE bundle for extension injection, double-injection guard via Symbol.for('pod.runtime')
+- [x] Extension `inject_pod` action in background.js + web_accessible_resources in manifest.json
+- [x] `initMeshSubsystem()` refactored to boot ClawserPod then layer mesh networking
+- [x] `state.services.pod` slot added for Pod singleton tracking
+- [x] 6 test files, 55 tests total (pod, detect-kind, capabilities, discovery, messaging, embed)
 
 ### Scope Estimate
 | Category | Modules | Est. LOC | Est. Tests |
