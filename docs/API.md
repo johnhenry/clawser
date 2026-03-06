@@ -373,6 +373,171 @@ new ChannelGateway({ agent, tenantId?, onIngest?, onRespond?, onLog? })
 
 ---
 
+## Pod
+
+**Package**: `web/packages/pod/src/pod.mjs`
+
+Base class for all pod types. Zero Clawser dependencies.
+
+### Constructor
+
+No-arg. All configuration is via `boot(opts)`.
+
+### Lifecycle
+
+| Method | Signature | Returns | Description |
+|--------|-----------|---------|-------------|
+| `boot` | `async boot(opts?)` | `void` | Run 6-phase boot sequence. Throws if not in `idle` state. |
+| `shutdown` | `async shutdown(opts?)` | `void` | Broadcast `POD_GOODBYE`, close channels, clear peers, remove runtime marker. `opts.silent` skips the goodbye broadcast. Idempotent. |
+
+**Boot options:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `identity` | `PodIdentity` | (generated) | Pre-existing Ed25519 identity |
+| `discoveryChannel` | `string` | `'pod-discovery'` | BroadcastChannel name |
+| `handshakeTimeout` | `number` | `1000` | ms to wait for parent ACK |
+| `discoveryTimeout` | `number` | `2000` | ms to wait for peer responses |
+| `globalThis` | `object` | `globalThis` | Override for testing |
+
+### Accessors
+
+| Getter | Type | Description |
+|--------|------|-------------|
+| `podId` | `string \| null` | Base64url SHA-256 of Ed25519 public key (43 chars) |
+| `identity` | `PodIdentity \| null` | Ed25519 key pair wrapper |
+| `capabilities` | `PodCapabilities \| null` | Detected runtime capabilities |
+| `kind` | `PodKind \| null` | `'window'` \| `'iframe'` \| `'worker'` \| `'service-worker'` \| `'shared-worker'` \| `'worklet'` \| `'spawned'` \| `'server'` |
+| `role` | `PodRole` | `'autonomous'` \| `'child'` \| `'peer'` |
+| `state` | `PodState` | `'idle'` \| `'booting'` \| `'ready'` \| `'shutdown'` |
+| `peers` | `Map<string, object>` | Copy of known peers (podId → info) |
+
+### Messaging
+
+| Method | Signature | Returns | Description |
+|--------|-----------|---------|-------------|
+| `send` | `send(targetPodId, payload)` | `void` | Send to a specific peer via BroadcastChannel. Throws if not `ready`. |
+| `broadcast` | `broadcast(payload)` | `void` | Send to all peers (address: `'*'`). |
+| `on` | `on(event, cb)` | `void` | Register event listener. |
+| `off` | `off(event, cb)` | `void` | Remove event listener. |
+| `toJSON` | `toJSON()` | `object` | Serializable snapshot: `{ podId, kind, role, state, capabilities, peerCount, peers }` |
+
+### Events
+
+| Event | Data | Description |
+|-------|------|-------------|
+| `phase` | `{ phase, name }` | Each boot phase starts |
+| `ready` | `{ podId, kind, role }` | Boot complete |
+| `shutdown` | `{ podId }` | Pod shut down |
+| `error` | `{ phase, error }` | Boot phase failed |
+| `peer:found` | `{ podId, kind }` | New peer discovered |
+| `peer:lost` | `{ podId }` | Peer departed |
+| `message` | `{ type, from, to, payload, ts }` | Incoming message |
+
+### Subclass Hooks
+
+| Hook | Signature | Description |
+|------|-----------|-------------|
+| `_onInstallListeners` | `_onInstallListeners(g)` | Phase 1: install custom handlers |
+| `_onReady` | `_onReady()` | Phase 5: boot complete |
+| `_onMessage` | `_onMessage(msg)` | Incoming targeted message |
+
+---
+
+## ClawserPod
+
+**File**: `web/clawser-pod.js`
+
+Extends `Pod` with mesh networking.
+
+### Methods
+
+| Method | Signature | Returns | Description |
+|--------|-----------|---------|-------------|
+| `initMesh` | `async initMesh(opts?)` | `{ peerNode, swarmCoordinator }` | Create MeshIdentityManager, IdentityWallet, PeerRegistry, PeerNode, SwarmCoordinator. Safe to call multiple times. |
+| `shutdown` | `async shutdown(opts?)` | `void` | Shuts down PeerNode then calls `Pod.shutdown()`. |
+
+### Accessors
+
+| Getter | Type | Description |
+|--------|------|-------------|
+| `peerNode` | `PeerNode \| null` | Mesh peer node |
+| `swarmCoordinator` | `SwarmCoordinator \| null` | Swarm task coordinator |
+| `wallet` | `IdentityWallet \| null` | Identity wallet |
+| `registry` | `PeerRegistry \| null` | Peer registry |
+
+---
+
+## EmbeddedPod
+
+**File**: `web/clawser-embed.js`
+
+Extends `Pod` for embedding into external web apps. Also exported as `ClawserEmbed` for backward compatibility.
+
+### Constructor
+
+```js
+new EmbeddedPod(config?)
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `containerId` | `string` | `'clawser'` | DOM element ID to render into |
+| `provider` | `string` | `null` | Default LLM provider |
+| `model` | `string` | `null` | Default model |
+| `tools` | `object` | `{}` | Tool configuration overrides |
+| `theme` | `object` | `{}` | UI theme overrides |
+
+### Methods
+
+| Method | Signature | Returns | Description |
+|--------|-----------|---------|-------------|
+| `sendMessage` | `async sendMessage(text, opts?)` | `{ content, toolCalls }` | Send a user message to the agent |
+
+### Accessors
+
+| Getter | Type | Description |
+|--------|------|-------------|
+| `config` | `object` | Copy of the configuration |
+
+---
+
+## Exported Functions (packages/pod)
+
+### detectPodKind
+
+```js
+import { detectPodKind } from './packages/pod/src/detect-kind.mjs';
+detectPodKind(globalThis) // => 'window' | 'iframe' | 'worker' | ...
+```
+
+### detectCapabilities
+
+```js
+import { detectCapabilities } from './packages/pod/src/capabilities.mjs';
+detectCapabilities(globalThis) // => { messaging, network, storage, compute }
+```
+
+### Message Factories
+
+```js
+import { createHello, createHelloAck, createGoodbye, createMessage,
+         createRpcRequest, createRpcResponse } from './packages/pod/src/messages.mjs';
+```
+
+| Factory | Required Fields | Description |
+|---------|----------------|-------------|
+| `createHello` | `podId`, `kind` | Discovery announcement |
+| `createHelloAck` | `podId`, `kind`, `targetPodId` | Discovery response |
+| `createGoodbye` | `podId` | Graceful departure |
+| `createMessage` | `from`, `to`, `payload` | Inter-pod message |
+| `createRpcRequest` | `from`, `to`, `method`, `requestId` | RPC call (optional `params`) |
+| `createRpcResponse` | `from`, `to`, `requestId` | RPC result (optional `result`, `error`) |
+
+All factories add a `ts` (timestamp) and `type` field automatically.
+
+---
+
 ## Additional References
 
 For complete tool specifications (parameters, permissions, return values), see [TOOLS.md](TOOLS.md).
