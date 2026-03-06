@@ -12,7 +12,7 @@
 use clawser_core::agent::{Agent, StepResult};
 use clawser_core::config::AgentConfig;
 use clawser_core::memory::{InMemoryBackend, Memory, MemoryCategory, MemoryEntry, RecallOptions};
-use clawser_core::providers::{ChatResponse, MockProvider, ToolCall, TokenUsage};
+use clawser_core::providers::{ChatResponse, MockProvider, TokenUsage, ToolCall};
 use clawser_core::scheduler::{JobAction, Schedule, Scheduler};
 use clawser_core::tools::{MockTool, ToolRegistry, ToolResult};
 
@@ -38,7 +38,10 @@ fn main() {
     );
 
     let mut tools = ToolRegistry::new();
-    tools.register(Box::new(MockTool::new("file_write", ToolResult::success("Written"))));
+    tools.register(Box::new(MockTool::new(
+        "file_write",
+        ToolResult::success("Written"),
+    )));
     tools.register(Box::new(MockTool::new("web_fetch", ToolResult::success(
         r#"{"flights": [{"price": 850, "airline": "ANA"}, {"price": 920, "airline": "JAL"}], "weather": "cherry blossom season, 15-20C"}"#
     ))));
@@ -50,19 +53,31 @@ fn main() {
     println!("[Goal] Created: {goal_id}");
 
     // Store user preferences
-    memory.store(MemoryEntry {
-        id: String::new(), key: "trip_dates".to_string(),
-        content: "Trip dates: April 5-10, 2026. 5 nights.".to_string(),
-        category: MemoryCategory::Core, timestamp: 1000,
-        session_id: None, score: None, embedding: None,
-    }).unwrap();
+    memory
+        .store(MemoryEntry {
+            id: String::new(),
+            key: "trip_dates".to_string(),
+            content: "Trip dates: April 5-10, 2026. 5 nights.".to_string(),
+            category: MemoryCategory::Core,
+            timestamp: 1000,
+            session_id: None,
+            score: None,
+            embedding: None,
+        })
+        .unwrap();
 
-    memory.store(MemoryEntry {
-        id: String::new(), key: "trip_budget".to_string(),
-        content: "Budget: $3000 total. Prefer mid-range hotels, $150-200/night.".to_string(),
-        category: MemoryCategory::Core, timestamp: 1000,
-        session_id: None, score: None, embedding: None,
-    }).unwrap();
+    memory
+        .store(MemoryEntry {
+            id: String::new(),
+            key: "trip_budget".to_string(),
+            content: "Budget: $3000 total. Prefer mid-range hotels, $150-200/night.".to_string(),
+            category: MemoryCategory::Core,
+            timestamp: 1000,
+            session_id: None,
+            score: None,
+            embedding: None,
+        })
+        .unwrap();
 
     // Research flights and weather
     let provider = MockProvider::new("trip-planner")
@@ -117,14 +132,18 @@ fn main() {
         - TeamLab Borderless\n\
         - Tsukiji Outer Market\n\
         - Departure prep\n";
-    println!("[Artifact] tokyo-itinerary-v1.md ({} chars)", itinerary_v1.len());
+    println!(
+        "[Artifact] tokyo-itinerary-v1.md ({} chars)",
+        itinerary_v1.len()
+    );
 
     // Schedule price monitoring
     let price_job = scheduler.add(
         "Check hotel prices",
         Schedule::Every(86_400_000), // Daily
         JobAction::AgentPrompt {
-            prompt: "Check current Tokyo hotel prices for April 5-10 and compare with previous".to_string(),
+            prompt: "Check current Tokyo hotel prices for April 5-10 and compare with previous"
+                .to_string(),
         },
         1000,
     );
@@ -134,19 +153,31 @@ fn main() {
     sep("SESSION 2: User feedback + itinerary v2");
 
     // User provides preferences
-    memory.store(MemoryEntry {
-        id: String::new(), key: "preference_quiet".to_string(),
-        content: "USER PREFERENCE: Prefers quieter neighborhoods. No Kabukicho. \
-                  Interested in architecture and food, not shopping.".to_string(),
-        category: MemoryCategory::Core, timestamp: 2000,
-        session_id: None, score: None, embedding: None,
-    }).unwrap();
+    memory
+        .store(MemoryEntry {
+            id: String::new(),
+            key: "preference_quiet".to_string(),
+            content: "USER PREFERENCE: Prefers quieter neighborhoods. No Kabukicho. \
+                  Interested in architecture and food, not shopping."
+                .to_string(),
+            category: MemoryCategory::Core,
+            timestamp: 2000,
+            session_id: None,
+            score: None,
+            embedding: None,
+        })
+        .unwrap();
     println!("[Memory] Stored preference: quieter neighborhoods, architecture, food");
 
     // Agent recalls preferences to refine
-    let prefs = memory.recall("preference", &RecallOptions::new().with_limit(10)).unwrap();
+    let prefs = memory
+        .recall("preference", &RecallOptions::new().with_limit(10))
+        .unwrap();
     assert!(!prefs.is_empty());
-    println!("[Memory] Recalled {} preferences for refinement", prefs.len());
+    println!(
+        "[Memory] Recalled {} preferences for refinement",
+        prefs.len()
+    );
 
     // Generate v2 itinerary (adapted)
     let itinerary_v2 = "# Tokyo Trip Itinerary v2 (Revised)\n\n\
@@ -170,9 +201,18 @@ fn main() {
         - Nezu Shrine + Nezu neighborhood\n\
         - Last ramen stop\n\
         - Departure\n";
-    println!("[Artifact] tokyo-itinerary-v2.md ({} chars)", itinerary_v2.len());
-    assert!(!itinerary_v2.contains("Kabukicho"), "v2 should respect quiet preference");
-    assert!(itinerary_v2.contains("Architecture"), "v2 should feature architecture");
+    println!(
+        "[Artifact] tokyo-itinerary-v2.md ({} chars)",
+        itinerary_v2.len()
+    );
+    assert!(
+        !itinerary_v2.contains("Kabukicho"),
+        "v2 should respect quiet preference"
+    );
+    assert!(
+        itinerary_v2.contains("Architecture"),
+        "v2 should feature architecture"
+    );
 
     // ── Session 3: Price alert fires ────────────────────────────
     sep("SESSION 3: Scheduled price check fires");
@@ -182,25 +222,40 @@ fn main() {
     println!("[Scheduler] Price check job fired");
 
     // Simulate price drop discovery
-    memory.store(MemoryEntry {
-        id: String::new(), key: "price_alert_hotel".to_string(),
-        content: "PRICE DROP: Hotel Gracery Shinjuku dropped from $180/night to $145/night. \
-                  Saves $175 total. Still available for Apr 5-10.".to_string(),
-        category: MemoryCategory::Daily, timestamp: 3000,
-        session_id: None, score: None, embedding: None,
-    }).unwrap();
+    memory
+        .store(MemoryEntry {
+            id: String::new(),
+            key: "price_alert_hotel".to_string(),
+            content: "PRICE DROP: Hotel Gracery Shinjuku dropped from $180/night to $145/night. \
+                  Saves $175 total. Still available for Apr 5-10."
+                .to_string(),
+            category: MemoryCategory::Daily,
+            timestamp: 3000,
+            session_id: None,
+            score: None,
+            embedding: None,
+        })
+        .unwrap();
     println!("[Alert] Hotel price drop detected: $180 -> $145/night (-$175 total)");
 
-    memory.store(MemoryEntry {
-        id: String::new(), key: "price_alert_flight".to_string(),
-        content: "FLIGHT UPDATE: ANA roundtrip now $790 (was $850). Save $60.".to_string(),
-        category: MemoryCategory::Daily, timestamp: 3000,
-        session_id: None, score: None, embedding: None,
-    }).unwrap();
+    memory
+        .store(MemoryEntry {
+            id: String::new(),
+            key: "price_alert_flight".to_string(),
+            content: "FLIGHT UPDATE: ANA roundtrip now $790 (was $850). Save $60.".to_string(),
+            category: MemoryCategory::Daily,
+            timestamp: 3000,
+            session_id: None,
+            score: None,
+            embedding: None,
+        })
+        .unwrap();
     println!("[Alert] Flight price drop: ANA $850 -> $790 (-$60)");
 
     // Update cost tracking
-    let alerts = memory.recall("price", &RecallOptions::new().with_limit(10)).unwrap();
+    let alerts = memory
+        .recall("price", &RecallOptions::new().with_limit(10))
+        .unwrap();
     println!("[Memory] {} price alerts accumulated", alerts.len());
     assert!(alerts.len() >= 2);
 
@@ -213,7 +268,10 @@ fn main() {
     // Verify all data persisted
     let total = memory.count(None).unwrap();
     println!("[Memory] Total entries: {total}");
-    assert!(total >= 5, "Should have dates, budget, preferences, prices, alerts");
+    assert!(
+        total >= 5,
+        "Should have dates, budget, preferences, prices, alerts"
+    );
 
     sep("SUMMARY");
     println!("  Demonstrated capabilities:");

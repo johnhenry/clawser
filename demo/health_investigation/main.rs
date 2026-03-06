@@ -15,9 +15,9 @@
 use clawser_core::agent::{Agent, GoalStatus, StepResult};
 use clawser_core::checkpoint::{Checkpoint, CheckpointManager};
 use clawser_core::config::AgentConfig;
-use clawser_core::events::{Event, EventBus, topics};
+use clawser_core::events::{topics, Event, EventBus};
 use clawser_core::memory::{InMemoryBackend, Memory, MemoryCategory, MemoryEntry, RecallOptions};
-use clawser_core::providers::{ChatResponse, MockProvider, ToolCall, TokenUsage};
+use clawser_core::providers::{ChatResponse, MockProvider, TokenUsage, ToolCall};
 use clawser_core::scheduler::{JobAction, Schedule, Scheduler};
 use clawser_core::session::Session;
 use clawser_core::tools::{MockTool, ToolRegistry, ToolResult};
@@ -63,7 +63,9 @@ fn main() {
     )));
     tools.register(Box::new(MockTool::new(
         "web_fetch",
-        ToolResult::success(r#"{"results": ["Tension headaches linked to screen time and dehydration"]}"#),
+        ToolResult::success(
+            r#"{"results": ["Tension headaches linked to screen time and dehydration"]}"#,
+        ),
     )));
 
     // ═══════════════════════════════════════════════════════════
@@ -90,7 +92,10 @@ fn main() {
                 })
                 .to_string(),
             }],
-            usage: TokenUsage { input_tokens: 150, output_tokens: 80 },
+            usage: TokenUsage {
+                input_tokens: 150,
+                output_tokens: 80,
+            },
             model: "mock".to_string(),
             reasoning_content: None,
         })
@@ -99,7 +104,10 @@ fn main() {
                       Please describe your first symptom episode."
                 .to_string(),
             tool_calls: vec![],
-            usage: TokenUsage { input_tokens: 100, output_tokens: 40 },
+            usage: TokenUsage {
+                input_tokens: 100,
+                output_tokens: 40,
+            },
             model: "mock".to_string(),
             reasoning_content: None,
         });
@@ -179,10 +187,11 @@ fn main() {
     assert!(recalled.len() >= 2, "Should find both symptom reports");
 
     // Pattern detection: both episodes involve long screen time
-    let pattern_match = recalled
-        .iter()
-        .all(|e| e.content.contains("screen time"));
-    assert!(pattern_match, "All recalled entries should mention screen time");
+    let pattern_match = recalled.iter().all(|e| e.content.contains("screen time"));
+    assert!(
+        pattern_match,
+        "All recalled entries should mention screen time"
+    );
     println!("[Analysis] Pattern detected: all episodes correlate with extended screen time");
 
     // Store the pattern as a core memory
@@ -239,7 +248,10 @@ fn main() {
                 })
                 .to_string(),
             }],
-            usage: TokenUsage { input_tokens: 200, output_tokens: 50 },
+            usage: TokenUsage {
+                input_tokens: 200,
+                output_tokens: 50,
+            },
             model: "mock".to_string(),
             reasoning_content: None,
         })
@@ -249,7 +261,10 @@ fn main() {
                       (every 20 min, look 20 feet away for 20 seconds) is recommended."
                 .to_string(),
             tool_calls: vec![],
-            usage: TokenUsage { input_tokens: 300, output_tokens: 120 },
+            usage: TokenUsage {
+                input_tokens: 300,
+                output_tokens: 120,
+            },
             model: "mock".to_string(),
             reasoning_content: None,
         });
@@ -306,7 +321,10 @@ fn main() {
         briefing.push_str(&format!("- {}\n", entry.content));
     }
     briefing.push_str("\n## Research Findings\n\n");
-    for entry in all_findings.iter().filter(|e| e.key.starts_with("research")) {
+    for entry in all_findings
+        .iter()
+        .filter(|e| e.key.starts_with("research"))
+    {
         briefing.push_str(&format!("- {}\n", entry.content));
     }
     briefing.push_str("\n## Questions for Doctor\n\n");
@@ -314,7 +332,10 @@ fn main() {
     briefing.push_str("2. Should I get an eye exam?\n");
     briefing.push_str("3. Are there preventive medications worth considering?\n");
 
-    println!("[Artifact] Generated doctor briefing ({} chars)", briefing.len());
+    println!(
+        "[Artifact] Generated doctor briefing ({} chars)",
+        briefing.len()
+    );
     assert!(briefing.contains("Symptom Timeline"));
     assert!(briefing.contains("Identified Patterns"));
     assert!(briefing.contains("Research Findings"));
@@ -349,7 +370,10 @@ fn main() {
     final_ckpt.session_history = agent.history.clone();
     final_ckpt.active_goals = agent.goals.clone();
     let (final_id, final_data) = checkpoint_mgr.save(&final_ckpt).unwrap();
-    println!("[Checkpoint] Final saved: {final_id} ({} bytes)", final_data.len());
+    println!(
+        "[Checkpoint] Final saved: {final_id} ({} bytes)",
+        final_data.len()
+    );
 
     // ── Verify checkpoint restore ───────────────────────────────
     let restored = Checkpoint::from_bytes(&final_data).unwrap();
@@ -361,7 +385,10 @@ fn main() {
     let total = memory.count(None).unwrap();
     let core = memory.count(Some(&MemoryCategory::Core)).unwrap();
     println!("[Memory] Total entries: {total}, Core entries: {core}");
-    assert!(total >= 5, "Should have symptom reports + patterns + research + diagnosis");
+    assert!(
+        total >= 5,
+        "Should have symptom reports + patterns + research + diagnosis"
+    );
 
     // ═══════════════════════════════════════════════════════════
     separator("SUMMARY");

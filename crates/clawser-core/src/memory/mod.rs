@@ -161,9 +161,9 @@ impl Memory for InMemoryBackend {
                 // Word-level keyword matching: entry must contain at least one query term
                 let content_lower = e.content.to_lowercase();
                 let key_lower = e.key.to_lowercase();
-                query_terms.iter().any(|term| {
-                    content_lower.contains(term) || key_lower.contains(term)
-                })
+                query_terms
+                    .iter()
+                    .any(|term| content_lower.contains(term) || key_lower.contains(term))
             })
             .cloned()
             .map(|mut e| {
@@ -349,8 +349,12 @@ mod tests {
     #[test]
     fn test_in_memory_store_assigns_id() {
         let mut mem = InMemoryBackend::new();
-        let id1 = mem.store(make_entry("a", "b", MemoryCategory::Core)).unwrap();
-        let id2 = mem.store(make_entry("c", "d", MemoryCategory::Core)).unwrap();
+        let id1 = mem
+            .store(make_entry("a", "b", MemoryCategory::Core))
+            .unwrap();
+        let id2 = mem
+            .store(make_entry("c", "d", MemoryCategory::Core))
+            .unwrap();
         assert_ne!(id1, id2);
         assert!(id1.starts_with("mem_"));
     }
@@ -358,9 +362,12 @@ mod tests {
     #[test]
     fn test_in_memory_recall() {
         let mut mem = InMemoryBackend::new();
-        mem.store(make_entry("fact", "The sky is blue", MemoryCategory::Core)).unwrap();
-        mem.store(make_entry("pref", "User likes red", MemoryCategory::Core)).unwrap();
-        mem.store(make_entry("log", "Meeting at 3pm", MemoryCategory::Daily)).unwrap();
+        mem.store(make_entry("fact", "The sky is blue", MemoryCategory::Core))
+            .unwrap();
+        mem.store(make_entry("pref", "User likes red", MemoryCategory::Core))
+            .unwrap();
+        mem.store(make_entry("log", "Meeting at 3pm", MemoryCategory::Daily))
+            .unwrap();
 
         let results = mem.recall("sky", &RecallOptions::new()).unwrap();
         assert_eq!(results.len(), 1);
@@ -370,8 +377,10 @@ mod tests {
     #[test]
     fn test_in_memory_recall_with_category_filter() {
         let mut mem = InMemoryBackend::new();
-        mem.store(make_entry("a", "hello world", MemoryCategory::Core)).unwrap();
-        mem.store(make_entry("b", "hello again", MemoryCategory::Daily)).unwrap();
+        mem.store(make_entry("a", "hello world", MemoryCategory::Core))
+            .unwrap();
+        mem.store(make_entry("b", "hello again", MemoryCategory::Daily))
+            .unwrap();
 
         let opts = RecallOptions::new().with_category(MemoryCategory::Core);
         let results = mem.recall("hello", &opts).unwrap();
@@ -383,8 +392,12 @@ mod tests {
     fn test_in_memory_recall_with_limit() {
         let mut mem = InMemoryBackend::new();
         for i in 0..20 {
-            mem.store(make_entry(&format!("k{i}"), &format!("content {i}"), MemoryCategory::Core))
-                .unwrap();
+            mem.store(make_entry(
+                &format!("k{i}"),
+                &format!("content {i}"),
+                MemoryCategory::Core,
+            ))
+            .unwrap();
         }
 
         let opts = RecallOptions::new().with_limit(5);
@@ -395,7 +408,9 @@ mod tests {
     #[test]
     fn test_in_memory_forget() {
         let mut mem = InMemoryBackend::new();
-        let id = mem.store(make_entry("temp", "delete me", MemoryCategory::Daily)).unwrap();
+        let id = mem
+            .store(make_entry("temp", "delete me", MemoryCategory::Daily))
+            .unwrap();
 
         assert_eq!(mem.count(None).unwrap(), 1);
         assert!(mem.forget(&id).unwrap());
@@ -406,9 +421,12 @@ mod tests {
     #[test]
     fn test_in_memory_list() {
         let mut mem = InMemoryBackend::new();
-        mem.store(make_entry("a", "core1", MemoryCategory::Core)).unwrap();
-        mem.store(make_entry("b", "daily1", MemoryCategory::Daily)).unwrap();
-        mem.store(make_entry("c", "core2", MemoryCategory::Core)).unwrap();
+        mem.store(make_entry("a", "core1", MemoryCategory::Core))
+            .unwrap();
+        mem.store(make_entry("b", "daily1", MemoryCategory::Daily))
+            .unwrap();
+        mem.store(make_entry("c", "core2", MemoryCategory::Core))
+            .unwrap();
 
         let all = mem.list(None, 0).unwrap();
         assert_eq!(all.len(), 3);
@@ -422,8 +440,10 @@ mod tests {
         let mut mem = InMemoryBackend::new();
         assert_eq!(mem.count(None).unwrap(), 0);
 
-        mem.store(make_entry("a", "x", MemoryCategory::Core)).unwrap();
-        mem.store(make_entry("b", "y", MemoryCategory::Daily)).unwrap();
+        mem.store(make_entry("a", "x", MemoryCategory::Core))
+            .unwrap();
+        mem.store(make_entry("b", "y", MemoryCategory::Daily))
+            .unwrap();
 
         assert_eq!(mem.count(None).unwrap(), 2);
         assert_eq!(mem.count(Some(&MemoryCategory::Core)).unwrap(), 1);
@@ -440,9 +460,14 @@ mod tests {
     #[test]
     fn test_noop_memory() {
         let mut mem = NoopMemory;
-        let id = mem.store(make_entry("k", "v", MemoryCategory::Core)).unwrap();
+        let id = mem
+            .store(make_entry("k", "v", MemoryCategory::Core))
+            .unwrap();
         assert!(id.is_empty()); // NoopMemory returns the entry's empty id
-        assert!(mem.recall("anything", &RecallOptions::new()).unwrap().is_empty());
+        assert!(mem
+            .recall("anything", &RecallOptions::new())
+            .unwrap()
+            .is_empty());
         assert!(mem.get("any_id").unwrap().is_none());
         assert!(mem.list(None, 10).unwrap().is_empty());
         assert!(!mem.forget("any").unwrap());
@@ -531,7 +556,8 @@ mod tests {
     #[test]
     fn test_recall_case_insensitive() {
         let mut mem = InMemoryBackend::new();
-        mem.store(make_entry("k", "The SKY is Blue", MemoryCategory::Core)).unwrap();
+        mem.store(make_entry("k", "The SKY is Blue", MemoryCategory::Core))
+            .unwrap();
 
         let results = mem.recall("sky", &RecallOptions::new()).unwrap();
         assert_eq!(results.len(), 1);
@@ -543,7 +569,8 @@ mod tests {
     #[test]
     fn test_recall_matches_key_too() {
         let mut mem = InMemoryBackend::new();
-        mem.store(make_entry("weather", "sunny today", MemoryCategory::Core)).unwrap();
+        mem.store(make_entry("weather", "sunny today", MemoryCategory::Core))
+            .unwrap();
 
         let results = mem.recall("weather", &RecallOptions::new()).unwrap();
         assert_eq!(results.len(), 1);

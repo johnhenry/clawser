@@ -56,7 +56,8 @@ impl PeerRegistry {
         username: String,
         capabilities: Vec<String>,
     ) -> u64 {
-        self.register_with_conn_id(fingerprint, username, capabilities, None).await
+        self.register_with_conn_id(fingerprint, username, capabilities, None)
+            .await
     }
 
     /// Register a peer with an explicit server-assigned connection ID.

@@ -229,7 +229,10 @@ pub extern "C" fn clawser_register_tool_spec(json_ptr: *const u8, json_len: u32)
     };
 
     let rt = state::get();
-    host::log(2, &format!("clawser: registered external tool '{}'", spec.name));
+    host::log(
+        2,
+        &format!("clawser: registered external tool '{}'", spec.name),
+    );
     rt.tools.register_external(spec);
     0
 }
@@ -385,7 +388,10 @@ pub extern "C" fn clawser_memory_recall(
     let rt = state::get();
     // Use higher limit for empty queries (list all) vs search queries
     let limit = if query.trim().is_empty() { 1000 } else { 20 };
-    match rt.memory.recall(query, &RecallOptions::new().with_limit(limit)) {
+    match rt
+        .memory
+        .recall(query, &RecallOptions::new().with_limit(limit))
+    {
         Ok(entries) => {
             let json = serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string());
             write_to_buffer(&json, out_ptr, max_len)

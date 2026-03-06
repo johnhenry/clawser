@@ -112,18 +112,16 @@ fn parse_webtransport_url(url: &str) -> WshResult<(String, String)> {
     } else if url.to_lowercase().starts_with("wt://") {
         &url[5..]
     } else {
-        return Err(WshError::Transport(format!("invalid WebTransport URL: {url}")));
+        return Err(WshError::Transport(format!(
+            "invalid WebTransport URL: {url}"
+        )));
     };
 
     // Strip path
     let host_port = without_scheme.split('/').next().unwrap_or(without_scheme);
 
     // Extract server name (without port)
-    let server_name = host_port
-        .split(':')
-        .next()
-        .unwrap_or(host_port)
-        .to_string();
+    let server_name = host_port.split(':').next().unwrap_or(host_port).to_string();
 
     // Default port for QUIC/WebTransport
     let addr = if host_port.contains(':') {
@@ -141,14 +139,26 @@ mod tests {
 
     #[test]
     fn detect_websocket() {
-        assert_eq!(detect_transport("ws://localhost:8080").unwrap(), TransportKind::WebSocket);
-        assert_eq!(detect_transport("wss://example.com").unwrap(), TransportKind::WebSocket);
+        assert_eq!(
+            detect_transport("ws://localhost:8080").unwrap(),
+            TransportKind::WebSocket
+        );
+        assert_eq!(
+            detect_transport("wss://example.com").unwrap(),
+            TransportKind::WebSocket
+        );
     }
 
     #[test]
     fn detect_webtransport() {
-        assert_eq!(detect_transport("https://example.com:4433").unwrap(), TransportKind::WebTransport);
-        assert_eq!(detect_transport("wt://example.com:4433").unwrap(), TransportKind::WebTransport);
+        assert_eq!(
+            detect_transport("https://example.com:4433").unwrap(),
+            TransportKind::WebTransport
+        );
+        assert_eq!(
+            detect_transport("wt://example.com:4433").unwrap(),
+            TransportKind::WebTransport
+        );
     }
 
     #[test]

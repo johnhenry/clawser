@@ -55,14 +55,18 @@ fn main() {
         ("axios", "1.6.0"),
     ];
     for (pkg, ver) in &deps {
-        memory.store(MemoryEntry {
-            id: String::new(),
-            key: format!("dep_{pkg}"),
-            content: format!("Dependency: {pkg}@{ver}"),
-            category: MemoryCategory::Core,
-            timestamp: 1000,
-            session_id: None, score: None, embedding: None,
-        }).unwrap();
+        memory
+            .store(MemoryEntry {
+                id: String::new(),
+                key: format!("dep_{pkg}"),
+                content: format!("Dependency: {pkg}@{ver}"),
+                category: MemoryCategory::Core,
+                timestamp: 1000,
+                session_id: None,
+                score: None,
+                embedding: None,
+            })
+            .unwrap();
     }
     println!("[Memory] Tracked {} dependencies", deps.len());
 
@@ -95,10 +99,13 @@ fn main() {
         key: "cve_2024_1234".to_string(),
         content: "CVE-2024-1234 | axios@1.6.0 | HIGH | SSRF via redirect following. \
                   Impact: Our API proxy uses axios for external requests – EXPLOITABLE. \
-                  Remediation: Upgrade to axios@1.7.0+".to_string(),
+                  Remediation: Upgrade to axios@1.7.0+"
+            .to_string(),
         category: MemoryCategory::Custom("security".to_string()),
         timestamp: 2000,
-        session_id: None, score: None, embedding: None,
+        session_id: None,
+        score: None,
+        embedding: None,
     };
     memory.store(cve_1).unwrap();
     println!("[CVE] NEW: CVE-2024-1234 (axios, HIGH severity, EXPLOITABLE)");
@@ -127,7 +134,9 @@ fn main() {
     println!("[Scheduler] Daily scan fired");
 
     // Check if CVE already known
-    let known = memory.recall("CVE-2024-1234", &RecallOptions::new()).unwrap();
+    let known = memory
+        .recall("CVE-2024-1234", &RecallOptions::new())
+        .unwrap();
     assert!(!known.is_empty(), "Should already know about this CVE");
     println!("[Dedup] CVE-2024-1234 already known – no new alert");
 
@@ -142,43 +151,56 @@ fn main() {
         key: "cve_2024_5678".to_string(),
         content: "CVE-2024-5678 | lodash@4.17.21 | MEDIUM | Prototype pollution in merge(). \
                   Impact: We use lodash.merge in config loading – POTENTIALLY EXPLOITABLE. \
-                  Remediation: Upgrade to lodash@4.17.22+ or use structuredClone".to_string(),
+                  Remediation: Upgrade to lodash@4.17.22+ or use structuredClone"
+            .to_string(),
         category: MemoryCategory::Custom("security".to_string()),
         timestamp: 4000,
-        session_id: None, score: None, embedding: None,
+        session_id: None,
+        score: None,
+        embedding: None,
     };
 
     // Verify it's genuinely new
-    let existing = memory.recall("CVE-2024-5678", &RecallOptions::new()).unwrap();
+    let existing = memory
+        .recall("CVE-2024-5678", &RecallOptions::new())
+        .unwrap();
     assert!(existing.is_empty(), "This CVE should be new");
     memory.store(cve_2).unwrap();
     println!("[CVE] NEW: CVE-2024-5678 (lodash, MEDIUM severity, POTENTIALLY EXPLOITABLE)");
     println!("[Notify] Browser notification: 'New vulnerability in lodash'");
 
     // Verify accumulation
-    let all_cves = memory.recall(
-        "CVE",
-        &RecallOptions::new()
-            .with_category(MemoryCategory::Custom("security".to_string()))
-            .with_limit(20),
-    ).unwrap();
+    let all_cves = memory
+        .recall(
+            "CVE",
+            &RecallOptions::new()
+                .with_category(MemoryCategory::Custom("security".to_string()))
+                .with_limit(20),
+        )
+        .unwrap();
     println!("[Memory] Total CVEs tracked: {}", all_cves.len());
     assert_eq!(all_cves.len(), 2, "Should have exactly 2 CVEs");
 
     // ── Day 7: Remediation complete ─────────────────────────────
     sep("DAY 7: Remediation applied");
 
-    memory.store(MemoryEntry {
-        id: String::new(),
-        key: "remediation_axios".to_string(),
-        content: "RESOLVED: axios upgraded to 1.7.2. CVE-2024-1234 mitigated.".to_string(),
-        category: MemoryCategory::Custom("security".to_string()),
-        timestamp: 7000,
-        session_id: None, score: None, embedding: None,
-    }).unwrap();
+    memory
+        .store(MemoryEntry {
+            id: String::new(),
+            key: "remediation_axios".to_string(),
+            content: "RESOLVED: axios upgraded to 1.7.2. CVE-2024-1234 mitigated.".to_string(),
+            category: MemoryCategory::Custom("security".to_string()),
+            timestamp: 7000,
+            session_id: None,
+            score: None,
+            embedding: None,
+        })
+        .unwrap();
     println!("[Remediation] axios upgraded to 1.7.2 – CVE-2024-1234 resolved");
 
-    let total = memory.count(Some(&MemoryCategory::Custom("security".to_string()))).unwrap();
+    let total = memory
+        .count(Some(&MemoryCategory::Custom("security".to_string())))
+        .unwrap();
     println!("[Memory] Security entries: {total}");
 
     sep("SUMMARY");

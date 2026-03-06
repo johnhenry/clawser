@@ -108,24 +108,19 @@ mod tests {
     #[test]
     fn test_mock_provider_empty_returns_error() {
         let provider = MockProvider::new("test");
-        let result = provider.chat(
-            &[ChatMessage::user("test")],
-            None,
-            &ChatOptions::default(),
-        );
+        let result = provider.chat(&[ChatMessage::user("test")], None, &ChatOptions::default());
         assert!(result.is_err());
     }
 
     #[test]
     fn test_mock_provider_remaining_count() {
-        let provider = MockProvider::new("test")
-            .with_response(ChatResponse {
-                content: "a".to_string(),
-                tool_calls: vec![],
-                usage: TokenUsage::default(),
-                model: "m".to_string(),
-                reasoning_content: None,
-            });
+        let provider = MockProvider::new("test").with_response(ChatResponse {
+            content: "a".to_string(),
+            tool_calls: vec![],
+            usage: TokenUsage::default(),
+            model: "m".to_string(),
+            reasoning_content: None,
+        });
         assert_eq!(provider.remaining_responses(), 1);
         let _ = provider.chat(&[ChatMessage::user("x")], None, &ChatOptions::default());
         assert_eq!(provider.remaining_responses(), 0);
@@ -149,7 +144,11 @@ mod tests {
         });
 
         let result = provider
-            .chat(&[ChatMessage::user("read a file")], None, &ChatOptions::default())
+            .chat(
+                &[ChatMessage::user("read a file")],
+                None,
+                &ChatOptions::default(),
+            )
             .unwrap();
         assert!(result.content.is_empty());
         assert_eq!(result.tool_calls.len(), 1);

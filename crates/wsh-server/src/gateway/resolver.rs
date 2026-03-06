@@ -36,7 +36,10 @@ impl DnsResolver {
     ///
     /// The returned TTL is always `None` because `tokio::net::lookup_host`
     /// does not expose DNS TTL information.
-    pub async fn resolve(name: &str, record_type: &str) -> Result<(Vec<String>, Option<u32>), String> {
+    pub async fn resolve(
+        name: &str,
+        record_type: &str,
+    ) -> Result<(Vec<String>, Option<u32>), String> {
         // Append a port for lookup_host (required by the API)
         let lookup_addr = format!("{}:0", name);
 
@@ -81,7 +84,10 @@ mod tests {
         let result = DnsResolver::resolve("localhost", "A").await;
         assert!(result.is_ok(), "localhost should resolve: {:?}", result);
         let (addrs, _ttl) = result.unwrap();
-        assert!(!addrs.is_empty(), "localhost should have at least one address");
+        assert!(
+            !addrs.is_empty(),
+            "localhost should have at least one address"
+        );
         assert!(
             addrs.iter().any(|a| a == "127.0.0.1"),
             "localhost should resolve to 127.0.0.1, got: {:?}",

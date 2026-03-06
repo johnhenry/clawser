@@ -146,11 +146,7 @@ impl Agent {
     }
 
     /// Run one step of the agent loop.
-    pub fn step(
-        &mut self,
-        provider: &dyn Provider,
-        tools: &ToolRegistry,
-    ) -> StepResult {
+    pub fn step(&mut self, provider: &dyn Provider, tools: &ToolRegistry) -> StepResult {
         match self.state {
             AgentState::Idle => StepResult::Idle,
 
@@ -162,11 +158,7 @@ impl Agent {
                 };
 
                 let options = ChatOptions::default();
-                let result = provider.chat(
-                    &self.history,
-                    tool_specs.as_deref(),
-                    &options,
-                );
+                let result = provider.chat(&self.history, tool_specs.as_deref(), &options);
 
                 match result {
                     Ok(response) => {
@@ -267,7 +259,8 @@ impl Agent {
                     result.error.unwrap_or_else(|| "unknown error".to_string())
                 )
             };
-            self.history.push(ChatMessage::tool_result(call_id, content));
+            self.history
+                .push(ChatMessage::tool_result(call_id, content));
         }
     }
 
@@ -427,13 +420,12 @@ mod tests {
     #[test]
     fn test_agent_step_tool_calls() {
         let mut agent = default_agent();
-        let provider = MockProvider::new("test").with_response(make_tool_response(vec![
-            ToolCall {
+        let provider =
+            MockProvider::new("test").with_response(make_tool_response(vec![ToolCall {
                 id: "tc_1".to_string(),
                 name: "file_read".to_string(),
                 arguments: r#"{"path": "/test.md"}"#.to_string(),
-            },
-        ]));
+            }]));
         let tools = ToolRegistry::new();
 
         agent.on_message("Read a file");
@@ -446,13 +438,12 @@ mod tests {
     #[test]
     fn test_agent_execute_tools() {
         let mut agent = default_agent();
-        let provider = MockProvider::new("test").with_response(make_tool_response(vec![
-            ToolCall {
+        let provider =
+            MockProvider::new("test").with_response(make_tool_response(vec![ToolCall {
                 id: "tc_1".to_string(),
                 name: "echo".to_string(),
                 arguments: "{}".to_string(),
-            },
-        ]));
+            }]));
 
         let mut tools = ToolRegistry::new();
         tools.register(Box::new(MockTool::new(
@@ -485,7 +476,10 @@ mod tests {
         let tools = ToolRegistry::new();
         let result = agent.step(&provider, &tools);
 
-        assert!(matches!(result, StepResult::Error(AgentError::ToolIterationLimit(2))));
+        assert!(matches!(
+            result,
+            StepResult::Error(AgentError::ToolIterationLimit(2))
+        ));
     }
 
     #[test]
@@ -603,7 +597,9 @@ mod tests {
 
         // Add enough messages to exceed 80% of 100 tokens
         for _ in 0..30 {
-            agent.history.push(ChatMessage::user("This is a moderately long message for testing purposes"));
+            agent.history.push(ChatMessage::user(
+                "This is a moderately long message for testing purposes",
+            ));
         }
         assert!(agent.needs_compaction(&provider));
     }

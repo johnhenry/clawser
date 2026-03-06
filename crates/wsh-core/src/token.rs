@@ -3,8 +3,8 @@
 //! Tokens allow clients to re-attach to sessions without re-authenticating.
 //! Format: `[8-byte expiry][32-byte HMAC-SHA256]`
 
-use ring::hmac;
 use crate::error::{WshError, WshResult};
+use ring::hmac;
 
 /// Create a session token.
 ///

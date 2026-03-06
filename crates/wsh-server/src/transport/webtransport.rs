@@ -25,9 +25,8 @@ pub async fn start_listener(
     bind_addr: SocketAddr,
     tls_config: Arc<rustls::ServerConfig>,
 ) -> WshResult<(quinn::Endpoint, mpsc::Receiver<WebTransportConnection>)> {
-    let quic_server_config =
-        quinn::crypto::rustls::QuicServerConfig::try_from(tls_config)
-            .map_err(|e| WshError::Transport(format!("QUIC crypto config failed: {e}")))?;
+    let quic_server_config = quinn::crypto::rustls::QuicServerConfig::try_from(tls_config)
+        .map_err(|e| WshError::Transport(format!("QUIC crypto config failed: {e}")))?;
     let quinn_server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
 
     let endpoint = quinn::Endpoint::server(quinn_server_config, bind_addr)

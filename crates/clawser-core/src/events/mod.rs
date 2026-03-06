@@ -102,10 +102,7 @@ impl EventBus {
 
     /// Count subscriptions for a topic.
     pub fn subscriber_count(&self, topic: &str) -> usize {
-        self.subscriptions
-            .get(topic)
-            .map(|s| s.len())
-            .unwrap_or(0)
+        self.subscriptions.get(topic).map(|s| s.len()).unwrap_or(0)
     }
 
     /// Clear all event history.

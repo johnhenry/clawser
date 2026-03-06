@@ -12,8 +12,8 @@ pub mod token;
 pub mod transport;
 
 // Re-export commonly used items at crate root.
+pub use codec::{cbor_decode, frame_encode, FrameDecoder};
 pub use error::{WshError, WshResult};
-pub use messages::{MsgType, ChannelKind, AuthMethod, PROTOCOL_VERSION};
-pub use codec::{frame_encode, cbor_decode, FrameDecoder};
 pub use identity::{fingerprint, short_fingerprint, FingerprintIndex};
-pub use token::{create_token, verify_token, generate_secret};
+pub use messages::{AuthMethod, ChannelKind, MsgType, PROTOCOL_VERSION};
+pub use token::{create_token, generate_secret, verify_token};

@@ -105,11 +105,7 @@ impl McpBridge {
     }
 
     /// Execute a CLI tool and capture its output.
-    async fn execute_tool(
-        &self,
-        tool: &CliToolDefinition,
-        arguments: &Value,
-    ) -> WshResult<Value> {
+    async fn execute_tool(&self, tool: &CliToolDefinition, arguments: &Value) -> WshResult<Value> {
         // Build the command string by substituting arguments
         let mut command_str = tool.command.clone();
         if let Some(obj) = arguments.as_object() {

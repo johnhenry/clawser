@@ -41,46 +41,70 @@ fn main() {
     sep("WEEK 1: Ownership & Borrowing");
 
     // Topic: Ownership
-    memory.store(MemoryEntry {
-        id: String::new(), key: "topic_ownership".to_string(),
-        content: "TOPIC: Ownership | Status: INTRODUCED | Mastery: 3/10 | \
-                  Student understood move semantics but confused about when copies happen.".to_string(),
-        category: MemoryCategory::Custom("curriculum".to_string()),
-        timestamp: 1000,
-        session_id: None, score: None, embedding: None,
-    }).unwrap();
+    memory
+        .store(MemoryEntry {
+            id: String::new(),
+            key: "topic_ownership".to_string(),
+            content: "TOPIC: Ownership | Status: INTRODUCED | Mastery: 3/10 | \
+                  Student understood move semantics but confused about when copies happen."
+                .to_string(),
+            category: MemoryCategory::Custom("curriculum".to_string()),
+            timestamp: 1000,
+            session_id: None,
+            score: None,
+            embedding: None,
+        })
+        .unwrap();
 
     // Track misconception
-    memory.store(MemoryEntry {
-        id: String::new(), key: "misconception_copy_vs_move".to_string(),
-        content: "MISCONCEPTION: Student thinks all assignments copy data. \
+    memory
+        .store(MemoryEntry {
+            id: String::new(),
+            key: "misconception_copy_vs_move".to_string(),
+            content: "MISCONCEPTION: Student thinks all assignments copy data. \
                   Needs reinforcement that only Copy types (i32, bool, etc.) copy; \
-                  heap-allocated types move.".to_string(),
-        category: MemoryCategory::Custom("misconceptions".to_string()),
-        timestamp: 1000,
-        session_id: None, score: None, embedding: None,
-    }).unwrap();
+                  heap-allocated types move."
+                .to_string(),
+            category: MemoryCategory::Custom("misconceptions".to_string()),
+            timestamp: 1000,
+            session_id: None,
+            score: None,
+            embedding: None,
+        })
+        .unwrap();
     println!("[Misconception] Tracked: copy vs move confusion");
 
     // Topic: Borrowing
-    memory.store(MemoryEntry {
-        id: String::new(), key: "topic_borrowing".to_string(),
-        content: "TOPIC: Borrowing | Status: INTRODUCED | Mastery: 2/10 | \
+    memory
+        .store(MemoryEntry {
+            id: String::new(),
+            key: "topic_borrowing".to_string(),
+            content: "TOPIC: Borrowing | Status: INTRODUCED | Mastery: 2/10 | \
                   Student struggled with mutable borrow rules. \
-                  Could not explain why two &mut references fail.".to_string(),
-        category: MemoryCategory::Custom("curriculum".to_string()),
-        timestamp: 1100,
-        session_id: None, score: None, embedding: None,
-    }).unwrap();
+                  Could not explain why two &mut references fail."
+                .to_string(),
+            category: MemoryCategory::Custom("curriculum".to_string()),
+            timestamp: 1100,
+            session_id: None,
+            score: None,
+            embedding: None,
+        })
+        .unwrap();
 
-    memory.store(MemoryEntry {
-        id: String::new(), key: "misconception_mut_borrow".to_string(),
-        content: "MISCONCEPTION: Student thinks you can have multiple &mut refs \
-                  if they 'don't overlap'. Needs to understand exclusivity rule.".to_string(),
-        category: MemoryCategory::Custom("misconceptions".to_string()),
-        timestamp: 1100,
-        session_id: None, score: None, embedding: None,
-    }).unwrap();
+    memory
+        .store(MemoryEntry {
+            id: String::new(),
+            key: "misconception_mut_borrow".to_string(),
+            content: "MISCONCEPTION: Student thinks you can have multiple &mut refs \
+                  if they 'don't overlap'. Needs to understand exclusivity rule."
+                .to_string(),
+            category: MemoryCategory::Custom("misconceptions".to_string()),
+            timestamp: 1100,
+            session_id: None,
+            score: None,
+            embedding: None,
+        })
+        .unwrap();
     println!("[Misconception] Tracked: mutable borrow exclusivity");
 
     // Schedule spaced repetition review (3 days for difficult topic)
@@ -111,26 +135,37 @@ fn main() {
     println!("[Scheduler] Borrowing review fired");
 
     // Recall misconceptions for this topic
-    let misconceptions = memory.recall(
-        "borrow",
-        &RecallOptions::new()
-            .with_category(MemoryCategory::Custom("misconceptions".to_string()))
-            .with_limit(5),
-    ).unwrap();
+    let misconceptions = memory
+        .recall(
+            "borrow",
+            &RecallOptions::new()
+                .with_category(MemoryCategory::Custom("misconceptions".to_string()))
+                .with_limit(5),
+        )
+        .unwrap();
     assert!(!misconceptions.is_empty());
-    println!("[Review] Recalled {} misconceptions about borrowing", misconceptions.len());
+    println!(
+        "[Review] Recalled {} misconceptions about borrowing",
+        misconceptions.len()
+    );
     println!("  Focusing on: {}", misconceptions[0].key);
 
     // Student does better this time – update mastery
-    memory.store(MemoryEntry {
-        id: String::new(), key: "topic_borrowing_review1".to_string(),
-        content: "TOPIC: Borrowing | Status: REVIEWED | Mastery: 5/10 | \
+    memory
+        .store(MemoryEntry {
+            id: String::new(),
+            key: "topic_borrowing_review1".to_string(),
+            content: "TOPIC: Borrowing | Status: REVIEWED | Mastery: 5/10 | \
                   Student now understands exclusivity rule. Still unsure about \
-                  borrowing in function parameters with lifetimes.".to_string(),
-        category: MemoryCategory::Custom("curriculum".to_string()),
-        timestamp: 2000,
-        session_id: None, score: None, embedding: None,
-    }).unwrap();
+                  borrowing in function parameters with lifetimes."
+                .to_string(),
+            category: MemoryCategory::Custom("curriculum".to_string()),
+            timestamp: 2000,
+            session_id: None,
+            score: None,
+            embedding: None,
+        })
+        .unwrap();
     println!("[Progress] Borrowing mastery: 2/10 -> 5/10");
 
     // Schedule next review (further out since improvement)
@@ -148,36 +183,50 @@ fn main() {
     sep("WEEK 2: Lifetimes (builds on borrowing)");
 
     // Check prerequisite mastery
-    let borrow_progress = memory.recall(
-        "Borrowing",
-        &RecallOptions::new()
-            .with_category(MemoryCategory::Custom("curriculum".to_string()))
-            .with_limit(5),
-    ).unwrap();
+    let borrow_progress = memory
+        .recall(
+            "Borrowing",
+            &RecallOptions::new()
+                .with_category(MemoryCategory::Custom("curriculum".to_string()))
+                .with_limit(5),
+        )
+        .unwrap();
     let latest = borrow_progress.first().unwrap();
     let ready = latest.content.contains("5/10") || latest.content.contains("Mastery: 5");
-    println!("[Prerequisite] Borrowing mastery check: {}", if ready { "PASS" } else { "NEED MORE REVIEW" });
+    println!(
+        "[Prerequisite] Borrowing mastery check: {}",
+        if ready { "PASS" } else { "NEED MORE REVIEW" }
+    );
 
-    memory.store(MemoryEntry {
-        id: String::new(), key: "topic_lifetimes".to_string(),
-        content: "TOPIC: Lifetimes | Status: INTRODUCED | Mastery: 1/10 | \
+    memory
+        .store(MemoryEntry {
+            id: String::new(),
+            key: "topic_lifetimes".to_string(),
+            content: "TOPIC: Lifetimes | Status: INTRODUCED | Mastery: 1/10 | \
                   Student overwhelmed. Struggled with 'a syntax. \
-                  Connecting it to borrowing helped somewhat.".to_string(),
-        category: MemoryCategory::Custom("curriculum".to_string()),
-        timestamp: 3000,
-        session_id: None, score: None, embedding: None,
-    }).unwrap();
+                  Connecting it to borrowing helped somewhat."
+                .to_string(),
+            category: MemoryCategory::Custom("curriculum".to_string()),
+            timestamp: 3000,
+            session_id: None,
+            score: None,
+            embedding: None,
+        })
+        .unwrap();
     println!("[Topic] Lifetimes introduced – mastery 1/10");
 
     // ── Generate progress report ────────────────────────────────
     sep("ARTIFACT: Progress report");
 
-    let all_topics = memory.list(
-        Some(&MemoryCategory::Custom("curriculum".to_string())), 20
-    ).unwrap();
-    let all_misconceptions = memory.list(
-        Some(&MemoryCategory::Custom("misconceptions".to_string())), 20
-    ).unwrap();
+    let all_topics = memory
+        .list(Some(&MemoryCategory::Custom("curriculum".to_string())), 20)
+        .unwrap();
+    let all_misconceptions = memory
+        .list(
+            Some(&MemoryCategory::Custom("misconceptions".to_string())),
+            20,
+        )
+        .unwrap();
 
     let mut report = String::from("# Rust Learning Progress\n\n");
     report.push_str("## Topics Covered\n\n");

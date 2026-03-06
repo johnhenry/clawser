@@ -16,7 +16,7 @@ use clawser_core::checkpoint::{Checkpoint, CheckpointManager};
 use clawser_core::config::AgentConfig;
 use clawser_core::git::{DiffStatus, FileStatus, GitCommit, GitDiffEntry, GitStatusEntry};
 use clawser_core::memory::{InMemoryBackend, Memory, MemoryCategory, MemoryEntry, RecallOptions};
-use clawser_core::providers::{ChatResponse, MockProvider, ToolCall, TokenUsage};
+use clawser_core::providers::{ChatResponse, MockProvider, TokenUsage, ToolCall};
 use clawser_core::tools::{MockTool, ToolRegistry, ToolResult};
 
 fn sep(title: &str) {
@@ -48,9 +48,18 @@ fn main() {
     tools.register(Box::new(MockTool::new("file_read", ToolResult::success(
         "// auth.js\nfunction login(req, res) {\n  req.session.user = user;\n  res.redirect('/');\n}"
     ))));
-    tools.register(Box::new(MockTool::new("file_write", ToolResult::success("Written"))));
-    tools.register(Box::new(MockTool::new("git_commit", ToolResult::success("Committed: abc123"))));
-    tools.register(Box::new(MockTool::new("git_branch", ToolResult::success("Branch created: jwt-migration"))));
+    tools.register(Box::new(MockTool::new(
+        "file_write",
+        ToolResult::success("Written"),
+    )));
+    tools.register(Box::new(MockTool::new(
+        "git_commit",
+        ToolResult::success("Committed: abc123"),
+    )));
+    tools.register(Box::new(MockTool::new(
+        "git_branch",
+        ToolResult::success("Branch created: jwt-migration"),
+    )));
 
     // ── DAY 1: Analysis & Planning ──────────────────────────────
     sep("DAY 1: Codebase analysis + migration plan");
@@ -69,7 +78,10 @@ fn main() {
                 name: "file_read".to_string(),
                 arguments: r#"{"path": "/workspace/src/auth.js"}"#.to_string(),
             }],
-            usage: TokenUsage { input_tokens: 200, output_tokens: 40 },
+            usage: TokenUsage {
+                input_tokens: 200,
+                output_tokens: 40,
+            },
             model: "mock".to_string(),
             reasoning_content: None,
         })
@@ -79,9 +91,13 @@ fn main() {
                       Phase 2: Replace session writes with token issuance\n\
                       Phase 3: Add middleware for token verification\n\
                       Phase 4: Remove session dependencies\n\
-                      Phase 5: Update tests".to_string(),
+                      Phase 5: Update tests"
+                .to_string(),
             tool_calls: vec![],
-            usage: TokenUsage { input_tokens: 400, output_tokens: 150 },
+            usage: TokenUsage {
+                input_tokens: 400,
+                output_tokens: 150,
+            },
             model: "mock".to_string(),
             reasoning_content: None,
         });
@@ -98,14 +114,20 @@ fn main() {
     }
 
     // Store migration plan in memory
-    memory.store(MemoryEntry {
-        id: String::new(),
-        key: "migration_plan".to_string(),
-        content: "JWT Migration: 5 phases – token gen, replace sessions, middleware, cleanup, tests".to_string(),
-        category: MemoryCategory::Core,
-        timestamp: 1000,
-        session_id: None, score: None, embedding: None,
-    }).unwrap();
+    memory
+        .store(MemoryEntry {
+            id: String::new(),
+            key: "migration_plan".to_string(),
+            content:
+                "JWT Migration: 5 phases – token gen, replace sessions, middleware, cleanup, tests"
+                    .to_string(),
+            category: MemoryCategory::Core,
+            timestamp: 1000,
+            session_id: None,
+            score: None,
+            embedding: None,
+        })
+        .unwrap();
 
     // Simulate creating the plan artifact
     let plan = "# JWT Migration Plan\n\n\
@@ -139,18 +161,26 @@ fn main() {
 
     // Simulate browser closed overnight, restore from checkpoint
     let restored = Checkpoint::from_bytes(&data1).unwrap();
-    println!("[Restore] Resumed from checkpoint, {} messages in history", restored.session_history.len());
+    println!(
+        "[Restore] Resumed from checkpoint, {} messages in history",
+        restored.session_history.len()
+    );
     assert!(!restored.active_goals.is_empty());
 
     // Phase 1: Create JWT utility
-    memory.store(MemoryEntry {
-        id: String::new(),
-        key: "phase1_complete".to_string(),
-        content: "Phase 1 done: created src/jwt.js with sign() and verify() using HS256".to_string(),
-        category: MemoryCategory::Core,
-        timestamp: 2000,
-        session_id: None, score: None, embedding: None,
-    }).unwrap();
+    memory
+        .store(MemoryEntry {
+            id: String::new(),
+            key: "phase1_complete".to_string(),
+            content: "Phase 1 done: created src/jwt.js with sign() and verify() using HS256"
+                .to_string(),
+            category: MemoryCategory::Core,
+            timestamp: 2000,
+            session_id: None,
+            score: None,
+            embedding: None,
+        })
+        .unwrap();
 
     let commit1 = GitCommit {
         hash: "a1b2c3d".to_string(),
@@ -161,14 +191,19 @@ fn main() {
     println!("[Git] Commit: {} – {}", commit1.hash, commit1.message);
 
     // Phase 2: Replace sessions
-    memory.store(MemoryEntry {
-        id: String::new(),
-        key: "phase2_complete".to_string(),
-        content: "Phase 2 done: login() now issues JWT, logout() clears httpOnly cookie".to_string(),
-        category: MemoryCategory::Core,
-        timestamp: 2100,
-        session_id: None, score: None, embedding: None,
-    }).unwrap();
+    memory
+        .store(MemoryEntry {
+            id: String::new(),
+            key: "phase2_complete".to_string(),
+            content: "Phase 2 done: login() now issues JWT, logout() clears httpOnly cookie"
+                .to_string(),
+            category: MemoryCategory::Core,
+            timestamp: 2100,
+            session_id: None,
+            score: None,
+            embedding: None,
+        })
+        .unwrap();
 
     let commit2 = GitCommit {
         hash: "e4f5g6h".to_string(),
@@ -179,14 +214,18 @@ fn main() {
     println!("[Git] Commit: {} – {}", commit2.hash, commit2.message);
 
     // Phase 3: Middleware
-    memory.store(MemoryEntry {
-        id: String::new(),
-        key: "phase3_complete".to_string(),
-        content: "Phase 3 done: authMiddleware.js verifies JWT on protected routes".to_string(),
-        category: MemoryCategory::Core,
-        timestamp: 2200,
-        session_id: None, score: None, embedding: None,
-    }).unwrap();
+    memory
+        .store(MemoryEntry {
+            id: String::new(),
+            key: "phase3_complete".to_string(),
+            content: "Phase 3 done: authMiddleware.js verifies JWT on protected routes".to_string(),
+            category: MemoryCategory::Core,
+            timestamp: 2200,
+            session_id: None,
+            score: None,
+            embedding: None,
+        })
+        .unwrap();
 
     let commit3 = GitCommit {
         hash: "i7j8k9l".to_string(),
@@ -206,8 +245,13 @@ fn main() {
     sep("DAY 3: Complete migration (cleanup + tests)");
 
     // Verify we can recall the migration progress
-    let progress = memory.recall("phase", &RecallOptions::new().with_limit(10)).unwrap();
-    println!("[Memory] Migration progress: {} phases tracked", progress.len());
+    let progress = memory
+        .recall("phase", &RecallOptions::new().with_limit(10))
+        .unwrap();
+    println!(
+        "[Memory] Migration progress: {} phases tracked",
+        progress.len()
+    );
     assert!(progress.len() >= 3, "Should have phases 1-3");
 
     // Phase 4: Remove sessions
@@ -217,12 +261,21 @@ fn main() {
         additions: 0,
         deletions: 2,
     };
-    println!("[Git] Diff: {} – {:?} (+{}, -{})", diff_entry.path, diff_entry.status, diff_entry.additions, diff_entry.deletions);
+    println!(
+        "[Git] Diff: {} – {:?} (+{}, -{})",
+        diff_entry.path, diff_entry.status, diff_entry.additions, diff_entry.deletions
+    );
 
     // Phase 5: Update tests
     let status_entries = vec![
-        GitStatusEntry { path: "tests/auth.test.js".to_string(), status: FileStatus::Modified },
-        GitStatusEntry { path: "tests/jwt.test.js".to_string(), status: FileStatus::Untracked },
+        GitStatusEntry {
+            path: "tests/auth.test.js".to_string(),
+            status: FileStatus::Modified,
+        },
+        GitStatusEntry {
+            path: "tests/jwt.test.js".to_string(),
+            status: FileStatus::Untracked,
+        },
     ];
     for entry in &status_entries {
         println!("[Git] Status: {} – {:?}", entry.path, entry.status);

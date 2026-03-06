@@ -90,10 +90,7 @@ impl ReverseListenerManager {
         let addr = format!("{}:{}", bind_addr, port);
         match TcpListener::bind(&addr).await {
             Ok(tcp_listener) => {
-                let actual_port = tcp_listener
-                    .local_addr()
-                    .map(|a| a.port())
-                    .unwrap_or(port);
+                let actual_port = tcp_listener.local_addr().map(|a| a.port()).unwrap_or(port);
 
                 let guard = self.policy.acquire();
 
@@ -119,7 +116,15 @@ impl ReverseListenerManager {
                 let channel_counter = self.next_channel_id.clone();
                 tokio::spawn(async move {
                     let _guard = guard; // keep alive for connection counting
-                    Self::accept_loop(tcp_listener, cancel_rx, listener_id_copy, inbound_tx, pending, channel_counter).await;
+                    Self::accept_loop(
+                        tcp_listener,
+                        cancel_rx,
+                        listener_id_copy,
+                        inbound_tx,
+                        pending,
+                        channel_counter,
+                    )
+                    .await;
                     debug!(listener_id = listener_id_copy, "accept loop ended");
                 });
 
@@ -158,7 +163,13 @@ impl ReverseListenerManager {
     ///
     /// * `channel_id` - The channel_id from the original `InboundOpen`.
     pub async fn handle_inbound_reject(&self, channel_id: u32) {
-        if self.pending_connections.lock().await.remove(&channel_id).is_some() {
+        if self
+            .pending_connections
+            .lock()
+            .await
+            .remove(&channel_id)
+            .is_some()
+        {
             debug!(channel_id, "pending connection rejected and dropped");
         } else {
             debug!(channel_id, "no pending connection for InboundReject");
@@ -198,7 +209,10 @@ impl ReverseListenerManager {
                 tokio::spawn(async move {
                     let _guard = guard;
                     let _cancel_tx = cancel_tx; // keep alive; drop ends relay
-                    GatewayForwarder::tcp_relay(tcp_stream, cancel_rx, write_rx, data_tx, gateway_id).await;
+                    GatewayForwarder::tcp_relay(
+                        tcp_stream, cancel_rx, write_rx, data_tx, gateway_id,
+                    )
+                    .await;
                     debug!(gateway_id, "inbound relay ended");
                 });
             }

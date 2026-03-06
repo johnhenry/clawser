@@ -33,11 +33,7 @@ fn build_transcript(session_id: &str, nonce: &[u8]) -> Vec<u8> {
 /// Sign a server challenge using the client's signing key.
 ///
 /// Returns the raw Ed25519 signature bytes (64 bytes).
-pub fn sign_challenge(
-    signing_key: &SigningKey,
-    session_id: &str,
-    nonce: &[u8],
-) -> Vec<u8> {
+pub fn sign_challenge(signing_key: &SigningKey, session_id: &str, nonce: &[u8]) -> Vec<u8> {
     let transcript = build_transcript(session_id, nonce);
     let signature = signing_key.sign(&transcript);
     signature.to_bytes().to_vec()
@@ -67,18 +63,18 @@ pub fn public_key_bytes(vk: &VerifyingKey) -> Vec<u8> {
 
 /// Reconstruct a `VerifyingKey` from raw 32-byte public key bytes.
 pub fn verifying_key_from_bytes(bytes: &[u8]) -> WshResult<VerifyingKey> {
-    let bytes: [u8; 32] = bytes
-        .try_into()
-        .map_err(|_| WshError::AuthFailed("invalid public key length (expected 32 bytes)".into()))?;
+    let bytes: [u8; 32] = bytes.try_into().map_err(|_| {
+        WshError::AuthFailed("invalid public key length (expected 32 bytes)".into())
+    })?;
     VerifyingKey::from_bytes(&bytes)
         .map_err(|e| WshError::AuthFailed(format!("invalid public key: {e}")))
 }
 
 /// Reconstruct a `SigningKey` from raw 32-byte secret key bytes.
 pub fn signing_key_from_bytes(bytes: &[u8]) -> WshResult<SigningKey> {
-    let bytes: [u8; 32] = bytes
-        .try_into()
-        .map_err(|_| WshError::AuthFailed("invalid secret key length (expected 32 bytes)".into()))?;
+    let bytes: [u8; 32] = bytes.try_into().map_err(|_| {
+        WshError::AuthFailed("invalid secret key length (expected 32 bytes)".into())
+    })?;
     Ok(SigningKey::from_bytes(&bytes))
 }
 

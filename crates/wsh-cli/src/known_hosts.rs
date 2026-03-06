@@ -31,9 +31,7 @@ pub fn verify(host: &str, port: u16, server_fingerprint: &str) -> Result<()> {
         }
         wsh_client::HostStatus::Unknown => {
             let short_fp = &server_fingerprint[..server_fingerprint.len().min(16)];
-            eprintln!(
-                "The authenticity of host '{host_key}' cannot be established."
-            );
+            eprintln!("The authenticity of host '{host_key}' cannot be established.");
             eprintln!("Server key fingerprint is {short_fp}.");
 
             let accept = Confirm::new()
@@ -50,9 +48,7 @@ pub fn verify(host: &str, port: u16, server_fingerprint: &str) -> Result<()> {
             known_hosts
                 .add_host(&host_key, server_fingerprint)
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
-            eprintln!(
-                "Warning: Permanently added '{host_key}' to the list of known hosts."
-            );
+            eprintln!("Warning: Permanently added '{host_key}' to the list of known hosts.");
 
             Ok(())
         }
@@ -64,9 +60,7 @@ pub fn verify(host: &str, port: u16, server_fingerprint: &str) -> Result<()> {
             eprintln!("@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!    @");
             eprintln!("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@");
             eprintln!("IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!");
-            eprintln!(
-                "The server key fingerprint for '{host_key}' has changed."
-            );
+            eprintln!("The server key fingerprint for '{host_key}' has changed.");
             eprintln!("  Previous: {short_expected}");
             eprintln!("  Current:  {short_new}");
 

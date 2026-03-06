@@ -567,7 +567,10 @@ mod tests {
         let json = config.to_json().unwrap();
         let parsed = Config::from_json(&json).unwrap();
         assert_eq!(parsed.version, config.version);
-        assert_eq!(parsed.agent.max_tool_iterations, config.agent.max_tool_iterations);
+        assert_eq!(
+            parsed.agent.max_tool_iterations,
+            config.agent.max_tool_iterations
+        );
     }
 
     #[test]
@@ -582,7 +585,10 @@ mod tests {
         config.agent.max_tool_iterations = 0;
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("max_tool_iterations"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("max_tool_iterations"));
     }
 
     #[test]

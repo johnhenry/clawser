@@ -62,11 +62,7 @@ where
     // Close the file channel
     session.close().await?;
 
-    tracing::info!(
-        "uploaded {} bytes to '{}'",
-        total,
-        remote_path
-    );
+    tracing::info!("uploaded {} bytes to '{}'", total, remote_path);
 
     Ok(total)
 }
@@ -99,7 +95,9 @@ pub async fn download(client: &WshClient, remote_path: &str) -> WshResult<Vec<u8
     while size_read < 8 {
         let n = session.read(&mut size_buf[size_read..]).await?;
         if n == 0 {
-            return Err(WshError::Transport("unexpected EOF reading file size".into()));
+            return Err(WshError::Transport(
+                "unexpected EOF reading file size".into(),
+            ));
         }
         size_read += n;
     }
@@ -125,11 +123,7 @@ pub async fn download(client: &WshClient, remote_path: &str) -> WshResult<Vec<u8
 
     session.close().await?;
 
-    tracing::info!(
-        "downloaded {} bytes from '{}'",
-        data.len(),
-        remote_path
-    );
+    tracing::info!("downloaded {} bytes from '{}'", data.len(), remote_path);
 
     Ok(data)
 }
@@ -167,8 +161,8 @@ mod tests {
         let path = std::str::from_utf8(&header[4..4 + path_len]).unwrap();
         assert_eq!(path, "/tmp/test.txt");
         let size = u64::from_be_bytes([
-            header[17], header[18], header[19], header[20],
-            header[21], header[22], header[23], header[24],
+            header[17], header[18], header[19], header[20], header[21], header[22], header[23],
+            header[24],
         ]);
         assert_eq!(size, 1024);
     }

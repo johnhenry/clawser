@@ -42,53 +42,108 @@ fn main() {
     // ── Initial hypothesis ──────────────────────────────────────
     sep("MONTH 1: Initial hypothesis");
 
-    memory.store(MemoryEntry {
-        id: String::new(), key: "hypothesis_v1".to_string(),
-        content: "HYPOTHESIS v1: Local AI runtimes (WASM + quantized models) can replace \
-                  cloud inference for 80%+ of common tasks with acceptable quality loss (<5%).".to_string(),
-        category: MemoryCategory::Custom("hypotheses".to_string()),
-        timestamp: 1000,
-        session_id: None, score: None, embedding: None,
-    }).unwrap();
+    memory
+        .store(MemoryEntry {
+            id: String::new(),
+            key: "hypothesis_v1".to_string(),
+            content: "HYPOTHESIS v1: Local AI runtimes (WASM + quantized models) can replace \
+                  cloud inference for 80%+ of common tasks with acceptable quality loss (<5%)."
+                .to_string(),
+            category: MemoryCategory::Custom("hypotheses".to_string()),
+            timestamp: 1000,
+            session_id: None,
+            score: None,
+            embedding: None,
+        })
+        .unwrap();
     println!("[Hypothesis] v1: Local runtimes can replace cloud for 80%+ tasks");
 
     // ── Evidence collection: PRO ────────────────────────────────
     sep("MONTH 1-2: Collecting evidence");
 
     let evidence = vec![
-        ("evidence_pro_1", "PRO", "Chrome AI (Gemini Nano) achieves 85% of GPT-4o quality \
-          on text summarization benchmarks. Latency 10x lower. Source: Chrome AI blog."),
-        ("evidence_pro_2", "PRO", "Llama-3-8B-Q4 runs at 15 tok/s on M1 MacBook, sufficient \
-          for interactive use. Quality comparable to GPT-3.5. Source: personal benchmark."),
-        ("evidence_con_1", "CON", "Complex multi-step reasoning (math, code generation) shows \
-          40% quality drop on local models vs cloud. Source: HumanEval benchmark."),
-        ("evidence_con_2", "CON", "WASM overhead adds 30% latency vs native execution. \
-          Memory limited to 4GB in browser context. Source: wasm-bench suite."),
-        ("evidence_neutral_1", "NEUTRAL", "WebGPU acceleration narrows the gap for compatible \
-          hardware but excludes ~40% of devices. Adoption growing. Source: caniuse.com."),
-        ("evidence_pro_3", "PRO", "Privacy benefit: no data leaves device. Compliance with \
-          GDPR/HIPAA automatic. Significant business value. Source: enterprise survey."),
+        (
+            "evidence_pro_1",
+            "PRO",
+            "Chrome AI (Gemini Nano) achieves 85% of GPT-4o quality \
+          on text summarization benchmarks. Latency 10x lower. Source: Chrome AI blog.",
+        ),
+        (
+            "evidence_pro_2",
+            "PRO",
+            "Llama-3-8B-Q4 runs at 15 tok/s on M1 MacBook, sufficient \
+          for interactive use. Quality comparable to GPT-3.5. Source: personal benchmark.",
+        ),
+        (
+            "evidence_con_1",
+            "CON",
+            "Complex multi-step reasoning (math, code generation) shows \
+          40% quality drop on local models vs cloud. Source: HumanEval benchmark.",
+        ),
+        (
+            "evidence_con_2",
+            "CON",
+            "WASM overhead adds 30% latency vs native execution. \
+          Memory limited to 4GB in browser context. Source: wasm-bench suite.",
+        ),
+        (
+            "evidence_neutral_1",
+            "NEUTRAL",
+            "WebGPU acceleration narrows the gap for compatible \
+          hardware but excludes ~40% of devices. Adoption growing. Source: caniuse.com.",
+        ),
+        (
+            "evidence_pro_3",
+            "PRO",
+            "Privacy benefit: no data leaves device. Compliance with \
+          GDPR/HIPAA automatic. Significant business value. Source: enterprise survey.",
+        ),
     ];
 
     for (key, category, content) in &evidence {
-        memory.store(MemoryEntry {
-            id: String::new(), key: key.to_string(),
-            content: content.to_string(),
-            category: MemoryCategory::Custom(format!("evidence_{}", category.to_lowercase())),
-            timestamp: 2000,
-            session_id: None, score: None, embedding: None,
-        }).unwrap();
+        memory
+            .store(MemoryEntry {
+                id: String::new(),
+                key: key.to_string(),
+                content: content.to_string(),
+                category: MemoryCategory::Custom(format!("evidence_{}", category.to_lowercase())),
+                timestamp: 2000,
+                session_id: None,
+                score: None,
+                embedding: None,
+            })
+            .unwrap();
         println!("[Evidence] [{category}] {key}");
     }
 
     // ── Analysis: Build evidence matrix ─────────────────────────
     sep("MONTH 2: Evidence matrix synthesis");
 
-    let pro = memory.list(Some(&MemoryCategory::Custom("evidence_pro".to_string())), 20).unwrap();
-    let con = memory.list(Some(&MemoryCategory::Custom("evidence_con".to_string())), 20).unwrap();
-    let neutral = memory.list(Some(&MemoryCategory::Custom("evidence_neutral".to_string())), 20).unwrap();
+    let pro = memory
+        .list(
+            Some(&MemoryCategory::Custom("evidence_pro".to_string())),
+            20,
+        )
+        .unwrap();
+    let con = memory
+        .list(
+            Some(&MemoryCategory::Custom("evidence_con".to_string())),
+            20,
+        )
+        .unwrap();
+    let neutral = memory
+        .list(
+            Some(&MemoryCategory::Custom("evidence_neutral".to_string())),
+            20,
+        )
+        .unwrap();
 
-    println!("[Analysis] Evidence count: {} PRO, {} CON, {} NEUTRAL", pro.len(), con.len(), neutral.len());
+    println!(
+        "[Analysis] Evidence count: {} PRO, {} CON, {} NEUTRAL",
+        pro.len(),
+        con.len(),
+        neutral.len()
+    );
     assert_eq!(pro.len(), 3);
     assert_eq!(con.len(), 2);
     assert_eq!(neutral.len(), 1);
@@ -118,43 +173,63 @@ fn main() {
         "No evidence on battery/power consumption impact on mobile devices",
     ];
     for gap in &gaps {
-        memory.store(MemoryEntry {
-            id: String::new(), key: format!("gap_{}", gap.split_whitespace().take(3).collect::<Vec<_>>().join("_").to_lowercase()),
-            content: format!("RESEARCH GAP: {gap}"),
-            category: MemoryCategory::Custom("gaps".to_string()),
-            timestamp: 3000,
-            session_id: None, score: None, embedding: None,
-        }).unwrap();
+        memory
+            .store(MemoryEntry {
+                id: String::new(),
+                key: format!(
+                    "gap_{}",
+                    gap.split_whitespace()
+                        .take(3)
+                        .collect::<Vec<_>>()
+                        .join("_")
+                        .to_lowercase()
+                ),
+                content: format!("RESEARCH GAP: {gap}"),
+                category: MemoryCategory::Custom("gaps".to_string()),
+                timestamp: 3000,
+                session_id: None,
+                score: None,
+                embedding: None,
+            })
+            .unwrap();
         println!("[Gap] {gap}");
     }
 
     // ── Hypothesis revision ─────────────────────────────────────
     sep("MONTH 3: Hypothesis revision");
 
-    memory.store(MemoryEntry {
-        id: String::new(), key: "hypothesis_v2".to_string(),
-        content: "HYPOTHESIS v2 (REVISED): Local AI runtimes can replace cloud inference for \
+    memory
+        .store(MemoryEntry {
+            id: String::new(),
+            key: "hypothesis_v2".to_string(),
+            content: "HYPOTHESIS v2 (REVISED): Local AI runtimes can replace cloud inference for \
                   ~60% of common tasks (summarization, classification, simple Q&A) with \
                   acceptable quality. Complex reasoning tasks (code gen, math, multi-step) \
                   still require cloud. Hybrid approach recommended: local for simple, \
                   cloud fallback for complex. Privacy benefits make local worthwhile even \
-                  at lower capability.".to_string(),
-        category: MemoryCategory::Custom("hypotheses".to_string()),
-        timestamp: 4000,
-        session_id: None, score: None, embedding: None,
-    }).unwrap();
+                  at lower capability."
+                .to_string(),
+            category: MemoryCategory::Custom("hypotheses".to_string()),
+            timestamp: 4000,
+            session_id: None,
+            score: None,
+            embedding: None,
+        })
+        .unwrap();
     println!("[Hypothesis] Revised: v1 (80%) -> v2 (60%, hybrid approach recommended)");
 
     // Verify hypothesis evolution
-    let hypotheses = memory.list(
-        Some(&MemoryCategory::Custom("hypotheses".to_string())), 10
-    ).unwrap();
+    let hypotheses = memory
+        .list(Some(&MemoryCategory::Custom("hypotheses".to_string())), 10)
+        .unwrap();
     assert_eq!(hypotheses.len(), 2, "Should have v1 and v2");
     println!("[Memory] Hypothesis versions tracked: {}", hypotheses.len());
 
     // ── Final synthesis ─────────────────────────────────────────
     let total = memory.count(None).unwrap();
-    let gap_count = memory.count(Some(&MemoryCategory::Custom("gaps".to_string()))).unwrap();
+    let gap_count = memory
+        .count(Some(&MemoryCategory::Custom("gaps".to_string())))
+        .unwrap();
     println!("\n[Lab Notebook] Total entries: {total}");
     println!("[Lab Notebook] Open research gaps: {gap_count}");
 

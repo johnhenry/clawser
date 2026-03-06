@@ -104,9 +104,12 @@ fn extract_raw_ed25519(wire: &[u8]) -> Option<Vec<u8>> {
     if wire.len() < key_offset + 4 {
         return None;
     }
-    let key_len =
-        u32::from_be_bytes([wire[key_offset], wire[key_offset + 1], wire[key_offset + 2], wire[key_offset + 3]])
-            as usize;
+    let key_len = u32::from_be_bytes([
+        wire[key_offset],
+        wire[key_offset + 1],
+        wire[key_offset + 2],
+        wire[key_offset + 3],
+    ]) as usize;
     let data_offset = key_offset + 4;
     if wire.len() < data_offset + key_len {
         return None;
@@ -154,8 +157,7 @@ pub fn is_key_authorized(public_key_raw: &[u8], authorized: &[AuthorizedKey]) ->
 
 fn base64_decode(input: &str) -> Option<Vec<u8>> {
     // Standard base64 alphabet
-    const TABLE: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
     let mut lookup = [255u8; 256];
     for (i, &c) in TABLE.iter().enumerate() {
@@ -208,7 +210,8 @@ mod tests {
     use super::*;
 
     // Valid SSH ed25519 wire format: [4B len]["ssh-ed25519"][4B len][32B key]
-    const TEST_KEY_B64: &str = "AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f";
+    const TEST_KEY_B64: &str =
+        "AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f";
 
     #[test]
     fn parse_simple_ed25519() {

@@ -105,9 +105,7 @@ impl PtyHandle {
             .master_reader
             .try_lock()
             .map_err(|_| WshError::Other("PTY reader lock contention".into()))?;
-        reader
-            .read(buf)
-            .map_err(|e| WshError::Io(e))
+        reader.read(buf).map_err(|e| WshError::Io(e))
     }
 
     /// Write to the PTY input (blocking — call from a spawn_blocking context).
@@ -116,9 +114,7 @@ impl PtyHandle {
             .master_writer
             .try_lock()
             .map_err(|_| WshError::Other("PTY writer lock contention".into()))?;
-        writer
-            .write_all(data)
-            .map_err(|e| WshError::Io(e))?;
+        writer.write_all(data).map_err(|e| WshError::Io(e))?;
         writer.flush().map_err(|e| WshError::Io(e))?;
         Ok(())
     }
@@ -156,10 +152,7 @@ impl PtyHandle {
         .map_err(|e| WshError::Other(format!("join error: {e}")))?
         .map_err(|e| WshError::Other(format!("wait error: {e}")))?;
 
-        let code = status
-            .exit_code()
-            .try_into()
-            .unwrap_or(-1);
+        let code = status.exit_code().try_into().unwrap_or(-1);
         info!(code, "PTY child exited");
         Ok(code as i32)
     }
@@ -207,10 +200,10 @@ pub fn detect_osc52(data: &[u8]) -> Option<String> {
     let remaining = &data[payload_start..];
 
     // Look for BEL or ESC backslash
-    let end = remaining.iter().position(|&b| b == 0x07)
-        .or_else(|| {
-            remaining.windows(2).position(|w| w == b"\x1b\\")
-        })?;
+    let end = remaining
+        .iter()
+        .position(|&b| b == 0x07)
+        .or_else(|| remaining.windows(2).position(|w| w == b"\x1b\\"))?;
 
     let payload = &remaining[..end];
     String::from_utf8(payload.to_vec()).ok()

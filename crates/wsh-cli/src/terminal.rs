@@ -19,8 +19,7 @@ impl RawModeGuard {
     ///
     /// Returns a guard that will automatically restore the terminal when dropped.
     pub fn enter() -> Result<Self> {
-        terminal::enable_raw_mode()
-            .context("failed to enable raw terminal mode")?;
+        terminal::enable_raw_mode().context("failed to enable raw terminal mode")?;
         Ok(Self { _private: () })
     }
 }
@@ -38,15 +37,13 @@ impl Drop for RawModeGuard {
 /// Returns `Ok(())` on success. Caller is responsible for calling
 /// `exit_raw_mode()` to restore the terminal.
 pub fn enter_raw_mode() -> Result<()> {
-    terminal::enable_raw_mode()
-        .context("failed to enable raw terminal mode")?;
+    terminal::enable_raw_mode().context("failed to enable raw terminal mode")?;
     Ok(())
 }
 
 /// Exit raw terminal mode, restoring normal (cooked) mode.
 pub fn exit_raw_mode() -> Result<()> {
-    terminal::disable_raw_mode()
-        .context("failed to disable raw terminal mode")?;
+    terminal::disable_raw_mode().context("failed to disable raw terminal mode")?;
     Ok(())
 }
 

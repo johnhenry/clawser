@@ -195,7 +195,9 @@ impl ToolRegistry {
         params: serde_json::Value,
         context: &ToolContext,
     ) -> Result<ToolResult, ToolError> {
-        let tool = self.get(name).ok_or_else(|| ToolError::NotFound(name.to_string()))?;
+        let tool = self
+            .get(name)
+            .ok_or_else(|| ToolError::NotFound(name.to_string()))?;
         tool.execute(params, context)
     }
 }

@@ -38,32 +38,50 @@ fn main() {
     // ── Chapter 1: Establish characters ─────────────────────────
     sep("CHAPTER 1: Character introductions");
 
-    memory.store(MemoryEntry {
-        id: String::new(), key: "char_alex_appearance".to_string(),
-        content: "CHARACTER: Alex Chen – tall, brown eyes, black hair, scar on left cheek. \
-                  Age 34. Architect. Reserved personality, speaks carefully.".to_string(),
-        category: MemoryCategory::Custom("characters".to_string()),
-        timestamp: 1000,
-        session_id: None, score: None, embedding: None,
-    }).unwrap();
+    memory
+        .store(MemoryEntry {
+            id: String::new(),
+            key: "char_alex_appearance".to_string(),
+            content: "CHARACTER: Alex Chen – tall, brown eyes, black hair, scar on left cheek. \
+                  Age 34. Architect. Reserved personality, speaks carefully."
+                .to_string(),
+            category: MemoryCategory::Custom("characters".to_string()),
+            timestamp: 1000,
+            session_id: None,
+            score: None,
+            embedding: None,
+        })
+        .unwrap();
 
-    memory.store(MemoryEntry {
-        id: String::new(), key: "char_maya_appearance".to_string(),
-        content: "CHARACTER: Maya Torres – short, green eyes, red curly hair. \
-                  Age 28. Journalist. Bold, asks uncomfortable questions.".to_string(),
-        category: MemoryCategory::Custom("characters".to_string()),
-        timestamp: 1000,
-        session_id: None, score: None, embedding: None,
-    }).unwrap();
+    memory
+        .store(MemoryEntry {
+            id: String::new(),
+            key: "char_maya_appearance".to_string(),
+            content: "CHARACTER: Maya Torres – short, green eyes, red curly hair. \
+                  Age 28. Journalist. Bold, asks uncomfortable questions."
+                .to_string(),
+            category: MemoryCategory::Custom("characters".to_string()),
+            timestamp: 1000,
+            session_id: None,
+            score: None,
+            embedding: None,
+        })
+        .unwrap();
 
-    memory.store(MemoryEntry {
-        id: String::new(), key: "plot_thread_missing_building".to_string(),
-        content: "PLOT THREAD: The old library building disappeared overnight. \
-                  No one remembers it except Alex. Status: UNRESOLVED.".to_string(),
-        category: MemoryCategory::Custom("plot_threads".to_string()),
-        timestamp: 1000,
-        session_id: None, score: None, embedding: None,
-    }).unwrap();
+    memory
+        .store(MemoryEntry {
+            id: String::new(),
+            key: "plot_thread_missing_building".to_string(),
+            content: "PLOT THREAD: The old library building disappeared overnight. \
+                  No one remembers it except Alex. Status: UNRESOLVED."
+                .to_string(),
+            category: MemoryCategory::Custom("plot_threads".to_string()),
+            timestamp: 1000,
+            session_id: None,
+            score: None,
+            embedding: None,
+        })
+        .unwrap();
 
     println!("[Memory] Stored: Alex Chen (brown eyes, scar left cheek)");
     println!("[Memory] Stored: Maya Torres (green eyes, red curly hair)");
@@ -79,12 +97,14 @@ fn main() {
     println!("[User] Submitted chapter 3 excerpt");
 
     // Agent checks character details against memory
-    let alex_details = memory.recall(
-        "Alex",
-        &RecallOptions::new()
-            .with_category(MemoryCategory::Custom("characters".to_string()))
-            .with_limit(5),
-    ).unwrap();
+    let alex_details = memory
+        .recall(
+            "Alex",
+            &RecallOptions::new()
+                .with_category(MemoryCategory::Custom("characters".to_string()))
+                .with_limit(5),
+        )
+        .unwrap();
 
     assert!(!alex_details.is_empty(), "Should recall Alex's details");
     let alex_desc = &alex_details[0].content;
@@ -98,12 +118,14 @@ fn main() {
     println!("[CONTRADICTION] Alex had brown eyes (ch1), now blue eyes (ch3)");
 
     // Detect contradiction: Maya's hair
-    let maya_details = memory.recall(
-        "Maya",
-        &RecallOptions::new()
-            .with_category(MemoryCategory::Custom("characters".to_string()))
-            .with_limit(5),
-    ).unwrap();
+    let maya_details = memory
+        .recall(
+            "Maya",
+            &RecallOptions::new()
+                .with_category(MemoryCategory::Custom("characters".to_string()))
+                .with_limit(5),
+        )
+        .unwrap();
     let maya_desc = &maya_details[0].content;
     let has_red_curly = maya_desc.contains("red curly hair");
     let chapter_says_blonde = chapter_3_excerpt.contains("blonde hair");
@@ -112,33 +134,47 @@ fn main() {
     println!("[CONTRADICTION] Maya had red curly hair (ch1), now straight blonde (ch3)");
 
     // Store contradictions
-    memory.store(MemoryEntry {
-        id: String::new(), key: "contradiction_alex_eyes".to_string(),
-        content: "CONTRADICTION: Alex's eyes were brown (ch1) but described as blue (ch3). \
-                  Author should resolve – pick one.".to_string(),
-        category: MemoryCategory::Custom("contradictions".to_string()),
-        timestamp: 3000,
-        session_id: None, score: None, embedding: None,
-    }).unwrap();
+    memory
+        .store(MemoryEntry {
+            id: String::new(),
+            key: "contradiction_alex_eyes".to_string(),
+            content: "CONTRADICTION: Alex's eyes were brown (ch1) but described as blue (ch3). \
+                  Author should resolve – pick one."
+                .to_string(),
+            category: MemoryCategory::Custom("contradictions".to_string()),
+            timestamp: 3000,
+            session_id: None,
+            score: None,
+            embedding: None,
+        })
+        .unwrap();
 
-    memory.store(MemoryEntry {
-        id: String::new(), key: "contradiction_maya_hair".to_string(),
-        content: "CONTRADICTION: Maya's hair was red and curly (ch1) but described as \
-                  straight blonde (ch3). Significant continuity error.".to_string(),
-        category: MemoryCategory::Custom("contradictions".to_string()),
-        timestamp: 3000,
-        session_id: None, score: None, embedding: None,
-    }).unwrap();
+    memory
+        .store(MemoryEntry {
+            id: String::new(),
+            key: "contradiction_maya_hair".to_string(),
+            content: "CONTRADICTION: Maya's hair was red and curly (ch1) but described as \
+                  straight blonde (ch3). Significant continuity error."
+                .to_string(),
+            category: MemoryCategory::Custom("contradictions".to_string()),
+            timestamp: 3000,
+            session_id: None,
+            score: None,
+            embedding: None,
+        })
+        .unwrap();
 
     // ── Chapter 5: Check plot threads ───────────────────────────
     sep("CHAPTER 5: Unresolved plot thread check");
 
-    let unresolved = memory.recall(
-        "UNRESOLVED",
-        &RecallOptions::new()
-            .with_category(MemoryCategory::Custom("plot_threads".to_string()))
-            .with_limit(10),
-    ).unwrap();
+    let unresolved = memory
+        .recall(
+            "UNRESOLVED",
+            &RecallOptions::new()
+                .with_category(MemoryCategory::Custom("plot_threads".to_string()))
+                .with_limit(10),
+        )
+        .unwrap();
     println!("[Plot] Unresolved threads: {}", unresolved.len());
     assert!(!unresolved.is_empty());
     for thread in &unresolved {
@@ -148,20 +184,30 @@ fn main() {
     // ── Generate story bible ────────────────────────────────────
     sep("ARTIFACT: Story bible generation");
 
-    let chars = memory.list(
-        Some(&MemoryCategory::Custom("characters".to_string())), 20
-    ).unwrap();
-    let threads = memory.list(
-        Some(&MemoryCategory::Custom("plot_threads".to_string())), 20
-    ).unwrap();
-    let contradictions = memory.list(
-        Some(&MemoryCategory::Custom("contradictions".to_string())), 20
-    ).unwrap();
+    let chars = memory
+        .list(Some(&MemoryCategory::Custom("characters".to_string())), 20)
+        .unwrap();
+    let threads = memory
+        .list(
+            Some(&MemoryCategory::Custom("plot_threads".to_string())),
+            20,
+        )
+        .unwrap();
+    let contradictions = memory
+        .list(
+            Some(&MemoryCategory::Custom("contradictions".to_string())),
+            20,
+        )
+        .unwrap();
 
     let mut bible = String::from("# Story Bible\n\n");
     bible.push_str("## Characters\n\n");
     for c in &chars {
-        bible.push_str(&format!("### {}\n{}\n\n", c.key.replace("char_", "").replace('_', " "), c.content));
+        bible.push_str(&format!(
+            "### {}\n{}\n\n",
+            c.key.replace("char_", "").replace('_', " "),
+            c.content
+        ));
     }
     bible.push_str("## Active Plot Threads\n\n");
     for t in &threads {

@@ -10,12 +10,7 @@ use tracing::{debug, info};
 use crate::config::parse_target;
 
 /// Copy the local public key to the remote host's authorized_keys.
-pub async fn run(
-    target: &str,
-    port: u16,
-    identity: &str,
-    transport: Option<&str>,
-) -> Result<()> {
+pub async fn run(target: &str, port: u16, identity: &str, transport: Option<&str>) -> Result<()> {
     let (user, host) = parse_target(target)?;
     info!(user = %user, host = %host, "copy-id");
 

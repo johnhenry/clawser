@@ -18,7 +18,9 @@ pub async fn discover_tools(client: &WshClient) -> WshResult<Vec<McpToolSpec>> {
         payload: Payload::McpDiscover(McpDiscoverPayload {}),
     };
 
-    let response = client.send_and_wait_public(envelope, MsgType::McpTools).await?;
+    let response = client
+        .send_and_wait_public(envelope, MsgType::McpTools)
+        .await?;
 
     match response.payload {
         Payload::McpTools(tools) => {

@@ -162,10 +162,7 @@ mod tests {
         idx.insert("b1c2d3e4f5".into(), "bob".into());
 
         assert_eq!(idx.len(), 2);
-        assert_eq!(
-            idx.resolve("a3").unwrap(),
-            Some(("a3f8c2d1e4", "alice"))
-        );
+        assert_eq!(idx.resolve("a3").unwrap(), Some(("a3f8c2d1e4", "alice")));
 
         idx.remove("a3f8c2d1e4");
         assert_eq!(idx.len(), 1);

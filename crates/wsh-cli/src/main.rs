@@ -16,14 +16,23 @@ use tracing::error;
 
 /// wsh — Web Shell client
 #[derive(Parser)]
-#[command(name = "wsh", version = "0.1.0", about = "Web Shell client — SSH-like remote access over WebTransport/WebSocket")]
+#[command(
+    name = "wsh",
+    version = "0.1.0",
+    about = "Web Shell client — SSH-like remote access over WebTransport/WebSocket"
+)]
 struct Cli {
     /// Server port
     #[arg(short, long, global = true, default_value_t = 4422)]
     port: u16,
 
     /// Key name to use for authentication
-    #[arg(short = 'i', long = "identity", global = true, default_value = "default")]
+    #[arg(
+        short = 'i',
+        long = "identity",
+        global = true,
+        default_value = "default"
+    )]
     identity: String,
 
     /// Force transport type (ws or wt)
@@ -140,7 +149,10 @@ async fn main() {
     // Load config file.
     let config_path = cli.config.clone().unwrap_or_else(|| {
         let home = dirs::home_dir().unwrap_or_default();
-        home.join(".wsh").join("config.toml").to_string_lossy().to_string()
+        home.join(".wsh")
+            .join("config.toml")
+            .to_string_lossy()
+            .to_string()
     });
     let cfg = config::Config::load(&config_path).unwrap_or_default();
 
@@ -149,28 +161,24 @@ async fn main() {
     let identity = cli.identity.clone();
     let transport = cli.transport.clone().or_else(|| {
         let t = cfg.default.transport.clone();
-        if t == "auto" { None } else { Some(t) }
+        if t == "auto" {
+            None
+        } else {
+            Some(t)
+        }
     });
 
     let result = match cli.command {
         Some(Command::Connect { target }) => {
             commands::connect::run(&target, port, &identity, transport.as_deref()).await
         }
-        Some(Command::Sessions) => {
-            commands::sessions::run_list().await
-        }
+        Some(Command::Sessions) => commands::sessions::run_list().await,
         Some(Command::Attach { session }) => {
             commands::sessions::run_attach(&session, port, &identity, transport.as_deref()).await
         }
-        Some(Command::Detach) => {
-            commands::sessions::run_detach().await
-        }
-        Some(Command::Keygen { name }) => {
-            commands::keygen::run(&name).await
-        }
-        Some(Command::Keys) => {
-            commands::keys::run().await
-        }
+        Some(Command::Detach) => commands::sessions::run_detach().await,
+        Some(Command::Keygen { name }) => commands::keygen::run(&name).await,
+        Some(Command::Keys) => commands::keys::run().await,
         Some(Command::CopyId { target }) => {
             commands::copy_id::run(&target, port, &identity, transport.as_deref()).await
         }
@@ -183,8 +191,18 @@ async fn main() {
         Some(Command::Peers { relay_host }) => {
             commands::relay::run_peers(&relay_host, port, &identity, transport.as_deref()).await
         }
-        Some(Command::ReverseConnect { fingerprint, relay_host }) => {
-            commands::relay::run_connect(&fingerprint, &relay_host, port, &identity, transport.as_deref()).await
+        Some(Command::ReverseConnect {
+            fingerprint,
+            relay_host,
+        }) => {
+            commands::relay::run_connect(
+                &fingerprint,
+                &relay_host,
+                port,
+                &identity,
+                transport.as_deref(),
+            )
+            .await
         }
         Some(Command::Tools { host }) => {
             commands::tools::run(host.as_deref(), port, &identity, transport.as_deref()).await

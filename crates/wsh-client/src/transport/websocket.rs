@@ -70,8 +70,7 @@ impl ByteStream for VirtualStream {
             if self.read_offset < self.read_buf.len() {
                 let available = self.read_buf.len() - self.read_offset;
                 let n = available.min(buf.len());
-                buf[..n]
-                    .copy_from_slice(&self.read_buf[self.read_offset..self.read_offset + n]);
+                buf[..n].copy_from_slice(&self.read_buf[self.read_offset..self.read_offset + n]);
                 self.read_offset += n;
                 if self.read_offset >= self.read_buf.len() {
                     self.read_buf.clear();
@@ -350,10 +349,7 @@ impl TransportSession for WebSocketSession {
 
     fn is_connected(&self) -> bool {
         // Non-blocking check — use try_lock to avoid blocking
-        self.connected
-            .try_lock()
-            .map(|c| *c)
-            .unwrap_or(false)
+        self.connected.try_lock().map(|c| *c).unwrap_or(false)
     }
 }
 

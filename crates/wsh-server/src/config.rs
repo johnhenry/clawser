@@ -244,9 +244,8 @@ impl ServerConfig {
             if expanded.exists() {
                 info!(path = %expanded.display(), "loading config file");
                 let content = std::fs::read_to_string(&expanded)?;
-                toml::from_str::<ConfigFile>(&content).map_err(|e| {
-                    wsh_core::WshError::Other(format!("config parse error: {e}"))
-                })?
+                toml::from_str::<ConfigFile>(&content)
+                    .map_err(|e| wsh_core::WshError::Other(format!("config parse error: {e}")))?
             } else {
                 info!(path = %expanded.display(), "config file not found, using defaults");
                 ConfigFile {

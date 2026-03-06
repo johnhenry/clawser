@@ -313,7 +313,12 @@ pub struct CostTracker {
 }
 
 impl CostTracker {
-    pub fn record(&mut self, usage: &TokenUsage, cost_per_input_token: f64, cost_per_output_token: f64) {
+    pub fn record(
+        &mut self,
+        usage: &TokenUsage,
+        cost_per_input_token: f64,
+        cost_per_output_token: f64,
+    ) {
         self.total_input_tokens += usage.input_tokens as u64;
         self.total_output_tokens += usage.output_tokens as u64;
         let cost = (usage.input_tokens as f64 * cost_per_input_token)
@@ -476,11 +481,15 @@ mod tests {
 
     #[test]
     fn test_content_part_serialization() {
-        let text = ContentPart::Text { text: "hello".to_string() };
+        let text = ContentPart::Text {
+            text: "hello".to_string(),
+        };
         let json = serde_json::to_string(&text).unwrap();
         assert!(json.contains("\"type\":\"text\""));
 
-        let img = ContentPart::ImageUrl { url: "https://example.com/img.png".to_string() };
+        let img = ContentPart::ImageUrl {
+            url: "https://example.com/img.png".to_string(),
+        };
         let json = serde_json::to_string(&img).unwrap();
         assert!(json.contains("\"type\":\"image_url\""));
     }

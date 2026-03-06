@@ -45,8 +45,10 @@ fn main() {
     println!("[Config] Autonomy: Supervised (suggestions only)");
 
     let mut tools = ToolRegistry::new();
-    tools.register(Box::new(MockTool::new("file_list", ToolResult::success(
-        r#"[
+    tools.register(Box::new(MockTool::new(
+        "file_list",
+        ToolResult::success(
+            r#"[
             {"name": "resume_v1.pdf", "size": 524288},
             {"name": "resume_v2.pdf", "size": 540672},
             {"name": "resume_final.pdf", "size": 548864},
@@ -57,8 +59,9 @@ fn main() {
             {"name": "screenshot_2024_01.png", "size": 2097152},
             {"name": "screenshot_2024_02.png", "size": 2097152},
             {"name": "screenshot_2024_03.png", "size": 2097152}
-        ]"#
-    ))));
+        ]"#,
+        ),
+    )));
 
     let _goal_id = agent.add_goal("Keep my workspace organized", 1000);
 
@@ -95,20 +98,32 @@ fn main() {
     ];
 
     // Detect duplicates (files with similar names)
-    let resume_variants: Vec<_> = files.iter()
+    let resume_variants: Vec<_> = files
+        .iter()
         .filter(|(name, _, _)| name.starts_with("resume"))
         .collect();
-    let screenshot_cluster: Vec<_> = files.iter()
+    let screenshot_cluster: Vec<_> = files
+        .iter()
         .filter(|(name, _, _)| name.starts_with("screenshot"))
         .collect();
-    let plan_variants: Vec<_> = files.iter()
+    let plan_variants: Vec<_> = files
+        .iter()
         .filter(|(name, _, _)| name.contains("project_plan"))
         .collect();
 
     println!("[Scan] Found {} files total", files.len());
-    println!("[Scan] Duplicate cluster: {} resume variants", resume_variants.len());
-    println!("[Scan] Duplicate cluster: {} screenshots", screenshot_cluster.len());
-    println!("[Scan] Duplicate cluster: {} project plan variants", plan_variants.len());
+    println!(
+        "[Scan] Duplicate cluster: {} resume variants",
+        resume_variants.len()
+    );
+    println!(
+        "[Scan] Duplicate cluster: {} screenshots",
+        screenshot_cluster.len()
+    );
+    println!(
+        "[Scan] Duplicate cluster: {} project plan variants",
+        plan_variants.len()
+    );
 
     // Generate suggestions (NOT actions – supervised mode)
     let mut suggestions = Vec::new();
@@ -121,11 +136,10 @@ fn main() {
         "SUGGEST: Move {} screenshots to media/screenshots/2024/",
         screenshot_cluster.len(),
     ));
-    suggestions.push(
-        "SUGGEST: Archive old_project_plan.md to archive/".to_string(),
-    );
+    suggestions.push("SUGGEST: Archive old_project_plan.md to archive/".to_string());
 
-    let total_reclaimable: u64 = resume_variants.iter()
+    let total_reclaimable: u64 = resume_variants
+        .iter()
         .take(resume_variants.len() - 1)
         .map(|(_, size, _)| size)
         .sum();
@@ -140,16 +154,23 @@ fn main() {
 
     // Store in maintenance log
     for (i, suggestion) in suggestions.iter().enumerate() {
-        memory.store(MemoryEntry {
-            id: String::new(),
-            key: format!("maintenance_week1_suggestion_{i}"),
-            content: suggestion.clone(),
-            category: MemoryCategory::Custom("maintenance".to_string()),
-            timestamp: 2000,
-            session_id: None, score: None, embedding: None,
-        }).unwrap();
+        memory
+            .store(MemoryEntry {
+                id: String::new(),
+                key: format!("maintenance_week1_suggestion_{i}"),
+                content: suggestion.clone(),
+                category: MemoryCategory::Custom("maintenance".to_string()),
+                timestamp: 2000,
+                session_id: None,
+                score: None,
+                embedding: None,
+            })
+            .unwrap();
     }
-    println!("[Memory] Stored {} maintenance suggestions", suggestions.len());
+    println!(
+        "[Memory] Stored {} maintenance suggestions",
+        suggestions.len()
+    );
 
     // ── User approves some suggestions ──────────────────────────
     sep("USER RESPONSE: Approve/reject suggestions");
@@ -158,29 +179,45 @@ fn main() {
     println!("[User] Approved: archive old project plan");
     println!("[User] Rejected: resume cleanup (wants to keep all versions)");
 
-    memory.store(MemoryEntry {
-        id: String::new(), key: "maintenance_week1_action_1".to_string(),
-        content: "ACTION TAKEN: Moved 3 screenshots to media/screenshots/2024/".to_string(),
-        category: MemoryCategory::Custom("maintenance".to_string()),
-        timestamp: 2100,
-        session_id: None, score: None, embedding: None,
-    }).unwrap();
+    memory
+        .store(MemoryEntry {
+            id: String::new(),
+            key: "maintenance_week1_action_1".to_string(),
+            content: "ACTION TAKEN: Moved 3 screenshots to media/screenshots/2024/".to_string(),
+            category: MemoryCategory::Custom("maintenance".to_string()),
+            timestamp: 2100,
+            session_id: None,
+            score: None,
+            embedding: None,
+        })
+        .unwrap();
 
-    memory.store(MemoryEntry {
-        id: String::new(), key: "maintenance_week1_action_2".to_string(),
-        content: "ACTION TAKEN: Archived old_project_plan.md to archive/".to_string(),
-        category: MemoryCategory::Custom("maintenance".to_string()),
-        timestamp: 2100,
-        session_id: None, score: None, embedding: None,
-    }).unwrap();
+    memory
+        .store(MemoryEntry {
+            id: String::new(),
+            key: "maintenance_week1_action_2".to_string(),
+            content: "ACTION TAKEN: Archived old_project_plan.md to archive/".to_string(),
+            category: MemoryCategory::Custom("maintenance".to_string()),
+            timestamp: 2100,
+            session_id: None,
+            score: None,
+            embedding: None,
+        })
+        .unwrap();
 
-    memory.store(MemoryEntry {
-        id: String::new(), key: "user_pref_resumes".to_string(),
-        content: "USER PREFERENCE: Keep all resume versions. Do not suggest cleanup.".to_string(),
-        category: MemoryCategory::Core,
-        timestamp: 2100,
-        session_id: None, score: None, embedding: None,
-    }).unwrap();
+    memory
+        .store(MemoryEntry {
+            id: String::new(),
+            key: "user_pref_resumes".to_string(),
+            content: "USER PREFERENCE: Keep all resume versions. Do not suggest cleanup."
+                .to_string(),
+            category: MemoryCategory::Core,
+            timestamp: 2100,
+            session_id: None,
+            score: None,
+            embedding: None,
+        })
+        .unwrap();
     println!("[Memory] Stored user preference: keep resume versions");
 
     // ── Week 2: Second scan (respects learned preferences) ──────
@@ -191,8 +228,12 @@ fn main() {
     println!("[Scheduler] Weekly scan fired");
 
     // Check learned preferences before suggesting
-    let resume_pref = memory.recall("resume", &RecallOptions::new().with_limit(5)).unwrap();
-    let has_keep_pref = resume_pref.iter().any(|e| e.content.contains("Keep all resume"));
+    let resume_pref = memory
+        .recall("resume", &RecallOptions::new().with_limit(5))
+        .unwrap();
+    let has_keep_pref = resume_pref
+        .iter()
+        .any(|e| e.content.contains("Keep all resume"));
     assert!(has_keep_pref, "Should recall user preference about resumes");
     println!("[Preference] Recalled: user wants to keep all resume versions");
     println!("[Scan] Skipping resume cleanup suggestions (user preference)");
@@ -200,13 +241,16 @@ fn main() {
     // ── Generate maintenance log ────────────────────────────────
     sep("ARTIFACT: Maintenance log");
 
-    let log_entries = memory.list(
-        Some(&MemoryCategory::Custom("maintenance".to_string())), 20
-    ).unwrap();
+    let log_entries = memory
+        .list(Some(&MemoryCategory::Custom("maintenance".to_string())), 20)
+        .unwrap();
 
     let mut log = String::from("# Workspace Maintenance Log\n\n");
     log.push_str("## Actions Taken\n\n");
-    for entry in log_entries.iter().filter(|e| e.content.starts_with("ACTION")) {
+    for entry in log_entries
+        .iter()
+        .filter(|e| e.content.starts_with("ACTION"))
+    {
         log.push_str(&format!("- {}\n", entry.content));
     }
     log.push_str("\n## Pending Suggestions\n\n");

@@ -266,7 +266,9 @@ mod tests {
         };
         let json = serde_json::to_string(&action).unwrap();
         let parsed: JobAction = serde_json::from_str(&json).unwrap();
-        assert!(matches!(parsed, JobAction::AgentPrompt { ref prompt } if prompt == "Check for updates"));
+        assert!(
+            matches!(parsed, JobAction::AgentPrompt { ref prompt } if prompt == "Check for updates")
+        );
     }
 
     #[test]

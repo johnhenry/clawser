@@ -11,8 +11,7 @@ use std::path::PathBuf;
 use wsh_core::{WshError, WshResult};
 
 /// Base64 encoding table (standard alphabet).
-const B64_TABLE: &[u8; 64] =
-    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const B64_TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 /// Information about a stored key.
 #[derive(Debug, Clone)]
@@ -365,7 +364,12 @@ mod tests {
 
         // Sign/verify round-trip with loaded key
         let sig = crate::auth::sign_challenge(&sk, "test-sess", b"nonce");
-        assert!(crate::auth::verify_challenge(&vk, &sig, "test-sess", b"nonce"));
+        assert!(crate::auth::verify_challenge(
+            &vk,
+            &sig,
+            "test-sess",
+            b"nonce"
+        ));
 
         // Delete
         store.delete("test-key").unwrap();

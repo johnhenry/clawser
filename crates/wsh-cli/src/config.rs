@@ -89,8 +89,7 @@ impl Config {
     /// Save the configuration to a TOML file.
     #[allow(dead_code)]
     pub fn save(&self, path: &str) -> Result<()> {
-        let content = toml::to_string_pretty(self)
-            .context("failed to serialize config")?;
+        let content = toml::to_string_pretty(self).context("failed to serialize config")?;
 
         let path = Path::new(path);
         if let Some(parent) = path.parent() {

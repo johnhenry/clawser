@@ -156,8 +156,7 @@ mod tests {
 
     #[test]
     fn test_session_compact_below_threshold() {
-        let mut session = Session::new("s1", 1000, 1800)
-            .with_compaction_keep_recent(5);
+        let mut session = Session::new("s1", 1000, 1800).with_compaction_keep_recent(5);
 
         for i in 0..3 {
             session.push(ChatMessage::user(format!("msg {i}")), 1000 + i as i64);
@@ -170,8 +169,7 @@ mod tests {
 
     #[test]
     fn test_session_compact_above_threshold() {
-        let mut session = Session::new("s1", 1000, 1800)
-            .with_compaction_keep_recent(3);
+        let mut session = Session::new("s1", 1000, 1800).with_compaction_keep_recent(3);
 
         session.push(ChatMessage::system("System prompt"), 1000);
         for i in 0..8 {
@@ -230,8 +228,7 @@ mod tests {
 
     #[test]
     fn test_session_compact_preserves_system_messages() {
-        let mut session = Session::new("s1", 1000, 1800)
-            .with_compaction_keep_recent(2);
+        let mut session = Session::new("s1", 1000, 1800).with_compaction_keep_recent(2);
 
         session.push(ChatMessage::system("Important system instruction"), 1000);
         for i in 0..5 {

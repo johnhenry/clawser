@@ -32,9 +32,7 @@ pub struct FrameDecoder {
 
 impl FrameDecoder {
     pub fn new() -> Self {
-        Self {
-            buffer: Vec::new(),
-        }
+        Self { buffer: Vec::new() }
     }
 
     /// Feed bytes into the decoder and return all complete CBOR-decoded messages.
@@ -46,9 +44,12 @@ impl FrameDecoder {
             if self.buffer.len() < 4 {
                 break;
             }
-            let len =
-                u32::from_be_bytes([self.buffer[0], self.buffer[1], self.buffer[2], self.buffer[3]])
-                    as usize;
+            let len = u32::from_be_bytes([
+                self.buffer[0],
+                self.buffer[1],
+                self.buffer[2],
+                self.buffer[3],
+            ]) as usize;
 
             if self.buffer.len() < 4 + len {
                 break;
@@ -73,9 +74,12 @@ impl FrameDecoder {
             if self.buffer.len() < 4 {
                 break;
             }
-            let len =
-                u32::from_be_bytes([self.buffer[0], self.buffer[1], self.buffer[2], self.buffer[3]])
-                    as usize;
+            let len = u32::from_be_bytes([
+                self.buffer[0],
+                self.buffer[1],
+                self.buffer[2],
+                self.buffer[3],
+            ]) as usize;
 
             if self.buffer.len() < 4 + len {
                 break;

@@ -71,8 +71,8 @@ async fn main() {
 
     // Initialize tracing
     use tracing_subscriber::EnvFilter;
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(&cli.log_level));
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&cli.log_level));
     tracing_subscriber::fmt()
         .with_env_filter(env_filter)
         .with_target(false)
@@ -169,10 +169,10 @@ fn load_tls_config(
         .map_err(|e| format!("cannot read key {}: {e}", key_path.display()))?;
 
     let certs: Vec<rustls::pki_types::CertificateDer<'static>> =
-        rustls_pemfile::certs(&mut &cert_pem[..])
-            .collect::<Result<Vec<_>, _>>()?;
+        rustls_pemfile::certs(&mut &cert_pem[..]).collect::<Result<Vec<_>, _>>()?;
 
-    let key = rustls_pemfile::private_key(&mut &key_pem[..])?.ok_or("no private key found in PEM")?;
+    let key =
+        rustls_pemfile::private_key(&mut &key_pem[..])?.ok_or("no private key found in PEM")?;
 
     let mut tls_config = rustls::ServerConfig::builder()
         .with_no_client_auth()
@@ -220,9 +220,8 @@ async fn shutdown_signal() {
 
     #[cfg(unix)]
     {
-        let mut sigterm =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                .expect("failed to install SIGTERM handler");
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler");
         tokio::select! {
             _ = ctrl_c => {}
             _ = sigterm.recv() => {}

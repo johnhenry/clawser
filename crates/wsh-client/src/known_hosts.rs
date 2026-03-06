@@ -154,9 +154,7 @@ mod tests {
     use super::*;
 
     fn temp_known_hosts(name: &str) -> KnownHosts {
-        let path = std::env::temp_dir()
-            .join("wsh-known-hosts-test")
-            .join(name);
+        let path = std::env::temp_dir().join("wsh-known-hosts-test").join(name);
         let _ = fs::remove_file(&path);
         KnownHosts::new(path)
     }

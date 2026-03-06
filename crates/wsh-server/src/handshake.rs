@@ -133,7 +133,14 @@ pub fn verify_auth(
             if !allow_pubkey {
                 return Err(WshError::AuthFailed("pubkey auth disabled".into()));
             }
-            verify_pubkey_auth(auth, nonce, session_id, authorized_keys, server_secret, session_ttl)
+            verify_pubkey_auth(
+                auth,
+                nonce,
+                session_id,
+                authorized_keys,
+                server_secret,
+                session_ttl,
+            )
         }
         AuthMethod::Password => {
             if !allow_password {
@@ -236,7 +243,7 @@ fn verify_password_auth(
     info!("password auth OK");
 
     Ok(AuthResult {
-        username: String::new(), // Filled by caller from HELLO
+        username: String::new(),    // Filled by caller from HELLO
         fingerprint: String::new(), // No fingerprint for password auth
         token,
         session_id: session_id.to_string(),
