@@ -93,6 +93,7 @@ import { FallbackChain, FallbackExecutor } from './clawser-fallback.js';
 import { ModelManager, ModelRegistry, ModelCache } from './clawser-models.js';
 import { ModelListTool, ModelPullTool, ModelRemoveTool, ModelStatusTool, TranscribeTool, SpeakTool, CaptionTool, OcrTool, DetectObjectsTool, ClassifyImageTool, ClassifyTextTool } from './clawser-model-tools.js';
 import { createConfiguredShell } from './clawser-shell-factory.js';
+import { VirtualTerminalManager } from './clawser-wsh-virtual-terminal-manager.js';
 
 // ── Mesh agent bridge helper ─────────────────────────────────────
 /**
@@ -137,6 +138,27 @@ async function syncRoutinesToIDB() {
 // Export for use by other modules (e.g., routine UI after changes)
 export { syncRoutinesToIDB };
 
+let _reverseVirtualTerminalManager = null;
+
+export function getReverseVirtualTerminalManager() {
+  return _reverseVirtualTerminalManager;
+}
+
+async function refreshReverseVirtualTerminalManager() {
+  if (_reverseVirtualTerminalManager) {
+    await _reverseVirtualTerminalManager.close();
+  }
+
+  _reverseVirtualTerminalManager = new VirtualTerminalManager({
+    shellFactory: async () => createConfiguredShell({
+      workspaceFs: state.workspaceFs,
+      getAgent: () => state.agent,
+      getRoutineEngine: () => state.routineEngine,
+      getModelManager: () => state.modelManager,
+    }),
+  });
+}
+
 // ── Shell session management ─────────────────────────────────────
 /** Create a fresh shell session for the current workspace. Sources .clawserrc and registers CLI. */
 export async function createShellSession() {
@@ -150,6 +172,8 @@ export async function createShellSession() {
   if (state.terminalSessions) {
     state.terminalSessions.setShell(state.shell);
   }
+
+  await refreshReverseVirtualTerminalManager();
 }
 
 // ── Lazy Panel Rendering (Gap 11.1) ──────────────────────────────
