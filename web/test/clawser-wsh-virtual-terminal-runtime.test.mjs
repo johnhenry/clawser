@@ -77,6 +77,26 @@ describe('VirtualTerminalSession', () => {
     assert.ok(frame.includes('first'));
   });
 
+  it('emits echo and terminal sync control frames while the terminal state changes', async () => {
+    const sent = [];
+    const session = new VirtualTerminalSession({
+      participantKey: 'reverse:test:echo',
+      channelId: 8,
+      shellFactory: async () => createFakeShell(),
+      sendControl: async (msg) => sent.push(msg),
+    });
+
+    await session.start();
+    sent.length = 0;
+
+    await session.write('pwd\r');
+
+    assert.ok(sent.some((msg) => msg.type === MSG.ECHO_ACK));
+    assert.ok(sent.some((msg) => msg.type === MSG.ECHO_STATE));
+    assert.ok(sent.some((msg) => msg.type === MSG.TERM_DIFF));
+    assert.ok(sent.some((msg) => msg.type === MSG.TERM_SYNC));
+  });
+
   it('closes on ctrl-d when the input buffer is empty', async () => {
     const sent = [];
     const session = new VirtualTerminalSession({

@@ -95,6 +95,42 @@ export class WshSession {
    */
   onClose = null;
 
+  /**
+   * Called when speculative local echo is acknowledged by the remote peer.
+   * @type {function(object): void|null}
+   */
+  onEchoAck = null;
+
+  /**
+   * Called when the remote peer reports current cursor/echo state.
+   * @type {function(object): void|null}
+   */
+  onEchoState = null;
+
+  /**
+   * Called when the remote peer emits a full terminal sync hash.
+   * @type {function(object): void|null}
+   */
+  onTermSync = null;
+
+  /**
+   * Called when the remote peer emits an incremental terminal diff.
+   * @type {function(object): void|null}
+   */
+  onTermDiff = null;
+
+  /** @type {object|null} */
+  #lastEchoAck = null;
+
+  /** @type {object|null} */
+  #lastEchoState = null;
+
+  /** @type {object|null} */
+  #lastTermSync = null;
+
+  /** @type {object|null} */
+  #lastTermDiff = null;
+
   // ── Constructor ─────────────────────────────────────────────────────
 
   /**
@@ -134,6 +170,34 @@ export class WshSession {
   /** Advertised session capabilities. */
   get capabilities() {
     return [...this.#capabilities];
+  }
+
+  /** Last echo acknowledgment received for this session. */
+  get lastEchoAck() {
+    return this.#lastEchoAck ? { ...this.#lastEchoAck } : null;
+  }
+
+  /** Last echo-state update received for this session. */
+  get lastEchoState() {
+    return this.#lastEchoState ? { ...this.#lastEchoState } : null;
+  }
+
+  /** Last terminal sync hash received for this session. */
+  get lastTermSync() {
+    if (!this.#lastTermSync) return null;
+    return {
+      ...this.#lastTermSync,
+      state_hash: this.#lastTermSync.state_hash?.slice?.() || this.#lastTermSync.state_hash,
+    };
+  }
+
+  /** Last terminal diff received for this session. */
+  get lastTermDiff() {
+    if (!this.#lastTermDiff) return null;
+    return {
+      ...this.#lastTermDiff,
+      patch: this.#lastTermDiff.patch?.slice?.() || this.#lastTermDiff.patch,
+    };
   }
 
   // ── Stream binding ──────────────────────────────────────────────────
@@ -313,10 +377,57 @@ export class WshSession {
       }
 
       case MSG.ECHO_ACK:
+        this.#lastEchoAck = this.#virtualBackend?.recordEchoAck(msg) || {
+          channel_id: this.channelId,
+          echo_seq: msg.echo_seq ?? 0,
+        };
+        try {
+          this.onEchoAck?.(this.lastEchoAck);
+        } catch (err) {
+          console.error('[wsh:session] onEchoAck handler error:', err);
+        }
+        break;
+
       case MSG.ECHO_STATE:
+        this.#lastEchoState = this.#virtualBackend?.recordEchoState(msg) || {
+          channel_id: this.channelId,
+          echo_seq: msg.echo_seq ?? 0,
+          cursor_x: msg.cursor_x ?? 0,
+          cursor_y: msg.cursor_y ?? 0,
+          pending: msg.pending ?? 0,
+        };
+        try {
+          this.onEchoState?.(this.lastEchoState);
+        } catch (err) {
+          console.error('[wsh:session] onEchoState handler error:', err);
+        }
+        break;
+
       case MSG.TERM_SYNC:
+        this.#lastTermSync = this.#virtualBackend?.recordTermSync(msg) || {
+          channel_id: this.channelId,
+          frame_seq: msg.frame_seq ?? 0,
+          state_hash: msg.state_hash?.slice?.() || msg.state_hash || new Uint8Array(),
+        };
+        try {
+          this.onTermSync?.(this.lastTermSync);
+        } catch (err) {
+          console.error('[wsh:session] onTermSync handler error:', err);
+        }
+        break;
+
       case MSG.TERM_DIFF:
-        // Fidelity features are routed here later; ignore for now.
+        this.#lastTermDiff = this.#virtualBackend?.recordTermDiff(msg) || {
+          channel_id: this.channelId,
+          frame_seq: msg.frame_seq ?? 0,
+          base_seq: msg.base_seq ?? 0,
+          patch: msg.patch?.slice?.() || msg.patch || new Uint8Array(),
+        };
+        try {
+          this.onTermDiff?.(this.lastTermDiff);
+        } catch (err) {
+          console.error('[wsh:session] onTermDiff handler error:', err);
+        }
         break;
 
       default:

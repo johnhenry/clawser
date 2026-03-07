@@ -8,7 +8,10 @@ use std::sync::Arc;
 
 use tokio::sync::Mutex;
 use wsh_core::error::{WshError, WshResult};
-use wsh_core::messages::{ChannelKind, Envelope, Payload, SessionDataMode};
+use wsh_core::messages::{
+    ChannelKind, EchoAckPayload, EchoStatePayload, Envelope, Payload, SessionDataMode,
+    TermDiffPayload, TermSyncPayload,
+};
 use wsh_core::transport::ByteStream;
 
 use crate::virtual_session::VirtualSessionBackend;
@@ -186,6 +189,38 @@ impl WshSession {
         *self.exit_code.lock().await
     }
 
+    /// Last echo acknowledgement received for this session, if available.
+    pub async fn last_echo_ack(&self) -> Option<EchoAckPayload> {
+        match &self.backend {
+            SessionBackend::Virtual(backend) => backend.last_echo_ack().await,
+            SessionBackend::Stream(_) => None,
+        }
+    }
+
+    /// Last echo state received for this session, if available.
+    pub async fn last_echo_state(&self) -> Option<EchoStatePayload> {
+        match &self.backend {
+            SessionBackend::Virtual(backend) => backend.last_echo_state().await,
+            SessionBackend::Stream(_) => None,
+        }
+    }
+
+    /// Last terminal sync hash received for this session, if available.
+    pub async fn last_term_sync(&self) -> Option<TermSyncPayload> {
+        match &self.backend {
+            SessionBackend::Virtual(backend) => backend.last_term_sync().await,
+            SessionBackend::Stream(_) => None,
+        }
+    }
+
+    /// Last terminal diff received for this session, if available.
+    pub async fn last_term_diff(&self) -> Option<TermDiffPayload> {
+        match &self.backend {
+            SessionBackend::Virtual(backend) => backend.last_term_diff().await,
+            SessionBackend::Stream(_) => None,
+        }
+    }
+
     /// Write data to the session's data stream.
     pub async fn write(&self, data: &[u8]) -> WshResult<()> {
         let state = self.state.lock().await;
@@ -324,10 +359,30 @@ impl WshSession {
                 self.mark_exited(exit.code).await;
                 Ok(())
             }
-            Payload::EchoAck(_)
-            | Payload::EchoState(_)
-            | Payload::TermSync(_)
-            | Payload::TermDiff(_) => Ok(()),
+            Payload::EchoAck(payload) => {
+                if let SessionBackend::Virtual(backend) = &self.backend {
+                    backend.record_echo_ack(payload.clone()).await;
+                }
+                Ok(())
+            }
+            Payload::EchoState(payload) => {
+                if let SessionBackend::Virtual(backend) = &self.backend {
+                    backend.record_echo_state(payload.clone()).await;
+                }
+                Ok(())
+            }
+            Payload::TermSync(payload) => {
+                if let SessionBackend::Virtual(backend) = &self.backend {
+                    backend.record_term_sync(payload.clone()).await;
+                }
+                Ok(())
+            }
+            Payload::TermDiff(payload) => {
+                if let SessionBackend::Virtual(backend) = &self.backend {
+                    backend.record_term_diff(payload.clone()).await;
+                }
+                Ok(())
+            }
             _ => Err(WshError::InvalidMessage(format!(
                 "unsupported session control payload for channel {}",
                 self.channel_id
@@ -339,7 +394,10 @@ impl WshSession {
 #[cfg(test)]
 mod tests {
     use tokio::sync::mpsc;
-    use wsh_core::messages::{ChannelKind, ClosePayload, Envelope, ExitPayload, MsgType, Payload};
+    use wsh_core::messages::{
+        ChannelKind, ClosePayload, EchoAckPayload, EchoStatePayload, Envelope, ExitPayload,
+        MsgType, Payload, TermDiffPayload, TermSyncPayload,
+    };
 
     use super::{ControlAction, SessionState, WshSession};
 
@@ -409,5 +467,63 @@ mod tests {
 
         assert_eq!(session.exit_code().await, Some(17));
         assert_eq!(session.state().await, SessionState::Closed);
+    }
+
+    #[tokio::test]
+    async fn virtual_session_tracks_echo_and_terminal_metadata() {
+        let (control_tx, _control_rx) = mpsc::channel(4);
+        let session = WshSession::new_virtual(11, ChannelKind::Pty, control_tx, vec![]);
+
+        session
+            .handle_control(&Envelope {
+                msg_type: MsgType::EchoAck,
+                payload: Payload::EchoAck(EchoAckPayload {
+                    channel_id: 11,
+                    echo_seq: 9,
+                }),
+            })
+            .await
+            .unwrap();
+        session
+            .handle_control(&Envelope {
+                msg_type: MsgType::EchoState,
+                payload: Payload::EchoState(EchoStatePayload {
+                    channel_id: 11,
+                    echo_seq: 9,
+                    cursor_x: 2,
+                    cursor_y: 1,
+                    pending: 0,
+                }),
+            })
+            .await
+            .unwrap();
+        session
+            .handle_control(&Envelope {
+                msg_type: MsgType::TermSync,
+                payload: Payload::TermSync(TermSyncPayload {
+                    channel_id: 11,
+                    frame_seq: 4,
+                    state_hash: vec![1, 2, 3],
+                }),
+            })
+            .await
+            .unwrap();
+        session
+            .handle_control(&Envelope {
+                msg_type: MsgType::TermDiff,
+                payload: Payload::TermDiff(TermDiffPayload {
+                    channel_id: 11,
+                    frame_seq: 4,
+                    base_seq: 3,
+                    patch: vec![4, 5],
+                }),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(session.last_echo_ack().await.unwrap().echo_seq, 9);
+        assert_eq!(session.last_echo_state().await.unwrap().cursor_y, 1);
+        assert_eq!(session.last_term_sync().await.unwrap().frame_seq, 4);
+        assert_eq!(session.last_term_diff().await.unwrap().base_seq, 3);
     }
 }

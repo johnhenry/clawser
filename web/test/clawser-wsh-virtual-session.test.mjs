@@ -6,10 +6,14 @@ import {
   WshClient,
   WshTransport,
   authOk,
+  echoAck,
+  echoState,
   openOk,
   reverseAccept,
   serverHello,
   sessionData,
+  termDiff,
+  termSync,
 } from '../packages/wsh/src/index.mjs';
 
 class MockTransport extends WshTransport {
@@ -157,6 +161,42 @@ describe('wsh virtual sessions', () => {
     const msg = transport.sent.at(-1);
     assert.equal(msg.type, MSG.REVERSE_ACCEPT);
     assert.deepEqual(msg.capabilities, ['shell']);
+
+    await client.disconnect();
+  });
+
+  it('retains and emits echo and terminal sync metadata for virtual sessions', async () => {
+    const { client, transport } = await createAuthenticatedClient();
+    transport.queueOpenResponse(
+      openOk({
+        channelId: 45,
+        dataMode: 'virtual',
+      })
+    );
+
+    const session = await client.openSession({ type: 'pty' });
+    const seen = [];
+
+    session.onEchoAck = (msg) => seen.push(['ack', msg.echo_seq]);
+    session.onEchoState = (msg) => seen.push(['state', msg.cursor_x, msg.cursor_y]);
+    session.onTermDiff = (msg) => seen.push(['diff', msg.frame_seq, msg.base_seq]);
+    session.onTermSync = (msg) => seen.push(['sync', msg.frame_seq]);
+
+    transport.deliver(echoAck({ channelId: 45, echoSeq: 4 }));
+    transport.deliver(echoState({ channelId: 45, echoSeq: 4, cursorX: 2, cursorY: 1, pending: 0 }));
+    transport.deliver(termDiff({ channelId: 45, frameSeq: 8, baseSeq: 7, patch: new Uint8Array([9]) }));
+    transport.deliver(termSync({ channelId: 45, frameSeq: 8, stateHash: new Uint8Array([1, 2, 3]) }));
+
+    assert.deepEqual(seen, [
+      ['ack', 4],
+      ['state', 2, 1],
+      ['diff', 8, 7],
+      ['sync', 8],
+    ]);
+    assert.equal(session.lastEchoAck.echo_seq, 4);
+    assert.equal(session.lastEchoState.cursor_y, 1);
+    assert.equal(session.lastTermDiff.base_seq, 7);
+    assert.deepEqual(Array.from(session.lastTermSync.state_hash), [1, 2, 3]);
 
     await client.disconnect();
   });

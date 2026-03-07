@@ -768,6 +768,30 @@ export class WshSession {
   /** Called when the session is fully closed. */
   onClose: (() => void) | null;
 
+  /** Called when the remote peer acknowledges speculative local echo. */
+  onEchoAck: ((payload: Record<string, unknown>) => void) | null;
+
+  /** Called when the remote peer reports current echo/cursor state. */
+  onEchoState: ((payload: Record<string, unknown>) => void) | null;
+
+  /** Called when the remote peer emits a terminal sync hash. */
+  onTermSync: ((payload: Record<string, unknown>) => void) | null;
+
+  /** Called when the remote peer emits an incremental terminal diff. */
+  onTermDiff: ((payload: Record<string, unknown>) => void) | null;
+
+  /** Last echo acknowledgement received for the session. */
+  readonly lastEchoAck: Record<string, unknown> | null;
+
+  /** Last echo state received for the session. */
+  readonly lastEchoState: Record<string, unknown> | null;
+
+  /** Last terminal sync received for the session. */
+  readonly lastTermSync: Record<string, unknown> | null;
+
+  /** Last terminal diff received for the session. */
+  readonly lastTermDiff: Record<string, unknown> | null;
+
   constructor(
     transport: WshTransport,
     channelId: number,

@@ -1,5 +1,13 @@
 import { TerminalSessionStore } from './clawser-terminal-session-store.js';
-import { close as closeMsg, exit as exitMsg, sessionData as sessionDataMsg } from './packages-wsh.js';
+import {
+  close as closeMsg,
+  echoAck as echoAckMsg,
+  echoState as echoStateMsg,
+  exit as exitMsg,
+  sessionData as sessionDataMsg,
+  termDiff as termDiffMsg,
+  termSync as termSyncMsg,
+} from './packages-wsh.js';
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -21,6 +29,24 @@ function renderPrompt(cwd = '/') {
 function trimReplay(replay, limit) {
   if (replay.length <= limit) return replay;
   return replay.slice(replay.length - limit);
+}
+
+async function hashReplay(replay) {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) {
+    return textEncoder.encode(String(replay.length));
+  }
+  const digest = await subtle.digest('SHA-256', textEncoder.encode(replay));
+  return new Uint8Array(digest);
+}
+
+function currentCursorPosition({ cwd = '/', cursor = 0, cols = 80 } = {}) {
+  const width = Math.max(cols || 80, 1);
+  const absolute = renderPrompt(cwd).length + cursor;
+  return {
+    cursorX: absolute % width,
+    cursorY: Math.floor(absolute / width),
+  };
 }
 
 export class VirtualTerminalSession {
@@ -46,6 +72,8 @@ export class VirtualTerminalSession {
   #runningToken = 0;
   #activeCommandToken = null;
   #interruptedTokens = new Set();
+  #echoSeq = 0;
+  #frameSeq = 0;
 
   onClose = null;
 
@@ -132,11 +160,17 @@ export class VirtualTerminalSession {
 
   async write(data) {
     if (this.#closed) return;
-    const input = textDecoder.decode(encodeInput(data), { stream: true });
+    const bytes = encodeInput(data);
+    const input = textDecoder.decode(bytes, { stream: true });
 
     for (const char of input) {
       await this.#handleInputChar(char);
       if (this.#closed) break;
+    }
+
+    if (!this.#closed && bytes.byteLength > 0) {
+      this.#echoSeq += bytes.byteLength;
+      await this.#emitEchoState();
     }
   }
 
@@ -157,12 +191,9 @@ export class VirtualTerminalSession {
 
     if (!this.#replay) return;
 
-    await this.#sendControl(
-      sessionDataMsg({
-        channelId: this.#channelId,
-        data: textEncoder.encode(this.#replay),
-      })
-    );
+    const data = textEncoder.encode(this.#replay);
+    await this.#sendControl(sessionDataMsg({ channelId: this.#channelId, data }));
+    await this.#emitTermFrame(data);
   }
 
   async signal(signal) {
@@ -443,11 +474,49 @@ export class VirtualTerminalSession {
     if (!text) return;
     const data = textEncoder.encode(text);
     this.#replay = trimReplay(this.#replay + text, this.#replayLimit);
-    await this.#sendControl(
-      sessionDataMsg({
-        channelId: this.#channelId,
-        data,
-      })
-    );
+    await this.#sendControl(sessionDataMsg({
+      channelId: this.#channelId,
+      data,
+    }));
+    await this.#emitTermFrame(data);
+  }
+
+  async #emitEchoState() {
+    const { cursorX, cursorY } = currentCursorPosition({
+      cwd: this.#shell?.state?.cwd || '/',
+      cursor: this.#cursor,
+      cols: this.#cols,
+    });
+
+    await this.#sendControl(echoAckMsg({
+      channelId: this.#channelId,
+      echoSeq: this.#echoSeq,
+    }));
+    await this.#sendControl(echoStateMsg({
+      channelId: this.#channelId,
+      echoSeq: this.#echoSeq,
+      cursorX,
+      cursorY,
+      pending: 0,
+    }));
+  }
+
+  async #emitTermFrame(patch) {
+    if (!patch?.byteLength) return;
+
+    const baseSeq = this.#frameSeq;
+    this.#frameSeq += 1;
+
+    await this.#sendControl(termDiffMsg({
+      channelId: this.#channelId,
+      frameSeq: this.#frameSeq,
+      baseSeq,
+      patch,
+    }));
+    await this.#sendControl(termSyncMsg({
+      channelId: this.#channelId,
+      frameSeq: this.#frameSeq,
+      stateHash: await hashReplay(this.#replay),
+    }));
   }
 }

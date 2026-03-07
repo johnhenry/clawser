@@ -831,7 +831,10 @@ impl WshClient {
             | MsgType::TermSync
             | MsgType::TermDiff => {
                 let Some(channel_id) = envelope_channel_id(&envelope) else {
-                    tracing::debug!("session-scoped message without channel ID: {:?}", envelope.msg_type);
+                    tracing::debug!(
+                        "session-scoped message without channel ID: {:?}",
+                        envelope.msg_type
+                    );
                     return;
                 };
 
@@ -1070,7 +1073,12 @@ mod tests {
         let response_tx = Arc::new(Mutex::new(HashMap::new()));
         let sessions = Arc::new(Mutex::new(HashMap::new()));
         let (control_tx, _control_rx) = mpsc::channel(4);
-        let session = Arc::new(WshSession::new_virtual(22, ChannelKind::Pty, control_tx, vec![]));
+        let session = Arc::new(WshSession::new_virtual(
+            22,
+            ChannelKind::Pty,
+            control_tx,
+            vec![],
+        ));
         sessions.lock().await.insert(22, session.clone());
         let (outgoing_tx, _outgoing_rx) = mpsc::channel(4);
 

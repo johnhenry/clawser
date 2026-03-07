@@ -5,6 +5,7 @@ use std::collections::VecDeque;
 use tokio::sync::{mpsc, Mutex};
 
 use wsh_core::error::{WshError, WshResult};
+use wsh_core::messages::{EchoAckPayload, EchoStatePayload, TermDiffPayload, TermSyncPayload};
 
 const DEFAULT_BUFFERED_CHUNKS: usize = 256;
 
@@ -13,6 +14,10 @@ pub struct VirtualSessionBackend {
     incoming_tx: Mutex<Option<mpsc::Sender<Vec<u8>>>>,
     incoming_rx: Mutex<mpsc::Receiver<Vec<u8>>>,
     pending: Mutex<VecDeque<u8>>,
+    echo_ack: Mutex<Option<EchoAckPayload>>,
+    echo_state: Mutex<Option<EchoStatePayload>>,
+    term_sync: Mutex<Option<TermSyncPayload>>,
+    term_diff: Mutex<Option<TermDiffPayload>>,
 }
 
 impl VirtualSessionBackend {
@@ -24,6 +29,10 @@ impl VirtualSessionBackend {
             incoming_tx: Mutex::new(Some(incoming_tx)),
             incoming_rx: Mutex::new(incoming_rx),
             pending: Mutex::new(VecDeque::new()),
+            echo_ack: Mutex::new(None),
+            echo_state: Mutex::new(None),
+            term_sync: Mutex::new(None),
+            term_diff: Mutex::new(None),
         }
     }
 
@@ -83,6 +92,46 @@ impl VirtualSessionBackend {
     pub async fn close(&self) {
         self.incoming_tx.lock().await.take();
     }
+
+    /// Record the latest echo acknowledgement for this session.
+    pub async fn record_echo_ack(&self, payload: EchoAckPayload) {
+        *self.echo_ack.lock().await = Some(payload);
+    }
+
+    /// Record the latest echo state for this session.
+    pub async fn record_echo_state(&self, payload: EchoStatePayload) {
+        *self.echo_state.lock().await = Some(payload);
+    }
+
+    /// Record the latest terminal sync hash for this session.
+    pub async fn record_term_sync(&self, payload: TermSyncPayload) {
+        *self.term_sync.lock().await = Some(payload);
+    }
+
+    /// Record the latest terminal diff for this session.
+    pub async fn record_term_diff(&self, payload: TermDiffPayload) {
+        *self.term_diff.lock().await = Some(payload);
+    }
+
+    /// Last echo acknowledgement received for this session.
+    pub async fn last_echo_ack(&self) -> Option<EchoAckPayload> {
+        self.echo_ack.lock().await.clone()
+    }
+
+    /// Last echo state received for this session.
+    pub async fn last_echo_state(&self) -> Option<EchoStatePayload> {
+        self.echo_state.lock().await.clone()
+    }
+
+    /// Last terminal sync hash received for this session.
+    pub async fn last_term_sync(&self) -> Option<TermSyncPayload> {
+        self.term_sync.lock().await.clone()
+    }
+
+    /// Last terminal diff received for this session.
+    pub async fn last_term_diff(&self) -> Option<TermDiffPayload> {
+        self.term_diff.lock().await.clone()
+    }
 }
 
 impl Default for VirtualSessionBackend {
@@ -93,6 +142,8 @@ impl Default for VirtualSessionBackend {
 
 #[cfg(test)]
 mod tests {
+    use wsh_core::messages::{EchoAckPayload, EchoStatePayload, TermDiffPayload, TermSyncPayload};
+
     use super::VirtualSessionBackend;
 
     #[tokio::test]
@@ -120,5 +171,46 @@ mod tests {
         assert_eq!(first, 2);
         assert_eq!(&buf[..first], b"ok");
         assert_eq!(second, 0);
+    }
+
+    #[tokio::test]
+    async fn tracks_echo_and_terminal_metadata() {
+        let backend = VirtualSessionBackend::new();
+
+        backend
+            .record_echo_ack(EchoAckPayload {
+                channel_id: 9,
+                echo_seq: 3,
+            })
+            .await;
+        backend
+            .record_echo_state(EchoStatePayload {
+                channel_id: 9,
+                echo_seq: 3,
+                cursor_x: 4,
+                cursor_y: 1,
+                pending: 0,
+            })
+            .await;
+        backend
+            .record_term_sync(TermSyncPayload {
+                channel_id: 9,
+                frame_seq: 7,
+                state_hash: vec![1, 2, 3],
+            })
+            .await;
+        backend
+            .record_term_diff(TermDiffPayload {
+                channel_id: 9,
+                frame_seq: 7,
+                base_seq: 6,
+                patch: vec![4, 5],
+            })
+            .await;
+
+        assert_eq!(backend.last_echo_ack().await.unwrap().echo_seq, 3);
+        assert_eq!(backend.last_echo_state().await.unwrap().cursor_x, 4);
+        assert_eq!(backend.last_term_sync().await.unwrap().frame_seq, 7);
+        assert_eq!(backend.last_term_diff().await.unwrap().base_seq, 6);
     }
 }

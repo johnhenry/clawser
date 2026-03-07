@@ -25,6 +25,18 @@ export class WshVirtualSessionBackend {
   /** @type {number} */
   #channelId;
 
+  /** @type {object|null} */
+  #lastEchoAck = null;
+
+  /** @type {object|null} */
+  #lastEchoState = null;
+
+  /** @type {object|null} */
+  #lastTermSync = null;
+
+  /** @type {object|null} */
+  #lastTermDiff = null;
+
   /**
    * @param {function(object): Promise<void>} sendControl
    * @param {number} channelId
@@ -45,5 +57,67 @@ export class WshVirtualSessionBackend {
         data: normalizeSessionData(data),
       })
     );
+  }
+
+  get lastEchoAck() {
+    return this.#lastEchoAck ? { ...this.#lastEchoAck } : null;
+  }
+
+  get lastEchoState() {
+    return this.#lastEchoState ? { ...this.#lastEchoState } : null;
+  }
+
+  get lastTermSync() {
+    if (!this.#lastTermSync) return null;
+    return {
+      ...this.#lastTermSync,
+      state_hash: this.#lastTermSync.state_hash?.slice?.() || this.#lastTermSync.state_hash,
+    };
+  }
+
+  get lastTermDiff() {
+    if (!this.#lastTermDiff) return null;
+    return {
+      ...this.#lastTermDiff,
+      patch: this.#lastTermDiff.patch?.slice?.() || this.#lastTermDiff.patch,
+    };
+  }
+
+  recordEchoAck(msg) {
+    this.#lastEchoAck = {
+      channel_id: this.#channelId,
+      echo_seq: msg.echo_seq ?? 0,
+    };
+    return this.lastEchoAck;
+  }
+
+  recordEchoState(msg) {
+    this.#lastEchoState = {
+      channel_id: this.#channelId,
+      echo_seq: msg.echo_seq ?? 0,
+      cursor_x: msg.cursor_x ?? 0,
+      cursor_y: msg.cursor_y ?? 0,
+      pending: msg.pending ?? 0,
+    };
+    return this.lastEchoState;
+  }
+
+  recordTermSync(msg) {
+    this.#lastTermSync = {
+      channel_id: this.#channelId,
+      frame_seq: msg.frame_seq ?? 0,
+      state_hash: msg.state_hash?.slice?.() || msg.state_hash || new Uint8Array(),
+    };
+    return this.lastTermSync;
+  }
+
+  recordTermDiff(msg) {
+    this.#lastTermDiff = {
+      channel_id: this.#channelId,
+      frame_seq: msg.frame_seq ?? 0,
+      base_seq: msg.base_seq ?? 0,
+      patch: msg.patch?.slice?.() || msg.patch || new Uint8Array(),
+    };
+    return this.lastTermDiff;
   }
 }
