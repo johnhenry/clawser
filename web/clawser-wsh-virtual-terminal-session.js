@@ -88,6 +88,10 @@ export class VirtualTerminalSession {
     return this.#kind;
   }
 
+  get command() {
+    return this.#command;
+  }
+
   get cols() {
     return this.#cols;
   }
@@ -102,6 +106,10 @@ export class VirtualTerminalSession {
 
   get replay() {
     return this.#replay;
+  }
+
+  get stateSnapshot() {
+    return this.#store?.serializeShellState?.() || null;
   }
 
   get closed() {
@@ -140,6 +148,21 @@ export class VirtualTerminalSession {
     if (!this.#activeCommandToken && this.#kind !== 'exec') {
       await this.#redrawLine();
     }
+  }
+
+  async replayToRemote({ cols = this.#cols, rows = this.#rows } = {}) {
+    if (this.#closed) return;
+    this.#cols = cols;
+    this.#rows = rows;
+
+    if (!this.#replay) return;
+
+    await this.#sendControl(
+      sessionDataMsg({
+        channelId: this.#channelId,
+        data: textEncoder.encode(this.#replay),
+      })
+    );
   }
 
   async signal(signal) {

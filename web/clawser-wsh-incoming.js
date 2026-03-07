@@ -140,6 +140,32 @@ class IncomingPeerContext {
     this._prevRelayHandler = null;
   }
 
+  reattach({
+    username,
+    targetFingerprint,
+    client,
+    capabilities,
+    tenantId = this.tenantId,
+  } = {}) {
+    const nextClient = client || this.client;
+    const clientChanged = this.client !== nextClient;
+
+    if (clientChanged) {
+      this.stopListening();
+      this.client = nextClient;
+    }
+
+    this.username = username || this.username;
+    this.targetFingerprint = targetFingerprint || this.targetFingerprint;
+    this.capabilities = capabilities || this.capabilities;
+    this.tenantId = tenantId;
+    this.state = 'active';
+
+    if (clientChanged || !this._listening) {
+      this.startListening();
+    }
+  }
+
   async handleRelayMessage(msg) {
     switch (msg.type) {
       case MSG.OPEN:
@@ -248,6 +274,21 @@ class IncomingPeerContext {
     const manager = getVirtualTerminalManager();
     if (!manager) {
       await this.#sendReply(openFail({ reason: 'virtual terminal manager is not ready' }));
+      return;
+    }
+
+    const resumed = await manager.tryReattachChannel(this.participantKey, {
+      kind: msg.kind,
+      command: msg.command || '',
+      cols: msg.cols || 80,
+      rows: msg.rows || 24,
+    });
+    if (resumed) {
+      await this.#sendReply(openOk({
+        channelId: resumed.channelId,
+        dataMode: 'virtual',
+        capabilities: msg.kind === 'pty' ? ['resize', 'signal'] : [],
+      }));
       return;
     }
 
@@ -409,12 +450,8 @@ export async function handleReverseConnect(msg) {
   await closeContextsForClient(activeClient, participantKey);
 
   const existing = incomingSessions.get(participantKey);
-  if (existing) {
-    await existing.close({ notifyRemote: false });
-  }
-
-  let tenantId = null;
-  if (_kernelBridge) {
+  let tenantId = existing?.tenantId || null;
+  if (!tenantId && _kernelBridge) {
     tenantId = _kernelBridge.handleReverseConnect({
       participantId: participantKey,
       username: msg.username,
@@ -431,16 +468,26 @@ export async function handleReverseConnect(msg) {
     tenantId,
   });
 
-  const session = new IncomingPeerContext({
-    participantKey,
-    username: msg.username,
-    targetFingerprint: msg.target_fingerprint,
-    client: activeClient,
-    capabilities,
-    tenantId,
-  });
-  incomingSessions.set(participantKey, session);
-  session.startListening();
+  if (existing) {
+    existing.reattach({
+      username: msg.username,
+      targetFingerprint: msg.target_fingerprint,
+      client: activeClient,
+      capabilities,
+      tenantId,
+    });
+  } else {
+    const session = new IncomingPeerContext({
+      participantKey,
+      username: msg.username,
+      targetFingerprint: msg.target_fingerprint,
+      client: activeClient,
+      capabilities,
+      tenantId,
+    });
+    incomingSessions.set(participantKey, session);
+    session.startListening();
+  }
 
   await activeClient.sendRelayControl(reverseAccept({
     targetFingerprint: msg.target_fingerprint,

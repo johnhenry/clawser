@@ -58,6 +58,7 @@ export class VirtualTerminalManager {
       existing.capabilities = normalizeCapabilities(capabilities);
       existing.tenantId = tenantId;
       existing.state = 'active';
+      existing.pendingReattachChannelIds = new Set(existing.channels.keys());
       return existing;
     }
 
@@ -70,6 +71,7 @@ export class VirtualTerminalManager {
       tenantId,
       state: 'active',
       channels: new Map(),
+      pendingReattachChannelIds: new Set(),
     };
 
     this.#contexts.set(participantKey, context);
@@ -89,6 +91,7 @@ export class VirtualTerminalManager {
       state: context.state,
       capabilities: { ...context.capabilities },
       channelIds: [...context.channels.keys()],
+      pendingReattachChannelIds: [...context.pendingReattachChannelIds],
     }));
   }
 
@@ -123,12 +126,45 @@ export class VirtualTerminalManager {
 
     session.onClose = () => {
       context.channels.delete(channelId);
+      context.pendingReattachChannelIds.delete(channelId);
     };
 
     context.channels.set(channelId, session);
     if (autoStart) {
       await session.start();
     }
+    return session;
+  }
+
+  async tryReattachChannel(participantKey, {
+    kind = 'pty',
+    command = '',
+    cols = 80,
+    rows = 24,
+  } = {}) {
+    const context = this.#requirePeerContext(participantKey);
+    if (!(context.pendingReattachChannelIds instanceof Set) || context.pendingReattachChannelIds.size === 0) {
+      return null;
+    }
+
+    const candidates = [...context.pendingReattachChannelIds]
+      .map((channelId) => context.channels.get(channelId) || null)
+      .filter(Boolean)
+      .filter((session) => !session.closed && session.kind === kind)
+      .filter((session) => {
+        if (kind === 'exec') {
+          return session.command === (command || '');
+        }
+        return !command;
+      });
+
+    if (candidates.length !== 1) {
+      return null;
+    }
+
+    const session = candidates[0];
+    context.pendingReattachChannelIds.delete(session.channelId);
+    await session.replayToRemote({ cols, rows });
     return session;
   }
 
@@ -160,6 +196,7 @@ export class VirtualTerminalManager {
     if (!session) return;
     await session.close({ notifyRemote });
     context.channels.delete(channelId);
+    context.pendingReattachChannelIds.delete(channelId);
   }
 
   async closePeerContext(participantKey, { notifyRemote = false } = {}) {

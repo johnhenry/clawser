@@ -145,4 +145,61 @@ describe('VirtualTerminalManager', () => {
 
     await manager.close();
   });
+
+  it('replays an existing PTY channel after the peer context is rebound', async () => {
+    const clientA = {
+      sent: [],
+      async sendRelayControl(msg) {
+        this.sent.push(msg);
+      },
+    };
+    const clientB = {
+      sent: [],
+      async sendRelayControl(msg) {
+        this.sent.push(msg);
+      },
+    };
+    const manager = new VirtualTerminalManager({
+      shellFactory: async () => createFakeShell(),
+    });
+    const participantKey = buildReverseParticipantKey({
+      username: 'erin',
+      targetFingerprint: 'SHA256:target',
+    });
+
+    await manager.registerPeerContext({
+      participantKey,
+      username: 'erin',
+      targetFingerprint: 'SHA256:target',
+      client: clientA,
+      capabilities: { shell: true, tools: false, fs: false },
+    });
+
+    const session = await manager.openChannel(participantKey, {
+      channelId: 12,
+      kind: 'pty',
+    });
+    await session.write('pwd\r');
+
+    await manager.registerPeerContext({
+      participantKey,
+      username: 'erin',
+      targetFingerprint: 'SHA256:target',
+      client: clientB,
+      capabilities: { shell: true, tools: false, fs: false },
+    });
+
+    const resumed = await manager.tryReattachChannel(participantKey, {
+      kind: 'pty',
+      cols: 120,
+      rows: 40,
+    });
+
+    assert.equal(resumed, session);
+    assert.equal(resumed.cols, 120);
+    assert.equal(resumed.rows, 40);
+    assert.ok(decodeSessionTraffic(clientB.sent).includes('/\n'));
+
+    await manager.close();
+  });
 });

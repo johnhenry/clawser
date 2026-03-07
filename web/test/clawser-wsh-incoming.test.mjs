@@ -146,4 +146,60 @@ describe('clawser-wsh-incoming', () => {
     assert.ok(failure);
     assert.match(failure.reason, /did not expose shell access/i);
   });
+
+  it('reattaches an existing reverse PTY instead of discarding browser state', async () => {
+    const clientA = createFakeClient();
+    getWshConnections().set('relay.example', clientA);
+
+    await handleReverseConnect({
+      username: 'alice',
+      target_fingerprint: 'SHA256:target',
+    });
+
+    await clientA.onRelayMessage({
+      type: MSG.OPEN,
+      kind: 'pty',
+      cols: 120,
+      rows: 40,
+    });
+
+    const firstOpen = clientA.sent.find((msg) => msg.type === MSG.OPEN_OK);
+    await clientA.onRelayMessage({
+      type: MSG.SESSION_DATA,
+      channel_id: firstOpen.channel_id,
+      data: new TextEncoder().encode('pwd\r'),
+    });
+
+    const clientB = createFakeClient();
+    getWshConnections().set('relay.example', clientB);
+
+    await handleReverseConnect({
+      username: 'alice',
+      target_fingerprint: 'SHA256:target',
+    });
+
+    const participantKey = buildReverseParticipantKey({
+      username: 'alice',
+      targetFingerprint: 'SHA256:target',
+    });
+    const rebound = getIncomingSession(participantKey);
+    assert.ok(rebound);
+    assert.equal(rebound.client, clientB);
+    assert.equal(listIncomingSessions().length, 1);
+
+    await clientB.onRelayMessage({
+      type: MSG.OPEN,
+      kind: 'pty',
+      cols: 90,
+      rows: 30,
+    });
+
+    const resumedOpen = clientB.sent.find((msg) => msg.type === MSG.OPEN_OK);
+    assert.ok(resumedOpen);
+    assert.equal(resumedOpen.channel_id, firstOpen.channel_id);
+
+    const replay = decodeSessionTraffic(clientB.sent);
+    assert.ok(replay.includes('/$ '));
+    assert.ok(replay.includes('/\n'));
+  });
 });

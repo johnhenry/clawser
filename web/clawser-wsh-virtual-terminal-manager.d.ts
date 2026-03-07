@@ -9,6 +9,7 @@ export interface ReversePeerContext {
   tenantId: string | null;
   state: string;
   channels: Map<number, VirtualTerminalSession>;
+  pendingReattachChannelIds: Set<number>;
 }
 
 export declare function buildReverseParticipantKey(parts?: {
@@ -48,6 +49,15 @@ export declare class VirtualTerminalManager {
       autoStart?: boolean;
     },
   ): Promise<VirtualTerminalSession>;
+  tryReattachChannel(
+    participantKey: string,
+    opts?: {
+      kind?: 'pty' | 'exec';
+      command?: string;
+      cols?: number;
+      rows?: number;
+    },
+  ): Promise<VirtualTerminalSession | null>;
   getChannel(participantKey: string, channelId: number): VirtualTerminalSession | null;
   writeToChannel(participantKey: string, channelId: number, data: Uint8Array | string): Promise<VirtualTerminalSession>;
   resizeChannel(participantKey: string, channelId: number, cols: number, rows: number): Promise<VirtualTerminalSession>;
