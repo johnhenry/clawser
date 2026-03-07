@@ -644,6 +644,7 @@ impl WshClient {
             MsgType::OpenOk => Some(MsgType::OpenFail),
             MsgType::AuthOk => Some(MsgType::AuthFail),
             MsgType::DetachOk => Some(MsgType::DetachFail),
+            MsgType::ReverseAccept => Some(MsgType::ReverseReject),
             MsgType::SessionList => Some(MsgType::Error),
             MsgType::Presence => Some(MsgType::Error),
             _ => None,

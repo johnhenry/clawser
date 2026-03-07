@@ -5,8 +5,11 @@
 
 use anyhow::{Context, Result};
 use tracing::{debug, info};
-use wsh_client::{ConnectConfig, WshClient};
+use wsh_client::{ConnectConfig, SessionOpts, WshClient};
 use wsh_core::messages::*;
+
+use crate::commands::interactive;
+use crate::terminal as term;
 
 /// Register as a reverse-connectable peer on a relay host.
 ///
@@ -223,32 +226,53 @@ pub async fn run_connect(
     .map_err(|e| anyhow::anyhow!("{e}"))
     .context("failed to connect to relay")?;
 
-    // Send ReverseConnect targeting the peer (fire-and-forget)
     let connect_msg = Envelope {
         msg_type: MsgType::ReverseConnect,
         payload: Payload::ReverseConnect(ReverseConnectPayload {
             target_fingerprint: target_fingerprint.to_string(),
-            username,
+            username: username.clone(),
         }),
     };
 
     println!("Connecting to peer {target_fingerprint} via {relay_host}:{port}...");
 
-    client
-        .send_fire_and_forget(connect_msg)
+    let response = client
+        .send_and_wait_public(connect_msg, MsgType::ReverseAccept)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))
-        .context("failed to send ReverseConnect")?;
+        .context("failed to reverse-connect to peer")?;
 
-    println!("Reverse connect sent. Waiting for peer response...");
-    println!("(Press Ctrl+C to disconnect)");
+    match response.payload {
+        Payload::ReverseAccept(accept) => {
+            let caps = if accept.capabilities.is_empty() {
+                "(no capabilities advertised)".to_string()
+            } else {
+                accept.capabilities.join(", ")
+            };
+            println!("Peer accepted reverse connection. Capabilities: {caps}");
+        }
+        Payload::ReverseReject(reject) => {
+            anyhow::bail!("peer rejected reverse connection: {}", reject.reason);
+        }
+        other => {
+            anyhow::bail!("unexpected reverse-connect response: {:?}", other);
+        }
+    }
 
-    // Hold connection open for the session
-    tokio::signal::ctrl_c()
+    let (cols, rows) = term::get_terminal_size();
+    let session = client
+        .open_session(SessionOpts {
+            kind: ChannelKind::Pty,
+            command: None,
+            cols: Some(cols),
+            rows: Some(rows),
+            env: None,
+        })
         .await
-        .map_err(|e| anyhow::anyhow!("ctrl_c signal error: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("{e}"))
+        .context("failed to open reverse PTY session")?;
 
-    println!("\nDisconnecting...");
+    interactive::run_session(session, &format!("peer {target_fingerprint}")).await?;
     client
         .disconnect()
         .await
