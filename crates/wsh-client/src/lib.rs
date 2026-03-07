@@ -36,6 +36,7 @@ pub mod known_hosts;
 pub mod mcp;
 pub mod session;
 pub mod transport;
+pub mod virtual_session;
 
 // Re-export primary public types.
 pub use client::{ConnectConfig, RemoteSessionInfo, WshClient};
@@ -43,6 +44,7 @@ pub use keystore::{KeyInfo, KeyStore};
 pub use known_hosts::{HostStatus, KnownHosts};
 pub use session::{SessionInfo, SessionOpts, SessionState, WshSession};
 pub use transport::{AnyTransport, TransportKind, WebSocketSession, WebTransportSession};
+pub use virtual_session::VirtualSessionBackend;
 
 // Re-export wsh-core error types for convenience.
 pub use wsh_core::{WshError, WshResult};

@@ -1,13 +1,17 @@
 //! Client-side wsh session.
 //!
-//! A `WshSession` wraps a data stream and provides read/write/resize/signal/close
-//! operations on a single channel.
+//! A `WshSession` wraps either a transport byte stream or a virtual-session
+//! message queue and provides read/write/resize/signal/close operations on a
+//! single channel.
 
 use std::sync::Arc;
+
 use tokio::sync::Mutex;
 use wsh_core::error::{WshError, WshResult};
-use wsh_core::messages::ChannelKind;
+use wsh_core::messages::{ChannelKind, Envelope, Payload, SessionDataMode};
 use wsh_core::transport::ByteStream;
+
+use crate::virtual_session::VirtualSessionBackend;
 
 /// The state of a session channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,20 +75,33 @@ pub struct WshSession {
     channel_id: u32,
     /// Channel kind.
     kind: ChannelKind,
+    /// Session data mode negotiated in `OpenOk`.
+    data_mode: SessionDataMode,
+    /// Server-advertised capabilities for this session.
+    capabilities: Vec<String>,
     /// Current state.
     state: Arc<Mutex<SessionState>>,
     /// Last known remote exit code, when available.
     exit_code: Arc<Mutex<Option<i32>>>,
-    /// The data stream for this channel.
-    stream: Arc<Mutex<Box<dyn ByteStream>>>,
+    /// The session backend for stream-backed or virtual-backed data.
+    backend: SessionBackend,
     /// Sender for control messages (resize, signal, close) — sent to the client's
     /// control dispatch loop.
     control_tx: tokio::sync::mpsc::Sender<ControlAction>,
 }
 
+enum SessionBackend {
+    Stream(Arc<Mutex<Box<dyn ByteStream>>>),
+    Virtual(Arc<VirtualSessionBackend>),
+}
+
 /// Internal control actions that the session sends to the client dispatch loop.
 #[derive(Debug)]
 pub enum ControlAction {
+    Data {
+        channel_id: u32,
+        data: Vec<u8>,
+    },
     Resize {
         channel_id: u32,
         cols: u16,
@@ -100,19 +117,41 @@ pub enum ControlAction {
 }
 
 impl WshSession {
-    /// Create a new session. Called internally by `WshClient::open_session`.
-    pub(crate) fn new(
+    /// Create a new stream-backed session.
+    pub(crate) fn new_stream(
         channel_id: u32,
         kind: ChannelKind,
         stream: Box<dyn ByteStream>,
         control_tx: tokio::sync::mpsc::Sender<ControlAction>,
+        capabilities: Vec<String>,
     ) -> Self {
         Self {
             channel_id,
             kind,
+            data_mode: SessionDataMode::Stream,
+            capabilities,
             state: Arc::new(Mutex::new(SessionState::Open)),
             exit_code: Arc::new(Mutex::new(None)),
-            stream: Arc::new(Mutex::new(stream)),
+            backend: SessionBackend::Stream(Arc::new(Mutex::new(stream))),
+            control_tx,
+        }
+    }
+
+    /// Create a new virtual-session-backed session.
+    pub(crate) fn new_virtual(
+        channel_id: u32,
+        kind: ChannelKind,
+        control_tx: tokio::sync::mpsc::Sender<ControlAction>,
+        capabilities: Vec<String>,
+    ) -> Self {
+        Self {
+            channel_id,
+            kind,
+            data_mode: SessionDataMode::Virtual,
+            capabilities,
+            state: Arc::new(Mutex::new(SessionState::Open)),
+            exit_code: Arc::new(Mutex::new(None)),
+            backend: SessionBackend::Virtual(Arc::new(VirtualSessionBackend::new())),
             control_tx,
         }
     }
@@ -125,6 +164,16 @@ impl WshSession {
     /// The kind of this channel.
     pub fn kind(&self) -> &ChannelKind {
         &self.kind
+    }
+
+    /// The negotiated data mode for this session.
+    pub fn data_mode(&self) -> &SessionDataMode {
+        &self.data_mode
+    }
+
+    /// Server-advertised capabilities for this session.
+    pub fn capabilities(&self) -> &[String] {
+        &self.capabilities
     }
 
     /// Current session state.
@@ -148,16 +197,33 @@ impl WshSession {
         }
         drop(state);
 
-        let mut stream = self.stream.lock().await;
-        stream.write_all(data).await
+        match &self.backend {
+            SessionBackend::Stream(stream) => {
+                let mut stream = stream.lock().await;
+                stream.write_all(data).await
+            }
+            SessionBackend::Virtual(_) => self
+                .control_tx
+                .send(ControlAction::Data {
+                    channel_id: self.channel_id,
+                    data: data.to_vec(),
+                })
+                .await
+                .map_err(|_| WshError::Channel("control channel closed".into())),
+        }
     }
 
     /// Read data from the session's data stream.
     ///
     /// Returns the number of bytes read. Returns 0 on EOF.
     pub async fn read(&self, buf: &mut [u8]) -> WshResult<usize> {
-        let mut stream = self.stream.lock().await;
-        stream.read(buf).await
+        match &self.backend {
+            SessionBackend::Stream(stream) => {
+                let mut stream = stream.lock().await;
+                stream.read(buf).await
+            }
+            SessionBackend::Virtual(backend) => backend.read(buf).await,
+        }
     }
 
     /// Resize the terminal (for pty sessions).
@@ -200,10 +266,14 @@ impl WshSession {
             .await
             .map_err(|_| WshError::Channel("control channel closed".into()))?;
 
-        // Close the data stream
-        {
-            let mut stream = self.stream.lock().await;
-            stream.close().await?;
+        match &self.backend {
+            SessionBackend::Stream(stream) => {
+                let mut stream = stream.lock().await;
+                stream.close().await?;
+            }
+            SessionBackend::Virtual(backend) => {
+                backend.close().await;
+            }
         }
 
         {
@@ -216,6 +286,9 @@ impl WshSession {
 
     /// Mark this session as closed (called externally when an Exit message is received).
     pub(crate) async fn mark_closed(&self) {
+        if let SessionBackend::Virtual(backend) = &self.backend {
+            backend.close().await;
+        }
         let mut state = self.state.lock().await;
         *state = SessionState::Closed;
     }
@@ -234,5 +307,107 @@ impl WshSession {
     pub(crate) async fn mark_open(&self) {
         let mut state = self.state.lock().await;
         *state = SessionState::Open;
+    }
+
+    /// Handle a session-specific control message from the server.
+    pub(crate) async fn handle_control(&self, envelope: &Envelope) -> WshResult<()> {
+        match &envelope.payload {
+            Payload::SessionData(data) => match &self.backend {
+                SessionBackend::Virtual(backend) => backend.push_data(data.data.clone()).await,
+                SessionBackend::Stream(_) => Ok(()),
+            },
+            Payload::Close(_) => {
+                self.mark_closed().await;
+                Ok(())
+            }
+            Payload::Exit(exit) => {
+                self.mark_exited(exit.code).await;
+                Ok(())
+            }
+            Payload::EchoAck(_)
+            | Payload::EchoState(_)
+            | Payload::TermSync(_)
+            | Payload::TermDiff(_) => Ok(()),
+            _ => Err(WshError::InvalidMessage(format!(
+                "unsupported session control payload for channel {}",
+                self.channel_id
+            ))),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::sync::mpsc;
+    use wsh_core::messages::{ChannelKind, ClosePayload, Envelope, ExitPayload, MsgType, Payload};
+
+    use super::{ControlAction, SessionState, WshSession};
+
+    #[tokio::test]
+    async fn virtual_session_write_sends_session_data_action() {
+        let (control_tx, mut control_rx) = mpsc::channel(4);
+        let session = WshSession::new_virtual(7, ChannelKind::Pty, control_tx, vec![]);
+
+        session.write(b"pwd\n").await.unwrap();
+
+        let action = control_rx.recv().await.unwrap();
+        assert!(matches!(
+            action,
+            ControlAction::Data { channel_id, data } if channel_id == 7 && data == b"pwd\n"
+        ));
+    }
+
+    #[tokio::test]
+    async fn virtual_session_reads_incoming_session_data() {
+        let (control_tx, _control_rx) = mpsc::channel(4);
+        let session = WshSession::new_virtual(8, ChannelKind::Pty, control_tx, vec![]);
+        let envelope = Envelope {
+            msg_type: MsgType::SessionData,
+            payload: Payload::SessionData(wsh_core::messages::SessionDataPayload {
+                channel_id: 8,
+                data: b"ls\n".to_vec(),
+            }),
+        };
+
+        session.handle_control(&envelope).await.unwrap();
+
+        let mut buf = [0_u8; 8];
+        let n = session.read(&mut buf).await.unwrap();
+        assert_eq!(n, 3);
+        assert_eq!(&buf[..n], b"ls\n");
+    }
+
+    #[tokio::test]
+    async fn close_payload_marks_virtual_session_closed() {
+        let (control_tx, _control_rx) = mpsc::channel(4);
+        let session = WshSession::new_virtual(9, ChannelKind::Pty, control_tx, vec![]);
+        let envelope = Envelope {
+            msg_type: MsgType::Close,
+            payload: Payload::Close(ClosePayload { channel_id: 9 }),
+        };
+
+        session.handle_control(&envelope).await.unwrap();
+
+        assert_eq!(session.state().await, SessionState::Closed);
+        let mut buf = [0_u8; 1];
+        assert_eq!(session.read(&mut buf).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn exit_payload_tracks_remote_exit_code() {
+        let (control_tx, _control_rx) = mpsc::channel(4);
+        let session = WshSession::new_virtual(10, ChannelKind::Exec, control_tx, vec![]);
+        let envelope = Envelope {
+            msg_type: MsgType::Exit,
+            payload: Payload::Exit(ExitPayload {
+                channel_id: 10,
+                code: 17,
+            }),
+        };
+
+        session.handle_control(&envelope).await.unwrap();
+
+        assert_eq!(session.exit_code().await, Some(17));
+        assert_eq!(session.state().await, SessionState::Closed);
     }
 }
