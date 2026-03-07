@@ -16,6 +16,18 @@ import {
   reverseRegister as reverseRegisterMsg, reverseList as reverseListMsg,
   reverseConnect as reverseConnectMsg,
   mcpDiscover as mcpDiscoverMsg, mcpCall as mcpCallMsg,
+  suspendSession as suspendSessionMsg, restartPty as restartPtyMsg,
+  metricsRequest as metricsRequestMsg,
+  guestInvite as guestInviteMsg, guestJoin as guestJoinMsg, guestRevoke as guestRevokeMsg,
+  shareSession as shareSessionMsg, shareRevoke as shareRevokeMsg,
+  compressBegin as compressBeginMsg, compressAck as compressAckMsg,
+  rateControl as rateControlMsg,
+  sessionLink as sessionLinkMsg, sessionUnlink as sessionUnlinkMsg,
+  copilotAttach as copilotAttachMsg, copilotSuggest as copilotSuggestMsg,
+  copilotDetach as copilotDetachMsg,
+  keyExchange as keyExchangeMsg,
+  fileOp as fileOpMsg,
+  policyEval as policyEvalMsg, policyUpdate as policyUpdateMsg,
 } from './messages.mjs';
 import { signChallenge, exportPublicKeyRaw } from './auth.mjs';
 import { WshSession } from './session.mjs';
@@ -107,6 +119,24 @@ export class WshClient {
    * @type {function(object): void|null}
    */
   onRelayMessage = null;
+
+  /**
+   * Called when a rate warning message arrives from the server.
+   * @type {function(object): void|null}
+   */
+  onRateWarning = null;
+
+  /**
+   * Called when a copilot suggestion arrives from an attached copilot.
+   * @type {function(object): void|null}
+   */
+  onCopilotSuggest = null;
+
+  /**
+   * Called when a key exchange message arrives from a peer.
+   * @type {function(object): void|null}
+   */
+  onKeyExchange = null;
 
   /**
    * Called when a gateway-subsystem control message arrives (opcodes 0x70-0x7f).
@@ -773,6 +803,352 @@ export class WshClient {
     return response.result;
   }
 
+  // ── Suspend / Restart ───────────────────────────────────────────────
+
+  /**
+   * Suspend a session on the server.
+   * @param {string} sessionId - Session to suspend
+   * @param {string} [action='suspend'] - Action: 'suspend' or 'hibernate'
+   */
+  async suspendSession(sessionId, action = 'suspend') {
+    this.#assertAuthenticated('suspendSession');
+    await this.#transport.sendControl(suspendSessionMsg({ sessionId, action }));
+  }
+
+  /**
+   * Restart the PTY process in a session.
+   * @param {string} sessionId - Session whose PTY to restart
+   * @param {string} [command] - Optional new command (defaults to original)
+   */
+  async restartPty(sessionId, command) {
+    this.#assertAuthenticated('restartPty');
+    await this.#transport.sendControl(restartPtyMsg({ sessionId, command }));
+  }
+
+  // ── Metrics ────────────────────────────────────────────────────────
+
+  /**
+   * Request server metrics (CPU, memory, sessions, RTT).
+   * @param {number} [timeout=10000]
+   * @returns {Promise<object>} Metrics response
+   */
+  async requestMetrics(timeout = DEFAULT_OPEN_TIMEOUT) {
+    this.#assertAuthenticated('requestMetrics');
+    await this.#transport.sendControl(metricsRequestMsg());
+    return this.#waitForMessage(
+      [MSG.METRICS],
+      timeout,
+      'Timed out waiting for metrics'
+    );
+  }
+
+  // ── Guest Sessions ────────────────────────────────────────────────
+
+  /**
+   * Invite a guest to a session.
+   * @param {string} sessionId - Session to share
+   * @param {number} ttl - Invitation TTL in seconds
+   * @param {string[]} [permissions=['read']] - Guest permissions
+   * @param {number} [timeout=10000]
+   * @returns {Promise<object>} Invite response with token
+   */
+  async inviteGuest(sessionId, ttl, permissions = ['read'], timeout = DEFAULT_OPEN_TIMEOUT) {
+    this.#assertAuthenticated('inviteGuest');
+    await this.#transport.sendControl(guestInviteMsg({ sessionId, ttl, permissions }));
+    return this.#waitForMessage(
+      [MSG.GUEST_INVITE],
+      timeout,
+      'Timed out waiting for guest invite confirmation'
+    );
+  }
+
+  /**
+   * Join a session as a guest.
+   * @param {string} token - Invitation token
+   * @param {string} [deviceLabel] - Device identifier
+   * @param {number} [timeout=10000]
+   * @returns {Promise<object>} Join response
+   */
+  async joinAsGuest(token, deviceLabel, timeout = DEFAULT_OPEN_TIMEOUT) {
+    this.#assertAuthenticated('joinAsGuest');
+    await this.#transport.sendControl(guestJoinMsg({ token, deviceLabel }));
+    return this.#waitForMessage(
+      [MSG.PRESENCE, MSG.AUTH_FAIL],
+      timeout,
+      'Timed out waiting for guest join response'
+    );
+  }
+
+  /**
+   * Revoke a guest invitation.
+   * @param {string} token - Token to revoke
+   * @param {string} [reason] - Reason for revocation
+   */
+  async revokeGuest(token, reason) {
+    this.#assertAuthenticated('revokeGuest');
+    await this.#transport.sendControl(guestRevokeMsg({ token, reason }));
+  }
+
+  // ── Session Sharing ───────────────────────────────────────────────
+
+  /**
+   * Share a session for multi-attach.
+   * @param {string} sessionId - Session to share
+   * @param {string} [mode='read'] - Share mode
+   * @param {number} [ttl] - Share TTL in seconds
+   * @param {number} [timeout=10000]
+   * @returns {Promise<object>} Share response with share_id
+   */
+  async shareSession(sessionId, mode = 'read', ttl, timeout = DEFAULT_OPEN_TIMEOUT) {
+    this.#assertAuthenticated('shareSession');
+    await this.#transport.sendControl(shareSessionMsg({ sessionId, mode, ttl }));
+    return this.#waitForMessage(
+      [MSG.SHARE_SESSION],
+      timeout,
+      'Timed out waiting for share confirmation'
+    );
+  }
+
+  /**
+   * Revoke a session share.
+   * @param {string} shareId - Share ID to revoke
+   * @param {string} [reason] - Reason for revocation
+   */
+  async revokeShare(shareId, reason) {
+    this.#assertAuthenticated('revokeShare');
+    await this.#transport.sendControl(shareRevokeMsg({ shareId, reason }));
+  }
+
+  // ── Compression ───────────────────────────────────────────────────
+
+  /**
+   * Negotiate compression with the server.
+   * @param {string} algorithm - Compression algorithm (e.g. 'zstd', 'lz4')
+   * @param {number} [level=3] - Compression level
+   * @param {number} [timeout=10000]
+   * @returns {Promise<object>} CompressAck response
+   */
+  async negotiateCompression(algorithm, level = 3, timeout = DEFAULT_OPEN_TIMEOUT) {
+    this.#assertAuthenticated('negotiateCompression');
+    await this.#transport.sendControl(compressBeginMsg({ algorithm, level }));
+    return this.#waitForMessage(
+      [MSG.COMPRESS_ACK],
+      timeout,
+      'Timed out waiting for compression acknowledgment'
+    );
+  }
+
+  // ── Rate Control ──────────────────────────────────────────────────
+
+  /**
+   * Set rate control parameters for a session.
+   * @param {string} sessionId - Session to rate-limit
+   * @param {number} maxBytesPerSec - Maximum throughput
+   * @param {string} [policy='pause'] - Rate limit policy
+   */
+  async setRateControl(sessionId, maxBytesPerSec, policy = 'pause') {
+    this.#assertAuthenticated('setRateControl');
+    await this.#transport.sendControl(rateControlMsg({ sessionId, maxBytesPerSec, policy }));
+  }
+
+  // ── Session Linking ───────────────────────────────────────────────
+
+  /**
+   * Link two sessions across hosts.
+   * @param {string} sourceSession - Source session ID
+   * @param {string} targetHost - Target host
+   * @param {number} targetPort - Target port
+   * @param {string} [targetUser] - Target username
+   */
+  async linkSession(sourceSession, targetHost, targetPort, targetUser) {
+    this.#assertAuthenticated('linkSession');
+    await this.#transport.sendControl(
+      sessionLinkMsg({ sourceSession, targetHost, targetPort, targetUser })
+    );
+  }
+
+  /**
+   * Unlink a previously linked session.
+   * @param {string} linkId - Link ID to remove
+   * @param {string} [reason] - Reason for unlinking
+   */
+  async unlinkSession(linkId, reason) {
+    this.#assertAuthenticated('unlinkSession');
+    await this.#transport.sendControl(sessionUnlinkMsg({ linkId, reason }));
+  }
+
+  // ── Copilot ───────────────────────────────────────────────────────
+
+  /**
+   * Attach a copilot to a session.
+   * @param {string} sessionId - Session to attach to
+   * @param {string} model - Model name
+   * @param {number} [contextWindow] - Context window size
+   */
+  async copilotAttach(sessionId, model, contextWindow) {
+    this.#assertAuthenticated('copilotAttach');
+    await this.#transport.sendControl(
+      copilotAttachMsg({ sessionId, model, contextWindow })
+    );
+  }
+
+  /**
+   * Send a copilot suggestion.
+   * @param {string} sessionId - Session ID
+   * @param {string} suggestion - Suggestion text
+   * @param {number} [confidence] - Confidence score 0-1
+   */
+  async copilotSuggest(sessionId, suggestion, confidence) {
+    this.#assertAuthenticated('copilotSuggest');
+    await this.#transport.sendControl(
+      copilotSuggestMsg({ sessionId, suggestion, confidence })
+    );
+  }
+
+  /**
+   * Detach a copilot from a session.
+   * @param {string} sessionId - Session ID
+   * @param {string} [reason] - Reason for detaching
+   */
+  async copilotDetach(sessionId, reason) {
+    this.#assertAuthenticated('copilotDetach');
+    await this.#transport.sendControl(copilotDetachMsg({ sessionId, reason }));
+  }
+
+  // ── E2E Encryption ────────────────────────────────────────────────
+
+  /**
+   * Initiate end-to-end encryption for a session using X25519 key exchange.
+   * @param {string} sessionId - Session ID
+   * @param {string} [algorithm='X25519'] - Key exchange algorithm
+   * @param {number} [timeout=10000]
+   * @returns {Promise<{sharedSecret: CryptoKey, peerPublicKey: Uint8Array}>}
+   */
+  async initiateE2E(sessionId, algorithm = 'X25519', timeout = DEFAULT_OPEN_TIMEOUT) {
+    this.#assertAuthenticated('initiateE2E');
+
+    // Generate ephemeral X25519 key pair
+    const ephemeral = await crypto.subtle.generateKey(
+      { name: 'X25519' },
+      false,
+      ['deriveBits']
+    );
+
+    const localPub = new Uint8Array(
+      await crypto.subtle.exportKey('raw', ephemeral.publicKey)
+    );
+
+    await this.#transport.sendControl(
+      keyExchangeMsg({ algorithm, publicKey: localPub, sessionId })
+    );
+
+    const peerMsg = await this.#waitForMessage(
+      [MSG.KEY_EXCHANGE],
+      timeout,
+      'Timed out waiting for peer key exchange'
+    );
+
+    // Import peer's public key and derive shared secret
+    const peerKey = await crypto.subtle.importKey(
+      'raw',
+      peerMsg.public_key,
+      { name: 'X25519' },
+      false,
+      []
+    );
+
+    const sharedBits = await crypto.subtle.deriveBits(
+      { name: 'X25519', public: peerKey },
+      ephemeral.privateKey,
+      256
+    );
+
+    // Derive an AES-GCM key from the shared secret
+    const sharedSecret = await crypto.subtle.importKey(
+      'raw',
+      sharedBits,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt']
+    );
+
+    return { sharedSecret, peerPublicKey: new Uint8Array(peerMsg.public_key) };
+  }
+
+  // ── Structured File Channel ───────────────────────────────────────
+
+  /**
+   * Perform a file operation on the remote host.
+   * @param {string} op - Operation: 'stat', 'list', 'read', 'write', 'mkdir', 'remove', 'rename'
+   * @param {string} path - File path
+   * @param {object} [opts] - Optional: offset, length for read; data for write; newPath for rename
+   * @param {number} [timeout=10000]
+   * @returns {Promise<object>} FileResult response
+   */
+  async fileOperation(op, path, opts = {}, timeout = DEFAULT_OPEN_TIMEOUT) {
+    this.#assertAuthenticated('fileOperation');
+    const channelId = this._nextChannelId();
+    await this.#transport.sendControl(
+      fileOpMsg({ channelId, op, path, offset: opts.offset, length: opts.length })
+    );
+    return this.#waitForMessage(
+      [MSG.FILE_RESULT],
+      timeout,
+      `Timed out waiting for file ${op} result`
+    );
+  }
+
+  /** Stat a remote file. */
+  async fileStat(path, timeout) { return this.fileOperation('stat', path, {}, timeout); }
+  /** List a remote directory. */
+  async fileList(path, timeout) { return this.fileOperation('list', path, {}, timeout); }
+  /** Read a remote file. */
+  async fileRead(path, offset, length, timeout) { return this.fileOperation('read', path, { offset, length }, timeout); }
+  /** Write to a remote file. */
+  async fileWrite(path, data, offset, timeout) { return this.fileOperation('write', path, { offset }, timeout); }
+  /** Create a remote directory. */
+  async fileMkdir(path, timeout) { return this.fileOperation('mkdir', path, {}, timeout); }
+  /** Remove a remote file or directory. */
+  async fileRemove(path, timeout) { return this.fileOperation('remove', path, {}, timeout); }
+  /** Rename a remote file or directory. */
+  async fileRename(oldPath, newPath, timeout) { return this.fileOperation('rename', oldPath, {}, timeout); }
+
+  // ── Policy Engine ─────────────────────────────────────────────────
+
+  /**
+   * Evaluate a policy on the server.
+   * @param {string} action - Action to evaluate
+   * @param {string} principal - Principal requesting the action
+   * @param {object} [context={}] - Additional context
+   * @param {number} [timeout=10000]
+   * @returns {Promise<object>} PolicyResult response
+   */
+  async evaluatePolicy(action, principal, context = {}, timeout = DEFAULT_OPEN_TIMEOUT) {
+    this.#assertAuthenticated('evaluatePolicy');
+    const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    await this.#transport.sendControl(
+      policyEvalMsg({ requestId, action, principal, context })
+    );
+    return this.#waitForMessage(
+      [MSG.POLICY_RESULT],
+      timeout,
+      'Timed out waiting for policy evaluation result'
+    );
+  }
+
+  /**
+   * Update a policy on the server.
+   * @param {string} policyId - Policy to update
+   * @param {object} rules - New policy rules
+   * @param {number} version - Policy version
+   */
+  async updatePolicy(policyId, rules, version) {
+    this.#assertAuthenticated('updatePolicy');
+    await this.#transport.sendControl(
+      policyUpdateMsg({ policyId, rules, version })
+    );
+  }
+
   // ── Internal: transport creation ────────────────────────────────────
 
   /**
@@ -1073,6 +1449,38 @@ export class WshClient {
         // Informational messages — no default handling needed.
         break;
 
+      case MSG.COMPRESS_BEGIN:
+        // Server wants to negotiate compression.  Browser can't decompress
+        // CBOR frames yet, so decline.
+        this.#transport?.sendControl(
+          compressAckMsg({ algorithm: msg.algorithm, accepted: false })
+        ).catch(() => {});
+        break;
+
+      case MSG.RATE_WARNING:
+        try {
+          this.onRateWarning?.(msg);
+        } catch (err) {
+          console.error('[wsh:client] onRateWarning handler error:', err);
+        }
+        break;
+
+      case MSG.COPILOT_SUGGEST:
+        try {
+          this.onCopilotSuggest?.(msg);
+        } catch (err) {
+          console.error('[wsh:client] onCopilotSuggest handler error:', err);
+        }
+        break;
+
+      case MSG.KEY_EXCHANGE:
+        try {
+          this.onKeyExchange?.(msg);
+        } catch (err) {
+          console.error('[wsh:client] onKeyExchange handler error:', err);
+        }
+        break;
+
       default:
         // Unrecognized message — ignore gracefully.
         break;
@@ -1229,6 +1637,10 @@ export class WshClient {
     return [
       MSG.OPEN, MSG.MCP_DISCOVER, MSG.MCP_CALL,
       MSG.CLOSE, MSG.RESIZE, MSG.SIGNAL,
+      MSG.GUEST_JOIN, MSG.GUEST_REVOKE,         // Unit 4
+      MSG.COPILOT_ATTACH, MSG.COPILOT_DETACH,   // Unit 9
+      MSG.FILE_OP,                               // Unit 11
+      MSG.POLICY_EVAL,                           // Unit 12
     ].includes(type);
   }
 

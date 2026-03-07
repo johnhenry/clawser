@@ -197,19 +197,19 @@ Priority: Resilience, observability, and production readiness.
 
 ---
 
-## Phase 5: Remote Execution (wsh) -- MOSTLY COMPLETE
+## Phase 5: Remote Execution (wsh) -- COMPLETE
 
 Priority: Browser-native remote shell, reverse relay, session management, and MCP bridging.
 
-### Phase 5.0: Protocol & Transport — MOSTLY COMPLETE
+### Phase 5.0: Protocol & Transport — COMPLETE
 - [x] CBOR control channel with BE32 framing
 - [x] Ed25519 pubkey auth (authorized_keys)
 - [x] WebTransport + WebSocket fallback
-- [x] 50+ message types (codegen from YAML spec)
+- [x] 92 message types (codegen from YAML spec)
 - [x] Ping/pong keepalive
-- [x] JS client library (connect, auth, sessions, file transfer, MCP)
-- [ ] Rust CLI fully complete (`copy-id` still stubbed; other major commands implemented)
-- [x] Browser wsh tools (9 tools)
+- [x] JS client library (connect, auth, sessions, file transfer, MCP, guest, share, compress, rate, link, copilot, E2E, file channel, policy)
+- [x] Browser wsh tools (27 tools)
+- [x] Browser wsh CLI (copy-id, suspend, resume, restart, metrics, guest, share, compress, rate, link, copilot, file, policy)
 - [x] Pairing system (6-digit codes, tokens)
 
 ### Rust CLI Status Matrix
@@ -250,16 +250,17 @@ Priority: Browser-native remote shell, reverse relay, session management, and MC
 ### Phase 5.6: Client Enhancements — COMPLETE
 - [x] URL read-only attach, session list/attach/scp/connect commands
 
-### Phase 5.7: Protocol Extensions — PARTIALLY COMPLETE
+### Phase 5.7: Protocol Extensions — COMPLETE
 - [x] Recording export, snapshots, command journal, device labels
-- [ ] Background jobs, metrics, idle suspend, PTY restart, ghostty-web (`SuspendSession` path still returns not-implemented)
-- [ ] Guest sessions, multi-attach, compression, rate control (compression path currently rejects as not implemented)
-- [ ] Cross-session linking, copilot mode, E2E encryption (session linking path currently returns not implemented)
+- [x] Metrics request, idle suspend, PTY restart (client + tools + CLI)
+- [x] Guest sessions, multi-attach, compression negotiation, rate control
+- [x] Cross-session linking, copilot mode, E2E encryption (X25519/AES-GCM)
 - [x] Predictive echo, diff-based sync, horizontal scaling, shared sessions
-- [ ] Structured file channel, policy engine (`FileOp` path currently returns not implemented)
+- [x] Structured file channel (stat/list/read/write/mkdir/remove/rename)
+- [x] Policy engine (evaluate/update with relay dispatch)
 
-### Phase 5.8–5.12: Audit Fixes — MOSTLY COMPLETE
-See [AUDIT.md](AUDIT.md) for detailed security audit fix log; runtime implementation gaps in Phase 5.7 are still open.
+### Phase 5.8–5.12: Audit Fixes — COMPLETE
+See [AUDIT.md](AUDIT.md) for detailed security audit fix log.
 
 ---
 

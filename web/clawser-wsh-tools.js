@@ -595,6 +595,509 @@ export class WshFetchTool extends BrowserTool {
   }
 }
 
+// ── wsh_suspend_session ───────────────────────────────────────────────
+
+export class WshSuspendSessionTool extends BrowserTool {
+  get name() { return 'wsh_suspend_session'; }
+  get description() { return 'Suspend a remote wsh session.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string', description: 'Session ID to suspend' },
+        action: { type: 'string', description: 'Action: suspend or hibernate (default: suspend)' },
+        host: { type: 'string', description: 'Server host' },
+      },
+      required: ['session_id'],
+    };
+  }
+  get permission() { return 'approve'; }
+
+  async execute({ session_id, action = 'suspend', host }) {
+    try {
+      const targetHost = host || [...connections.keys()].pop();
+      const client = targetHost ? await getClient(targetHost) : null;
+      if (!client) return { success: false, output: '', error: 'No active connection.' };
+      await client.suspendSession(session_id, action);
+      return { success: true, output: `Session ${session_id} ${action} requested` };
+    } catch (err) {
+      return { success: false, output: '', error: err.message };
+    }
+  }
+}
+
+// ── wsh_restart_pty ──────────────────────────────────────────────────
+
+export class WshRestartPtyTool extends BrowserTool {
+  get name() { return 'wsh_restart_pty'; }
+  get description() { return 'Restart the PTY process in a remote wsh session.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string', description: 'Session ID' },
+        command: { type: 'string', description: 'New command (optional, defaults to original)' },
+        host: { type: 'string', description: 'Server host' },
+      },
+      required: ['session_id'],
+    };
+  }
+  get permission() { return 'approve'; }
+
+  async execute({ session_id, command, host }) {
+    try {
+      const targetHost = host || [...connections.keys()].pop();
+      const client = targetHost ? await getClient(targetHost) : null;
+      if (!client) return { success: false, output: '', error: 'No active connection.' };
+      await client.restartPty(session_id, command);
+      return { success: true, output: `PTY restart requested for session ${session_id}` };
+    } catch (err) {
+      return { success: false, output: '', error: err.message };
+    }
+  }
+}
+
+// ── wsh_metrics ──────────────────────────────────────────────────────
+
+export class WshMetricsTool extends BrowserTool {
+  get name() { return 'wsh_metrics'; }
+  get description() { return 'Request server metrics (CPU, memory, sessions) from a connected wsh host.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        host: { type: 'string', description: 'Server host (uses last connected if omitted)' },
+      },
+    };
+  }
+  get permission() { return 'read'; }
+
+  async execute({ host } = {}) {
+    try {
+      const targetHost = host || [...connections.keys()].pop();
+      const client = targetHost ? await getClient(targetHost) : null;
+      if (!client) return { success: false, output: '', error: 'No active connection.' };
+      const metrics = await client.requestMetrics();
+      return { success: true, output: JSON.stringify(metrics, null, 2) };
+    } catch (err) {
+      return { success: false, output: '', error: err.message };
+    }
+  }
+}
+
+// ── wsh_guest_invite ─────────────────────────────────────────────────
+
+export class WshGuestInviteTool extends BrowserTool {
+  get name() { return 'wsh_guest_invite'; }
+  get description() { return 'Invite a guest to a wsh session with time-limited access.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string', description: 'Session to share' },
+        ttl: { type: 'number', description: 'Invitation TTL in seconds' },
+        permissions: { type: 'array', description: 'Permissions: read, write, control', items: { type: 'string' } },
+        host: { type: 'string', description: 'Server host' },
+      },
+      required: ['session_id', 'ttl'],
+    };
+  }
+  get permission() { return 'approve'; }
+
+  async execute({ session_id, ttl, permissions = ['read'], host }) {
+    try {
+      const targetHost = host || [...connections.keys()].pop();
+      const client = targetHost ? await getClient(targetHost) : null;
+      if (!client) return { success: false, output: '', error: 'No active connection.' };
+      const result = await client.inviteGuest(session_id, ttl, permissions);
+      return { success: true, output: JSON.stringify(result) };
+    } catch (err) {
+      return { success: false, output: '', error: err.message };
+    }
+  }
+}
+
+// ── wsh_guest_revoke ─────────────────────────────────────────────────
+
+export class WshGuestRevokeTool extends BrowserTool {
+  get name() { return 'wsh_guest_revoke'; }
+  get description() { return 'Revoke a guest invitation token.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        token: { type: 'string', description: 'Guest token to revoke' },
+        reason: { type: 'string', description: 'Reason for revocation' },
+        host: { type: 'string', description: 'Server host' },
+      },
+      required: ['token'],
+    };
+  }
+  get permission() { return 'approve'; }
+
+  async execute({ token, reason, host }) {
+    try {
+      const targetHost = host || [...connections.keys()].pop();
+      const client = targetHost ? await getClient(targetHost) : null;
+      if (!client) return { success: false, output: '', error: 'No active connection.' };
+      await client.revokeGuest(token, reason);
+      return { success: true, output: `Guest token revoked` };
+    } catch (err) {
+      return { success: false, output: '', error: err.message };
+    }
+  }
+}
+
+// ── wsh_share_session ────────────────────────────────────────────────
+
+export class WshShareSessionTool extends BrowserTool {
+  get name() { return 'wsh_share_session'; }
+  get description() { return 'Share a wsh session for multi-attach access.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string', description: 'Session to share' },
+        mode: { type: 'string', description: 'Share mode: read or control (default: read)' },
+        ttl: { type: 'number', description: 'Share TTL in seconds' },
+        host: { type: 'string', description: 'Server host' },
+      },
+      required: ['session_id'],
+    };
+  }
+  get permission() { return 'approve'; }
+
+  async execute({ session_id, mode = 'read', ttl, host }) {
+    try {
+      const targetHost = host || [...connections.keys()].pop();
+      const client = targetHost ? await getClient(targetHost) : null;
+      if (!client) return { success: false, output: '', error: 'No active connection.' };
+      const result = await client.shareSession(session_id, mode, ttl);
+      return { success: true, output: JSON.stringify(result) };
+    } catch (err) {
+      return { success: false, output: '', error: err.message };
+    }
+  }
+}
+
+// ── wsh_share_revoke ─────────────────────────────────────────────────
+
+export class WshShareRevokeTool extends BrowserTool {
+  get name() { return 'wsh_share_revoke'; }
+  get description() { return 'Revoke a session share.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        share_id: { type: 'string', description: 'Share ID to revoke' },
+        reason: { type: 'string', description: 'Reason for revocation' },
+        host: { type: 'string', description: 'Server host' },
+      },
+      required: ['share_id'],
+    };
+  }
+  get permission() { return 'approve'; }
+
+  async execute({ share_id, reason, host }) {
+    try {
+      const targetHost = host || [...connections.keys()].pop();
+      const client = targetHost ? await getClient(targetHost) : null;
+      if (!client) return { success: false, output: '', error: 'No active connection.' };
+      await client.revokeShare(share_id, reason);
+      return { success: true, output: `Share ${share_id} revoked` };
+    } catch (err) {
+      return { success: false, output: '', error: err.message };
+    }
+  }
+}
+
+// ── wsh_compress ─────────────────────────────────────────────────────
+
+export class WshCompressTool extends BrowserTool {
+  get name() { return 'wsh_compress'; }
+  get description() { return 'Negotiate compression with a connected wsh server.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        algorithm: { type: 'string', description: 'Compression algorithm (e.g. zstd, lz4)' },
+        level: { type: 'number', description: 'Compression level (default: 3)' },
+        host: { type: 'string', description: 'Server host' },
+      },
+      required: ['algorithm'],
+    };
+  }
+  get permission() { return 'approve'; }
+
+  async execute({ algorithm, level = 3, host }) {
+    try {
+      const targetHost = host || [...connections.keys()].pop();
+      const client = targetHost ? await getClient(targetHost) : null;
+      if (!client) return { success: false, output: '', error: 'No active connection.' };
+      const result = await client.negotiateCompression(algorithm, level);
+      return { success: true, output: JSON.stringify(result) };
+    } catch (err) {
+      return { success: false, output: '', error: err.message };
+    }
+  }
+}
+
+// ── wsh_rate_control ─────────────────────────────────────────────────
+
+export class WshRateControlTool extends BrowserTool {
+  get name() { return 'wsh_rate_control'; }
+  get description() { return 'Set rate control parameters for a wsh session.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string', description: 'Session ID' },
+        max_bytes_per_sec: { type: 'number', description: 'Maximum bytes per second' },
+        policy: { type: 'string', description: 'Rate limit policy: pause or drop (default: pause)' },
+        host: { type: 'string', description: 'Server host' },
+      },
+      required: ['session_id', 'max_bytes_per_sec'],
+    };
+  }
+  get permission() { return 'approve'; }
+
+  async execute({ session_id, max_bytes_per_sec, policy = 'pause', host }) {
+    try {
+      const targetHost = host || [...connections.keys()].pop();
+      const client = targetHost ? await getClient(targetHost) : null;
+      if (!client) return { success: false, output: '', error: 'No active connection.' };
+      await client.setRateControl(session_id, max_bytes_per_sec, policy);
+      return { success: true, output: `Rate control set: ${max_bytes_per_sec} B/s (${policy})` };
+    } catch (err) {
+      return { success: false, output: '', error: err.message };
+    }
+  }
+}
+
+// ── wsh_link_session ─────────────────────────────────────────────────
+
+export class WshLinkSessionTool extends BrowserTool {
+  get name() { return 'wsh_link_session'; }
+  get description() { return 'Link a wsh session to another host for cross-session routing.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        source_session: { type: 'string', description: 'Source session ID' },
+        target_host: { type: 'string', description: 'Target host' },
+        target_port: { type: 'number', description: 'Target port' },
+        target_user: { type: 'string', description: 'Target username' },
+        host: { type: 'string', description: 'Server host' },
+      },
+      required: ['source_session', 'target_host', 'target_port'],
+    };
+  }
+  get permission() { return 'approve'; }
+
+  async execute({ source_session, target_host, target_port, target_user, host }) {
+    try {
+      const h = host || [...connections.keys()].pop();
+      const client = h ? await getClient(h) : null;
+      if (!client) return { success: false, output: '', error: 'No active connection.' };
+      await client.linkSession(source_session, target_host, target_port, target_user);
+      return { success: true, output: `Session link requested: ${source_session} → ${target_host}:${target_port}` };
+    } catch (err) {
+      return { success: false, output: '', error: err.message };
+    }
+  }
+}
+
+// ── wsh_unlink_session ───────────────────────────────────────────────
+
+export class WshUnlinkSessionTool extends BrowserTool {
+  get name() { return 'wsh_unlink_session'; }
+  get description() { return 'Unlink a previously linked wsh session.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        link_id: { type: 'string', description: 'Link ID to remove' },
+        reason: { type: 'string', description: 'Reason for unlinking' },
+        host: { type: 'string', description: 'Server host' },
+      },
+      required: ['link_id'],
+    };
+  }
+  get permission() { return 'approve'; }
+
+  async execute({ link_id, reason, host }) {
+    try {
+      const h = host || [...connections.keys()].pop();
+      const client = h ? await getClient(h) : null;
+      if (!client) return { success: false, output: '', error: 'No active connection.' };
+      await client.unlinkSession(link_id, reason);
+      return { success: true, output: `Session unlinked: ${link_id}` };
+    } catch (err) {
+      return { success: false, output: '', error: err.message };
+    }
+  }
+}
+
+// ── wsh_copilot_attach ───────────────────────────────────────────────
+
+export class WshCopilotAttachTool extends BrowserTool {
+  get name() { return 'wsh_copilot_attach'; }
+  get description() { return 'Attach an AI copilot to a wsh session for suggestions.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string', description: 'Session to attach copilot to' },
+        model: { type: 'string', description: 'AI model name' },
+        context_window: { type: 'number', description: 'Context window size' },
+        host: { type: 'string', description: 'Server host' },
+      },
+      required: ['session_id', 'model'],
+    };
+  }
+  get permission() { return 'approve'; }
+
+  async execute({ session_id, model, context_window, host }) {
+    try {
+      const h = host || [...connections.keys()].pop();
+      const client = h ? await getClient(h) : null;
+      if (!client) return { success: false, output: '', error: 'No active connection.' };
+      await client.copilotAttach(session_id, model, context_window);
+      return { success: true, output: `Copilot attached: ${model} → session ${session_id}` };
+    } catch (err) {
+      return { success: false, output: '', error: err.message };
+    }
+  }
+}
+
+// ── wsh_copilot_detach ───────────────────────────────────────────────
+
+export class WshCopilotDetachTool extends BrowserTool {
+  get name() { return 'wsh_copilot_detach'; }
+  get description() { return 'Detach the copilot from a wsh session.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string', description: 'Session ID' },
+        reason: { type: 'string', description: 'Reason for detaching' },
+        host: { type: 'string', description: 'Server host' },
+      },
+      required: ['session_id'],
+    };
+  }
+  get permission() { return 'approve'; }
+
+  async execute({ session_id, reason, host }) {
+    try {
+      const h = host || [...connections.keys()].pop();
+      const client = h ? await getClient(h) : null;
+      if (!client) return { success: false, output: '', error: 'No active connection.' };
+      await client.copilotDetach(session_id, reason);
+      return { success: true, output: `Copilot detached from session ${session_id}` };
+    } catch (err) {
+      return { success: false, output: '', error: err.message };
+    }
+  }
+}
+
+// ── wsh_file_op ──────────────────────────────────────────────────────
+
+export class WshFileOpTool extends BrowserTool {
+  get name() { return 'wsh_file_op'; }
+  get description() { return 'Perform structured file operations on a remote wsh host (stat, list, read, write, mkdir, remove, rename).'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        op: { type: 'string', description: 'Operation: stat, list, read, write, mkdir, remove, rename' },
+        path: { type: 'string', description: 'File path' },
+        offset: { type: 'number', description: 'Read/write offset' },
+        length: { type: 'number', description: 'Read length' },
+        host: { type: 'string', description: 'Server host' },
+      },
+      required: ['op', 'path'],
+    };
+  }
+  get permission() { return 'approve'; }
+
+  async execute({ op, path, offset, length, host }) {
+    try {
+      const h = host || [...connections.keys()].pop();
+      const client = h ? await getClient(h) : null;
+      if (!client) return { success: false, output: '', error: 'No active connection.' };
+      const result = await client.fileOperation(op, path, { offset, length });
+      return { success: true, output: JSON.stringify(result) };
+    } catch (err) {
+      return { success: false, output: '', error: err.message };
+    }
+  }
+}
+
+// ── wsh_policy_eval ──────────────────────────────────────────────────
+
+export class WshPolicyEvalTool extends BrowserTool {
+  get name() { return 'wsh_policy_eval'; }
+  get description() { return 'Evaluate a policy action on a connected wsh server.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        action: { type: 'string', description: 'Action to evaluate' },
+        principal: { type: 'string', description: 'Principal requesting the action' },
+        context: { type: 'object', description: 'Additional context' },
+        host: { type: 'string', description: 'Server host' },
+      },
+      required: ['action', 'principal'],
+    };
+  }
+  get permission() { return 'read'; }
+
+  async execute({ action, principal, context = {}, host }) {
+    try {
+      const h = host || [...connections.keys()].pop();
+      const client = h ? await getClient(h) : null;
+      if (!client) return { success: false, output: '', error: 'No active connection.' };
+      const result = await client.evaluatePolicy(action, principal, context);
+      return { success: true, output: JSON.stringify(result) };
+    } catch (err) {
+      return { success: false, output: '', error: err.message };
+    }
+  }
+}
+
+// ── wsh_policy_update ────────────────────────────────────────────────
+
+export class WshPolicyUpdateTool extends BrowserTool {
+  get name() { return 'wsh_policy_update'; }
+  get description() { return 'Update a policy on a connected wsh server.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        policy_id: { type: 'string', description: 'Policy ID to update' },
+        rules: { type: 'object', description: 'New policy rules' },
+        version: { type: 'number', description: 'Policy version' },
+        host: { type: 'string', description: 'Server host' },
+      },
+      required: ['policy_id', 'rules', 'version'],
+    };
+  }
+  get permission() { return 'approve'; }
+
+  async execute({ policy_id, rules, version, host }) {
+    try {
+      const h = host || [...connections.keys()].pop();
+      const client = h ? await getClient(h) : null;
+      if (!client) return { success: false, output: '', error: 'No active connection.' };
+      await client.updatePolicy(policy_id, rules, version);
+      return { success: true, output: `Policy ${policy_id} updated to v${version}` };
+    } catch (err) {
+      return { success: false, output: '', error: err.message };
+    }
+  }
+}
+
 // ── Registry helper ───────────────────────────────────────────────────
 
 /**
@@ -655,6 +1158,23 @@ export function registerWshTools(registry) {
   registry.register(new WshMcpCallTool());
   registry.register(new WshFetchTool());
   registry.register(new WshGpuProbeTool());
+  // Phase 5 additions
+  registry.register(new WshSuspendSessionTool());
+  registry.register(new WshRestartPtyTool());
+  registry.register(new WshMetricsTool());
+  registry.register(new WshGuestInviteTool());
+  registry.register(new WshGuestRevokeTool());
+  registry.register(new WshShareSessionTool());
+  registry.register(new WshShareRevokeTool());
+  registry.register(new WshCompressTool());
+  registry.register(new WshRateControlTool());
+  registry.register(new WshLinkSessionTool());
+  registry.register(new WshUnlinkSessionTool());
+  registry.register(new WshCopilotAttachTool());
+  registry.register(new WshCopilotDetachTool());
+  registry.register(new WshFileOpTool());
+  registry.register(new WshPolicyEvalTool());
+  registry.register(new WshPolicyUpdateTool());
 }
 
 /**

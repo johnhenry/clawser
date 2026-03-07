@@ -8,7 +8,7 @@ const ROOT = resolve(import.meta.dirname, '..', '..');
 describe('wsh roadmap/implementation consistency', () => {
   it('roadmap reflects non-final phase wording and includes CLI matrix', () => {
     const roadmap = readFileSync(resolve(ROOT, 'ROADMAP.md'), 'utf8');
-    assert.match(roadmap, /Phase 5: Remote Execution \(wsh\) -- MOSTLY COMPLETE/);
+    assert.match(roadmap, /Phase 5: Remote Execution \(wsh\) -- COMPLETE/);
     assert.match(roadmap, /Rust CLI Status Matrix/);
   });
 

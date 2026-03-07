@@ -49,6 +49,20 @@ Usage:
   wsh tools [host]                 List MCP tools on connected host
   wsh reverse relay --expose-shell Register as reverse-connectable peer
   wsh peers relay                  List reverse-connected peers on relay
+  wsh suspend <session_id>         Suspend a session
+  wsh resume <session_id>          Resume a suspended session
+  wsh restart <session_id>         Restart PTY in a session
+  wsh metrics [host]               Request server metrics
+  wsh guest invite|join|revoke     Guest session management
+  wsh share <session_id>           Share a session for multi-attach
+  wsh unshare <share_id>           Revoke a session share
+  wsh compress <algorithm>         Negotiate compression
+  wsh rate <session_id> <bps>      Set rate control
+  wsh link <session> <host> <port> Link sessions across hosts
+  wsh unlink <link_id>             Unlink sessions
+  wsh copilot attach|detach        Copilot mode management
+  wsh file <op> <path>             Structured file operations
+  wsh policy eval|update           Policy engine operations
 
 Options:
   -p, --port <PORT>                Server port [default: 4422]
@@ -479,6 +493,58 @@ export function registerWshCli(registry, getAgent, getShell) {
     }
   }
 
+  // ── Subcommand: copy-id ─────────────────────────────────────────
+
+  async function cmdCopyId(positional, flags) {
+    const target = positional[0];
+    if (!target) {
+      return { stdout: '', stderr: 'Usage: wsh copy-id user@host\n', exitCode: 1 };
+    }
+
+    const parsed = parseUserHost(target, parseInt(flags.port) || 4422);
+    if (!parsed || !parsed.user) {
+      return { stdout: '', stderr: 'Invalid target. Use: user@host[:port]\n', exitCode: 1 };
+    }
+
+    const keyName = flags.identity || 'default';
+    const transport = flags.transport || 'auto';
+
+    try {
+      const ks = await ensureKeyStore();
+      const keyPair = await ks.getKeyPair(keyName);
+      if (!keyPair) {
+        return { stdout: '', stderr: `Key "${keyName}" not found. Run: wsh keygen\n`, exitCode: 1 };
+      }
+
+      // Export the public key in SSH format
+      const pubKeySSH = await exportPublicKeySSH(keyPair.publicKey, `${parsed.user}@clawser`);
+
+      // Build the command that appends the key to authorized_keys
+      const escapedKey = pubKeySSH.replace(/'/g, "'\\''");
+      const remoteCmd = `mkdir -p ~/.wsh && echo '${escapedKey}' >> ~/.wsh/authorized_keys`;
+
+      const url = buildUrl(parsed.host, parsed.port, transport);
+      const result = await WshClient.exec(url, remoteCmd, {
+        username: parsed.user,
+        keyPair,
+      });
+
+      if (result.exitCode !== 0) {
+        const decoder = new TextDecoder();
+        const stderr = result.stdout instanceof Uint8Array
+          ? decoder.decode(result.stdout) : String(result.stdout || '');
+        return { stdout: '', stderr: `copy-id failed: ${stderr}\n`, exitCode: 1 };
+      }
+
+      return {
+        stdout: `Public key "${keyName}" installed on ${parsed.host} for ${parsed.user}\n`,
+        stderr: '', exitCode: 0,
+      };
+    } catch (err) {
+      return { stdout: '', stderr: `copy-id failed: ${err.message}\n`, exitCode: 1 };
+    }
+  }
+
   // ── Subcommand: attach ──────────────────────────────────────────
 
   async function cmdAttach(positional, flags) {
@@ -544,6 +610,282 @@ export function registerWshCli(registry, getAgent, getShell) {
     }
   }
 
+  // ── Subcommand: suspend / resume / restart ──────────────────────
+
+  async function cmdSuspend(positional) {
+    const sessionId = positional[0];
+    if (!sessionId) return { stdout: '', stderr: 'Usage: wsh suspend <session_id>\n', exitCode: 1 };
+    const host = [...connections.keys()].pop();
+    if (!host) return { stdout: '', stderr: 'No active connection.\n', exitCode: 1 };
+    const client = connections.get(host);
+    if (!client || client.state !== 'authenticated') return { stdout: '', stderr: 'Not connected.\n', exitCode: 1 };
+    try {
+      await client.suspendSession(sessionId, 'suspend');
+      return { stdout: `Session ${sessionId} suspend requested\n`, stderr: '', exitCode: 0 };
+    } catch (err) { return { stdout: '', stderr: `Suspend failed: ${err.message}\n`, exitCode: 1 }; }
+  }
+
+  async function cmdResume(positional) {
+    const sessionId = positional[0];
+    if (!sessionId) return { stdout: '', stderr: 'Usage: wsh resume <session_id>\n', exitCode: 1 };
+    const host = [...connections.keys()].pop();
+    if (!host) return { stdout: '', stderr: 'No active connection.\n', exitCode: 1 };
+    const client = connections.get(host);
+    if (!client || client.state !== 'authenticated') return { stdout: '', stderr: 'Not connected.\n', exitCode: 1 };
+    try {
+      await client.suspendSession(sessionId, 'resume');
+      return { stdout: `Session ${sessionId} resume requested\n`, stderr: '', exitCode: 0 };
+    } catch (err) { return { stdout: '', stderr: `Resume failed: ${err.message}\n`, exitCode: 1 }; }
+  }
+
+  async function cmdRestart(positional) {
+    const sessionId = positional[0];
+    if (!sessionId) return { stdout: '', stderr: 'Usage: wsh restart <session_id>\n', exitCode: 1 };
+    const host = [...connections.keys()].pop();
+    if (!host) return { stdout: '', stderr: 'No active connection.\n', exitCode: 1 };
+    const client = connections.get(host);
+    if (!client || client.state !== 'authenticated') return { stdout: '', stderr: 'Not connected.\n', exitCode: 1 };
+    try {
+      await client.restartPty(sessionId, positional[1]);
+      return { stdout: `PTY restart requested for ${sessionId}\n`, stderr: '', exitCode: 0 };
+    } catch (err) { return { stdout: '', stderr: `Restart failed: ${err.message}\n`, exitCode: 1 }; }
+  }
+
+  // ── Subcommand: metrics ─────────────────────────────────────────
+
+  async function cmdMetrics(positional) {
+    const host = positional[0] || [...connections.keys()].pop();
+    if (!host) return { stdout: '', stderr: 'No active connection.\n', exitCode: 1 };
+    const client = connections.get(host);
+    if (!client || client.state !== 'authenticated') return { stdout: '', stderr: `Not connected to ${host}\n`, exitCode: 1 };
+    try {
+      const m = await client.requestMetrics();
+      const lines = ['SERVER METRICS'];
+      if (m.cpu !== undefined) lines.push(`CPU:      ${m.cpu}%`);
+      if (m.memory !== undefined) lines.push(`Memory:   ${m.memory}%`);
+      if (m.sessions !== undefined) lines.push(`Sessions: ${m.sessions}`);
+      if (m.rtt !== undefined) lines.push(`RTT:      ${m.rtt}ms`);
+      return { stdout: lines.join('\n') + '\n', stderr: '', exitCode: 0 };
+    } catch (err) { return { stdout: '', stderr: `Metrics failed: ${err.message}\n`, exitCode: 1 }; }
+  }
+
+  // ── Subcommand: guest ───────────────────────────────────────────
+
+  async function cmdGuest(positional, flags) {
+    const action = positional[0];
+    const host = [...connections.keys()].pop();
+    if (!host) return { stdout: '', stderr: 'No active connection.\n', exitCode: 1 };
+    const client = connections.get(host);
+    if (!client || client.state !== 'authenticated') return { stdout: '', stderr: 'Not connected.\n', exitCode: 1 };
+
+    switch (action) {
+      case 'invite': {
+        const sessionId = positional[1];
+        const ttl = parseInt(positional[2]) || 3600;
+        if (!sessionId) return { stdout: '', stderr: 'Usage: wsh guest invite <session_id> [ttl]\n', exitCode: 1 };
+        try {
+          const result = await client.inviteGuest(sessionId, ttl);
+          return { stdout: `Guest invite created (TTL: ${ttl}s)\nToken: ${result.token || JSON.stringify(result)}\n`, stderr: '', exitCode: 0 };
+        } catch (err) { return { stdout: '', stderr: `Invite failed: ${err.message}\n`, exitCode: 1 }; }
+      }
+      case 'join': {
+        const token = positional[1];
+        if (!token) return { stdout: '', stderr: 'Usage: wsh guest join <token>\n', exitCode: 1 };
+        try {
+          const result = await client.joinAsGuest(token);
+          return { stdout: `Joined as guest\n`, stderr: '', exitCode: 0 };
+        } catch (err) { return { stdout: '', stderr: `Join failed: ${err.message}\n`, exitCode: 1 }; }
+      }
+      case 'revoke': {
+        const token = positional[1];
+        if (!token) return { stdout: '', stderr: 'Usage: wsh guest revoke <token>\n', exitCode: 1 };
+        try {
+          await client.revokeGuest(token, positional[2]);
+          return { stdout: `Guest token revoked\n`, stderr: '', exitCode: 0 };
+        } catch (err) { return { stdout: '', stderr: `Revoke failed: ${err.message}\n`, exitCode: 1 }; }
+      }
+      default:
+        return { stdout: '', stderr: 'Usage: wsh guest invite|join|revoke\n', exitCode: 1 };
+    }
+  }
+
+  // ── Subcommand: share / unshare ─────────────────────────────────
+
+  async function cmdShare(positional) {
+    const sessionId = positional[0];
+    if (!sessionId) return { stdout: '', stderr: 'Usage: wsh share <session_id> [mode] [ttl]\n', exitCode: 1 };
+    const host = [...connections.keys()].pop();
+    if (!host) return { stdout: '', stderr: 'No active connection.\n', exitCode: 1 };
+    const client = connections.get(host);
+    if (!client || client.state !== 'authenticated') return { stdout: '', stderr: 'Not connected.\n', exitCode: 1 };
+    try {
+      const mode = positional[1] || 'read';
+      const ttl = positional[2] ? parseInt(positional[2]) : undefined;
+      const result = await client.shareSession(sessionId, mode, ttl);
+      return { stdout: `Session shared (share_id: ${result.share_id || JSON.stringify(result)})\n`, stderr: '', exitCode: 0 };
+    } catch (err) { return { stdout: '', stderr: `Share failed: ${err.message}\n`, exitCode: 1 }; }
+  }
+
+  async function cmdUnshare(positional) {
+    const shareId = positional[0];
+    if (!shareId) return { stdout: '', stderr: 'Usage: wsh unshare <share_id>\n', exitCode: 1 };
+    const host = [...connections.keys()].pop();
+    if (!host) return { stdout: '', stderr: 'No active connection.\n', exitCode: 1 };
+    const client = connections.get(host);
+    if (!client || client.state !== 'authenticated') return { stdout: '', stderr: 'Not connected.\n', exitCode: 1 };
+    try {
+      await client.revokeShare(shareId, positional[1]);
+      return { stdout: `Share ${shareId} revoked\n`, stderr: '', exitCode: 0 };
+    } catch (err) { return { stdout: '', stderr: `Unshare failed: ${err.message}\n`, exitCode: 1 }; }
+  }
+
+  // ── Subcommand: compress ────────────────────────────────────────
+
+  async function cmdCompress(positional) {
+    const algorithm = positional[0];
+    if (!algorithm) return { stdout: '', stderr: 'Usage: wsh compress <algorithm> [level]\n', exitCode: 1 };
+    const host = [...connections.keys()].pop();
+    if (!host) return { stdout: '', stderr: 'No active connection.\n', exitCode: 1 };
+    const client = connections.get(host);
+    if (!client || client.state !== 'authenticated') return { stdout: '', stderr: 'Not connected.\n', exitCode: 1 };
+    try {
+      const level = positional[1] ? parseInt(positional[1]) : 3;
+      const result = await client.negotiateCompression(algorithm, level);
+      const accepted = result.accepted ? 'accepted' : 'declined';
+      return { stdout: `Compression ${algorithm} (level ${level}): ${accepted}\n`, stderr: '', exitCode: 0 };
+    } catch (err) { return { stdout: '', stderr: `Compression failed: ${err.message}\n`, exitCode: 1 }; }
+  }
+
+  // ── Subcommand: rate ────────────────────────────────────────────
+
+  async function cmdRate(positional) {
+    const sessionId = positional[0];
+    const bps = parseInt(positional[1]);
+    if (!sessionId || isNaN(bps)) return { stdout: '', stderr: 'Usage: wsh rate <session_id> <bytes_per_sec> [policy]\n', exitCode: 1 };
+    const host = [...connections.keys()].pop();
+    if (!host) return { stdout: '', stderr: 'No active connection.\n', exitCode: 1 };
+    const client = connections.get(host);
+    if (!client || client.state !== 'authenticated') return { stdout: '', stderr: 'Not connected.\n', exitCode: 1 };
+    try {
+      await client.setRateControl(sessionId, bps, positional[2] || 'pause');
+      return { stdout: `Rate control set: ${bps} B/s\n`, stderr: '', exitCode: 0 };
+    } catch (err) { return { stdout: '', stderr: `Rate control failed: ${err.message}\n`, exitCode: 1 }; }
+  }
+
+  // ── Subcommand: link / unlink ───────────────────────────────────
+
+  async function cmdLink(positional) {
+    const [sessionId, targetHost, targetPortStr, targetUser] = positional;
+    if (!sessionId || !targetHost || !targetPortStr) return { stdout: '', stderr: 'Usage: wsh link <session_id> <target_host> <target_port> [target_user]\n', exitCode: 1 };
+    const host = [...connections.keys()].pop();
+    if (!host) return { stdout: '', stderr: 'No active connection.\n', exitCode: 1 };
+    const client = connections.get(host);
+    if (!client || client.state !== 'authenticated') return { stdout: '', stderr: 'Not connected.\n', exitCode: 1 };
+    try {
+      await client.linkSession(sessionId, targetHost, parseInt(targetPortStr), targetUser);
+      return { stdout: `Session link: ${sessionId} → ${targetHost}:${targetPortStr}\n`, stderr: '', exitCode: 0 };
+    } catch (err) { return { stdout: '', stderr: `Link failed: ${err.message}\n`, exitCode: 1 }; }
+  }
+
+  async function cmdUnlink(positional) {
+    const linkId = positional[0];
+    if (!linkId) return { stdout: '', stderr: 'Usage: wsh unlink <link_id>\n', exitCode: 1 };
+    const host = [...connections.keys()].pop();
+    if (!host) return { stdout: '', stderr: 'No active connection.\n', exitCode: 1 };
+    const client = connections.get(host);
+    if (!client || client.state !== 'authenticated') return { stdout: '', stderr: 'Not connected.\n', exitCode: 1 };
+    try {
+      await client.unlinkSession(linkId, positional[1]);
+      return { stdout: `Unlinked: ${linkId}\n`, stderr: '', exitCode: 0 };
+    } catch (err) { return { stdout: '', stderr: `Unlink failed: ${err.message}\n`, exitCode: 1 }; }
+  }
+
+  // ── Subcommand: copilot ─────────────────────────────────────────
+
+  async function cmdCopilot(positional) {
+    const action = positional[0];
+    const host = [...connections.keys()].pop();
+    if (!host) return { stdout: '', stderr: 'No active connection.\n', exitCode: 1 };
+    const client = connections.get(host);
+    if (!client || client.state !== 'authenticated') return { stdout: '', stderr: 'Not connected.\n', exitCode: 1 };
+
+    switch (action) {
+      case 'attach': {
+        const sessionId = positional[1];
+        const model = positional[2];
+        if (!sessionId || !model) return { stdout: '', stderr: 'Usage: wsh copilot attach <session_id> <model>\n', exitCode: 1 };
+        try {
+          await client.copilotAttach(sessionId, model, positional[3] ? parseInt(positional[3]) : undefined);
+          return { stdout: `Copilot ${model} attached to ${sessionId}\n`, stderr: '', exitCode: 0 };
+        } catch (err) { return { stdout: '', stderr: `Attach failed: ${err.message}\n`, exitCode: 1 }; }
+      }
+      case 'detach': {
+        const sessionId = positional[1];
+        if (!sessionId) return { stdout: '', stderr: 'Usage: wsh copilot detach <session_id>\n', exitCode: 1 };
+        try {
+          await client.copilotDetach(sessionId, positional[2]);
+          return { stdout: `Copilot detached from ${sessionId}\n`, stderr: '', exitCode: 0 };
+        } catch (err) { return { stdout: '', stderr: `Detach failed: ${err.message}\n`, exitCode: 1 }; }
+      }
+      default:
+        return { stdout: '', stderr: 'Usage: wsh copilot attach|detach\n', exitCode: 1 };
+    }
+  }
+
+  // ── Subcommand: file ────────────────────────────────────────────
+
+  async function cmdFile(positional) {
+    const op = positional[0];
+    const path = positional[1];
+    if (!op || !path) return { stdout: '', stderr: 'Usage: wsh file <op> <path> [offset] [length]\n  Ops: stat, list, read, write, mkdir, remove, rename\n', exitCode: 1 };
+    const host = [...connections.keys()].pop();
+    if (!host) return { stdout: '', stderr: 'No active connection.\n', exitCode: 1 };
+    const client = connections.get(host);
+    if (!client || client.state !== 'authenticated') return { stdout: '', stderr: 'Not connected.\n', exitCode: 1 };
+    try {
+      const opts = {};
+      if (positional[2]) opts.offset = parseInt(positional[2]);
+      if (positional[3]) opts.length = parseInt(positional[3]);
+      const result = await client.fileOperation(op, path, opts);
+      return { stdout: JSON.stringify(result, null, 2) + '\n', stderr: '', exitCode: 0 };
+    } catch (err) { return { stdout: '', stderr: `File op failed: ${err.message}\n`, exitCode: 1 }; }
+  }
+
+  // ── Subcommand: policy ──────────────────────────────────────────
+
+  async function cmdPolicy(positional) {
+    const action = positional[0];
+    const host = [...connections.keys()].pop();
+    if (!host) return { stdout: '', stderr: 'No active connection.\n', exitCode: 1 };
+    const client = connections.get(host);
+    if (!client || client.state !== 'authenticated') return { stdout: '', stderr: 'Not connected.\n', exitCode: 1 };
+
+    switch (action) {
+      case 'eval': {
+        const pAction = positional[1];
+        const principal = positional[2];
+        if (!pAction || !principal) return { stdout: '', stderr: 'Usage: wsh policy eval <action> <principal>\n', exitCode: 1 };
+        try {
+          const result = await client.evaluatePolicy(pAction, principal);
+          return { stdout: JSON.stringify(result, null, 2) + '\n', stderr: '', exitCode: 0 };
+        } catch (err) { return { stdout: '', stderr: `Policy eval failed: ${err.message}\n`, exitCode: 1 }; }
+      }
+      case 'update': {
+        const policyId = positional[1];
+        const rulesStr = positional[2];
+        const version = parseInt(positional[3]);
+        if (!policyId || !rulesStr || isNaN(version)) return { stdout: '', stderr: 'Usage: wsh policy update <policy_id> <rules_json> <version>\n', exitCode: 1 };
+        try {
+          const rules = JSON.parse(rulesStr);
+          await client.updatePolicy(policyId, rules, version);
+          return { stdout: `Policy ${policyId} updated to v${version}\n`, stderr: '', exitCode: 0 };
+        } catch (err) { return { stdout: '', stderr: `Policy update failed: ${err.message}\n`, exitCode: 1 }; }
+      }
+      default:
+        return { stdout: '', stderr: 'Usage: wsh policy eval|update\n', exitCode: 1 };
+    }
+  }
+
   // ── Main command handler ───────────────────────────────────────
 
   registry.register('wsh', async ({ args }) => {
@@ -577,7 +919,7 @@ export function registerWshCli(registry, getAgent, getShell) {
       case 'detach':
         return { stdout: '', stderr: 'detach: use Ctrl+D or close session\n', exitCode: 1 };
       case 'copy-id':
-        return { stdout: '', stderr: 'copy-id: not yet implemented in browser shell\n', exitCode: 1 };
+        return cmdCopyId(positional.slice(1), flags);
       case 'scp':
         return cmdScp(positional.slice(1), flags);
       case 'tools':
@@ -586,6 +928,34 @@ export function registerWshCli(registry, getAgent, getShell) {
         return cmdReverse(positional.slice(1), flags);
       case 'peers':
         return cmdPeers(positional.slice(1), flags);
+      case 'suspend':
+        return cmdSuspend(positional.slice(1));
+      case 'resume':
+        return cmdResume(positional.slice(1));
+      case 'restart':
+        return cmdRestart(positional.slice(1));
+      case 'metrics':
+        return cmdMetrics(positional.slice(1));
+      case 'guest':
+        return cmdGuest(positional.slice(1), flags);
+      case 'share':
+        return cmdShare(positional.slice(1));
+      case 'unshare':
+        return cmdUnshare(positional.slice(1));
+      case 'compress':
+        return cmdCompress(positional.slice(1));
+      case 'rate':
+        return cmdRate(positional.slice(1));
+      case 'link':
+        return cmdLink(positional.slice(1));
+      case 'unlink':
+        return cmdUnlink(positional.slice(1));
+      case 'copilot':
+        return cmdCopilot(positional.slice(1));
+      case 'file':
+        return cmdFile(positional.slice(1));
+      case 'policy':
+        return cmdPolicy(positional.slice(1));
       default:
         break;
     }

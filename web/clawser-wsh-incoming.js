@@ -188,6 +188,71 @@ class IncomingSession {
         break;
       }
 
+      case MSG.GUEST_JOIN: {
+        console.log('[wsh:incoming] GuestJoin from peer:', msg.token);
+        // Relay to server — browser acknowledges guest join
+        break;
+      }
+
+      case MSG.GUEST_REVOKE: {
+        console.log('[wsh:incoming] GuestRevoke from peer:', msg.token);
+        break;
+      }
+
+      case MSG.COPILOT_ATTACH: {
+        console.log('[wsh:incoming] CopilotAttach from peer:', msg.model);
+        // Kernel bridge handleCopilotAttach if available
+        if (_kernelBridge && typeof _kernelBridge.handleCopilotAttach === 'function') {
+          _kernelBridge.handleCopilotAttach(msg);
+        }
+        break;
+      }
+
+      case MSG.COPILOT_DETACH: {
+        console.log('[wsh:incoming] CopilotDetach from peer');
+        break;
+      }
+
+      case MSG.FILE_OP: {
+        const { fileResult: fileResultMsg } = await import('./packages-wsh.js');
+        console.log('[wsh:incoming] FileOp from peer:', msg.op, msg.path);
+        try {
+          // Handle file operations against OPFS via the tool registry
+          const result = await this.handleToolCall('fs_' + msg.op, { path: msg.path, offset: msg.offset, length: msg.length });
+          await this._sendReply(fileResultMsg({
+            channelId: msg.channel_id,
+            success: result.success !== false,
+            metadata: result.output ? { data: result.output } : {},
+            errorMessage: result.error,
+          }));
+        } catch (err) {
+          await this._sendReply(fileResultMsg({
+            channelId: msg.channel_id,
+            success: false,
+            errorMessage: err.message,
+          }));
+        }
+        break;
+      }
+
+      case MSG.POLICY_EVAL: {
+        const { policyResult: policyResultMsg } = await import('./packages-wsh.js');
+        console.log('[wsh:incoming] PolicyEval from peer:', msg.action, msg.principal);
+        // Use local tool permission system to evaluate
+        const registry = _toolRegistry || globalThis.__clawserToolRegistry;
+        let allowed = false;
+        if (registry) {
+          const tool = registry.get(msg.action);
+          allowed = tool ? (tool.permission === 'auto' || tool.permission === 'read' || tool.permission === 'internal') : false;
+        }
+        await this._sendReply(policyResultMsg({
+          requestId: msg.request_id,
+          allowed,
+          reason: allowed ? 'permitted by local policy' : 'requires approval',
+        }));
+        break;
+      }
+
       case MSG.AGENT_CHAT: {
         // CLI wants to chat with the agent.
         const content = msg.content || '';
