@@ -531,6 +531,7 @@ Step-by-step guides to get productive with Clawser — see the [full tutorial in
 | [docs/CONFIG.md](docs/CONFIG.md) | Configuration panel options and storage keys |
 | [docs/FEATURES.md](docs/FEATURES.md) | Advanced features guide (routines, delegation, vault, etc.) |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Static server, Docker, and production setup |
+| [docs/WSH-INTO-CLAWSER.md](docs/WSH-INTO-CLAWSER.md) | Reverse-connect setup and current status for reaching a live Clawser tab via `wsh` |
 | [docs/tutorials/](docs/tutorials/README.md) | 10 step-by-step tutorials with screenshots |
 
 ## `.reference/` Directory

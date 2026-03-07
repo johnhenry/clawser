@@ -12,7 +12,8 @@
       "file": "../ARCHITECTURE.md",
       "children": [
         { "title": "Modules", "slug": "modules", "file": "../MODULES.md" },
-        { "title": "Internals", "slug": "internals", "file": "../INTERNALS.md" }
+        { "title": "Internals", "slug": "internals", "file": "../INTERNALS.md" },
+        { "title": "Reverse Browser Terminal Backlog", "slug": "reverse-browser-terminal-backlog", "file": "../REVERSE-BROWSER-TERMINAL-BACKLOG.md" }
       ]
     },
     {
@@ -39,7 +40,9 @@
       "title": "CLI",
       "slug": "cli",
       "file": "../CLI.md",
-      "children": []
+      "children": [
+        { "title": "WSH Into Clawser", "slug": "wsh-into-clawser", "file": "../WSH-INTO-CLAWSER.md" }
+      ]
     },
     {
       "title": "Deployment",
