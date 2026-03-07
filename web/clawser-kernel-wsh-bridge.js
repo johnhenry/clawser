@@ -12,6 +12,7 @@
  */
 
 import { KERNEL_CAP } from './packages-kernel.js';
+import { buildReverseParticipantKey } from './clawser-wsh-virtual-terminal-manager.js';
 
 /**
  * Bridge between wsh session events and kernel tenant lifecycle.
@@ -86,12 +87,17 @@ export class KernelWshBridge {
    * not get full FS or NET access.
    *
    * @param {Object} event
+   * @param {string} [event.participantId] - Stable participant identifier.
    * @param {string} event.username - Remote CLI username.
    * @param {string} event.fingerprint - Remote CLI fingerprint.
    * @param {string[]} [event.capabilities] - Override default caps.
    * @returns {{ tenantId: string }}
    */
-  handleReverseConnect({ username, fingerprint, capabilities }) {
+  handleReverseConnect({ participantId, username, fingerprint, capabilities }) {
+    const stableParticipantId = participantId || buildReverseParticipantKey({
+      username,
+      targetFingerprint: fingerprint,
+    });
     const caps = capabilities || [KERNEL_CAP.STDIO, KERNEL_CAP.CLOCK];
     const tenant = this.#kernel.createTenant({
       capabilities: caps,
@@ -99,10 +105,10 @@ export class KernelWshBridge {
         REVERSE: 'true',
         USERNAME: username,
         FINGERPRINT: fingerprint,
-        PARTICIPANT_ID: username,
+        PARTICIPANT_ID: stableParticipantId,
       },
     });
-    this.#tenantMap.set(username, tenant.id);
+    this.#tenantMap.set(stableParticipantId, tenant.id);
     return { tenantId: tenant.id };
   }
 
@@ -144,7 +150,12 @@ export class KernelWshBridge {
     // Wire onReverseConnect — the primary entry point for incoming CLI peers.
     const prevReverseConnect = wshClient.onReverseConnect;
     wshClient.onReverseConnect = (msg) => {
+      const participantId = buildReverseParticipantKey({
+        username: msg.username,
+        targetFingerprint: msg.target_fingerprint || msg.fingerprint || '',
+      });
       this.handleReverseConnect({
+        participantId,
         username: msg.username,
         fingerprint: msg.target_fingerprint || msg.fingerprint || '',
       });

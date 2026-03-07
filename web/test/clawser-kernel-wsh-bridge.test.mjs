@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { KernelWshBridge } from '../clawser-kernel-wsh-bridge.js';
+import { buildReverseParticipantKey } from '../clawser-wsh-virtual-terminal-manager.js';
 import { Kernel, KERNEL_CAP } from '../packages/kernel/src/index.mjs';
 
 describe('KernelWshBridge', () => {
@@ -93,8 +94,13 @@ describe('KernelWshBridge', () => {
   it('handleReverseConnect creates tenant with restricted caps', () => {
     const kernel = new Kernel();
     const bridge = new KernelWshBridge(kernel);
+    const participantId = buildReverseParticipantKey({
+      username: 'cli_user',
+      targetFingerprint: 'SHA256:abc123',
+    });
 
     const { tenantId } = bridge.handleReverseConnect({
+      participantId,
       username: 'cli_user',
       fingerprint: 'SHA256:abc123',
     });
@@ -104,7 +110,7 @@ describe('KernelWshBridge', () => {
     assert.equal(tenant.env.get('REVERSE'), 'true');
     assert.equal(tenant.env.get('USERNAME'), 'cli_user');
     assert.equal(tenant.env.get('FINGERPRINT'), 'SHA256:abc123');
-    assert.equal(tenant.env.get('PARTICIPANT_ID'), 'cli_user');
+    assert.equal(tenant.env.get('PARTICIPANT_ID'), participantId);
     // Should have STDIO and CLOCK but NOT NET or FS
     assert.ok(tenant.caps._granted.includes(KERNEL_CAP.STDIO));
     assert.ok(tenant.caps._granted.includes(KERNEL_CAP.CLOCK));
@@ -135,11 +141,15 @@ describe('KernelWshBridge', () => {
   it('handleParticipantLeave destroys reverse-connect tenant', () => {
     const kernel = new Kernel();
     const bridge = new KernelWshBridge(kernel);
+    const participantId = buildReverseParticipantKey({
+      username: 'cli_user',
+      targetFingerprint: 'fp',
+    });
 
-    bridge.handleReverseConnect({ username: 'cli_user', fingerprint: 'fp' });
+    bridge.handleReverseConnect({ participantId, username: 'cli_user', fingerprint: 'fp' });
     assert.equal(kernel.listTenants().length, 1);
 
-    bridge.handleParticipantLeave('cli_user');
+    bridge.handleParticipantLeave(participantId);
     assert.equal(kernel.listTenants().length, 0);
 
     bridge.close();
@@ -164,7 +174,10 @@ describe('KernelWshBridge', () => {
       target_fingerprint: 'SHA256:fp',
     });
     assert.equal(kernel.listTenants().length, 1);
-    assert.ok(bridge.getTenantId('remote_cli'));
+    assert.ok(bridge.getTenantId(buildReverseParticipantKey({
+      username: 'remote_cli',
+      targetFingerprint: 'SHA256:fp',
+    })));
 
     bridge.close();
     kernel.close();
@@ -198,7 +211,11 @@ describe('KernelWshBridge', () => {
 
     // Create some tenants
     bridge.handleGuestJoin({ guestId: 'g1' });
-    bridge.handleReverseConnect({ username: 'rc1', fingerprint: 'fp' });
+    bridge.handleReverseConnect({
+      participantId: buildReverseParticipantKey({ username: 'rc1', targetFingerprint: 'fp' }),
+      username: 'rc1',
+      fingerprint: 'fp',
+    });
     assert.equal(kernel.listTenants().length, 2);
 
     // Simulate client disconnect
@@ -224,7 +241,11 @@ describe('KernelWshBridge', () => {
 
     bridge.handleGuestJoin({ guestId: 'g1' });
     bridge.handleCopilotAttach({ copilotId: 'c1' });
-    bridge.handleReverseConnect({ username: 'rc1', fingerprint: 'fp' });
+    bridge.handleReverseConnect({
+      participantId: buildReverseParticipantKey({ username: 'rc1', targetFingerprint: 'fp' }),
+      username: 'rc1',
+      fingerprint: 'fp',
+    });
     assert.equal(kernel.listTenants().length, 3);
 
     bridge.close();

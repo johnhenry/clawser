@@ -1,20 +1,5 @@
-/**
- * Type definitions for clawser-wsh-incoming.js
- * — Incoming reverse-connect session handler for wsh.
- */
-
 import type { KernelWshBridge } from './clawser-kernel-wsh-bridge.d.ts';
-import type { ToolResult } from './types.d.ts';
-
-/**
- * Set the kernel-wsh bridge for tenant lifecycle.
- */
-export declare function setKernelBridge(bridge: KernelWshBridge | null): void;
-
-/**
- * Get the current kernel-wsh bridge.
- */
-export declare function getKernelBridge(): KernelWshBridge | null;
+import type { VirtualTerminalManager } from './clawser-wsh-virtual-terminal-manager.d.ts';
 
 export interface ReverseConnectMessage {
   target_fingerprint: string;
@@ -22,45 +7,35 @@ export interface ReverseConnectMessage {
   [key: string]: unknown;
 }
 
-/**
- * Handle an incoming ReverseConnect message.
- * Called by the WshClient's onReverseConnect callback.
- *
- * Creates an IncomingSession and wires up relay message listening so
- * the browser can receive and respond to Open/McpCall/McpDiscover etc.
- * from the remote CLI peer.
- */
-export declare function handleReverseConnect(msg: ReverseConnectMessage): void;
-
 export interface IncomingSessionInfo {
+  participantKey: string;
   username: string;
   fingerprint: string;
   createdAt: number;
   state: string;
 }
 
-/**
- * List active incoming sessions.
- */
+export declare function setKernelBridge(bridge: KernelWshBridge | null): void;
+export declare function getKernelBridge(): KernelWshBridge | null;
+export declare function setToolRegistry(registry: unknown): void;
+export declare function setMcpClient(client: unknown): void;
+export declare function setAgentGateway(gateway: unknown): void;
+export declare function setVirtualTerminalManager(manager: VirtualTerminalManager | null): void;
+export declare function handleReverseConnect(msg: ReverseConnectMessage): Promise<void>;
 export declare function listIncomingSessions(): IncomingSessionInfo[];
-
-/**
- * Get an incoming session by username or fingerprint prefix.
- *
- * Returns the IncomingSession instance (non-exported class), or null.
- */
 export declare function getIncomingSession(prefix: string): {
+  participantKey: string;
   username: string;
   targetFingerprint: string;
   client: unknown;
+  capabilities: { shell: boolean; tools: boolean; fs: boolean };
+  tenantId: string | null;
   createdAt: number;
   state: string;
-  tenantId: string | null;
   startListening(): void;
   stopListening(): void;
-  handleRelayMessage(msg: unknown): Promise<void>;
-  handleToolCall(tool: string, args: Record<string, unknown>): Promise<ToolResult>;
-  handleExec(command: string): Promise<ToolResult>;
-  handleMcpCall(tool: string, args: Record<string, unknown>): Promise<ToolResult>;
-  close(): void;
+  handleRelayMessage(msg: Record<string, unknown>): Promise<void>;
+  handleToolCall(tool: string, args: Record<string, unknown>): Promise<unknown>;
+  handleMcpCall(tool: string, args: Record<string, unknown>): Promise<unknown>;
+  close(opts?: { notifyRemote?: boolean }): Promise<void>;
 } | null;

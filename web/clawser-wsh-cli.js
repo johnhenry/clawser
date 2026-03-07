@@ -404,6 +404,7 @@ export function registerWshCli(registry, getAgent, getShell) {
         keyPair,
         expose,
       });
+      client.__clawserExposeCapabilities = { ...expose };
 
       // Wire incoming handler, chaining with any existing handler
       if (typeof globalThis.__wshIncomingHandler === 'function') {

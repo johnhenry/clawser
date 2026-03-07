@@ -74,6 +74,7 @@ export class WshConnectTool extends BrowserTool {
           keyPair,
           expose,
         });
+        client.__clawserExposeCapabilities = { ...expose };
         // Wire incoming session handler if available, chaining with any existing handler
         if (typeof globalThis.__wshIncomingHandler === 'function') {
           const prevHandler = client.onReverseConnect;

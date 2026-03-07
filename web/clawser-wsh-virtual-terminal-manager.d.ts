@@ -45,6 +45,7 @@ export declare class VirtualTerminalManager {
       command?: string;
       cols?: number;
       rows?: number;
+      autoStart?: boolean;
     },
   ): Promise<VirtualTerminalSession>;
   getChannel(participantKey: string, channelId: number): VirtualTerminalSession | null;

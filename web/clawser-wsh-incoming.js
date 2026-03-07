@@ -1,370 +1,197 @@
 /**
- * Clawser wsh Incoming Session Handler
+ * Clawser wsh incoming reverse-session router.
  *
- * Handles incoming reverse-connect requests from remote CLI clients.
- * When a CLI sends ReverseConnect to the server targeting this browser,
- * the server forwards the message here. This module bridges the
- * incoming connection to the browser's agent tools.
- *
- * Flow:
- *   1. CLI sends ReverseConnect → server forwards to browser
- *   2. Browser creates IncomingSession, wires onRelayMessage on WshClient
- *   3. Server relay bridge forwards Open/McpCall/McpDiscover/Close etc.
- *   4. IncomingSession routes each message to the appropriate handler
- *   5. Results are sent back through the WshClient → server → CLI
+ * Accepts reverse-connect requests from CLI peers, creates a stable peer
+ * context, and routes relay-forwarded terminal/tool/file/policy messages into
+ * browser-local handlers.
  */
 
 import { getWshConnections } from './clawser-wsh-tools.js';
+import { buildReverseParticipantKey } from './clawser-wsh-virtual-terminal-manager.js';
+import {
+  MSG,
+  fileResult,
+  mcpResult,
+  mcpTools,
+  openFail,
+  openOk,
+  policyResult,
+  reverseAccept,
+  reverseReject,
+} from './packages-wsh.js';
 
 // ── Kernel bridge integration (optional) ────────────────────────────
 /** @type {import('./clawser-kernel-wsh-bridge.js').KernelWshBridge|null} */
 let _kernelBridge = null;
 
-/** Set the kernel-wsh bridge for tenant lifecycle. */
 export function setKernelBridge(bridge) { _kernelBridge = bridge; }
-
-/** Get the current kernel-wsh bridge. */
 export function getKernelBridge() { return _kernelBridge; }
 
-// ── Service injection (replaces globalThis side-channels) ────────────
+// ── Service injection ────────────────────────────────────────────────
 /** @type {import('./clawser-tools.js').BrowserToolRegistry|null} */
 let _toolRegistry = null;
 /** @type {object|null} */
 let _mcpClient = null;
 /** @type {import('./clawser-gateway.js').ChannelGateway|null} */
 let _agentGateway = null;
+/** @type {import('./clawser-wsh-virtual-terminal-manager.js').VirtualTerminalManager|null} */
+let _virtualTerminalManager = null;
 
-/** Inject the tool registry (replaces globalThis.__clawserToolRegistry reads). */
 export function setToolRegistry(registry) { _toolRegistry = registry; }
-/** Inject the MCP client (replaces globalThis.__clawserMcpClient reads). */
 export function setMcpClient(client) { _mcpClient = client; }
-/** Inject the channel gateway for agent chat routing. */
 export function setAgentGateway(gateway) { _agentGateway = gateway; }
+export function setVirtualTerminalManager(manager) { _virtualTerminalManager = manager; }
 
-// ── Incoming session tracking ────────────────────────────────────────
+// ── Peer context tracking ────────────────────────────────────────────
 
-/** @type {Map<string, IncomingSession>} username → session */
+/** @type {Map<string, IncomingPeerContext>} */
 const incomingSessions = new Map();
 
-/**
- * An incoming session from a remote CLI client.
- * Bridges the relay to browser agent tools.
- */
-class IncomingSession {
-  /** @param {object} msg - ReverseConnect message */
-  constructor(msg, client) {
-    this.username = msg.username;
-    this.targetFingerprint = msg.target_fingerprint;
-    this.client = client;
-    this.createdAt = Date.now();
-    this.state = 'active';
-    /** @type {string|null} Kernel tenant ID (set by handleReverseConnect if bridge is active). */
-    this.tenantId = null;
-    /** @type {boolean} Whether this session is actively listening for relay messages. */
-    this._listening = false;
-    /** @type {Function|null} Previous onRelayMessage handler, saved for restore on stopListening. */
-    this._prevRelayHandler = null;
+function getVirtualTerminalManager() {
+  return _virtualTerminalManager;
+}
+
+function getParticipantCapabilities(client) {
+  return client?.__clawserExposeCapabilities
+    || client?.exposedCapabilities
+    || { shell: true, tools: true, fs: true };
+}
+
+function capabilityList(capabilities) {
+  return Object.entries(capabilities || {})
+    .filter(([, enabled]) => !!enabled)
+    .map(([name]) => name);
+}
+
+function selectActiveClient(msg) {
+  const connections = getWshConnections();
+
+  for (const client of connections.values()) {
+    if (client.state === 'authenticated' && client.fingerprint === msg.target_fingerprint) {
+      return client;
+    }
   }
 
-  // ── Relay message listener ──────────────────────────────────────────
+  for (const client of connections.values()) {
+    if (client.state === 'authenticated') {
+      return client;
+    }
+  }
 
-  /**
-   * Start listening for relay-forwarded messages from the CLI peer.
-   * The server's relay bridge forwards Open, McpCall, McpDiscover, etc.
-   * to our WshClient. We wire the client's onRelayMessage callback to
-   * route those messages through this session.
-   */
+  return null;
+}
+
+async function closeContextsForClient(client, exceptParticipantKey = null) {
+  const matches = [...incomingSessions.values()]
+    .filter((session) => session.client === client && session.participantKey !== exceptParticipantKey);
+
+  for (const session of matches) {
+    await session.close({ notifyRemote: false });
+  }
+}
+
+class IncomingPeerContext {
+  constructor({
+    participantKey,
+    username,
+    targetFingerprint,
+    client,
+    capabilities,
+    tenantId = null,
+  }) {
+    this.participantKey = participantKey;
+    this.username = username;
+    this.targetFingerprint = targetFingerprint;
+    this.client = client;
+    this.capabilities = capabilities;
+    this.tenantId = tenantId;
+    this.createdAt = Date.now();
+    this.state = 'active';
+    this._listening = false;
+    this._prevRelayHandler = null;
+    this._nextChannelId = 1;
+  }
+
   startListening() {
     if (this._listening) return;
     this._listening = true;
-
-    // Wire the client's onRelayMessage callback.
-    // If multiple sessions share a client (unlikely but possible),
-    // we chain the handlers.  Save the previous handler so we can
-    // restore it in stopListening().
     this._prevRelayHandler = this.client.onRelayMessage;
 
-    this.client.onRelayMessage = (msg) => {
-      // Only handle if this session is still active.
+    this.client.onRelayMessage = async (msg) => {
       if (this.state === 'active') {
-        this.handleRelayMessage(msg);
-      } else if (this._prevRelayHandler) {
-        this._prevRelayHandler(msg);
+        try {
+          await this.handleRelayMessage(msg);
+        } catch (err) {
+          console.error('[wsh:incoming] relay handler failed:', err);
+        }
+        return;
+      }
+
+      if (this._prevRelayHandler) {
+        return this._prevRelayHandler(msg);
       }
     };
   }
 
-  /**
-   * Stop listening for relay messages and restore any previous handler.
-   */
   stopListening() {
     if (!this._listening) return;
     this._listening = false;
-    // Restore the previous handler instead of nulling the callback,
-    // so chained handlers from other sessions continue to work.
     this.client.onRelayMessage = this._prevRelayHandler;
     this._prevRelayHandler = null;
   }
 
-  // ── Relay message dispatch ──────────────────────────────────────────
-
-  /**
-   * Handle a relay-forwarded message from the CLI peer.
-   * Routes Open, McpDiscover, McpCall, Close, Resize, and Signal.
-   *
-   * @param {object} msg - Decoded control message from the relay bridge
-   */
   async handleRelayMessage(msg) {
-    // Lazy-import MSG constants to avoid circular dependency at module load.
-    const { MSG, mcpTools, mcpResult, openOk, openFail, close: closeMsg } =
-      await import('./packages-wsh.js');
-
     switch (msg.type) {
-      case MSG.OPEN: {
-        // CLI wants to open a session on the browser.
-        // For exec-type opens, run the command and send the result back.
-        console.log('[wsh:incoming] Open from peer:', msg.kind, msg.command);
-
-        const command = msg.command || 'echo "connected"';
-        try {
-          const result = await this.handleExec(command);
-          // Send OpenOk acknowledgment back through the relay.
-          await this._sendReply(openOk({ channelId: msg.channel_id || 0 }));
-          // If there's output, we would send it as data frames.
-          // For now, log the result.  Full data streaming will be added
-          // when the relay bridge supports bidirectional data channels.
-          console.log('[wsh:incoming] Exec result:', result);
-        } catch (err) {
-          console.error('[wsh:incoming] Exec error:', err);
-          await this._sendReply(openFail({ reason: err.message }));
-        }
-        break;
-      }
-
-      case MSG.MCP_DISCOVER: {
-        // CLI wants to discover browser tools.
-        console.log('[wsh:incoming] McpDiscover from peer');
-
-        const registry = _toolRegistry || globalThis.__clawserToolRegistry;
-        const tools = registry
-          ? [...registry.entries()].map(([name, tool]) => ({
-              name,
-              description: tool.description || '',
-              parameters: tool.parameters || {},
-            }))
-          : [];
-
-        await this._sendReply(mcpTools({ tools }));
-        break;
-      }
-
-      case MSG.MCP_CALL: {
-        // CLI wants to call a browser tool.
-        const toolName = msg.tool;
-        const args = msg.arguments || {};
-        console.log('[wsh:incoming] McpCall from peer:', toolName);
-
-        const result = await this.handleToolCall(toolName, args);
-        await this._sendReply(mcpResult({ result }));
-        break;
-      }
-
-      case MSG.CLOSE: {
-        // CLI is closing the session.
-        console.log('[wsh:incoming] Close from peer');
-        this.close();
-        break;
-      }
-
-      case MSG.RESIZE: {
-        // CLI wants to resize a terminal (informational in browser context).
-        console.log('[wsh:incoming] Resize from peer:', msg.cols, 'x', msg.rows);
-        break;
-      }
-
-      case MSG.SIGNAL: {
-        // CLI is sending a signal (e.g., SIGINT).
-        console.log('[wsh:incoming] Signal from peer:', msg.signal);
-        break;
-      }
-
-      case MSG.GUEST_JOIN: {
-        console.log('[wsh:incoming] GuestJoin from peer:', msg.token);
-        // Relay to server — browser acknowledges guest join
-        break;
-      }
-
-      case MSG.GUEST_REVOKE: {
-        console.log('[wsh:incoming] GuestRevoke from peer:', msg.token);
-        break;
-      }
-
-      case MSG.COPILOT_ATTACH: {
-        console.log('[wsh:incoming] CopilotAttach from peer:', msg.model);
-        // Kernel bridge handleCopilotAttach if available
-        if (_kernelBridge && typeof _kernelBridge.handleCopilotAttach === 'function') {
-          _kernelBridge.handleCopilotAttach(msg);
-        }
-        break;
-      }
-
-      case MSG.COPILOT_DETACH: {
-        console.log('[wsh:incoming] CopilotDetach from peer');
-        break;
-      }
-
-      case MSG.FILE_OP: {
-        const { fileResult: fileResultMsg } = await import('./packages-wsh.js');
-        console.log('[wsh:incoming] FileOp from peer:', msg.op, msg.path);
-        try {
-          // Handle file operations against OPFS via the tool registry
-          const result = await this.handleToolCall('fs_' + msg.op, { path: msg.path, offset: msg.offset, length: msg.length });
-          await this._sendReply(fileResultMsg({
-            channelId: msg.channel_id,
-            success: result.success !== false,
-            metadata: result.output ? { data: result.output } : {},
-            errorMessage: result.error,
-          }));
-        } catch (err) {
-          await this._sendReply(fileResultMsg({
-            channelId: msg.channel_id,
-            success: false,
-            errorMessage: err.message,
-          }));
-        }
-        break;
-      }
-
-      case MSG.POLICY_EVAL: {
-        const { policyResult: policyResultMsg } = await import('./packages-wsh.js');
-        console.log('[wsh:incoming] PolicyEval from peer:', msg.action, msg.principal);
-        // Use local tool permission system to evaluate
-        const registry = _toolRegistry || globalThis.__clawserToolRegistry;
-        let allowed = false;
-        if (registry) {
-          const tool = registry.get(msg.action);
-          allowed = tool ? (tool.permission === 'auto' || tool.permission === 'read' || tool.permission === 'internal') : false;
-        }
-        await this._sendReply(policyResultMsg({
-          requestId: msg.request_id,
-          allowed,
-          reason: allowed ? 'permitted by local policy' : 'requires approval',
-        }));
-        break;
-      }
-
-      case MSG.AGENT_CHAT: {
-        // CLI wants to chat with the agent.
-        const content = msg.content || '';
-        const sender = msg.sender || this.username;
-        console.log('[wsh:incoming] AgentChat from peer:', sender);
-
-        const { agentChatChunk, agentChatDone } = await import('./packages-wsh.js');
-
-        if (_agentGateway && _agentGateway.agent) {
-          try {
-            const agent = _agentGateway.agent;
-            agent.sendMessage(content, { source: `wsh:${this.username}` });
-
-            let responseText = '';
-            if (typeof agent.runStream === 'function') {
-              for await (const chunk of agent.runStream()) {
-                if (chunk.type === 'text') {
-                  responseText += chunk.text;
-                  await this._sendReply(agentChatChunk({
-                    text: chunk.text,
-                    channelId: msg.channel_id,
-                  }));
-                } else if (chunk.type === 'done') {
-                  if (chunk.response?.data) responseText = chunk.response.data;
-                  break;
-                } else if (chunk.type === 'error') {
-                  responseText = `Error: ${chunk.error}`;
-                  break;
-                }
-              }
-            } else {
-              const result = await agent.run();
-              responseText = result.data || '';
-            }
-
-            await this._sendReply(agentChatDone({
-              content: responseText,
-              channelId: msg.channel_id,
-            }));
-          } catch (err) {
-            console.error('[wsh:incoming] AgentChat error:', err);
-            await this._sendReply(agentChatDone({
-              content: `Error: ${err.message}`,
-              channelId: msg.channel_id,
-            }));
-          }
-        } else {
-          console.warn('[wsh:incoming] No agent gateway available for AgentChat');
-          await this._sendReply(agentChatDone({
-            content: 'No agent available in this workspace.',
-            channelId: msg.channel_id,
-          }));
-        }
-        break;
-      }
-
+      case MSG.OPEN:
+        await this.#handleOpen(msg);
+        return;
+      case MSG.SESSION_DATA:
+        await this.#handleSessionData(msg);
+        return;
+      case MSG.RESIZE:
+        await this.#handleResize(msg);
+        return;
+      case MSG.SIGNAL:
+        await this.#handleSignal(msg);
+        return;
+      case MSG.CLOSE:
+        await this.#handleClose(msg);
+        return;
+      case MSG.MCP_DISCOVER:
+        await this.#handleMcpDiscover();
+        return;
+      case MSG.MCP_CALL:
+        await this.#handleMcpCall(msg);
+        return;
+      case MSG.FILE_OP:
+        await this.#handleFileOp(msg);
+        return;
+      case MSG.POLICY_EVAL:
+        await this.#handlePolicyEval(msg);
+        return;
+      case MSG.GUEST_JOIN:
+      case MSG.GUEST_REVOKE:
+      case MSG.COPILOT_ATTACH:
+      case MSG.COPILOT_DETACH:
+        // Preserve existing reverse control-plane flows without introducing
+        // new behavior in this phase.
+        return;
       default:
-        console.log('[wsh:incoming] Unhandled relay message type:',
-          `0x${msg.type.toString(16)}`);
+        console.log('[wsh:incoming] Unhandled relay message type:', `0x${msg.type.toString(16)}`);
     }
   }
 
-  // ── Reply helper ────────────────────────────────────────────────────
-
-  /**
-   * Send a reply message back through the WshClient.
-   * The server's relay bridge will forward it to the CLI peer.
-   *
-   * @param {object} msg - Encoded control message to send
-   * @returns {Promise<void>}
-   */
-  async _sendReply(msg) {
-    if (this.state !== 'active') {
-      console.warn('[wsh:incoming] Attempted to send reply on inactive session');
-      return;
-    }
-
-    try {
-      // Access the transport through the client.
-      // WshClient doesn't expose sendControl publicly, but the transport
-      // is accessible via the _transport getter if available, or we use
-      // a method that the client does expose.
-      //
-      // For now, we use the internal transport reference.  A cleaner API
-      // (client.sendRelay()) could be added later.
-      const transport = this.client._transport || this.client['#transport'];
-      if (transport && typeof transport.sendControl === 'function') {
-        await transport.sendControl(msg);
-      } else {
-        console.warn('[wsh:incoming] No transport available to send reply');
-      }
-    } catch (err) {
-      console.error('[wsh:incoming] Failed to send reply:', err);
-    }
-  }
-
-  // ── Tool execution ──────────────────────────────────────────────────
-
-  /**
-   * Handle a tool call from the remote CLI.
-   * @param {string} tool - Tool name
-   * @param {object} args - Tool arguments
-   * @returns {Promise<object>} Tool result
-   */
   async handleToolCall(tool, args) {
-    // Look up tool in the browser's registry (if available)
     const registry = _toolRegistry || globalThis.__clawserToolRegistry;
     if (!registry) {
       return { success: false, output: '', error: 'No tool registry available' };
     }
 
-    const browserTool = registry.get(tool);
+    if (typeof registry.execute === 'function') {
+      return registry.execute(tool, args);
+    }
+
+    const browserTool = registry.get?.(tool);
     if (!browserTool) {
       return { success: false, output: '', error: `Tool "${tool}" not found` };
     }
@@ -376,23 +203,6 @@ class IncomingSession {
     }
   }
 
-  /**
-   * Handle a shell exec request from the remote CLI.
-   * Delegates to the shell_exec tool if available.
-   * @param {string} command - Command to execute
-   * @returns {Promise<object>} Execution result
-   */
-  async handleExec(command) {
-    return this.handleToolCall('shell_exec', { command });
-  }
-
-  /**
-   * Handle an MCP tool call from the remote CLI.
-   * Forwards to the agent's MCP client.
-   * @param {string} tool - Tool name
-   * @param {object} args - Tool arguments
-   * @returns {Promise<object>}
-   */
   async handleMcpCall(tool, args) {
     const mcpClient = _mcpClient || globalThis.__clawserMcpClient;
     if (!mcpClient) {
@@ -407,130 +217,260 @@ class IncomingSession {
     }
   }
 
-  // ── Lifecycle ───────────────────────────────────────────────────────
-
-  close() {
+  async close({ notifyRemote = false } = {}) {
+    if (this.state === 'closed') return;
     this.state = 'closed';
     this.stopListening();
-    // Destroy kernel tenant for this reverse-connect peer.
-    if (_kernelBridge) {
-      _kernelBridge.handleParticipantLeave(this.username);
+
+    const manager = getVirtualTerminalManager();
+    if (manager) {
+      await manager.closePeerContext(this.participantKey, { notifyRemote });
     }
-    incomingSessions.delete(this.username);
+
+    if (_kernelBridge) {
+      _kernelBridge.handleParticipantLeave(this.participantKey);
+    }
+
+    incomingSessions.delete(this.participantKey);
+  }
+
+  async #handleOpen(msg) {
+    if (msg.kind !== 'pty' && msg.kind !== 'exec') {
+      await this.#sendReply(openFail({ reason: `unsupported reverse channel kind: ${msg.kind}` }));
+      return;
+    }
+
+    if (!this.capabilities.shell) {
+      await this.#sendReply(openFail({ reason: 'reverse peer did not expose shell access' }));
+      return;
+    }
+
+    const manager = getVirtualTerminalManager();
+    if (!manager) {
+      await this.#sendReply(openFail({ reason: 'virtual terminal manager is not ready' }));
+      return;
+    }
+
+    const channelId = Number.isInteger(msg.channel_id) ? msg.channel_id : this._nextChannelId++;
+    const session = await manager.openChannel(this.participantKey, {
+      channelId,
+      kind: msg.kind,
+      command: msg.command || '',
+      cols: msg.cols || 80,
+      rows: msg.rows || 24,
+      autoStart: false,
+    });
+
+    await this.#sendReply(openOk({
+      channelId,
+      dataMode: 'virtual',
+      capabilities: msg.kind === 'pty' ? ['resize', 'signal'] : [],
+    }));
+
+    await session.start();
+  }
+
+  async #handleSessionData(msg) {
+    const manager = getVirtualTerminalManager();
+    if (!manager) return;
+    await manager.writeToChannel(this.participantKey, msg.channel_id, msg.data);
+  }
+
+  async #handleResize(msg) {
+    const manager = getVirtualTerminalManager();
+    if (!manager) return;
+    await manager.resizeChannel(this.participantKey, msg.channel_id, msg.cols, msg.rows);
+  }
+
+  async #handleSignal(msg) {
+    const manager = getVirtualTerminalManager();
+    if (!manager) return;
+    await manager.signalChannel(this.participantKey, msg.channel_id, msg.signal);
+  }
+
+  async #handleClose(msg) {
+    const manager = getVirtualTerminalManager();
+    if (!manager) return;
+
+    if (Number.isInteger(msg.channel_id)) {
+      await manager.closeChannel(this.participantKey, msg.channel_id, { notifyRemote: false });
+      return;
+    }
+
+    await this.close({ notifyRemote: false });
+  }
+
+  async #handleMcpDiscover() {
+    if (!this.capabilities.tools) {
+      await this.#sendReply(mcpTools({ tools: [] }));
+      return;
+    }
+
+    const registry = _toolRegistry || globalThis.__clawserToolRegistry;
+    const tools = typeof registry?.allSpecs === 'function'
+      ? registry.allSpecs()
+      : [];
+    await this.#sendReply(mcpTools({ tools }));
+  }
+
+  async #handleMcpCall(msg) {
+    if (!this.capabilities.tools) {
+      await this.#sendReply(mcpResult({
+        result: { success: false, output: '', error: 'reverse peer did not expose tool access' },
+      }));
+      return;
+    }
+
+    const result = await this.handleMcpCall(msg.tool, msg.arguments || {});
+    await this.#sendReply(mcpResult({ result }));
+  }
+
+  async #handleFileOp(msg) {
+    if (!this.capabilities.fs) {
+      await this.#sendReply(fileResult({
+        channelId: msg.channel_id,
+        success: false,
+        errorMessage: 'reverse peer did not expose filesystem access',
+      }));
+      return;
+    }
+
+    try {
+      const result = await this.handleToolCall(`fs_${msg.op}`, {
+        path: msg.path,
+        offset: msg.offset,
+        length: msg.length,
+        data: msg.data,
+      });
+
+      await this.#sendReply(fileResult({
+        channelId: msg.channel_id,
+        success: result.success !== false,
+        metadata: result.output ? { data: result.output } : {},
+        errorMessage: result.error,
+      }));
+    } catch (err) {
+      await this.#sendReply(fileResult({
+        channelId: msg.channel_id,
+        success: false,
+        errorMessage: err.message,
+      }));
+    }
+  }
+
+  async #handlePolicyEval(msg) {
+    const registry = _toolRegistry || globalThis.__clawserToolRegistry;
+    const tool = registry?.get?.(msg.action) || null;
+    const allowedByCapability = msg.action?.startsWith?.('fs_')
+      ? this.capabilities.fs
+      : this.capabilities.tools;
+    const allowedByPermission = !!tool && ['auto', 'read', 'internal'].includes(tool.permission);
+
+    await this.#sendReply(policyResult({
+      requestId: msg.request_id,
+      allowed: allowedByCapability && allowedByPermission,
+      reason: allowedByCapability && allowedByPermission
+        ? 'permitted by local reverse-peer policy'
+        : 'blocked by reverse-peer capability policy',
+    }));
+  }
+
+  async #sendReply(msg) {
+    if (this.state !== 'active') return;
+    await this.client.sendRelayControl(msg);
   }
 }
 
-// ── Handler registration ─────────────────────────────────────────────
+// ── Public API ───────────────────────────────────────────────────────
 
-/**
- * Handle an incoming ReverseConnect message.
- * Called by the WshClient's onReverseConnect callback.
- *
- * Creates an IncomingSession and wires up relay message listening so
- * the browser can receive and respond to Open/McpCall/McpDiscover etc.
- * from the remote CLI peer.
- *
- * @param {object} msg - Decoded ReverseConnect message
- *   { target_fingerprint, username }
- */
 export async function handleReverseConnect(msg) {
-  console.log('[wsh:incoming] Reverse connect from:', msg.username,
-    'target:', msg.target_fingerprint);
-
-  // Find the client whose fingerprint matches the target (this browser is the target).
-  // If the message has a sourceClient reference, use that; otherwise find the client
-  // that is connected to the relay where this ReverseConnect arrived.
-  const connections = getWshConnections();
-  let activeClient = null;
-
-  // First, try to find the client that received this message by matching
-  // our own fingerprint against the target_fingerprint
-  for (const client of connections.values()) {
-    if (client.state === 'authenticated' && client.fingerprint === msg.target_fingerprint) {
-      activeClient = client;
-      break;
-    }
-  }
-
-  // Fallback: use any authenticated client connected as a reverse peer
+  const activeClient = selectActiveClient(msg);
   if (!activeClient) {
-    for (const client of connections.values()) {
-      if (client.state === 'authenticated') {
-        activeClient = client;
-        break;
-      }
-    }
-  }
-
-  if (!activeClient) {
-    console.warn('[wsh:incoming] No active client to accept connection');
+    console.warn('[wsh:incoming] No active relay client is available for reverse connect');
     return;
   }
 
-  // Close any existing session for this username (replace stale sessions).
-  const existing = incomingSessions.get(msg.username);
-  if (existing && existing.state === 'active') {
-    console.log('[wsh:incoming] Replacing existing session for', msg.username);
-    existing.close();
+  const manager = getVirtualTerminalManager();
+  if (!manager) {
+    await activeClient.sendRelayControl(reverseReject({
+      targetFingerprint: msg.target_fingerprint,
+      username: msg.username,
+      reason: 'virtual terminal manager is not ready',
+    }));
+    return;
   }
 
-  // Create incoming session, keyed by username.
-  const session = new IncomingSession(msg, activeClient);
-  incomingSessions.set(msg.username, session);
+  const participantKey = buildReverseParticipantKey({
+    username: msg.username,
+    targetFingerprint: msg.target_fingerprint,
+  });
+  const capabilities = getParticipantCapabilities(activeClient);
 
-  // Create a kernel tenant for this reverse-connect peer.
+  await closeContextsForClient(activeClient, participantKey);
+
+  const existing = incomingSessions.get(participantKey);
+  if (existing) {
+    await existing.close({ notifyRemote: false });
+  }
+
+  let tenantId = null;
   if (_kernelBridge) {
-    const { tenantId } = _kernelBridge.handleReverseConnect({
+    tenantId = _kernelBridge.handleReverseConnect({
+      participantId: participantKey,
       username: msg.username,
       fingerprint: msg.target_fingerprint || '',
-    });
-    session.tenantId = tenantId;
+    }).tenantId;
   }
 
-  // Wire up relay message listening so Open/McpCall/etc. from the CLI
-  // are routed through this session.
+  await manager.registerPeerContext({
+    participantKey,
+    username: msg.username,
+    targetFingerprint: msg.target_fingerprint,
+    client: activeClient,
+    capabilities,
+    tenantId,
+  });
+
+  const session = new IncomingPeerContext({
+    participantKey,
+    username: msg.username,
+    targetFingerprint: msg.target_fingerprint,
+    client: activeClient,
+    capabilities,
+    tenantId,
+  });
+  incomingSessions.set(participantKey, session);
   session.startListening();
 
-  const { reverseAccept } = await import('./packages-wsh.js');
-  await session._sendReply(reverseAccept({
+  await activeClient.sendRelayControl(reverseAccept({
     targetFingerprint: msg.target_fingerprint,
     username: msg.username,
-    capabilities: [],
+    capabilities: capabilityList(capabilities),
   }));
-
-  console.log('[wsh:incoming] Session created, listening for relay messages from',
-    msg.username, `(${incomingSessions.size} active incoming sessions)`);
 }
 
-/**
- * List active incoming sessions.
- * @returns {Array<{ username: string, fingerprint: string, createdAt: number, state: string }>}
- */
 export function listIncomingSessions() {
-  return [...incomingSessions.values()].map(s => ({
-    username: s.username,
-    fingerprint: s.targetFingerprint,
-    createdAt: s.createdAt,
-    state: s.state,
+  return [...incomingSessions.values()].map((session) => ({
+    participantKey: session.participantKey,
+    username: session.username,
+    fingerprint: session.targetFingerprint,
+    createdAt: session.createdAt,
+    state: session.state,
   }));
 }
 
-/**
- * Get an incoming session by username or fingerprint prefix.
- * @param {string} prefix - Username or fingerprint prefix
- * @returns {IncomingSession|null}
- */
 export function getIncomingSession(prefix) {
-  // Try exact username match first.
   if (incomingSessions.has(prefix)) {
     return incomingSessions.get(prefix);
   }
-  // Then try fingerprint prefix match.
+
   for (const session of incomingSessions.values()) {
+    if (session.participantKey.startsWith(prefix)) return session;
     if (session.targetFingerprint?.startsWith(prefix)) return session;
+    if (session.username === prefix) return session;
   }
+
   return null;
 }
 
-// Register the global handler for WshConnectTool to pick up
 globalThis.__wshIncomingHandler = handleReverseConnect;

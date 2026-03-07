@@ -19,6 +19,7 @@ export interface SessionGrantEvent {
 }
 
 export interface ReverseConnectEvent {
+  participantId?: string;
   username: string;
   fingerprint: string;
   capabilities?: string[];

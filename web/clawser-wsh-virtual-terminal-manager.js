@@ -102,6 +102,7 @@ export class VirtualTerminalManager {
     command = '',
     cols = 80,
     rows = 24,
+    autoStart = true,
   } = {}) {
     const context = this.#requirePeerContext(participantKey);
 
@@ -125,7 +126,9 @@ export class VirtualTerminalManager {
     };
 
     context.channels.set(channelId, session);
-    await session.start();
+    if (autoStart) {
+      await session.start();
+    }
     return session;
   }
 

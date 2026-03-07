@@ -157,6 +157,16 @@ async function refreshReverseVirtualTerminalManager() {
       getModelManager: () => state.modelManager,
     }),
   });
+
+  try {
+    const { setToolRegistry, setVirtualTerminalManager } = await import('./clawser-wsh-incoming.js');
+    setVirtualTerminalManager(_reverseVirtualTerminalManager);
+    if (state.browserTools) {
+      setToolRegistry(state.browserTools);
+    }
+  } catch (err) {
+    console.warn('[clawser] reverse terminal manager wiring failed', err);
+  }
 }
 
 // ── Shell session management ─────────────────────────────────────
