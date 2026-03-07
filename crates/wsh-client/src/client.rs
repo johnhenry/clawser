@@ -994,10 +994,11 @@ mod tests {
 
     use tokio::sync::{mpsc, Mutex};
     use wsh_core::messages::{
-        ChannelKind, ClosePayload, Envelope, MsgType, Payload, SessionDataPayload,
+        ChannelKind, ClosePayload, Envelope, MsgType, OpenOkPayload, Payload, SessionDataMode,
+        SessionDataPayload,
     };
 
-    use super::{known_host_label, WshClient};
+    use super::{known_host_label, SessionOpts, WshClient};
     use crate::session::WshSession;
 
     #[test]
@@ -1096,5 +1097,57 @@ mod tests {
 
         assert_eq!(session.state().await, crate::session::SessionState::Closed);
         assert!(!sessions.lock().await.contains_key(&22));
+    }
+
+    #[tokio::test]
+    async fn open_session_uses_virtual_data_mode_when_server_returns_virtual_open_ok() {
+        let response_tx = Arc::new(Mutex::new(HashMap::new()));
+        let sessions = Arc::new(Mutex::new(HashMap::new()));
+        let (control_action_tx, _control_action_rx) = mpsc::channel(4);
+        let (outgoing_tx, mut outgoing_rx) = mpsc::channel(4);
+
+        let client = WshClient {
+            transport: Arc::new(Mutex::new(crate::transport::AnyTransport::Test(
+                crate::transport::TestTransport,
+            ))),
+            session_id: Some("sess-1".into()),
+            token: None,
+            sessions: sessions.clone(),
+            control_action_tx,
+            dispatch_handle: None,
+            keepalive_handle: None,
+            outgoing_tx,
+            response_tx: response_tx.clone(),
+            connected: Arc::new(Mutex::new(true)),
+            reverse_connect_rx: Arc::new(Mutex::new(None)),
+        };
+
+        let response_task = tokio::spawn(async move {
+            let _open_frame = outgoing_rx.recv().await.expect("missing OPEN frame");
+            let mut waiters = response_tx.lock().await;
+            let tx = waiters
+                .get_mut(&u8::from(MsgType::OpenOk))
+                .and_then(|entries| entries.pop())
+                .expect("missing OPEN_OK waiter");
+            tx.send(Envelope {
+                msg_type: MsgType::OpenOk,
+                payload: Payload::OpenOk(OpenOkPayload {
+                    channel_id: 31,
+                    stream_ids: vec![],
+                    data_mode: SessionDataMode::Virtual,
+                    capabilities: vec!["resize".into(), "signal".into()],
+                }),
+            })
+            .unwrap();
+        });
+
+        let session = client.open_session(SessionOpts::default()).await.unwrap();
+        assert_eq!(session.channel_id(), 31);
+        assert_eq!(*session.data_mode(), SessionDataMode::Virtual);
+        assert_eq!(
+            session.capabilities(),
+            &["resize".to_string(), "signal".to_string()]
+        );
+        response_task.await.unwrap();
     }
 }

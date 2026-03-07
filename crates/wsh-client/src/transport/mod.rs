@@ -27,13 +27,22 @@ pub enum TransportKind {
 pub enum AnyTransport {
     WebSocket(WebSocketSession),
     WebTransport(WebTransportSession),
+    #[cfg(test)]
+    Test(TestTransport),
 }
+
+#[cfg(test)]
+pub struct TestTransport;
 
 impl AnyTransport {
     pub async fn send_control(&mut self, data: &[u8]) -> WshResult<()> {
         match self {
             Self::WebSocket(s) => s.send_control(data).await,
             Self::WebTransport(s) => s.send_control(data).await,
+            #[cfg(test)]
+            Self::Test(_) => Err(WshError::Transport(
+                "test transport does not support control sends".into(),
+            )),
         }
     }
 
@@ -41,6 +50,10 @@ impl AnyTransport {
         match self {
             Self::WebSocket(s) => s.recv_control().await,
             Self::WebTransport(s) => s.recv_control().await,
+            #[cfg(test)]
+            Self::Test(_) => Err(WshError::Transport(
+                "test transport does not support control receives".into(),
+            )),
         }
     }
 
@@ -48,6 +61,10 @@ impl AnyTransport {
         match self {
             Self::WebSocket(s) => s.open_stream().await,
             Self::WebTransport(s) => s.open_stream().await,
+            #[cfg(test)]
+            Self::Test(_) => Err(WshError::Transport(
+                "test transport does not support streams".into(),
+            )),
         }
     }
 
@@ -55,6 +72,10 @@ impl AnyTransport {
         match self {
             Self::WebSocket(s) => s.accept_stream().await,
             Self::WebTransport(s) => s.accept_stream().await,
+            #[cfg(test)]
+            Self::Test(_) => Err(WshError::Transport(
+                "test transport does not support streams".into(),
+            )),
         }
     }
 
@@ -62,6 +83,8 @@ impl AnyTransport {
         match self {
             Self::WebSocket(s) => s.close().await,
             Self::WebTransport(s) => s.close().await,
+            #[cfg(test)]
+            Self::Test(_) => Ok(()),
         }
     }
 
@@ -69,6 +92,8 @@ impl AnyTransport {
         match self {
             Self::WebSocket(s) => s.is_connected(),
             Self::WebTransport(s) => s.is_connected(),
+            #[cfg(test)]
+            Self::Test(_) => true,
         }
     }
 }

@@ -11,6 +11,24 @@ use wsh_core::messages::*;
 use crate::commands::interactive;
 use crate::terminal as term;
 
+fn reverse_accept_summary(accept: &ReverseAcceptPayload) -> String {
+    if accept.capabilities.is_empty() {
+        "(no capabilities advertised)".to_string()
+    } else {
+        accept.capabilities.join(", ")
+    }
+}
+
+fn parse_reverse_connect_response(payload: Payload) -> Result<String> {
+    match payload {
+        Payload::ReverseAccept(accept) => Ok(reverse_accept_summary(&accept)),
+        Payload::ReverseReject(reject) => {
+            anyhow::bail!("peer rejected reverse connection: {}", reject.reason)
+        }
+        other => anyhow::bail!("unexpected reverse-connect response: {:?}", other),
+    }
+}
+
 /// Register as a reverse-connectable peer on a relay host.
 ///
 /// The client connects to the relay, sends a `ReverseRegister` message with
@@ -242,22 +260,8 @@ pub async fn run_connect(
         .map_err(|e| anyhow::anyhow!("{e}"))
         .context("failed to reverse-connect to peer")?;
 
-    match response.payload {
-        Payload::ReverseAccept(accept) => {
-            let caps = if accept.capabilities.is_empty() {
-                "(no capabilities advertised)".to_string()
-            } else {
-                accept.capabilities.join(", ")
-            };
-            println!("Peer accepted reverse connection. Capabilities: {caps}");
-        }
-        Payload::ReverseReject(reject) => {
-            anyhow::bail!("peer rejected reverse connection: {}", reject.reason);
-        }
-        other => {
-            anyhow::bail!("unexpected reverse-connect response: {:?}", other);
-        }
-    }
+    let caps = parse_reverse_connect_response(response.payload)?;
+    println!("Peer accepted reverse connection. Capabilities: {caps}");
 
     let (cols, rows) = term::get_terminal_size();
     let session = client
@@ -279,4 +283,48 @@ pub async fn run_connect(
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_reverse_connect_response, reverse_accept_summary};
+    use wsh_core::messages::{Payload, ReverseAcceptPayload, ReverseRejectPayload};
+
+    #[test]
+    fn reverse_accept_summary_falls_back_when_no_capabilities_are_advertised() {
+        assert_eq!(
+            reverse_accept_summary(&ReverseAcceptPayload {
+                target_fingerprint: "fp".into(),
+                username: "user".into(),
+                capabilities: vec![],
+            }),
+            "(no capabilities advertised)"
+        );
+    }
+
+    #[test]
+    fn parse_reverse_connect_response_accepts_reverse_accept() {
+        let caps = parse_reverse_connect_response(Payload::ReverseAccept(ReverseAcceptPayload {
+            target_fingerprint: "fp".into(),
+            username: "user".into(),
+            capabilities: vec!["shell".into(), "tools".into()],
+        }))
+        .unwrap();
+
+        assert_eq!(caps, "shell, tools");
+    }
+
+    #[test]
+    fn parse_reverse_connect_response_rejects_reverse_reject() {
+        let err = parse_reverse_connect_response(Payload::ReverseReject(ReverseRejectPayload {
+            target_fingerprint: "fp".into(),
+            username: "user".into(),
+            reason: "busy".into(),
+        }))
+        .unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("peer rejected reverse connection: busy"));
+    }
 }

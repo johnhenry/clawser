@@ -124,6 +124,11 @@ describe('Phase 5 integration — all exports, methods, tools, relay types', () 
     assert.ok(client._isRelayForwardable(MSG.CLOSE));
     assert.ok(client._isRelayForwardable(MSG.RESIZE));
     assert.ok(client._isRelayForwardable(MSG.SIGNAL));
+    assert.ok(client._isRelayForwardable(MSG.SESSION_DATA));
+    assert.ok(client._isRelayForwardable(MSG.ECHO_ACK));
+    assert.ok(client._isRelayForwardable(MSG.ECHO_STATE));
+    assert.ok(client._isRelayForwardable(MSG.TERM_SYNC));
+    assert.ok(client._isRelayForwardable(MSG.TERM_DIFF));
 
     // Phase 5.7 additions
     assert.ok(client._isRelayForwardable(MSG.GUEST_JOIN), 'GUEST_JOIN');

@@ -156,6 +156,28 @@ describe('KernelWshBridge', () => {
     kernel.close();
   });
 
+  it('keeps reverse tenants distinct when usernames collide across fingerprints', () => {
+    const kernel = new Kernel();
+    const bridge = new KernelWshBridge(kernel);
+
+    const first = bridge.handleReverseConnect({
+      participantId: buildReverseParticipantKey({ username: 'shared', targetFingerprint: 'fp-a' }),
+      username: 'shared',
+      fingerprint: 'fp-a',
+    });
+    const second = bridge.handleReverseConnect({
+      participantId: buildReverseParticipantKey({ username: 'shared', targetFingerprint: 'fp-b' }),
+      username: 'shared',
+      fingerprint: 'fp-b',
+    });
+
+    assert.notEqual(first.tenantId, second.tenantId);
+    assert.equal(kernel.listTenants().length, 2);
+
+    bridge.close();
+    kernel.close();
+  });
+
   // ── bind() with callback properties ──────────────────────────────
 
   it('bind wires onReverseConnect callback', () => {
