@@ -1,6 +1,9 @@
 {
   "private": true,
   "type": "module",
+  "dependencies": {
+    "serve": "^14.2.0"
+  },
   "devDependencies": {
     "typescript": "^5.9.3"
   }
