@@ -12,22 +12,23 @@
  */
 
 import { encodeBase64url, decodeBase64url } from './packages/mesh-primitives/src/index.mjs';
+import { MESH_TYPE } from './packages/mesh-primitives/src/constants.mjs';
 
 // Re-export for consumers
 export { encodeBase64url, decodeBase64url };
 
 // ---------------------------------------------------------------------------
-// Wire constants
+// Wire constants — imported from canonical registry
 // ---------------------------------------------------------------------------
 
 /** Wire type for a single audit entry. */
-export const AUDIT_ENTRY = 0xB0;
+export const AUDIT_ENTRY = MESH_TYPE.AUDIT_ENTRY;
 
 /** Wire type for querying an audit chain. */
-export const AUDIT_CHAIN_QUERY = 0xB1;
+export const AUDIT_CHAIN_QUERY = MESH_TYPE.AUDIT_CHAIN_QUERY;
 
 /** Wire type for responding with audit chain data. */
-export const AUDIT_CHAIN_RESPONSE = 0xB2;
+export const AUDIT_CHAIN_RESPONSE = MESH_TYPE.AUDIT_CHAIN_RESPONSE;
 
 // ---------------------------------------------------------------------------
 // Genesis

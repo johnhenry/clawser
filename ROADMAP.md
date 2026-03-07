@@ -38,6 +38,7 @@ Clawser is a **beta-quality** browser-native AI agent platform. The core runtime
 | **Phase 7** | Virtual Server subsystem — SW fetch intercept, ServerManager, function/static/proxy handlers, 8 agent tools, FetchTool auto-routing, kernel svc:// integration, Servers UI panel |
 | **Phase 8** | BrowserMesh integration — 30 new modules for decentralized mesh: identity, trust, CRDT sync, P2P transport, naming, real transports, resource scheduling, payments, consensus, swarm coordination |
 | **OpenClaw Final** | Channel Gateway (`clawser-gateway.js`) — scheduler/routine lane through gateway, kernel tenantId threading, per-channel serialized queues, virtual channel keys, 105 gateway tests |
+| **Phase 8.11** | Subsystem wiring + doc-only features — wire code collision fix (21 codes migrated), 11 subsystems wired into bootstrap, SW mesh routing, WebTransport bridge, cross-origin comms, WebRTC mesh, mesh DevTools inspector (5 new modules, 139 new tests) |
 
 ---
 
@@ -765,7 +766,7 @@ Turns Clawser into a first-class node in the BrowserMesh decentralized mesh — 
 
 **Companion spec**: `docs/browsermesh/specs/proposals/clawser-integration.md`. BrowserMesh owns wire format + protocol definitions; Clawser owns API surfaces + runtime integration.
 
-**Wire format**: BrowserMesh messages use codes 0xA0–0xE5 (wsh 0x01–0x9E preserved unchanged).
+**Wire format**: BrowserMesh messages use codes 0xA0–0xBF (core protocol) and 0xC0–0xD7 (extended subsystems: swarm, audit, resources, quotas, payments, GPU). Range 0xF0–0xFF is reserved. Canonical registry: `web/packages/mesh-primitives/src/constants.mjs`. wsh codes 0x01–0x9E preserved unchanged.
 **Identity encoding**: base64url(SHA-256(publicKey)) — 43 chars.
 **Trust model**: Float [0.0, 1.0] with multiplicative transitive decay.
 
@@ -833,13 +834,22 @@ Turns Clawser into a first-class node in the BrowserMesh decentralized mesh — 
 - [x] `web/packages/pod/src/capabilities.mjs` — Detect messaging/network/storage/compute capabilities from globalThis (~65 LOC, 7 tests)
 - [x] `web/packages/pod/src/messages.mjs` — Wire protocol constants and factories: POD_HELLO, POD_HELLO_ACK, POD_GOODBYE, POD_MESSAGE, POD_RPC_REQUEST, POD_RPC_RESPONSE (~135 LOC, 7 tests)
 - [x] `web/packages/pod/src/injected-pod.mjs` — InjectedPod: page text/structured extraction, visual overlay, extension bridge (~155 LOC)
-- [x] `web/clawser-pod.js` — ClawserPod extends Pod: wraps PeerNode + SwarmCoordinator via initMesh() (~75 LOC)
+- [x] `web/clawser-pod.js` — ClawserPod extends Pod: wraps PeerNode + SwarmCoordinator via initMesh(), 22 mesh subsystems with private fields, getters, shutdown teardown (~250 LOC)
 - [x] `web/clawser-embed.js` — EmbeddedPod extends Pod: embeddable developer API, backward-compat ClawserEmbed alias (~60 LOC, 6 tests)
 - [x] `extension/pod-inject.js` — Generated IIFE bundle for extension injection, double-injection guard via Symbol.for('pod.runtime')
 - [x] Extension `inject_pod` action in background.js + web_accessible_resources in manifest.json
 - [x] `initMeshSubsystem()` refactored to boot ClawserPod then layer mesh networking
 - [x] `state.services.pod` slot added for Pod singleton tracking
 - [x] 6 test files, 55 tests total (pod, detect-kind, capabilities, discovery, messaging, embed)
+
+### Phase 8.11: Subsystem Wiring + Doc-Only Features
+- [x] **Wire code collision fix** — Migrated 21 wire codes from 4 modules (orchestrator, marketplace, apps, consensus) to canonical MESH_TYPE registry in `constants.mjs` (range 0xD8–0xEC). All modules now import from registry, no hardcoded hex values remain
+- [x] **Full subsystem bootstrap** — Wired 11 deferred subsystems into app bootstrap: ResourceRegistry, Marketplace, QuotaManager, QuotaEnforcer, PaymentRouter, ConsensusManager, MeshRelayClient, MeshNameResolver, AppRegistry, AppStore, MeshOrchestrator. State slots, ClawserPod instantiation, lifecycle wiring, orchestrator tool registration, live ResourceRegistry data in mesh panel
+- [x] `web/clawser-mesh-sw-routing.js` — ServiceWorker mesh routing: MeshFetchRouter intercepts `mesh://` and `*.mesh.local` URLs, parseMeshRequest URL parser (~200 LOC, 17 tests)
+- [x] `web/clawser-mesh-webtransport.js` — WebTransport bridge: WebTransportBridge extends MeshTransport (HTTP/3 datagrams + bidi streams), WebTransportAdapterFactory, supportsWebTransport() (~350 LOC, 25 tests)
+- [x] `web/clawser-mesh-cross-origin.js` — Cross-origin communication: CrossOriginBridge (origin validation, trust levels, method allowlisting), CrossOriginHandshake (challenge-ack protocol), RateLimiter, TRUST_LEVELS enum (~500 LOC, 38 tests)
+- [x] `web/clawser-mesh-webrtc.js` — WebRTC mesh: WebRTCPeerConnection (offer/answer/ICE lifecycle, DataChannel, stats), WebRTCMeshManager (multi-peer, broadcast, auto-cleanup), WebRTCTransportAdapter extends MeshTransport, WebRTCAdapterFactory (~570 LOC, 47 tests)
+- [x] `web/clawser-mesh-devtools.js` — Mesh DevTools inspector: MeshInspector (snapshot, healthCheck, toMarkdownReport), MeshInspectTool (BrowserTool, `mesh_inspect`, read permission) (~200 LOC, 12 tests)
 
 ### Scope Estimate
 | Category | Modules | Est. LOC | Est. Tests |
@@ -857,6 +867,68 @@ Turns Clawser into a first-class node in the BrowserMesh decentralized mesh — 
 | Advanced Capabilities (Phase 8.9) | — | ~1,500 | ~50 |
 | Kernel Extensions | — | ~300 | ~30 |
 | **Total** | **30 new + 8 ext** | **~18,500–22,000** | **~710** |
+
+---
+
+## Phase 9: Public BrowserMesh Package Surface (Future)
+
+Priority: Complete the documented `@browsermesh/*` package ecosystem. The mesh runtime works internally (30+ modules, 3,700+ tests) but the public API surface promised in documentation does not exist as shippable packages.
+
+### Current state
+
+**Actual packages in repo:**
+- `web/packages/mesh-primitives` — Wire protocol, constants, shared types
+- `web/packages/pod` — Pod base class, detect-kind, capabilities, messages
+- `web/packages/netway` — Network abstractions
+- `web/packages/wsh` — Remote shell protocol
+
+**Documented but not implemented:**
+- `@browsermesh/runtime`
+- `@browsermesh/client`
+- `@browsermesh/server`
+- `@browsermesh/storage`
+- `@browsermesh/compute`
+- `@browsermesh/manifest`
+- `@browsermesh/schema`
+- `@browsermesh/admission`
+- `@browsermesh/cli`
+
+### Phase 9.1: Freeze the BrowserMesh Contract
+- [ ] Choose canonical package map — promote existing substrate into `@browsermesh/runtime`, `@browsermesh/client`, `@browsermesh/server`; keep `mesh-primitives` as internal shared package
+- [ ] Define canonical runtime entrypoints: `installPodRuntime()`, `createRuntime()`, `createClient()`, `createServer()`
+- [ ] Mark each spec as: implemented, partial, doc-only, or obsolete
+- [ ] Resolve documentation inconsistencies (ARCHITECTURE-AUDIT.md vs ROADMAP.md on BrowserMesh status)
+
+### Phase 9.2: Consolidate the Runtime
+- [ ] Extract or alias `web/packages/pod` into `@browsermesh/runtime`
+- [ ] Wrap `Pod` with documented runtime API surface
+- [ ] Add client/server wrappers around existing transport stack
+- [ ] Provide missing documented entrypoints so `installPodRuntime(...)` examples actually run
+- [ ] Back `docs/browsermesh/specs/reference/client-api.md` with real code
+
+### Phase 9.3: Align Specs to Code
+- [ ] Add or update formal specs for all implemented modules (identity keyring, trust graph, resource marketplace, payment channels, quota metering, voting protocol, swarm protocol, app distribution, audit recorder, relay service)
+- [ ] Update spec index and dependency graph
+- [ ] Add implementation-status sections to specs with shipping code
+
+### Phase 9.4: Build Missing Package Layers
+- [ ] `@browsermesh/storage` — Distributed storage abstraction (reuse OPFS, CRDT sync)
+- [ ] `@browsermesh/compute` — Compute routing (reuse `clawser-mesh-resources.js`, `clawser-mesh-scheduler.js`)
+- [ ] `@browsermesh/manifest` — App manifest validation and packaging
+- [ ] `@browsermesh/schema` — Wire protocol schema definitions
+- [ ] `@browsermesh/admission` — Admission control and capability enforcement
+- [ ] `@browsermesh/cli` — CLI tooling for mesh operations (reuse `wsh` for bridge/remote transport)
+
+### Phase 9.5: End-to-End and Interop Testing
+- [ ] Multi-tab discovery test
+- [ ] Service advertisement and lookup across real runtime instances
+- [ ] Stream open/data/close across pods
+- [ ] File transfer accept/resume/cancel
+- [ ] ACL + trust + quota interaction
+- [ ] Relay fallback scenarios
+- [ ] Browser-to-server pod interop
+- [ ] Client/runtime/server API compatibility with documentation
+- [ ] Protocol registry collision tests (fail on wire-code reuse)
 
 ---
 

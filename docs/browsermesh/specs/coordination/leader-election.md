@@ -230,3 +230,9 @@ The leader role is advertised in presence metadata:
 // Leader includes role in presence updates
 presence.setState('online', { role: 'leader' });
 ```
+
+## Implementation Status
+
+**Status**: Leader election is implemented inside SwarmCoordinator as part of swarm lifecycle. Uses highest-podId tie-breaking. Wired to app bootstrap.
+
+**Source**: `web/clawser-mesh-swarm.js`

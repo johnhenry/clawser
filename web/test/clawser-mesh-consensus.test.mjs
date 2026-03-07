@@ -26,12 +26,12 @@ describe('Wire constants', () => {
     assert.equal(CONSENSUS_VOTE, 0xA9);
   });
 
-  it('CONSENSUS_CLOSE is 0xAA', () => {
-    assert.equal(CONSENSUS_CLOSE, 0xAA);
+  it('CONSENSUS_CLOSE is 0xEB', () => {
+    assert.equal(CONSENSUS_CLOSE, 0xEB);
   });
 
-  it('CONSENSUS_RESULT is 0xAB', () => {
-    assert.equal(CONSENSUS_RESULT, 0xAB);
+  it('CONSENSUS_RESULT is 0xEC', () => {
+    assert.equal(CONSENSUS_RESULT, 0xEC);
   });
 });
 

@@ -22,28 +22,28 @@ import {
 // ---------------------------------------------------------------------------
 
 describe('Wire constants', () => {
-  it('RESOURCE_ADVERTISE equals 0xB3', () => {
-    assert.equal(RESOURCE_ADVERTISE, 0xb3);
+  it('RESOURCE_ADVERTISE equals 0xC7', () => {
+    assert.equal(RESOURCE_ADVERTISE, 0xc7);
   });
 
-  it('RESOURCE_DISCOVER equals 0xB4', () => {
-    assert.equal(RESOURCE_DISCOVER, 0xb4);
+  it('RESOURCE_DISCOVER equals 0xC8', () => {
+    assert.equal(RESOURCE_DISCOVER, 0xc8);
   });
 
-  it('RESOURCE_DISCOVER_RESPONSE equals 0xB5', () => {
-    assert.equal(RESOURCE_DISCOVER_RESPONSE, 0xb5);
+  it('RESOURCE_DISCOVER_RESPONSE equals 0xC9', () => {
+    assert.equal(RESOURCE_DISCOVER_RESPONSE, 0xc9);
   });
 
-  it('COMPUTE_REQUEST equals 0xB6', () => {
-    assert.equal(COMPUTE_REQUEST, 0xb6);
+  it('COMPUTE_REQUEST equals 0xCA', () => {
+    assert.equal(COMPUTE_REQUEST, 0xca);
   });
 
-  it('COMPUTE_RESULT equals 0xB7', () => {
-    assert.equal(COMPUTE_RESULT, 0xb7);
+  it('COMPUTE_RESULT equals 0xCB', () => {
+    assert.equal(COMPUTE_RESULT, 0xcb);
   });
 
-  it('COMPUTE_PROGRESS equals 0xB8', () => {
-    assert.equal(COMPUTE_PROGRESS, 0xb8);
+  it('COMPUTE_PROGRESS equals 0xCC', () => {
+    assert.equal(COMPUTE_PROGRESS, 0xcc);
   });
 });
 

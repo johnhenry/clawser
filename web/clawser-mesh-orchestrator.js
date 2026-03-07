@@ -16,24 +16,19 @@ const BrowserTool = globalThis.BrowserTool || class {
   constructor() {}
 }
 
+import { MESH_TYPE } from './packages/mesh-primitives/src/constants.mjs'
+
 // ---------------------------------------------------------------------------
-// Wire constants
+// Wire constants (re-exported from canonical registry)
 // ---------------------------------------------------------------------------
 
-/** List all pods in the mesh */
-export const ORCH_LIST_PODS = 0xd0
-/** Get detailed pod status */
-export const ORCH_POD_STATUS = 0xd1
-/** Execute a command on a remote pod */
-export const ORCH_EXEC = 0xd2
-/** Deploy a skill to a remote pod */
-export const ORCH_DEPLOY = 0xd3
-/** Drain a pod (graceful disconnect) */
-export const ORCH_DRAIN = 0xd4
-/** Expose a pod's service */
-export const ORCH_EXPOSE = 0xd5
-/** Route a service to a target pod */
-export const ORCH_ROUTE = 0xd6
+export const ORCH_LIST_PODS = MESH_TYPE.ORCH_LIST_PODS    // 0xd8
+export const ORCH_POD_STATUS = MESH_TYPE.ORCH_POD_STATUS  // 0xd9
+export const ORCH_EXEC = MESH_TYPE.ORCH_EXEC              // 0xda
+export const ORCH_DEPLOY = MESH_TYPE.ORCH_DEPLOY          // 0xdb
+export const ORCH_DRAIN = MESH_TYPE.ORCH_DRAIN            // 0xdc
+export const ORCH_EXPOSE = MESH_TYPE.ORCH_EXPOSE          // 0xdd
+export const ORCH_ROUTE = MESH_TYPE.ORCH_ROUTE            // 0xde
 
 // ---------------------------------------------------------------------------
 // Valid enumerations

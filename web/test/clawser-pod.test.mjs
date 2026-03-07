@@ -3,6 +3,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { Pod } from '../packages/pod/src/pod.mjs'
 import { PodIdentity } from '../packages/mesh-primitives/src/identity.mjs'
+import { ClawserPod } from '../clawser-pod.js'
 
 // Stub BroadcastChannel for Node
 class StubBroadcastChannel {
@@ -206,5 +207,36 @@ describe('Pod', () => {
     const g = makeGlobal()
     await pod.boot({ globalThis: g, discoveryTimeout: 50, handshakeTimeout: 50 })
     assert.equal(installG, g)
+  })
+})
+
+describe('ClawserPod identity unification', () => {
+  let cpod
+
+  afterEach(async () => {
+    if (cpod && cpod.state !== 'shutdown' && cpod.state !== 'idle') {
+      await cpod.shutdown({ silent: true })
+    }
+  })
+
+  it('mesh wallet uses the same podId as the Pod base class', async () => {
+    cpod = new ClawserPod()
+    const g = makeGlobal()
+    await cpod.boot({ globalThis: g, discoveryTimeout: 50, handshakeTimeout: 50 })
+
+    const basePodId = cpod.podId
+    assert.ok(basePodId, 'Pod should have a podId after boot')
+
+    const { peerNode, swarmCoordinator } = await cpod.initMesh()
+
+    // The wallet's default identity should match the Pod's identity
+    const walletDefault = cpod.wallet.getDefault()
+    assert.ok(walletDefault, 'Wallet should have a default identity')
+    assert.equal(walletDefault.podId, basePodId,
+      'Wallet podId should equal Pod podId after identity import')
+
+    // PeerNode should use the same podId
+    assert.equal(peerNode.podId, basePodId,
+      'PeerNode podId should equal Pod podId')
   })
 })

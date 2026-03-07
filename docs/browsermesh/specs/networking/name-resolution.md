@@ -175,3 +175,9 @@ sequenceDiagram
 - **Cache poisoning**: Each resolver maintains its own authoritative registry. Cross-resolver sync uses signed NAME_REGISTER messages verified against the sender's identity.
 - **Impersonation**: Names are bound to fingerprints. Only the current owner (verified by fingerprint match) can renew, transfer, or unregister a name.
 - **Transfer safety**: Both the current owner's fingerprint and the destination fingerprint must be specified, preventing unauthorized transfers.
+
+## Implementation Status
+
+**Status**: Code exists in `web/clawser-mesh-naming.js`. Not wired to app bootstrap — the NamingService is instantiated only in tests. DiscoveryManager provides the active discovery layer.
+
+**Source**: `web/clawser-mesh-naming.js`

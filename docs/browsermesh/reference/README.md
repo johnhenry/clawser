@@ -1,5 +1,11 @@
 # BrowserMesh Reference Implementation
 
+> **Implementation Status**: This document describes the target `@browsermesh/*` package API.
+> The current Clawser implementation uses equivalent JS modules in `web/` (not TypeScript packages).
+> Entrypoints like `installPodRuntime()` are provided via `web/packages/pod/src/runtime.mjs`.
+> Wire codes are consolidated in `web/packages/mesh-primitives/src/constants.mjs`.
+> Status markers: **implemented** = code exists and is wired, **partial** = code exists but not fully integrated, **doc-only** = API defined here but not yet implemented.
+
 ## 1. Package Structure
 
 ```
@@ -1299,28 +1305,28 @@ Browser DevTools extension for debugging:
 
 ## 8. Roadmap
 
-### Phase 1: Core (Current)
-- [x] Pod model and types
-- [x] Cryptographic primitives
-- [x] Basic discovery (BroadcastChannel)
-- [x] Message routing
+### Phase 1: Core — **implemented**
+- [x] Pod model and types (`web/packages/pod/`)
+- [x] Cryptographic primitives (`web/clawser-mesh-identity.js`, `web/clawser-mesh-keyring.js`)
+- [x] Basic discovery — BroadcastChannel (`web/clawser-mesh-discovery.js`)
+- [x] Message routing (`web/clawser-mesh-peer.js`)
 
-### Phase 2: Mesh
-- [ ] SharedWorker coordination
-- [ ] ServiceWorker routing
-- [ ] Channel upgrades
+### Phase 2: Mesh — **partial**
+- [x] SharedWorker coordination (`SharedWorkerRelayStrategy` in discovery module)
+- [ ] ServiceWorker routing — doc-only
+- [x] Channel upgrades (`web/clawser-mesh-transport.js` — transport negotiation)
 
-### Phase 3: External
-- [ ] WebTransport bridge
-- [ ] WebSocket fallback
-- [ ] RPC protocol
+### Phase 3: External — **partial**
+- [ ] WebTransport bridge — doc-only
+- [x] WebSocket fallback (`web/clawser-mesh-relay.js`)
+- [x] RPC protocol (Pod RPC via `createRpcRequest`/`createRpcResponse`)
 
-### Phase 4: Federation
-- [ ] Cross-origin communication
-- [ ] WebRTC mesh
-- [ ] Multi-device sync
+### Phase 4: Federation — **partial**
+- [ ] Cross-origin communication — doc-only
+- [ ] WebRTC mesh — doc-only (signaling spec exists)
+- [x] Multi-device sync (`web/clawser-mesh-sync.js` — CRDT engine)
 
-### Phase 5: Tooling
+### Phase 5: Tooling — **doc-only**
 - [ ] CLI tools
 - [ ] DevTools extension
 - [ ] Documentation site

@@ -14,21 +14,16 @@
  *   node --import ./web/test/_setup-globals.mjs --test web/test/clawser-mesh-consensus.test.mjs
  */
 
+import { MESH_TYPE } from './packages/mesh-primitives/src/constants.mjs';
+
 // ---------------------------------------------------------------------------
-// Wire constants
+// Wire constants (re-exported from canonical registry)
 // ---------------------------------------------------------------------------
 
-/** Wire code: broadcast a new proposal to the mesh. */
-export const CONSENSUS_PROPOSE = 0xA8;
-
-/** Wire code: submit a vote on a proposal. */
-export const CONSENSUS_VOTE = 0xA9;
-
-/** Wire code: close a proposal (author or timeout). */
-export const CONSENSUS_CLOSE = 0xAA;
-
-/** Wire code: broadcast final results of a closed proposal. */
-export const CONSENSUS_RESULT = 0xAB;
+export const CONSENSUS_PROPOSE = MESH_TYPE.CONSENSUS_PROPOSE;  // 0xa8
+export const CONSENSUS_VOTE = MESH_TYPE.CONSENSUS_VOTE;        // 0xa9
+export const CONSENSUS_CLOSE = MESH_TYPE.CONSENSUS_CLOSE;      // 0xeb
+export const CONSENSUS_RESULT = MESH_TYPE.CONSENSUS_RESULT;    // 0xec
 
 // ---------------------------------------------------------------------------
 // VoteType enum

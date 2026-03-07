@@ -300,3 +300,9 @@ async function rollbackMigration(ctx: MigrationContext): Promise<void> {
 | Transfer timeout | 30 seconds |
 | Dual-active window | 10 seconds |
 | Urgent migration budget | 1 second |
+
+## Implementation Status
+
+**Status**: Code exists in `web/clawser-mesh-migration.js`. Not surfaced through runtime API — migration tools are not registered during app bootstrap.
+
+**Source**: `web/clawser-mesh-migration.js`

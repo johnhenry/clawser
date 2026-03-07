@@ -15,27 +15,18 @@
  *   node --import ./web/test/_setup-globals.mjs --test web/test/clawser-mesh-apps.test.mjs
  */
 
+import { MESH_TYPE } from './packages/mesh-primitives/src/constants.mjs';
+
 // ---------------------------------------------------------------------------
-// Wire Constants
+// Wire Constants (re-exported from canonical registry)
 // ---------------------------------------------------------------------------
 
-/** @type {number} */
-export const APP_MANIFEST = 0x98;
-
-/** @type {number} */
-export const APP_INSTALL = 0x99;
-
-/** @type {number} */
-export const APP_UNINSTALL = 0x9A;
-
-/** @type {number} */
-export const APP_STATE_SYNC = 0x9B;
-
-/** @type {number} */
-export const APP_RPC = 0x9C;
-
-/** @type {number} */
-export const APP_EVENT = 0x9D;
+export const APP_MANIFEST = MESH_TYPE.APP_MANIFEST;        // 0xe5
+export const APP_INSTALL = MESH_TYPE.APP_INSTALL;          // 0xe6
+export const APP_UNINSTALL = MESH_TYPE.APP_UNINSTALL;      // 0xe7
+export const APP_STATE_SYNC = MESH_TYPE.APP_STATE_SYNC;    // 0xe8
+export const APP_RPC = MESH_TYPE.APP_RPC;                  // 0xe9
+export const APP_EVENT = MESH_TYPE.APP_EVENT;              // 0xea
 
 // ---------------------------------------------------------------------------
 // Valid permissions

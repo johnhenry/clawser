@@ -477,3 +477,9 @@ await syncManager.broadcastDelta('room-stats', [{
 | Vector clock entries | 256 (max pods) |
 | Compaction delta threshold | 100 deltas |
 | Compaction size threshold | 256 KB |
+
+## Implementation Status
+
+**Status**: MeshSyncEngine exists with 6 CRDT types (LWW-Register, G-Counter, PN-Counter, OR-Set, RGA, LWW-Map). Wired to app bootstrap via ClawserPod.initMesh(). Auto-sync intervals supported.
+
+**Source**: `web/clawser-mesh-sync.js`

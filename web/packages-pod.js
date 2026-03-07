@@ -21,4 +21,10 @@ export {
 
   // Variants
   InjectedPod,
+
+  // Runtime entrypoints
+  installPodRuntime,
+  createRuntime,
+  createClient,
+  createServer,
 } from './packages/pod/src/index.mjs';

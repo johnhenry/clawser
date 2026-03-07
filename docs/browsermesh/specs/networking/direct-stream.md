@@ -140,3 +140,9 @@ Both `MeshStream` and `StreamMultiplexer` support `toJSON()` / `fromJSON()` for 
 ## 10. Implementation
 
 See `web/clawser-mesh-streams.js` for the Clawser implementation (~500 LOC).
+
+## Implementation Status
+
+**Status**: StreamMultiplexer and MeshStream classes exist and are fully functional. Wired to app bootstrap via ClawserPod.initMesh(). Supports flow control with credits, ordered/unordered delivery, and concurrent stream limits.
+
+**Source**: `web/clawser-mesh-streams.js`

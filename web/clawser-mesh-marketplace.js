@@ -11,22 +11,18 @@
  *   node --import ./web/test/_setup-globals.mjs --test web/test/clawser-mesh-marketplace.test.mjs
  */
 
+import { MESH_TYPE } from './packages/mesh-primitives/src/constants.mjs';
+
 // ---------------------------------------------------------------------------
-// Wire constants
+// Wire constants (re-exported from canonical registry)
 // ---------------------------------------------------------------------------
 
-/** Publish a service listing */
-export const LISTING_PUBLISH = 0x90;
-/** Query available listings */
-export const LISTING_QUERY = 0x91;
-/** Response to a listing query */
-export const LISTING_RESPONSE = 0x92;
-/** Purchase / subscribe to a service */
-export const LISTING_PURCHASE = 0x93;
-/** Submit a review for a service */
-export const REVIEW_SUBMIT = 0x94;
-/** Query reviews for a service */
-export const REVIEW_QUERY = 0x95;
+export const LISTING_PUBLISH = MESH_TYPE.LISTING_PUBLISH;    // 0xdf
+export const LISTING_QUERY = MESH_TYPE.LISTING_QUERY;        // 0xe0
+export const LISTING_RESPONSE = MESH_TYPE.LISTING_RESPONSE;  // 0xe1
+export const LISTING_PURCHASE = MESH_TYPE.LISTING_PURCHASE;  // 0xe2
+export const REVIEW_SUBMIT = MESH_TYPE.REVIEW_SUBMIT;        // 0xe3
+export const REVIEW_QUERY = MESH_TYPE.REVIEW_QUERY;          // 0xe4
 
 // ---------------------------------------------------------------------------
 // Valid enumerations

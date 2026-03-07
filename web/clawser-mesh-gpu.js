@@ -16,21 +16,23 @@
  *   node --import ./web/test/_setup-globals.mjs --test web/test/clawser-mesh-gpu.test.mjs
  */
 
+import { MESH_TYPE } from './packages/mesh-primitives/src/constants.mjs'
+
 // ---------------------------------------------------------------------------
-// Wire Constants
+// Wire Constants — imported from canonical registry
 // ---------------------------------------------------------------------------
 
 /** Wire type for GPU capability probe. */
-export const GPU_PROBE = 0xF3
+export const GPU_PROBE = MESH_TYPE.GPU_PROBE
 
 /** Wire type for shard assignment message. */
-export const GPU_SHARD_ASSIGN = 0xF4
+export const GPU_SHARD_ASSIGN = MESH_TYPE.GPU_SHARD_ASSIGN
 
 /** Wire type for gradient push from a shard peer. */
-export const GPU_GRADIENT_PUSH = 0xF5
+export const GPU_GRADIENT_PUSH = MESH_TYPE.GPU_GRADIENT_PUSH
 
 /** Wire type for training control messages (start/cancel/status). */
-export const GPU_TRAIN_CONTROL = 0xF6
+export const GPU_TRAIN_CONTROL = MESH_TYPE.GPU_TRAIN_CONTROL
 
 // ---------------------------------------------------------------------------
 // GpuCapability

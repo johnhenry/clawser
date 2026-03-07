@@ -11,18 +11,20 @@
  *   node --import ./web/test/_setup-globals.mjs --test web/test/clawser-mesh-quotas.test.mjs
  */
 
+import { MESH_TYPE } from './packages/mesh-primitives/src/constants.mjs';
+
 // ---------------------------------------------------------------------------
-// Wire constants
+// Wire constants — imported from canonical registry
 // ---------------------------------------------------------------------------
 
 /** Wire code sent when a quota rule is created or updated. */
-export const QUOTA_UPDATE = 0xB9;
+export const QUOTA_UPDATE = MESH_TYPE.QUOTA_UPDATE;
 
 /** Wire code sent when a quota violation is detected. */
-export const QUOTA_VIOLATION = 0xBA;
+export const QUOTA_VIOLATION = MESH_TYPE.QUOTA_VIOLATION;
 
 /** Wire code for periodic usage reports. */
-export const USAGE_REPORT = 0xBB;
+export const USAGE_REPORT = MESH_TYPE.USAGE_REPORT;
 
 // ---------------------------------------------------------------------------
 // Default limits

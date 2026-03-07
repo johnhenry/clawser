@@ -20,20 +20,20 @@ import {
 // ── Wire Constants ──────────────────────────────────────────────
 
 describe('Wire constants', () => {
-  it('SWARM_JOIN equals 0xAC', () => {
-    assert.equal(SWARM_JOIN, 0xAC);
+  it('SWARM_JOIN equals 0xC0', () => {
+    assert.equal(SWARM_JOIN, 0xC0);
   });
 
-  it('SWARM_LEAVE equals 0xAD', () => {
-    assert.equal(SWARM_LEAVE, 0xAD);
+  it('SWARM_LEAVE equals 0xC1', () => {
+    assert.equal(SWARM_LEAVE, 0xC1);
   });
 
-  it('SWARM_HEARTBEAT equals 0xAE', () => {
-    assert.equal(SWARM_HEARTBEAT, 0xAE);
+  it('SWARM_HEARTBEAT equals 0xC2', () => {
+    assert.equal(SWARM_HEARTBEAT, 0xC2);
   });
 
-  it('SWARM_TASK_ASSIGN equals 0xAF', () => {
-    assert.equal(SWARM_TASK_ASSIGN, 0xAF);
+  it('SWARM_TASK_ASSIGN equals 0xC3', () => {
+    assert.equal(SWARM_TASK_ASSIGN, 0xC3);
   });
 });
 

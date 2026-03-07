@@ -10,14 +10,16 @@
  *   node --import ./web/test/_setup-globals.mjs --test web/test/clawser-mesh-payments.test.mjs
  */
 
+import { MESH_TYPE } from './packages/mesh-primitives/src/constants.mjs';
+
 // ---------------------------------------------------------------------------
-// Wire constants
+// Wire constants — imported from canonical registry
 // ---------------------------------------------------------------------------
 
-export const PAYMENT_OPEN = 0xBC;
-export const PAYMENT_UPDATE = 0xBD;
-export const PAYMENT_CLOSE = 0xBE;
-export const ESCROW_CREATE = 0xBF;
+export const PAYMENT_OPEN = MESH_TYPE.PAYMENT_OPEN;
+export const PAYMENT_UPDATE = MESH_TYPE.PAYMENT_UPDATE;
+export const PAYMENT_CLOSE = MESH_TYPE.PAYMENT_CLOSE;
+export const ESCROW_CREATE = MESH_TYPE.ESCROW_CREATE;
 
 // ---------------------------------------------------------------------------
 // Channel states

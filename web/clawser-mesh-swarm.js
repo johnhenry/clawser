@@ -10,13 +10,15 @@
  */
 
 // ---------------------------------------------------------------------------
-// Wire Constants
+// Wire Constants — imported from canonical registry
 // ---------------------------------------------------------------------------
 
-export const SWARM_JOIN = 0xAC;
-export const SWARM_LEAVE = 0xAD;
-export const SWARM_HEARTBEAT = 0xAE;
-export const SWARM_TASK_ASSIGN = 0xAF;
+import { MESH_TYPE } from './packages/mesh-primitives/src/constants.mjs'
+
+export const SWARM_JOIN = MESH_TYPE.SWARM_JOIN
+export const SWARM_LEAVE = MESH_TYPE.SWARM_LEAVE
+export const SWARM_HEARTBEAT = MESH_TYPE.SWARM_HEARTBEAT
+export const SWARM_TASK_ASSIGN = MESH_TYPE.SWARM_TASK_ASSIGN
 
 // ---------------------------------------------------------------------------
 // Enums

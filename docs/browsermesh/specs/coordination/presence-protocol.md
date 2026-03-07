@@ -190,3 +190,9 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 ```
+
+## Implementation Status
+
+**Status**: Presence behavior exists in PeerNode heartbeat mechanism and DiscoveryManager TTL-based pruning. No standalone presence service — presence is implicit in discovery records.
+
+**Source**: `web/clawser-peer-node.js`, `web/clawser-mesh-discovery.js`

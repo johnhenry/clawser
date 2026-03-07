@@ -1,6 +1,9 @@
 /**
  * BrowserMesh wire format type codes.
- * Reserved range: 0xA0–0xBF for mesh-specific message types.
+ * Ranges:
+ *   0xA0–0xBF  Core mesh protocol (identity, ACL, chat, streams, naming, files, keepalive)
+ *   0xC0–0xEC  Extended subsystems (swarm, audit, resources, quotas, payments, GPU, orchestration, marketplace, apps, consensus)
+ *   0xF0–0xFF  Reserved (internal / future)
  *
  * @enum {number}
  */
@@ -78,6 +81,116 @@ export const MESH_TYPE = Object.freeze({
   PING: 0xbe,
   /** Pong / keepalive response */
   PONG: 0xbf,
+
+  // ── Swarm coordination (0xC0–0xC3) ──────────────────────────────────
+  /** Join a swarm */
+  SWARM_JOIN: 0xc0,
+  /** Leave a swarm */
+  SWARM_LEAVE: 0xc1,
+  /** Swarm heartbeat / liveness */
+  SWARM_HEARTBEAT: 0xc2,
+  /** Assign a task within a swarm */
+  SWARM_TASK_ASSIGN: 0xc3,
+
+  // ── Audit trail (0xC4–0xC6) ─────────────────────────────────────────
+  /** Single audit log entry */
+  AUDIT_ENTRY: 0xc4,
+  /** Query an audit chain */
+  AUDIT_CHAIN_QUERY: 0xc5,
+  /** Response with audit chain data */
+  AUDIT_CHAIN_RESPONSE: 0xc6,
+
+  // ── Resource management (0xC7–0xCC) ─────────────────────────────────
+  /** Advertise local resources to the mesh */
+  RESOURCE_ADVERTISE: 0xc7,
+  /** Discover peers matching resource constraints */
+  RESOURCE_DISCOVER: 0xc8,
+  /** Response to a discovery query */
+  RESOURCE_DISCOVER_RESPONSE: 0xc9,
+  /** Submit a compute request */
+  COMPUTE_REQUEST: 0xca,
+  /** Return a compute result */
+  COMPUTE_RESULT: 0xcb,
+  /** Incremental progress update for a running job */
+  COMPUTE_PROGRESS: 0xcc,
+
+  // ── Quota metering (0xCD–0xCF) ──────────────────────────────────────
+  /** Quota rule created or updated */
+  QUOTA_UPDATE: 0xcd,
+  /** Quota violation detected */
+  QUOTA_VIOLATION: 0xce,
+  /** Periodic usage report */
+  USAGE_REPORT: 0xcf,
+
+  // ── Payment channels (0xD0–0xD3) ────────────────────────────────────
+  /** Open a payment channel */
+  PAYMENT_OPEN: 0xd0,
+  /** Update channel balance */
+  PAYMENT_UPDATE: 0xd1,
+  /** Close a payment channel */
+  PAYMENT_CLOSE: 0xd2,
+  /** Create an escrow */
+  ESCROW_CREATE: 0xd3,
+
+  // ── GPU orchestration (0xD4–0xD7) ───────────────────────────────────
+  /** GPU capability probe */
+  GPU_PROBE: 0xd4,
+  /** Assign a training shard to a peer */
+  GPU_SHARD_ASSIGN: 0xd5,
+  /** Push gradients from a shard peer */
+  GPU_GRADIENT_PUSH: 0xd6,
+  /** Training control message (start/cancel/status) */
+  GPU_TRAIN_CONTROL: 0xd7,
+
+  // ── Orchestration (0xD8–0xDE) ──────────────────────────────────────
+  /** List all pods in the mesh */
+  ORCH_LIST_PODS: 0xd8,
+  /** Get detailed pod status */
+  ORCH_POD_STATUS: 0xd9,
+  /** Execute a command on a remote pod */
+  ORCH_EXEC: 0xda,
+  /** Deploy a skill to a remote pod */
+  ORCH_DEPLOY: 0xdb,
+  /** Drain a pod (graceful disconnect) */
+  ORCH_DRAIN: 0xdc,
+  /** Expose a pod's service */
+  ORCH_EXPOSE: 0xdd,
+  /** Route a service to a target pod */
+  ORCH_ROUTE: 0xde,
+
+  // ── Marketplace (0xDF–0xE4) ────────────────────────────────────────
+  /** Publish a service listing */
+  LISTING_PUBLISH: 0xdf,
+  /** Query available listings */
+  LISTING_QUERY: 0xe0,
+  /** Response to a listing query */
+  LISTING_RESPONSE: 0xe1,
+  /** Purchase / subscribe to a service */
+  LISTING_PURCHASE: 0xe2,
+  /** Submit a review for a service */
+  REVIEW_SUBMIT: 0xe3,
+  /** Query reviews for a service */
+  REVIEW_QUERY: 0xe4,
+
+  // ── App distribution (0xE5–0xEA) ───────────────────────────────────
+  /** App manifest announcement */
+  APP_MANIFEST: 0xe5,
+  /** App install request */
+  APP_INSTALL: 0xe6,
+  /** App uninstall request */
+  APP_UNINSTALL: 0xe7,
+  /** App state synchronization */
+  APP_STATE_SYNC: 0xe8,
+  /** App RPC call */
+  APP_RPC: 0xe9,
+  /** App event broadcast */
+  APP_EVENT: 0xea,
+
+  // ── Consensus extended (0xEB–0xEC) ─────────────────────────────────
+  /** Close a proposal (author or timeout) */
+  CONSENSUS_CLOSE: 0xeb,
+  /** Broadcast final results of a closed proposal */
+  CONSENSUS_RESULT: 0xec,
 });
 
 /**

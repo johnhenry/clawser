@@ -73,7 +73,7 @@ These are not bugs but areas where full integration requires user-facing decisio
 1. **Channel plugins** (Telegram, Discord, etc.) — defined but no channel configuration UI exists to create/configure channels
 2. **Marketplace UI** — `clawser-ui-marketplace.js` exists but needs a panel in the navigation
 3. **SharedWorker** — infrastructure exists but requires opt-in architecture decisions
-4. **Mesh system** (Phase 8 BrowserMesh) — 16 modules exist on a separate branch, not yet merged
+4. **Mesh system** (Phase 8 BrowserMesh) — 30+ modules merged into main; wire codes consolidated in `mesh-primitives/constants.mjs`; subsystem bootstrap and tool registration are being wired into the app lifecycle
 
 ## Files Modified
 

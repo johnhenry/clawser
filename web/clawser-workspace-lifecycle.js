@@ -61,6 +61,9 @@ import { initServerManager, getServerManager } from './clawser-server.js';
 import { registerServerTools } from './clawser-server-tools.js';
 import { renderServerList, initServerPanel } from './clawser-ui-servers.js';
 import { ClawserPod } from './clawser-pod.js';
+import { registerMeshTools } from './clawser-mesh-tools.js';
+import { registerIdentityTools } from './clawser-mesh-identity-tools.js';
+import { createMeshctlTools } from './clawser-mesh-orchestrator.js';
 import { renderSwarmPanel, initSwarmListeners } from './clawser-ui-swarms.js';
 import { renderTransferPanel, initTransferListeners } from './clawser-ui-transfers.js';
 import { renderMeshPanel, initMeshListeners } from './clawser-ui-mesh.js';
@@ -211,15 +214,66 @@ async function initMeshSubsystem() {
     }
 
     // Layer mesh networking on top of the pod
-    const { peerNode, swarmCoordinator } = await state.pod.initMesh();
-    state.peerNode = peerNode;
-    state.swarmCoordinator = swarmCoordinator;
+    const result = await state.pod.initMesh();
+    state.peerNode = result.peerNode;
+    state.swarmCoordinator = result.swarmCoordinator;
+    state.discoveryManager = result.discoveryManager;
+    state.transportNegotiator = result.transportNegotiator;
+    state.auditChain = result.auditChain;
+    state.streamMultiplexer = result.streamMultiplexer;
+    state.fileTransfer = result.fileTransfer;
+    state.serviceDirectory = result.serviceDirectory;
+    state.syncEngine = result.syncEngine;
+    state.resourceRegistry = result.resourceRegistry;
+    state.meshMarketplace = result.meshMarketplace;
+    state.quotaManager = result.quotaManager;
+    state.quotaEnforcer = result.quotaEnforcer;
+    state.paymentRouter = result.paymentRouter;
+    state.consensusManager = result.consensusManager;
+    state.relayClient = result.relayClient;
+    state.nameResolver = result.nameResolver;
+    state.appRegistry = result.appRegistry;
+    state.appStore = result.appStore;
+    state.orchestrator = result.orchestrator;
+
+    // Register mesh tools if tool registry is available
+    if (state.browserTools) {
+      try {
+        registerMeshTools(state.browserTools, state.streamMultiplexer, state.fileTransfer);
+        registerIdentityTools(state.browserTools);
+        // Register orchestrator tools
+        if (state.orchestrator) {
+          const meshctlTools = createMeshctlTools(state.orchestrator);
+          for (const tool of meshctlTools) state.browserTools.register(tool);
+        }
+      } catch (e) {
+        console.warn('[clawser] Mesh tool registration failed (non-fatal):', e.message);
+      }
+    }
 
     console.log('[clawser] P2P mesh initialized via ClawserPod — podId:', state.pod.podId);
   } catch (err) {
     console.warn('[clawser] P2P mesh init failed (non-fatal):', err.message);
     state.peerNode = null;
     state.swarmCoordinator = null;
+    state.discoveryManager = null;
+    state.transportNegotiator = null;
+    state.auditChain = null;
+    state.streamMultiplexer = null;
+    state.fileTransfer = null;
+    state.serviceDirectory = null;
+    state.syncEngine = null;
+    state.resourceRegistry = null;
+    state.meshMarketplace = null;
+    state.quotaManager = null;
+    state.quotaEnforcer = null;
+    state.paymentRouter = null;
+    state.consensusManager = null;
+    state.relayClient = null;
+    state.nameResolver = null;
+    state.appRegistry = null;
+    state.appStore = null;
+    state.orchestrator = null;
   }
 }
 
@@ -406,6 +460,7 @@ export async function switchWorkspace(newId, convId) {
       if (!c) return;
       const podId = state.peerNode?.podId || 'local';
       const sc = state.swarmCoordinator;
+      const getSwarms = () => sc?.listSwarms?.() || [];
       const listenerOpts = {
         onCreate: (opts) => {
           if (sc) {
@@ -414,18 +469,21 @@ export async function switchWorkspace(newId, convId) {
           }
         },
         onRefresh: () => {
-          c.innerHTML = renderSwarmPanel({ swarms: [], localPodId: podId });
+          c.innerHTML = renderSwarmPanel({ swarms: getSwarms(), localPodId: podId });
           initSwarmListeners(listenerOpts);
         },
       };
-      c.innerHTML = renderSwarmPanel({ swarms: [], localPodId: podId });
+      c.innerHTML = renderSwarmPanel({ swarms: getSwarms(), localPodId: podId });
       initSwarmListeners(listenerOpts);
     },
     transfers: () => {
       const c = $('transfersContainer');
       if (!c) return;
       const podId = state.peerNode?.podId || 'local';
-      c.innerHTML = renderTransferPanel({ active: [], history: [], localPodId: podId });
+      const ft = state.fileTransfer;
+      const active = ft?.listTransfers?.({ status: 'transferring' }) || [];
+      const history = ft?.listTransfers?.({ status: 'completed' }) || [];
+      c.innerHTML = renderTransferPanel({ active, history, localPodId: podId });
       initTransferListeners();
     },
     mesh: () => {
@@ -433,11 +491,17 @@ export async function switchWorkspace(newId, convId) {
       if (!c) return;
       const podId = state.peerNode?.podId || 'local';
       const peerLabel = state.peerNode?.wallet?.getDefault()?.label || 'This Pod';
+      const peers = state.peerNode?.registry?.listPeers?.() || [];
+      const services = state.serviceDirectory?.listAll?.() || [];
       c.innerHTML = renderMeshPanel({
         localPod: { podId, label: peerLabel, uptime: 0 },
-        peers: [],
-        resources: [],
-        services: [],
+        peers,
+        resources: (state.resourceRegistry?.listAll?.() || []).flatMap(d =>
+          Object.entries(d.resources || {}).filter(([,v]) => v > 0).map(([type, value]) =>
+            ({ podId: d.podId, type, used: value, capacity: value })
+          )
+        ),
+        services,
       });
       initMeshListeners();
     },
@@ -458,7 +522,12 @@ export async function switchWorkspace(newId, convId) {
       const c = $('remoteContainer');
       if (!c) return;
       if (state.peerNode) {
-        c.innerHTML = renderServiceBrowser({ discover() { return []; } });
+        const svcDir = state.serviceDirectory;
+        if (svcDir) {
+          c.innerHTML = renderServiceBrowser(svcDir);
+        } else {
+          c.innerHTML = '<div class="rc-empty" style="padding:1.5rem;opacity:0.6">Service directory not initialized. Mesh subsystem may still be starting.</div>';
+        }
         updatePeerBadge(state.peerNode);
       } else {
         c.innerHTML = '<div class="rc-empty" style="padding:1.5rem;opacity:0.6">Remote access requires an active peer connection. Start a mesh session first.</div>';
@@ -1099,6 +1168,7 @@ export async function initWorkspace(wsId, convId) {
         if (!c) return;
         const podId = state.peerNode?.podId || 'local';
         const sc = state.swarmCoordinator;
+        const getSwarms = () => sc?.listSwarms?.() || [];
         const listenerOpts = {
           onCreate: (opts) => {
             if (sc) {
@@ -1107,18 +1177,21 @@ export async function initWorkspace(wsId, convId) {
             }
           },
           onRefresh: () => {
-            c.innerHTML = renderSwarmPanel({ swarms: [], localPodId: podId });
+            c.innerHTML = renderSwarmPanel({ swarms: getSwarms(), localPodId: podId });
             initSwarmListeners(listenerOpts);
           },
         };
-        c.innerHTML = renderSwarmPanel({ swarms: [], localPodId: podId });
+        c.innerHTML = renderSwarmPanel({ swarms: getSwarms(), localPodId: podId });
         initSwarmListeners(listenerOpts);
       },
       transfers: () => {
         const c = $('transfersContainer');
         if (!c) return;
         const podId = state.peerNode?.podId || 'local';
-        c.innerHTML = renderTransferPanel({ active: [], history: [], localPodId: podId });
+        const ft = state.fileTransfer;
+        const active = ft?.listTransfers?.({ status: 'transferring' }) || [];
+        const history = ft?.listTransfers?.({ status: 'completed' }) || [];
+        c.innerHTML = renderTransferPanel({ active, history, localPodId: podId });
         initTransferListeners();
       },
       mesh: () => {
@@ -1126,11 +1199,17 @@ export async function initWorkspace(wsId, convId) {
         if (!c) return;
         const podId = state.peerNode?.podId || 'local';
         const peerLabel = state.peerNode?.wallet?.getDefault()?.label || 'This Pod';
+        const peers = state.peerNode?.registry?.listPeers?.() || [];
+        const services = state.serviceDirectory?.listAll?.() || [];
         c.innerHTML = renderMeshPanel({
           localPod: { podId, label: peerLabel, uptime: 0 },
-          peers: [],
-          resources: [],
-          services: [],
+          peers,
+          resources: (state.resourceRegistry?.listAll?.() || []).flatMap(d =>
+          Object.entries(d.resources || {}).filter(([,v]) => v > 0).map(([type, value]) =>
+            ({ podId: d.podId, type, used: value, capacity: value })
+          )
+        ),
+          services,
         });
         initMeshListeners();
       },
@@ -1151,8 +1230,12 @@ export async function initWorkspace(wsId, convId) {
         const c = $('remoteContainer');
         if (!c) return;
         if (state.peerNode) {
-          c.innerHTML = renderServiceBrowser(state.serviceBrowser || { discover() { return []; } });
-          if (state.serviceBrowser) initServiceBrowserListeners(state.serviceBrowser);
+          const svcDir = state.serviceDirectory;
+          if (svcDir) {
+            c.innerHTML = renderServiceBrowser(svcDir);
+          } else {
+            c.innerHTML = '<div class="rc-empty" style="padding:1.5rem;opacity:0.6">Service directory not initialized. Mesh subsystem may still be starting.</div>';
+          }
           updatePeerBadge(state.peerNode);
         } else {
           c.innerHTML = '<div class="rc-empty" style="padding:1.5rem;opacity:0.6">Remote access requires an active peer connection. Start a mesh session first.</div>';

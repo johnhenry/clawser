@@ -11,3 +11,4 @@ export {
   createRpcRequest, createRpcResponse,
 } from './messages.mjs'
 export { InjectedPod } from './injected-pod.mjs'
+export { installPodRuntime, createRuntime, createClient, createServer } from './runtime.mjs'

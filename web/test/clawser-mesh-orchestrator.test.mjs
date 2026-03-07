@@ -69,32 +69,32 @@ function makeRemotePeer(overrides = {}) {
 // ---------------------------------------------------------------------------
 
 describe('Wire constants', () => {
-  it('ORCH_LIST_PODS equals 0xD0', () => {
-    assert.equal(ORCH_LIST_PODS, 0xd0)
+  it('ORCH_LIST_PODS equals 0xD8', () => {
+    assert.equal(ORCH_LIST_PODS, 0xd8)
   })
 
-  it('ORCH_POD_STATUS equals 0xD1', () => {
-    assert.equal(ORCH_POD_STATUS, 0xd1)
+  it('ORCH_POD_STATUS equals 0xD9', () => {
+    assert.equal(ORCH_POD_STATUS, 0xd9)
   })
 
-  it('ORCH_EXEC equals 0xD2', () => {
-    assert.equal(ORCH_EXEC, 0xd2)
+  it('ORCH_EXEC equals 0xDA', () => {
+    assert.equal(ORCH_EXEC, 0xda)
   })
 
-  it('ORCH_DEPLOY equals 0xD3', () => {
-    assert.equal(ORCH_DEPLOY, 0xd3)
+  it('ORCH_DEPLOY equals 0xDB', () => {
+    assert.equal(ORCH_DEPLOY, 0xdb)
   })
 
-  it('ORCH_DRAIN equals 0xD4', () => {
-    assert.equal(ORCH_DRAIN, 0xd4)
+  it('ORCH_DRAIN equals 0xDC', () => {
+    assert.equal(ORCH_DRAIN, 0xdc)
   })
 
-  it('ORCH_EXPOSE equals 0xD5', () => {
-    assert.equal(ORCH_EXPOSE, 0xd5)
+  it('ORCH_EXPOSE equals 0xDD', () => {
+    assert.equal(ORCH_EXPOSE, 0xdd)
   })
 
-  it('ORCH_ROUTE equals 0xD6', () => {
-    assert.equal(ORCH_ROUTE, 0xd6)
+  it('ORCH_ROUTE equals 0xDE', () => {
+    assert.equal(ORCH_ROUTE, 0xde)
   })
 })
 

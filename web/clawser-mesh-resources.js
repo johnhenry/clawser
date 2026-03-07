@@ -11,22 +11,24 @@
  *   node --import ./web/test/_setup-globals.mjs --test web/test/clawser-mesh-resources.test.mjs
  */
 
+import { MESH_TYPE } from './packages/mesh-primitives/src/constants.mjs';
+
 // ---------------------------------------------------------------------------
-// Wire constants
+// Wire constants — imported from canonical registry
 // ---------------------------------------------------------------------------
 
 /** Advertise local resources to the mesh */
-export const RESOURCE_ADVERTISE = 0xb3;
+export const RESOURCE_ADVERTISE = MESH_TYPE.RESOURCE_ADVERTISE;
 /** Discover peers matching resource constraints */
-export const RESOURCE_DISCOVER = 0xb4;
+export const RESOURCE_DISCOVER = MESH_TYPE.RESOURCE_DISCOVER;
 /** Response to a discovery query */
-export const RESOURCE_DISCOVER_RESPONSE = 0xb5;
+export const RESOURCE_DISCOVER_RESPONSE = MESH_TYPE.RESOURCE_DISCOVER_RESPONSE;
 /** Submit a compute request */
-export const COMPUTE_REQUEST = 0xb6;
+export const COMPUTE_REQUEST = MESH_TYPE.COMPUTE_REQUEST;
 /** Return a compute result */
-export const COMPUTE_RESULT = 0xb7;
+export const COMPUTE_RESULT = MESH_TYPE.COMPUTE_RESULT;
 /** Incremental progress update for a running job */
-export const COMPUTE_PROGRESS = 0xb8;
+export const COMPUTE_PROGRESS = MESH_TYPE.COMPUTE_PROGRESS;
 
 // ---------------------------------------------------------------------------
 // ResourceDescriptor

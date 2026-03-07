@@ -643,20 +643,20 @@ describe('PaymentRouter', () => {
 // ---------------------------------------------------------------------------
 
 describe('Wire constants', () => {
-  it('PAYMENT_OPEN is 0xBC', () => {
-    assert.equal(PAYMENT_OPEN, 0xBC);
+  it('PAYMENT_OPEN is 0xD0', () => {
+    assert.equal(PAYMENT_OPEN, 0xD0);
   });
 
-  it('PAYMENT_UPDATE is 0xBD', () => {
-    assert.equal(PAYMENT_UPDATE, 0xBD);
+  it('PAYMENT_UPDATE is 0xD1', () => {
+    assert.equal(PAYMENT_UPDATE, 0xD1);
   });
 
-  it('PAYMENT_CLOSE is 0xBE', () => {
-    assert.equal(PAYMENT_CLOSE, 0xBE);
+  it('PAYMENT_CLOSE is 0xD2', () => {
+    assert.equal(PAYMENT_CLOSE, 0xD2);
   });
 
-  it('ESCROW_CREATE is 0xBF', () => {
-    assert.equal(ESCROW_CREATE, 0xBF);
+  it('ESCROW_CREATE is 0xD3', () => {
+    assert.equal(ESCROW_CREATE, 0xD3);
   });
 
   it('CHANNEL_STATES is frozen', () => {

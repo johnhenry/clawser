@@ -150,16 +150,16 @@ describe('DEFAULT_LIMITS', () => {
 // ---------------------------------------------------------------------------
 
 describe('Wire constants', () => {
-  it('QUOTA_UPDATE is 0xB9', () => {
-    assert.equal(QUOTA_UPDATE, 0xB9);
+  it('QUOTA_UPDATE is 0xCD', () => {
+    assert.equal(QUOTA_UPDATE, 0xCD);
   });
 
-  it('QUOTA_VIOLATION is 0xBA', () => {
-    assert.equal(QUOTA_VIOLATION, 0xBA);
+  it('QUOTA_VIOLATION is 0xCE', () => {
+    assert.equal(QUOTA_VIOLATION, 0xCE);
   });
 
-  it('USAGE_REPORT is 0xBB', () => {
-    assert.equal(USAGE_REPORT, 0xBB);
+  it('USAGE_REPORT is 0xCF', () => {
+    assert.equal(USAGE_REPORT, 0xCF);
   });
 
   it('wire constants are distinct', () => {

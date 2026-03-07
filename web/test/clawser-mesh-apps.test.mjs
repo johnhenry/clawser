@@ -12,28 +12,28 @@ import {
 // ---------------------------------------------------------------------------
 
 describe('Wire constants', () => {
-  it('APP_MANIFEST is 0x98', () => {
-    assert.equal(APP_MANIFEST, 0x98);
+  it('APP_MANIFEST is 0xe5', () => {
+    assert.equal(APP_MANIFEST, 0xe5);
   });
 
-  it('APP_INSTALL is 0x99', () => {
-    assert.equal(APP_INSTALL, 0x99);
+  it('APP_INSTALL is 0xe6', () => {
+    assert.equal(APP_INSTALL, 0xe6);
   });
 
-  it('APP_UNINSTALL is 0x9A', () => {
-    assert.equal(APP_UNINSTALL, 0x9A);
+  it('APP_UNINSTALL is 0xe7', () => {
+    assert.equal(APP_UNINSTALL, 0xe7);
   });
 
-  it('APP_STATE_SYNC is 0x9B', () => {
-    assert.equal(APP_STATE_SYNC, 0x9B);
+  it('APP_STATE_SYNC is 0xe8', () => {
+    assert.equal(APP_STATE_SYNC, 0xe8);
   });
 
-  it('APP_RPC is 0x9C', () => {
-    assert.equal(APP_RPC, 0x9C);
+  it('APP_RPC is 0xe9', () => {
+    assert.equal(APP_RPC, 0xe9);
   });
 
-  it('APP_EVENT is 0x9D', () => {
-    assert.equal(APP_EVENT, 0x9D);
+  it('APP_EVENT is 0xea', () => {
+    assert.equal(APP_EVENT, 0xea);
   });
 });
 

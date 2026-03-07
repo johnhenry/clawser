@@ -38,16 +38,16 @@ function makeSignFn(privateKey) {
 // ---------------------------------------------------------------------------
 
 describe('Wire constants', () => {
-  it('AUDIT_ENTRY is 0xB0', () => {
-    assert.equal(AUDIT_ENTRY, 0xB0);
+  it('AUDIT_ENTRY is 0xC4', () => {
+    assert.equal(AUDIT_ENTRY, 0xC4);
   });
 
-  it('AUDIT_CHAIN_QUERY is 0xB1', () => {
-    assert.equal(AUDIT_CHAIN_QUERY, 0xB1);
+  it('AUDIT_CHAIN_QUERY is 0xC5', () => {
+    assert.equal(AUDIT_CHAIN_QUERY, 0xC5);
   });
 
-  it('AUDIT_CHAIN_RESPONSE is 0xB2', () => {
-    assert.equal(AUDIT_CHAIN_RESPONSE, 0xB2);
+  it('AUDIT_CHAIN_RESPONSE is 0xC6', () => {
+    assert.equal(AUDIT_CHAIN_RESPONSE, 0xC6);
   });
 
   it('constants are distinct', () => {

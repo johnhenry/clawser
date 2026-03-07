@@ -594,3 +594,9 @@ stateDiagram-v2
     note right of Open: Failing fast<br/>Requests rejected
     note right of HalfOpen: Testing recovery<br/>Limited requests
 ```
+
+## Implementation Status
+
+**Status**: ServiceDirectory and ServiceEndpoint exist in `clawser-mesh-discovery.js`. Wired to app bootstrap via ClawserPod.initMesh(). Supports local registration and remote endpoint tracking.
+
+**Source**: `web/clawser-mesh-discovery.js`

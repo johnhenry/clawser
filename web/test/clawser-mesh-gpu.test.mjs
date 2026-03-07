@@ -20,20 +20,20 @@ import {
 // ---------------------------------------------------------------------------
 
 describe('Wire constants', () => {
-  it('GPU_PROBE is 0xF3', () => {
-    assert.equal(GPU_PROBE, 0xF3)
+  it('GPU_PROBE is 0xD4', () => {
+    assert.equal(GPU_PROBE, 0xD4)
   })
 
-  it('GPU_SHARD_ASSIGN is 0xF4', () => {
-    assert.equal(GPU_SHARD_ASSIGN, 0xF4)
+  it('GPU_SHARD_ASSIGN is 0xD5', () => {
+    assert.equal(GPU_SHARD_ASSIGN, 0xD5)
   })
 
-  it('GPU_GRADIENT_PUSH is 0xF5', () => {
-    assert.equal(GPU_GRADIENT_PUSH, 0xF5)
+  it('GPU_GRADIENT_PUSH is 0xD6', () => {
+    assert.equal(GPU_GRADIENT_PUSH, 0xD6)
   })
 
-  it('GPU_TRAIN_CONTROL is 0xF6', () => {
-    assert.equal(GPU_TRAIN_CONTROL, 0xF6)
+  it('GPU_TRAIN_CONTROL is 0xD7', () => {
+    assert.equal(GPU_TRAIN_CONTROL, 0xD7)
   })
 })
 
