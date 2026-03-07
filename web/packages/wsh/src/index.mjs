@@ -54,6 +54,7 @@ export { WebSocketTransport } from './transport-ws.mjs';
 
 // Session + Client
 export { WshSession } from './session.mjs';
+export { WshVirtualSessionBackend, normalizeSessionData } from './virtual-session.mjs';
 export { WshClient } from './client.mjs';
 
 // Key storage

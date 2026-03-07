@@ -753,6 +753,12 @@ export class WshSession {
   /** Exit code, if the process has exited. */
   readonly exitCode: number | null;
 
+  /** Session data plane. */
+  readonly dataMode: 'stream' | 'virtual';
+
+  /** Session capabilities advertised by OPEN_OK. */
+  readonly capabilities: string[];
+
   /** Called when stdout/stderr data arrives. */
   onData: ((data: Uint8Array) => void) | null;
 
@@ -767,6 +773,10 @@ export class WshSession {
     channelId: number,
     streamIds: object,
     kind: 'pty' | 'exec',
+    opts?: {
+      dataMode?: 'stream' | 'virtual';
+      capabilities?: string[];
+    },
   );
 
   /**
@@ -799,6 +809,12 @@ export class WshSession {
   _bind(readable: ReadableStream<Uint8Array>, writable: WritableStream<Uint8Array>): void;
 
   /**
+   * Activate the message-backed data plane for a virtual session.
+   * @internal
+   */
+  _activateVirtual(sendControl: (msg: WshMessage) => Promise<void>): void;
+
+  /**
    * Handle a control message dispatched by WshClient for this channel.
    * @internal
    */
@@ -809,6 +825,13 @@ export class WshSession {
    * @internal
    */
   _pumpDataStream(): Promise<void>;
+}
+
+export function normalizeSessionData(data: Uint8Array | string): Uint8Array;
+
+export class WshVirtualSessionBackend {
+  constructor(sendControl: (msg: WshMessage) => Promise<void>, channelId: number);
+  write(data: Uint8Array | string): Promise<void>;
 }
 
 // ============================================================================
@@ -995,6 +1018,11 @@ export class WshClient {
    * Initiate a reverse connection to a registered peer.
    */
   reverseConnectTo(targetFingerprint: string, timeout?: number): Promise<void>;
+
+  /**
+   * Send a control message over the authenticated relay connection.
+   */
+  sendRelayControl(msg: WshMessage): Promise<void>;
 
   /**
    * Upload a blob to a remote path.

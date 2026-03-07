@@ -1,15 +1,14 @@
 /**
- * WshSession — manages a single PTY or exec channel over a wsh transport.
+ * WshSession — shared facade for stream-backed and virtual-backed channels.
  *
- * Each session owns a pair of data streams (stdin/stdout) and receives
- * control messages (EXIT, CLOSE, RESIZE) dispatched by the parent WshClient.
- * Data flows as raw bytes on the transport's bidirectional streams, with no
- * CBOR framing overhead.
+ * Stream-backed sessions use raw transport streams for stdin/stdout.
+ * Virtual-backed sessions use control messages (`SESSION_DATA`) for bytes.
  */
 
 import {
   MSG, resize as resizeMsg, signal as signalMsg, close as closeMsg,
 } from './messages.mjs';
+import { WshVirtualSessionBackend } from './virtual-session.mjs';
 
 // ── Session states ────────────────────────────────────────────────────
 
@@ -39,6 +38,12 @@ export class WshSession {
   /** @type {import('./transport.mjs').WshTransport} Transport reference. */
   #transport;
 
+  /** @type {'stream'|'virtual'} Session data plane. */
+  #dataMode = 'stream';
+
+  /** @type {string[]} Advertised session capabilities. */
+  #capabilities = [];
+
   /**
    * Stream IDs returned by the server in OPEN_OK.
    * Typically { stdin: number, stdout: number } or a single bidirectional ID.
@@ -51,6 +56,9 @@ export class WshSession {
    * @type {WritableStreamDefaultWriter|null}
    */
   #stdinWriter = null;
+
+  /** @type {WshVirtualSessionBackend|null} */
+  #virtualBackend = null;
 
   /**
    * The readable side of the stdout data stream.
@@ -94,13 +102,18 @@ export class WshSession {
    * @param {number} channelId
    * @param {object} streamIds - Stream identifiers from OPEN_OK.
    * @param {'pty'|'exec'} kind
+   * @param {object} [opts]
+   * @param {'stream'|'virtual'} [opts.dataMode='stream']
+   * @param {string[]} [opts.capabilities=[]]
    */
-  constructor(transport, channelId, streamIds, kind) {
+  constructor(transport, channelId, streamIds, kind, { dataMode = 'stream', capabilities = [] } = {}) {
     this.#transport = transport;
     this.channelId = channelId;
     this.#streamIds = streamIds;
     this.kind = kind;
     this.id = String(channelId);
+    this.#dataMode = dataMode === 'virtual' ? 'virtual' : 'stream';
+    this.#capabilities = Array.isArray(capabilities) ? [...capabilities] : [];
   }
 
   /** Current session state. */
@@ -113,6 +126,16 @@ export class WshSession {
     return this.#exitCode;
   }
 
+  /** Session data plane: stream-backed or control-message-backed. */
+  get dataMode() {
+    return this.#dataMode;
+  }
+
+  /** Advertised session capabilities. */
+  get capabilities() {
+    return [...this.#capabilities];
+  }
+
   // ── Stream binding ──────────────────────────────────────────────────
 
   /**
@@ -123,6 +146,9 @@ export class WshSession {
    * @param {WritableStream<Uint8Array>} writable - stdin bytes to server
    */
   _bind(readable, writable) {
+    if (this.#dataMode !== 'stream') {
+      throw new Error('Cannot bind transport streams to a virtual session');
+    }
     if (this.#state === STATE_CLOSED) {
       throw new Error('Cannot bind streams to a closed session');
     }
@@ -130,6 +156,22 @@ export class WshSession {
     this.#stdinWriter = writable.getWriter();
     this.#state = STATE_ACTIVE;
     this.#pumpDone = this._pumpDataStream();
+  }
+
+  /**
+   * Activate a message-backed virtual session.
+   *
+   * @param {function(object): Promise<void>} sendControl
+   */
+  _activateVirtual(sendControl) {
+    if (this.#dataMode !== 'virtual') {
+      throw new Error('Cannot activate virtual backend for a stream session');
+    }
+    if (this.#state === STATE_CLOSED) {
+      throw new Error('Cannot activate a closed session');
+    }
+    this.#virtualBackend = new WshVirtualSessionBackend(sendControl, this.channelId);
+    this.#state = STATE_ACTIVE;
   }
 
   // ── Public API ──────────────────────────────────────────────────────
@@ -143,6 +185,13 @@ export class WshSession {
   async write(data) {
     if (this.#state === STATE_CLOSED) {
       throw new Error('Cannot write to a closed session');
+    }
+    if (this.#dataMode === 'virtual') {
+      if (this.#virtualBackend === null) {
+        throw new Error('Session not yet activated — virtual backend unavailable');
+      }
+      await this.#virtualBackend.write(data);
+      return;
     }
     if (this.#stdinWriter === null) {
       throw new Error('Session not yet bound — stdin writer unavailable');
@@ -197,20 +246,23 @@ export class WshSession {
       // Transport may already be closed; ignore.
     }
 
-    // Release the stdin writer.
-    try {
-      await this.#stdinWriter?.close();
-    } catch {
-      // May already be closed or errored.
-    }
+    if (this.#dataMode === 'stream') {
+      // Release the stdin writer.
+      try {
+        await this.#stdinWriter?.close();
+      } catch {
+        // May already be closed or errored.
+      }
 
-    // Wait for the data pump to finish.
-    if (this.#pumpDone) {
-      await this.#pumpDone.catch(() => {});
+      // Wait for the data pump to finish.
+      if (this.#pumpDone) {
+        await this.#pumpDone.catch(() => {});
+      }
     }
 
     this.#stdinWriter = null;
     this.#stdoutReadable = null;
+    this.#virtualBackend = null;
     this.#emitClose();
   }
 
@@ -223,6 +275,17 @@ export class WshSession {
    */
   _handleControlMessage(msg) {
     switch (msg.type) {
+      case MSG.SESSION_DATA: {
+        if (msg.data && msg.data.byteLength > 0) {
+          try {
+            this.onData?.(msg.data);
+          } catch (err) {
+            console.error('[wsh:session] onData handler error:', err);
+          }
+        }
+        break;
+      }
+
       case MSG.EXIT: {
         this.#exitCode = msg.code ?? -1;
         try {
@@ -248,6 +311,13 @@ export class WshSession {
         // Server acknowledgment of resize; currently a no-op on the client.
         break;
       }
+
+      case MSG.ECHO_ACK:
+      case MSG.ECHO_STATE:
+      case MSG.TERM_SYNC:
+      case MSG.TERM_DIFF:
+        // Fidelity features are routed here later; ignore for now.
+        break;
 
       default:
         // Unknown control message for this channel — ignore gracefully.
@@ -313,6 +383,7 @@ export class WshSession {
     }
     this.#stdinWriter = null;
     this.#stdoutReadable = null;
+    this.#virtualBackend = null;
   }
 
   /**

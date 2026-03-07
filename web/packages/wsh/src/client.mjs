@@ -379,8 +379,7 @@ export class WshClient {
    */
   async openSession({ type = 'pty', command, cols = 80, rows = 24, env, timeout = DEFAULT_OPEN_TIMEOUT } = {}) {
     this.#assertAuthenticated('openSession');
-
-    const channelId = this._nextChannelId();
+    const requestedChannelId = this._nextChannelId();
 
     await this.#transport.sendControl(
       openMsg({ kind: type, command, cols, rows, env })
@@ -397,13 +396,25 @@ export class WshClient {
       throw new Error(`Failed to open session: ${response.reason || 'rejected'}`);
     }
 
-    // The server returns the actual channel ID and stream IDs.
-    const serverChannelId = response.channel_id ?? channelId;
-    const streamIds = response.stream_ids;
+    const serverChannelId = response.channel_id ?? requestedChannelId;
+    const streamIds = response.stream_ids ?? {};
+    const dataMode = response.data_mode === 'virtual' ? 'virtual' : 'stream';
+    const capabilities = Array.isArray(response.capabilities) ? response.capabilities : [];
 
     // Create the session object.
-    const session = new WshSession(this.#transport, serverChannelId, streamIds, type);
+    const session = new WshSession(
+      this.#transport,
+      serverChannelId,
+      streamIds,
+      type,
+      { dataMode, capabilities }
+    );
     this.#sessions.set(serverChannelId, session);
+
+    if (dataMode === 'virtual') {
+      session._activateVirtual((msg) => this.sendRelayControl(msg));
+      return session;
+    }
 
     // Open the data stream and bind it to the session.
     const stream = await this.#transport.openStream();
@@ -645,6 +656,20 @@ export class WshClient {
     await this.#transport.sendControl(
       reverseConnectMsg({ targetFingerprint, username: '' })
     );
+  }
+
+  /**
+   * Send a control message over the authenticated relay connection.
+   *
+   * Browser reverse handlers use this for peer replies instead of touching
+   * the transport internals directly.
+   *
+   * @param {object} msg
+   * @returns {Promise<void>}
+   */
+  async sendRelayControl(msg) {
+    this.#assertAuthenticated('sendRelayControl');
+    await this.#transport.sendControl(msg);
   }
 
   // ── File transfer ───────────────────────────────────────────────────
@@ -1367,20 +1392,6 @@ export class WshClient {
       return;
     }
 
-    // Route relay-forwarded messages from remote CLI peers.
-    // In reverse mode, the server's relay bridge forwards Open, McpCall,
-    // McpDiscover, etc. from the CLI to this browser client.  These are
-    // message types that a normal client would never receive from the
-    // server, so we intercept them here before the channel dispatch.
-    if (this.onRelayMessage && this._isRelayForwardable(type)) {
-      try {
-        this.onRelayMessage(msg);
-      } catch (err) {
-        console.error('[wsh:client] onRelayMessage handler error:', err);
-      }
-      return;
-    }
-
     // Dispatch channel-specific messages to sessions.
     const channelId = msg.channel_id;
     if (channelId !== undefined && this.#sessions.has(channelId)) {
@@ -1390,6 +1401,20 @@ export class WshClient {
       // Remove session from tracking if it's closed.
       if (type === MSG.CLOSE) {
         this.#sessions.delete(channelId);
+      }
+      return;
+    }
+
+    // Route relay-forwarded messages from remote CLI peers.
+    // In reverse mode, the server's relay bridge forwards Open, McpCall,
+    // McpDiscover, etc. from the CLI to this browser client. Channel-bound
+    // traffic is given to active sessions first so stream and virtual
+    // sessions share the same top-level API.
+    if (this.onRelayMessage && this._isRelayForwardable(type)) {
+      try {
+        this.onRelayMessage(msg);
+      } catch (err) {
+        console.error('[wsh:client] onRelayMessage handler error:', err);
       }
       return;
     }

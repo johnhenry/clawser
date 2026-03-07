@@ -48,6 +48,8 @@ export {
 
   // Session + Client
   WshSession,
+  WshVirtualSessionBackend,
+  normalizeSessionData,
   WshClient,
 
   // Key storage
