@@ -1637,10 +1637,14 @@ export class WshClient {
     return [
       MSG.OPEN, MSG.MCP_DISCOVER, MSG.MCP_CALL,
       MSG.CLOSE, MSG.RESIZE, MSG.SIGNAL,
+      MSG.SESSION_DATA,
+      MSG.REVERSE_ACCEPT, MSG.REVERSE_REJECT,
       MSG.GUEST_JOIN, MSG.GUEST_REVOKE,         // Unit 4
       MSG.COPILOT_ATTACH, MSG.COPILOT_DETACH,   // Unit 9
       MSG.FILE_OP,                               // Unit 11
       MSG.POLICY_EVAL,                           // Unit 12
+      MSG.ECHO_ACK, MSG.ECHO_STATE,
+      MSG.TERM_SYNC, MSG.TERM_DIFF,
     ].includes(type);
   }
 

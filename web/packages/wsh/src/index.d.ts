@@ -66,6 +66,7 @@ export const MSG: {
   readonly SIGNAL: 0x14;
   readonly EXIT: 0x15;
   readonly CLOSE: 0x16;
+  readonly SESSION_DATA: 0x17;
 
   // Transport
   readonly ERROR: 0x20;
@@ -100,6 +101,8 @@ export const MSG: {
   readonly REVERSE_LIST: 0x51;
   readonly REVERSE_PEERS: 0x52;
   readonly REVERSE_CONNECT: 0x53;
+  readonly REVERSE_ACCEPT: 0x54;
+  readonly REVERSE_REJECT: 0x55;
 
   // Framing
   readonly WS_DATA: 0x60;
@@ -262,6 +265,8 @@ export function open(opts?: {
 export function openOk(opts?: {
   channelId?: number;
   streamIds?: number[];
+  dataMode?: string;
+  capabilities?: string[];
 }): WshMessage;
 
 export function openFail(opts?: {
@@ -286,6 +291,11 @@ export function exit(opts?: {
 
 export function close(opts?: {
   channelId?: number;
+}): WshMessage;
+
+export function sessionData(opts?: {
+  channelId?: number;
+  data?: Uint8Array;
 }): WshMessage;
 
 // -- Message constructors (transport) --
@@ -385,6 +395,18 @@ export function reversePeers(opts?: {
 export function reverseConnect(opts?: {
   targetFingerprint?: string;
   username?: string;
+}): WshMessage;
+
+export function reverseAccept(opts?: {
+  targetFingerprint?: string;
+  username?: string;
+  capabilities?: string[];
+}): WshMessage;
+
+export function reverseReject(opts?: {
+  targetFingerprint?: string;
+  username?: string;
+  reason?: string;
 }): WshMessage;
 
 // -- Message constructors (gateway) --

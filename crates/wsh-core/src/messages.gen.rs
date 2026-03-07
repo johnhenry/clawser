@@ -24,6 +24,7 @@ pub enum MsgType {
     Signal = 0x14,
     Exit = 0x15,
     Close = 0x16,
+    SessionData = 0x17,
 
     Error = 0x20,
     Ping = 0x21,
@@ -55,6 +56,8 @@ pub enum MsgType {
     ReverseList = 0x51,
     ReversePeers = 0x52,
     ReverseConnect = 0x53,
+    ReverseAccept = 0x54,
+    ReverseReject = 0x55,
 
     SessionList = 0x5f,
     Detach = 0x60,
@@ -147,6 +150,7 @@ impl TryFrom<u8> for MsgType {
             0x14 => Ok(Self::Signal),
             0x15 => Ok(Self::Exit),
             0x16 => Ok(Self::Close),
+            0x17 => Ok(Self::SessionData),
             0x20 => Ok(Self::Error),
             0x21 => Ok(Self::Ping),
             0x22 => Ok(Self::Pong),
@@ -174,6 +178,8 @@ impl TryFrom<u8> for MsgType {
             0x51 => Ok(Self::ReverseList),
             0x52 => Ok(Self::ReversePeers),
             0x53 => Ok(Self::ReverseConnect),
+            0x54 => Ok(Self::ReverseAccept),
+            0x55 => Ok(Self::ReverseReject),
             0x5f => Ok(Self::SessionList),
             0x60 => Ok(Self::Detach),
             0x61 => Ok(Self::DetachOk),
@@ -230,9 +236,10 @@ impl TryFrom<u8> for MsgType {
 }
 
 /// ChannelKind enum.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ChannelKind {
+    #[default]
     Pty,
     Exec,
     Meta,
@@ -243,11 +250,21 @@ pub enum ChannelKind {
 }
 
 /// AuthMethod enum.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum AuthMethod {
+    #[default]
     Pubkey,
     Password,
+}
+
+/// SessionDataMode enum.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionDataMode {
+    #[default]
+    Stream,
+    Virtual,
 }
 
 /// Protocol version string.
@@ -283,6 +300,7 @@ pub enum Payload {
     Signal(SignalPayload),
     Exit(ExitPayload),
     Close(ClosePayload),
+    SessionData(SessionDataPayload),
     Error(ErrorPayload),
     PingPong(PingPongPayload),
     Attach(AttachPayload),
@@ -309,6 +327,8 @@ pub enum Payload {
     ReverseList(ReverseListPayload),
     ReversePeers(ReversePeersPayload),
     ReverseConnect(ReverseConnectPayload),
+    ReverseAccept(ReverseAcceptPayload),
+    ReverseReject(ReverseRejectPayload),
     SessionList(SessionListPayload),
     Detach(DetachPayload),
     DetachOk(DetachOkPayload),
@@ -444,6 +464,10 @@ pub struct OpenOkPayload {
     pub channel_id: u32,
     #[serde(default)]
     pub stream_ids: Vec<u32>,
+    #[serde(default)]
+    pub data_mode: SessionDataMode,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -473,6 +497,13 @@ pub struct ExitPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClosePayload {
     pub channel_id: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionDataPayload {
+    pub channel_id: u32,
+    #[serde(with = "serde_bytes")]
+    pub data: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -644,6 +675,21 @@ pub struct ReversePeersPayload {
 pub struct ReverseConnectPayload {
     pub target_fingerprint: String,
     pub username: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReverseAcceptPayload {
+    pub target_fingerprint: String,
+    pub username: String,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReverseRejectPayload {
+    pub target_fingerprint: String,
+    pub username: String,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

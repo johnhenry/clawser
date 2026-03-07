@@ -481,6 +481,7 @@ function rustInnerType(yamlType) {
   if (yamlType === 'u32[]') return 'Vec<u32>';
   if (yamlType === 'AuthMethod[]') return 'Vec<AuthMethod>';
   if (yamlType === 'AttachmentInfo[]') return 'Vec<AttachmentInfo>';
+  if (yamlType === 'SessionSummary[]') return 'Vec<SessionSummary>';
   if (yamlType === 'PeerInfo[]') return 'Vec<PeerInfo>';
   if (yamlType === 'McpToolSpec[]') return 'Vec<McpToolSpec>';
   if (yamlType === 'map<string,string>') return 'std::collections::HashMap<String, String>';
@@ -548,10 +549,13 @@ function emitRust(schema) {
   // Enums
   for (const [enumName, enumDef] of Object.entries(schema.enums)) {
     out.push(`/// ${enumName} enum.`);
-    out.push('#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]');
+    out.push('#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]');
     out.push('#[serde(rename_all = "lowercase")]');
     out.push(`pub enum ${enumName} {`);
-    for (const v of enumDef.values) {
+    for (const [index, v] of enumDef.values.entries()) {
+      if (index === 0) {
+        out.push('    #[default]');
+      }
       out.push(`    ${v[0].toUpperCase() + v.slice(1)},`);
     }
     out.push('}');

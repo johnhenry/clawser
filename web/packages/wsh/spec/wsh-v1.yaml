@@ -23,6 +23,12 @@ enums:
   AuthMethod:
     type: string
     values: [pubkey, password]
+  SessionDataMode:
+    type: string
+    values: [stream, virtual]
+    value_descriptions:
+      stream: "Session uses transport-opened byte streams"
+      virtual: "Session uses message-framed SessionData payloads"
 
 messages:
   handshake:
@@ -161,6 +167,12 @@ messages:
         stream_ids:
           type: "u32[]"
           default: "[]"
+        data_mode:
+          type: SessionDataMode
+          default: '"stream"'
+        capabilities:
+          type: "string[]"
+          default: "[]"
 
     OpenFail:
       code: 0x12
@@ -169,6 +181,19 @@ messages:
       fields:
         reason:
           type: string
+          required: true
+
+    SessionData:
+      code: 0x17
+      description: >
+        Bidirectional data frame for sessions that use virtual message-backed
+        transport instead of transport-opened byte streams.
+      fields:
+        channel_id:
+          type: u32
+          required: true
+        data:
+          type: bytes
           required: true
 
     Resize:
@@ -595,6 +620,38 @@ messages:
           type: string
           required: true
         username:
+          type: string
+          required: true
+
+    ReverseAccept:
+      code: 0x54
+      description: >
+        Sent by the target peer after it has created a reverse peer context
+        and is ready to receive channel open requests.
+      fields:
+        target_fingerprint:
+          type: string
+          required: true
+        username:
+          type: string
+          required: true
+        capabilities:
+          type: "string[]"
+          default: "[]"
+
+    ReverseReject:
+      code: 0x55
+      description: >
+        Sent by the target peer when it cannot accept a pending reverse
+        connection request.
+      fields:
+        target_fingerprint:
+          type: string
+          required: true
+        username:
+          type: string
+          required: true
+        reason:
           type: string
           required: true
 

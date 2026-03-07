@@ -194,6 +194,10 @@ pub struct WshServer {
     /// browser peer, both directions are stored here so that forwardable
     /// messages from one side are relayed to the other.
     relay_pairs: Arc<RwLock<HashMap<u64, u64>>>,
+    /// Pending reverse-connect handshakes: conn_id → partner conn_id.
+    /// These entries exist after `ReverseConnect` is forwarded and before the
+    /// target peer answers with `ReverseAccept` or `ReverseReject`.
+    pending_relay_pairs: Arc<RwLock<HashMap<u64, u64>>>,
     /// Atomic counter for generating unique connection IDs.
     /// Starts at 1; 0 is reserved as sentinel for unwrap_or(0).
     next_conn_id: Arc<AtomicU64>,
@@ -284,6 +288,7 @@ impl WshServer {
             conn_session_map: Arc::new(RwLock::new(HashMap::new())),
             channel_sessions: Arc::new(RwLock::new(HashMap::new())),
             relay_pairs: Arc::new(RwLock::new(HashMap::new())),
+            pending_relay_pairs: Arc::new(RwLock::new(HashMap::new())),
             next_conn_id: Arc::new(AtomicU64::new(1)),
             next_channel_id: Arc::new(AtomicU32::new(1)),
         })
@@ -326,6 +331,7 @@ impl WshServer {
         let gc_echo_trackers = server.echo_trackers.clone();
         let gc_channel_sessions = server.channel_sessions.clone();
         let gc_relay_pairs = server.relay_pairs.clone();
+        let gc_pending_relay_pairs = server.pending_relay_pairs.clone();
         let idle_warning_grace: u64 = 300; // Warn 5 minutes before idle timeout
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
@@ -439,6 +445,10 @@ impl WshServer {
                 {
                     let senders = gc_peer_senders.read().await;
                     gc_relay_pairs
+                        .write()
+                        .await
+                        .retain(|cid, _| senders.contains_key(cid));
+                    gc_pending_relay_pairs
                         .write()
                         .await
                         .retain(|cid, _| senders.contains_key(cid));
@@ -672,11 +682,7 @@ impl WshServer {
                 if let Some(cid) = ctx.conn_id {
                     self.peer_senders.write().await.remove(&cid);
                     self.conn_session_map.write().await.remove(&cid);
-                    // Clean up relay bridge — remove both directions
-                    let mut pairs = self.relay_pairs.write().await;
-                    if let Some(partner) = pairs.remove(&cid) {
-                        pairs.remove(&partner);
-                    }
+                    self.clear_relay_links(cid).await;
                 }
                 self.peer_registry.unregister(&ctx.fingerprint).await;
             }
@@ -845,11 +851,7 @@ impl WshServer {
                 if let Some(cid) = ctx.conn_id {
                     self.peer_senders.write().await.remove(&cid);
                     self.conn_session_map.write().await.remove(&cid);
-                    // Clean up relay bridge — remove both directions
-                    let mut pairs = self.relay_pairs.write().await;
-                    if let Some(partner) = pairs.remove(&cid) {
-                        pairs.remove(&partner);
-                    }
+                    self.clear_relay_links(cid).await;
                 }
                 self.peer_registry.unregister(&ctx.fingerprint).await;
             }
@@ -1060,6 +1062,20 @@ impl WshServer {
         }
     }
 
+    async fn clear_relay_links(&self, conn_id: u64) {
+        {
+            let mut pending = self.pending_relay_pairs.write().await;
+            if let Some(partner) = pending.remove(&conn_id) {
+                pending.remove(&partner);
+            }
+        }
+
+        let mut pairs = self.relay_pairs.write().await;
+        if let Some(partner) = pairs.remove(&conn_id) {
+            pairs.remove(&partner);
+        }
+    }
+
     /// Build the list of features this server advertises based on configuration.
     fn build_feature_list(&self) -> Vec<String> {
         let mut features = vec!["mcp".to_string(), "file-transfer".to_string()];
@@ -1135,6 +1151,7 @@ impl WshServer {
                 | MsgType::Exit
                 | MsgType::Resize
                 | MsgType::Signal
+                | MsgType::SessionData
                 | MsgType::GatewayData
                 | MsgType::GatewayOk
                 | MsgType::GatewayFail
@@ -1143,6 +1160,10 @@ impl WshServer {
                 | MsgType::McpTools
                 | MsgType::McpCall
                 | MsgType::McpResult
+                | MsgType::EchoAck
+                | MsgType::EchoState
+                | MsgType::TermSync
+                | MsgType::TermDiff
         )
     }
 
@@ -1153,6 +1174,55 @@ impl WshServer {
         inbound_tx: mpsc::Sender<crate::gateway::listener::InboundEvent>,
         data_tx: mpsc::Sender<GatewayEvent>,
     ) -> WshResult<Option<Envelope>> {
+        if let Some(conn_id) = ctx.conn_id {
+            if matches!(
+                envelope.msg_type,
+                MsgType::ReverseAccept | MsgType::ReverseReject
+            ) {
+                let partner_id = {
+                    let pending = self.pending_relay_pairs.read().await;
+                    pending.get(&conn_id).copied()
+                };
+
+                if let Some(partner_id) = partner_id {
+                    let msg_type = envelope.msg_type;
+                    let senders = self.peer_senders.read().await;
+                    if let Some(sender) = senders.get(&partner_id) {
+                        let _ = sender.try_send(envelope);
+                    } else {
+                        drop(senders);
+                        self.clear_relay_links(conn_id).await;
+                        warn!(
+                            conn_id,
+                            partner_id,
+                            "pending reverse partner sender gone, cleaning up handshake"
+                        );
+                        return Ok(None);
+                    }
+                    drop(senders);
+
+                    {
+                        let mut pending = self.pending_relay_pairs.write().await;
+                        pending.remove(&conn_id);
+                        pending.remove(&partner_id);
+                    }
+
+                    if matches!(msg_type, MsgType::ReverseAccept) {
+                        let mut pairs = self.relay_pairs.write().await;
+                        pairs.insert(conn_id, partner_id);
+                        pairs.insert(partner_id, conn_id);
+                        info!(
+                            requester = partner_id,
+                            target = conn_id,
+                            "relay bridge established after reverse accept"
+                        );
+                    }
+
+                    return Ok(None);
+                }
+            }
+        }
+
         // ── Relay bridge forwarding ──────────────────────────────
         // If this connection has a relay partner (established via ReverseConnect),
         // forward eligible message types to the partner instead of processing
@@ -1170,9 +1240,7 @@ impl WshServer {
                     }
                     // Partner sender gone — clean up stale relay pair
                     drop(senders);
-                    let mut pairs = self.relay_pairs.write().await;
-                    pairs.remove(&conn_id);
-                    pairs.remove(&partner_id);
+                    self.clear_relay_links(conn_id).await;
                     warn!(
                         conn_id,
                         partner_id, "relay partner sender gone, cleaning up bridge"
@@ -1255,18 +1323,15 @@ impl WshServer {
                             }
                             drop(senders);
 
-                            // Set up relay bridge between requester and target.
-                            // After this, forwardable messages from either side
-                            // will be transparently relayed to the other.
                             if let Some(requester_conn_id) = ctx.conn_id {
-                                let mut pairs = self.relay_pairs.write().await;
-                                pairs.insert(requester_conn_id, target_conn_id);
-                                pairs.insert(target_conn_id, requester_conn_id);
+                                let mut pending = self.pending_relay_pairs.write().await;
+                                pending.insert(requester_conn_id, target_conn_id);
+                                pending.insert(target_conn_id, requester_conn_id);
                                 info!(
                                     requester = requester_conn_id,
                                     target = target_conn_id,
                                     target_fp = %&result.target_fingerprint[..8.min(result.target_fingerprint.len())],
-                                    "relay bridge established"
+                                    "reverse connect forwarded, awaiting target accept"
                                 );
                             } else {
                                 info!(
@@ -1625,6 +1690,8 @@ impl WshServer {
                                     payload: Payload::OpenOk(OpenOkPayload {
                                         channel_id,
                                         stream_ids: vec![],
+                                        data_mode: SessionDataMode::Stream,
+                                        capabilities: vec![],
                                     }),
                                 }))
                             }

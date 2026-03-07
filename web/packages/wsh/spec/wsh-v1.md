@@ -19,7 +19,7 @@
 - **Version**: `wsh-v1`
 - **Wire format**: CBOR
 - **Framing**: length prefixed be32
-- **Total message types**: 92 (including WS_DATA framing marker)
+- **Total message types**: 95 (including WS_DATA framing marker)
 
 ## Enums
 
@@ -46,6 +46,15 @@ Type: `string`
 | `pubkey` |
 | `password` |
 
+### SessionDataMode
+
+Type: `string`
+
+| Value |
+|-------|
+| `stream` |
+| `virtual` |
+
 ## Message Types
 
 | Code | Name | Category |
@@ -64,6 +73,7 @@ Type: `string`
 | `0x14` | Signal | channel |
 | `0x15` | Exit | channel |
 | `0x16` | Close | channel |
+| `0x17` | SessionData | channel |
 | `0x20` | Error | transport |
 | `0x21` | Ping | transport |
 | `0x22` | Pong | transport |
@@ -91,6 +101,8 @@ Type: `string`
 | `0x51` | ReverseList | reverse |
 | `0x52` | ReversePeers | reverse |
 | `0x53` | ReverseConnect | reverse |
+| `0x54` | ReverseAccept | reverse |
+| `0x55` | ReverseReject | reverse |
 | `0x5f` | SessionList | session |
 | `0x60` | Detach | session |
 | `0x60` | WsData | framing |
@@ -249,6 +261,8 @@ Category: **channel**
 |-------|------|----------|---------|
 | `channel_id` | `u32` | yes | — |
 | `stream_ids` | `u32[]` | no | `[]` |
+| `data_mode` | `SessionDataMode` | no | `"stream"` |
+| `capabilities` | `string[]` | no | `[]` |
 
 ### OpenFail (`0x12`)
 
@@ -303,6 +317,17 @@ Category: **channel**
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `channel_id` | `u32` | yes | — |
+
+### SessionData (`0x17`)
+
+Category: **channel**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `channel_id` | `u32` | yes | — |
+| `data` | `bytes` | yes | — |
 
 ### Error (`0x20`)
 
@@ -590,6 +615,30 @@ Category: **reverse**
 |-------|------|----------|---------|
 | `target_fingerprint` | `string` | yes | — |
 | `username` | `string` | yes | — |
+
+### ReverseAccept (`0x54`)
+
+Category: **reverse**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `target_fingerprint` | `string` | yes | — |
+| `username` | `string` | yes | — |
+| `capabilities` | `string[]` | no | `[]` |
+
+### ReverseReject (`0x55`)
+
+Category: **reverse**
+
+> >
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `target_fingerprint` | `string` | yes | — |
+| `username` | `string` | yes | — |
+| `reason` | `string` | yes | — |
 
 ### SessionList (`0x5f`)
 

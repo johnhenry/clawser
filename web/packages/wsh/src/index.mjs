@@ -12,11 +12,11 @@ export { cborEncode, cborDecode, frameEncode, FrameDecoder } from './cbor.mjs';
 export {
   MSG, MSG_NAMES, CHANNEL_KIND, AUTH_METHOD, PROTOCOL_VERSION,
   hello, serverHello, challenge, authMethods, auth, authOk, authFail,
-  open, openOk, openFail, resize, signal, exit, close, error, ping, pong,
+  open, openOk, openFail, resize, signal, exit, close, sessionData, error, ping, pong,
   attach, resume, rename, idleWarning, shutdown, snapshot,
   presence, controlChanged, metrics,
   mcpDiscover, mcpTools, mcpCall, mcpResult,
-  reverseRegister, reverseList, reversePeers, reverseConnect,
+  reverseRegister, reverseList, reversePeers, reverseConnect, reverseAccept, reverseReject,
   openTcp, openUdp, resolveDns, gatewayOk, gatewayFail, gatewayClose,
   inboundOpen, inboundAccept, inboundReject, dnsResult,
   listenRequest, listenOk, listenFail, listenClose, gatewayData,

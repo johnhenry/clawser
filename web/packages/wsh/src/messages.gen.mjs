@@ -24,6 +24,7 @@ export const MSG = Object.freeze({
   SIGNAL:            0x14,
   EXIT:              0x15,
   CLOSE:             0x16,
+  SESSION_DATA:      0x17,
 
   // Transport
   ERROR:             0x20,
@@ -59,6 +60,8 @@ export const MSG = Object.freeze({
   REVERSE_LIST:      0x51,
   REVERSE_PEERS:     0x52,
   REVERSE_CONNECT:   0x53,
+  REVERSE_ACCEPT:    0x54,
+  REVERSE_REJECT:    0x55,
 
   // Session
   SESSION_LIST:      0x5f,
@@ -247,11 +250,13 @@ export function open({ kind, command, cols, rows, env } = {}) {
   return msg;
 }
 
-export function openOk({ channelId, streamIds = [] } = {}) {
+export function openOk({ channelId, streamIds = [], dataMode = "stream", capabilities = [] } = {}) {
   return {
     type: MSG.OPEN_OK,
     channel_id: channelId,
     stream_ids: streamIds,
+    data_mode: dataMode,
+    capabilities,
   };
 }
 
@@ -291,6 +296,14 @@ export function close({ channelId } = {}) {
   return {
     type: MSG.CLOSE,
     channel_id: channelId,
+  };
+}
+
+export function sessionData({ channelId, data } = {}) {
+  return {
+    type: MSG.SESSION_DATA,
+    channel_id: channelId,
+    data,
   };
 }
 
@@ -473,6 +486,24 @@ export function reverseConnect({ targetFingerprint, username } = {}) {
     type: MSG.REVERSE_CONNECT,
     target_fingerprint: targetFingerprint,
     username,
+  };
+}
+
+export function reverseAccept({ targetFingerprint, username, capabilities = [] } = {}) {
+  return {
+    type: MSG.REVERSE_ACCEPT,
+    target_fingerprint: targetFingerprint,
+    username,
+    capabilities,
+  };
+}
+
+export function reverseReject({ targetFingerprint, username, reason } = {}) {
+  return {
+    type: MSG.REVERSE_REJECT,
+    target_fingerprint: targetFingerprint,
+    username,
+    reason,
   };
 }
 

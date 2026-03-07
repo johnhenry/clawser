@@ -433,7 +433,7 @@ class IncomingSession {
  * @param {object} msg - Decoded ReverseConnect message
  *   { target_fingerprint, username }
  */
-export function handleReverseConnect(msg) {
+export async function handleReverseConnect(msg) {
   console.log('[wsh:incoming] Reverse connect from:', msg.username,
     'target:', msg.target_fingerprint);
 
@@ -490,6 +490,13 @@ export function handleReverseConnect(msg) {
   // Wire up relay message listening so Open/McpCall/etc. from the CLI
   // are routed through this session.
   session.startListening();
+
+  const { reverseAccept } = await import('./packages-wsh.js');
+  await session._sendReply(reverseAccept({
+    targetFingerprint: msg.target_fingerprint,
+    username: msg.username,
+    capabilities: [],
+  }));
 
   console.log('[wsh:incoming] Session created, listening for relay messages from',
     msg.username, `(${incomingSessions.size} active incoming sessions)`);
