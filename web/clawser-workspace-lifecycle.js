@@ -14,14 +14,13 @@ import { saveConfig, applyRestoredConfig, rebuildProviderDropdown, setupProvider
 import { updateRouteHash, PANELS, resetRenderedPanels, isPanelRendered } from './clawser-router.js';
 import { setStatus, addMsg, addErrorMsg, addToolCall, addInlineToolCall, updateInlineToolCall, addEvent, updateState, updateCostDisplay, replaySessionHistory, replayFromEvents, updateConvNameDisplay, persistActiveConversation, renderToolCalls, resetChatUI } from './clawser-ui-chat.js';
 import { refreshFiles, renderGoals, renderToolRegistry, renderSkills, applySecuritySettings, renderAutonomySection, renderIdentitySection, renderRoutingSection, renderAuthProfilesSection, renderSelfRepairSection, updateCacheStats, renderLimitsSection, renderSandboxSection, renderHeartbeatSection, updateCostMeter, updateAutonomyBadge, updateDaemonBadge, refreshDashboard, renderMountList, renderOAuthSection, renderTerminalSessionBar, replayTerminalSession, renderToolManagementPanel, initAgentPicker, updateAgentLabel, renderAgentPanel, terminalAskUser, renderMarketplace, renderChannelPanel, updateChannelBadge, restoreSavedChannels, initSharedWorkerFromConfig } from './clawser-ui-panels.js';
-import { registerClawserCli } from './clawser-cli.js';
 import { AgentStorage } from './clawser-agent-storage.js';
 import { SwitchAgentTool, ConsultAgentTool } from './clawser-tools.js';
 import { TerminalSessionManager } from './clawser-terminal-sessions.js';
 
 import { ClawserAgent } from './clawser-agent.js';
 import { createDefaultRegistry, WorkspaceFs, registerAgentTools, AskUserQuestionTool } from './clawser-tools.js';
-import { ClawserShell, ShellTool } from './clawser-shell.js';
+import { ShellTool } from './clawser-shell.js';
 
 // Kernel integration (optional — no-op if kernel not initialized)
 let _kernelIntegration = null;
@@ -41,8 +40,6 @@ import { DelegateTool } from './clawser-delegate.js';
 import { GitStatusTool, GitDiffTool, GitLogTool, GitCommitTool, GitBranchTool, GitRecallTool } from './clawser-git.js';
 import { BrowserOpenTool, BrowserReadPageTool, BrowserClickTool, BrowserFillTool, BrowserWaitTool, BrowserEvaluateTool, BrowserListTabsTool, BrowserCloseTabTool } from './clawser-browser-auto.js';
 import { SandboxRunTool, SandboxStatusTool } from './clawser-sandbox.js';
-import { registerAndboxCli } from './clawser-andbox-cli.js';
-import { registerWshCli } from './clawser-wsh-cli.js';
 import { registerWshTools } from './clawser-wsh-tools.js';
 import { registerNetwayTools } from './clawser-netway-tools.js';
 import { HwListTool, HwConnectTool, HwSendTool, HwReadTool, HwDisconnectTool, HwInfoTool } from './clawser-hardware.js';
@@ -93,10 +90,9 @@ import { getExtensionClient } from './clawser-extension-tools.js';
 
 // Fallback chain
 import { FallbackChain, FallbackExecutor } from './clawser-fallback.js';
-import { registerSchedulerCli } from './clawser-scheduler-cli.js';
 import { ModelManager, ModelRegistry, ModelCache } from './clawser-models.js';
 import { ModelListTool, ModelPullTool, ModelRemoveTool, ModelStatusTool, TranscribeTool, SpeakTool, CaptionTool, OcrTool, DetectObjectsTool, ClassifyImageTool, ClassifyTextTool } from './clawser-model-tools.js';
-import { registerModelCli } from './clawser-model-cli.js';
+import { createConfiguredShell } from './clawser-shell-factory.js';
 
 // ── Mesh agent bridge helper ─────────────────────────────────────
 /**
@@ -144,13 +140,12 @@ export { syncRoutinesToIDB };
 // ── Shell session management ─────────────────────────────────────
 /** Create a fresh shell session for the current workspace. Sources .clawserrc and registers CLI. */
 export async function createShellSession() {
-  state.shell = new ClawserShell({ workspaceFs: state.workspaceFs });
-  await state.shell.source('/.clawserrc');
-  registerClawserCli(state.shell.registry, () => state.agent, () => state.shell);
-  registerAndboxCli(state.shell.registry, () => state.agent, () => state.shell);
-  registerWshCli(state.shell.registry, () => state.agent, () => state.shell);
-  registerSchedulerCli(state.shell.registry, () => state.routineEngine, () => state.agent);
-  registerModelCli(state.shell.registry, () => state.modelManager);
+  state.shell = await createConfiguredShell({
+    workspaceFs: state.workspaceFs,
+    getAgent: () => state.agent,
+    getRoutineEngine: () => state.routineEngine,
+    getModelManager: () => state.modelManager,
+  });
   // Update terminal session manager's shell reference
   if (state.terminalSessions) {
     state.terminalSessions.setShell(state.shell);
