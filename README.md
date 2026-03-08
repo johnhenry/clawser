@@ -270,19 +270,23 @@ Clawser is a pure JavaScript agent platform that runs entirely in the browser. I
    cd clawser
    ```
 
-2. Serve the `web/` directory with any static file server:
+2. Start the built-in local HTTPS server:
    ```bash
-   # Using Python
+   npm start
+
+   # Optional HTTP fallback
+   npm run start:http
+   ```
+
+   `npm start` serves `web/` at `https://localhost:8080` and will generate a cached localhost certificate on first run.
+
+   Other static servers still work for basic development:
+   ```bash
    python3 -m http.server 8080 --directory web
-
-   # Using Node
-   npx serve web
-
-   # Using Docker
    docker build -t clawser . && docker run -p 8080:80 clawser
    ```
 
-3. Open `http://localhost:8080` in Chrome (131+ for Chrome AI, any modern browser otherwise).
+3. Open `https://localhost:8080` in Chrome (131+ for Chrome AI, any modern browser otherwise).
 
 4. Add an LLM provider account (OpenAI, Anthropic, etc.) in the Config panel.
 

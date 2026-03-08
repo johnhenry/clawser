@@ -19,10 +19,12 @@ tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 quinn = { version = "0.11", default-features = false, features = ["rustls", "runtime-tokio", "ring"] }
 tokio-tungstenite = "0.24"
+tokio-rustls = "0.26"
 portable-pty = "0.8"
 rcgen = "0.13"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rustls-pemfile = "2"
+wtransport = { version = "0.7", features = ["dangerous-configuration"] }
 clap = { version = "4", features = ["derive"] }
 toml = "0.8"
 dirs = "6"

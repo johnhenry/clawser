@@ -69,6 +69,27 @@ class MockTransport extends WshTransport {
   }
 }
 
+class TrackingTransport extends MockTransport {
+  constructor(kind, attempts, connectError = null) {
+    super();
+    this.kind = kind;
+    this.attempts = attempts;
+    this.connectError = connectError;
+    this.closeCalls = 0;
+  }
+
+  async _doConnect(url) {
+    this.attempts.push([this.kind, url]);
+    if (this.connectError) {
+      throw new Error(this.connectError);
+    }
+  }
+
+  async _doClose() {
+    this.closeCalls += 1;
+  }
+}
+
 async function createAuthenticatedClient(transport = new MockTransport()) {
   const client = new WshClient();
   await client.connectWithTransport(transport, 'https://relay.example', {
@@ -79,6 +100,145 @@ async function createAuthenticatedClient(transport = new MockTransport()) {
 }
 
 describe('wsh virtual sessions', () => {
+  it('falls back from WebTransport to WebSocket for auto transport on HTTPS URLs', async () => {
+    const attempts = [];
+    const client = new WshClient({
+      transportFactories: {
+        wt: () => new TrackingTransport('wt', attempts, 'Opening handshake failed'),
+        ws: () => new TrackingTransport('ws', attempts),
+      },
+    });
+
+    const sessionId = await client.connect('https://relay.example:4422', {
+      username: 'alice',
+      password: 'secret',
+    });
+
+    assert.equal(sessionId, 'sess-1');
+    assert.deepEqual(attempts, [
+      ['wt', 'https://relay.example:4422'],
+      ['ws', 'https://relay.example:4422'],
+    ]);
+
+    await client.disconnect();
+  });
+
+  it('uses WebSocket immediately when transport is forced to ws', async () => {
+    const attempts = [];
+    const client = new WshClient({
+      transportFactories: {
+        wt: () => new TrackingTransport('wt', attempts),
+        ws: () => new TrackingTransport('ws', attempts),
+      },
+    });
+
+    const sessionId = await client.connect('https://relay.example:4422', {
+      username: 'alice',
+      password: 'secret',
+      transport: 'ws',
+    });
+
+    assert.equal(sessionId, 'sess-1');
+    assert.deepEqual(attempts, [['ws', 'https://relay.example:4422']]);
+
+    await client.disconnect();
+  });
+
+  it('does not fall back when transport is forced to wt', async () => {
+    const attempts = [];
+    const client = new WshClient({
+      transportFactories: {
+        wt: () => new TrackingTransport('wt', attempts, 'Opening handshake failed'),
+        ws: () => new TrackingTransport('ws', attempts),
+      },
+    });
+
+    await assert.rejects(
+      () => client.connect('https://relay.example:4422', {
+        username: 'alice',
+        password: 'secret',
+        transport: 'wt',
+      }),
+      /Connection failed across transports \(wt: Opening handshake failed\)/
+    );
+    assert.deepEqual(attempts, [['wt', 'https://relay.example:4422']]);
+    assert.equal(client.state, 'closed');
+  });
+
+  it('uses WebSocket immediately for wss URLs in auto mode', async () => {
+    const attempts = [];
+    const client = new WshClient({
+      transportFactories: {
+        wt: () => new TrackingTransport('wt', attempts),
+        ws: () => new TrackingTransport('ws', attempts),
+      },
+    });
+
+    const sessionId = await client.connect('wss://relay.example:4422', {
+      username: 'alice',
+      password: 'secret',
+    });
+
+    assert.equal(sessionId, 'sess-1');
+    assert.deepEqual(attempts, [['ws', 'wss://relay.example:4422']]);
+
+    await client.disconnect();
+  });
+
+  it('surfaces a combined error when all transport attempts fail', async () => {
+    const attempts = [];
+    const client = new WshClient({
+      transportFactories: {
+        wt: () => new TrackingTransport('wt', attempts, 'Opening handshake failed'),
+        ws: () => new TrackingTransport('ws', attempts, 'WebSocket connection failed'),
+      },
+    });
+
+    await assert.rejects(
+      () => client.connect('https://relay.example:4422', {
+        username: 'alice',
+        password: 'secret',
+      }),
+      /Connection failed across transports \(wt: Opening handshake failed; ws: WebSocket connection failed\)/
+    );
+    assert.deepEqual(attempts, [
+      ['wt', 'https://relay.example:4422'],
+      ['ws', 'https://relay.example:4422'],
+    ]);
+    assert.equal(client.state, 'closed');
+  });
+
+  it('does not fire onClose for a failed WebTransport fallback attempt', async () => {
+    const attempts = [];
+    let failedWtTransport = null;
+    const client = new WshClient({
+      transportFactories: {
+        wt: () => {
+          failedWtTransport = new TrackingTransport('wt', attempts, 'Opening handshake failed');
+          return failedWtTransport;
+        },
+        ws: () => new TrackingTransport('ws', attempts),
+      },
+    });
+    let closeEvents = 0;
+    client.onClose = () => {
+      closeEvents += 1;
+    };
+
+    const sessionId = await client.connect('https://relay.example:4422', {
+      username: 'alice',
+      password: 'secret',
+    });
+
+    assert.equal(sessionId, 'sess-1');
+    assert.equal(client.state, 'authenticated');
+    assert.equal(closeEvents, 0);
+    assert.equal(failedWtTransport.closeCalls, 0);
+
+    await client.disconnect();
+    assert.equal(closeEvents, 0);
+  });
+
   it('opens a virtual session without opening a transport stream', async () => {
     const { client, transport } = await createAuthenticatedClient();
     transport.queueOpenResponse(

@@ -5,9 +5,39 @@ This document covers the closest thing Clawser currently has to "SSH into a runn
 The first thing to know is that Clawser itself is a browser app. There is no always-on shell daemon inside the tab. Because of that, there are two different `wsh` workflows:
 
 1. `wsh` into a `wsh-server` running on a host. This is the fully implemented path today.
-2. `wsh` into a live Clawser browser tab through a relay. This is the closest match to "wsh into Clawser", but it is only partially implemented in this repo.
+2. `wsh` into a live Clawser browser tab through a relay. This is the closest match to "wsh into Clawser", and it now works for normal interactive shell workloads through a browser-backed virtual terminal.
 
-If your goal is a working remote PTY right now, use the direct `wsh-server` path in the last section. If your goal is specifically to reach a live Clawser tab, use the reverse-connect flow below and note the current limitation.
+If your goal is specifically to reach a live Clawser tab, use the reverse-connect flow below. If your goal is a real host PTY with full Unix terminal semantics, use the direct `wsh-server` path in the last section.
+
+## Before You Start
+
+This guide uses four different command surfaces:
+
+- `Repo shell`: your normal macOS/Linux terminal in the repo root
+- `Relay shell`: the shell on the machine running `wsh-server`
+- `Clawser terminal`: the terminal panel inside the target Clawser browser tab
+- `Operator shell`: your normal macOS/Linux terminal where the Rust `wsh` CLI runs
+
+Sometimes `Relay shell`, `Repo shell`, and `Operator shell` are all the same machine. That is fine.
+
+Two important address rules:
+
+- In the `Clawser terminal`, `wsh reverse` accepts `relay-host[:port]`
+- In the Rust CLI, `wsh peers` and `wsh reverse-connect` accept `relay-host` only; the port comes from `-p/--port` and defaults to `4422`
+
+So for a local relay:
+
+- `Clawser terminal`: `wsh -i clawser-tab reverse localhost:4422`
+- `Operator shell`: `wsh -i operator peers localhost`
+
+Do not write `localhost:4422` in the Rust CLI relay commands, because the Rust CLI appends the port itself.
+
+Use the relay hostname as seen from the place where the command runs:
+
+- if the relay is on the same machine as the browser tab, `localhost` works in the `Clawser terminal`
+- if the relay is on another machine, use a hostname the browser can reach
+- if the relay is on the same machine as the Rust CLI, `localhost` works in the `Operator shell`
+- if the relay is on another machine, use a hostname the CLI machine can reach
 
 ## What You Need
 
@@ -17,23 +47,57 @@ If your goal is a working remote PTY right now, use the direct `wsh-server` path
 - TLS for the relay/server
 - Public keys added to the relay/server's `authorized_keys`
 
-In the CLI examples below, use the installed `wsh` binary if you have it. If you do not, replace `wsh ...` with:
+For local browser testing, the repo's default static server now runs over HTTPS:
+
+```bash
+npm start
+```
+
+That serves Clawser at `https://localhost:8080`, which is the simplest local origin for reverse-browser `wsh` work.
+
+In the `Operator shell`, if you do not already have the Rust `wsh` binary installed, replace local CLI commands of the form:
+
+```bash
+wsh ...
+```
+
+with:
 
 ```bash
 cargo run -p wsh-cli -- ...
 ```
 
-## 1. Build the Server and CLI
+This replacement is only for the Rust CLI in your normal shell. It is not needed inside the `Clawser terminal`, where `wsh` is already a built-in shell command.
 
-From the repo root:
+## 1. Start Clawser
+
+Run this in the `Repo shell`:
+
+```bash
+npm start
+```
+
+Then open:
+
+```text
+https://localhost:8080
+```
+
+Open the target workspace and keep its terminal available for later steps.
+
+## 2. Build the Server and CLI
+
+Run this in the `Repo shell`:
 
 ```bash
 cargo build -p wsh-server -p wsh-cli
 ```
 
-## 2. Start a Relay Server
+## 3. Start a Relay Server
 
-If you only need local development on `localhost`, you can use the built-in self-signed certificate generator:
+Run this in the `Relay shell`.
+
+If you only need local development on `localhost`, use the built-in certificate generator:
 
 ```bash
 cargo run -p wsh-server -- --generate-cert --enable-relay --port 4422
@@ -44,6 +108,8 @@ Important:
 - `--generate-cert` only creates a cert for `localhost`, `127.0.0.1`, and `::1`
 - That is fine for local testing
 - It is not sufficient for a real remote hostname that a browser tab will connect to
+- For browser-driven reverse `wsh`, the relay certificate must still be trusted by the browser
+- `--generate-cert` creates key material, but it does not automatically make that certificate trusted in Chrome/Safari/Firefox
 
 For a real hostname, run `wsh-server` with a certificate that matches the relay hostname:
 
@@ -64,35 +130,49 @@ For this guide, use `~/.wsh/authorized_keys` so the setup is explicit.
 
 When the Rust CLI connects to a relay or host for the first time, it stores that server fingerprint in `~/.wsh/known_hosts` using TOFU (`host:port` pinning). Check that file if you need to inspect or reset a stored fingerprint.
 
-## 3. Generate a Key for the Target Clawser Tab
+If you are doing everything locally on one machine, the relay address for the rest of this guide is:
 
-Open the target Clawser instance, open its terminal, and generate a browser-side key:
+- `Clawser terminal`: `localhost:4422`
+- `Operator shell`: `localhost` with the default port `4422`
+
+## 4. Generate a Key for the Target Clawser Tab
+
+Run this in the `Clawser terminal` inside the target browser tab:
 
 ```bash
 wsh keygen clawser-tab
 ```
 
-Copy the full `ssh-ed25519 ...` public key printed by that command.
+Copy the full `ssh-ed25519 ...` public key printed by that command somewhere safe. You will paste it into the relay's `authorized_keys` file in step 6.
 
 Note:
 
 - The browser `wsh keys` command shows only a shortened public key preview
 - If you need the full browser public key later, the simplest path is to generate a fresh named key and copy the printed output immediately
 
-## 4. Generate a Key for the CLI Operator
+## 5. Generate a Key for the CLI Operator
 
-On the machine where you will run the Rust `wsh` CLI:
+Run this in the `Operator shell`.
+
+If `wsh` is installed on your local `PATH`:
 
 ```bash
 wsh keygen operator
 cat ~/.wsh/keys/operator.pub
 ```
 
-Copy that full public key as well.
+If `wsh` is not installed on your local `PATH`:
 
-## 5. Authorize Both Keys on the Relay
+```bash
+cargo run -p wsh-cli -- keygen operator
+cat ~/.wsh/keys/operator.pub
+```
 
-On the machine running `wsh-server`:
+Copy that full public key as well. You will also paste this into the relay's `authorized_keys` file in step 6.
+
+## 6. Authorize Both Keys on the Relay
+
+Run this in the `Relay shell`:
 
 ```bash
 mkdir -p ~/.wsh
@@ -101,48 +181,93 @@ touch ~/.wsh/authorized_keys
 chmod 600 ~/.wsh/authorized_keys
 ```
 
-Append:
+Then append both public keys, one line each, to `~/.wsh/authorized_keys`:
 
-- the browser key from `wsh keygen clawser-tab`
-- the CLI key from `~/.wsh/keys/operator.pub`
+- the browser key from step 4
+- the CLI key from step 5
+
+One simple way is:
+
+```bash
+cat >> ~/.wsh/authorized_keys
+```
+
+Then paste:
+
+1. the full `ssh-ed25519 ...` line from the `Clawser terminal`
+2. the full `ssh-ed25519 ...` line from `~/.wsh/keys/operator.pub`
+
+Then press `Ctrl+D`.
 
 After this step, both the Clawser tab and the CLI can authenticate to the relay.
 
-## 6. Register the Target Clawser Tab as a Reverse Peer
+## 7. Register the Target Clawser Tab as a Reverse Peer
 
-In the target Clawser tab, keep the terminal open and run:
+Run this in the `Clawser terminal`.
+
+For local development, where the relay is running on the same machine as the browser:
 
 ```bash
-wsh -i clawser-tab reverse relay.example.com
+wsh -i clawser-tab reverse localhost:4422
 ```
 
-If you want to expose only specific capabilities instead of the default "all", use:
+For a remote relay:
 
 ```bash
-wsh -i clawser-tab reverse relay.example.com --expose-shell
+wsh -i clawser-tab reverse relay.example.com:4422
+```
+
+If you want to expose only specific capabilities instead of the default "all", use the same relay address with flags:
+
+```bash
+wsh -i clawser-tab reverse localhost:4422 --expose-shell
 ```
 
 Or:
 
 ```bash
-wsh -i clawser-tab reverse relay.example.com --expose-shell --expose-tools --expose-fs
+wsh -i clawser-tab reverse localhost:4422 --expose-shell --expose-tools --expose-fs
 ```
 
 What to expect:
 
-- Clawser will connect to the relay over `https://` or `wss://`
+- Clawser first tries browser WebTransport to `https://relay-host:port`
+- if WebTransport is unavailable or the handshake fails, it automatically falls back to `wss://relay-host:port`
 - the terminal prints a short peer fingerprint
 - the tab must stay open, because the reverse registration is tied to that live browser session
+- after registration, the relay knows this browser tab as a reverse-connectable peer
 
-If the relay uses a self-signed cert, this step only works reliably for local `localhost` development. A normal remote browser connection needs a trusted cert for the relay hostname.
+If both transport attempts fail in the browser, check the relay certificate first. The browser must accept that certificate for either WebTransport or `wss://` to work.
 
-## 7. Discover the Clawser Peer from the CLI
+## 8. Discover the Clawser Peer from the CLI
 
-On the CLI machine:
+Run this in the `Operator shell`.
+
+For local development, where the relay is on the same machine as the CLI:
+
+```bash
+wsh -i operator peers localhost
+```
+
+If `wsh` is not installed locally:
+
+```bash
+cargo run -p wsh-cli -- -i operator peers localhost
+```
+
+For a remote relay on the default port:
 
 ```bash
 wsh -i operator peers relay.example.com
 ```
+
+For a non-default port:
+
+```bash
+wsh -p 5544 -i operator peers relay.example.com
+```
+
+Do not write `relay.example.com:4422` here. In the Rust CLI, `peers` takes the host separately from the port.
 
 You should see a peer list with:
 
@@ -152,37 +277,73 @@ You should see a peer list with:
 
 Take note of the fingerprint for the target Clawser tab.
 
-## 8. Send the Reverse-Connect Request
+## 9. Send the Reverse-Connect Request
 
-From the CLI machine:
+Run this in the `Operator shell`.
+
+For local development:
+
+```bash
+wsh -i operator reverse-connect <fingerprint> localhost
+```
+
+If `wsh` is not installed locally:
+
+```bash
+cargo run -p wsh-cli -- -i operator reverse-connect <fingerprint> localhost
+```
+
+For a remote relay on the default port:
 
 ```bash
 wsh -i operator reverse-connect <fingerprint> relay.example.com
 ```
 
-At this point the relay forwards a `ReverseConnect` message to the Clawser tab, and the browser-side incoming-session handler creates a session record for that CLI peer.
+For a non-default port:
 
-## 9. Current Limitation
+```bash
+wsh -p 5544 -i operator reverse-connect <fingerprint> relay.example.com
+```
 
-This repo does not yet finish the last mile for "interactive `wsh` into a live Clawser tab" from the Rust CLI.
+At this point:
 
-What is implemented:
+- the relay forwards `ReverseConnect` to the Clawser tab
+- the browser accepts or rejects the request
+- on accept, the Rust CLI opens a browser-backed virtual terminal channel
+- the CLI enters the interactive terminal loop
+
+For a successful connection, you should see an interactive shell prompt instead of stopping at the handshake.
+
+## 10. Current Limits of the Browser Path
+
+The reverse browser terminal is interactive now, but it is still not the same thing as a real host PTY.
+
+What works well:
 
 - `wsh-server` relay support
 - browser reverse-peer registration
 - peer discovery
-- reverse-connect message forwarding
-- browser-side incoming session handling for relay messages
+- reverse-connect accept/reject handshake
+- interactive CLI terminal loop over the reverse connection
+- browser-side line editing, prompt redraw, history, resize, Ctrl-C, and Ctrl-D
+- replay/reattach of browser-owned terminal state across reconnects
 
-What is not finished end-to-end:
+What this path is not:
 
-- the Rust `wsh` CLI `reverse-connect` command does not open an interactive PTY into the browser peer after sending `ReverseConnect`
+- a kernel-backed PTY
+- a shell attached to a real Unix TTY device
+- a replacement for direct host `wsh-server` sessions when you need full terminal compatibility
 
-So today, the exact flow above gets the Clawser tab online as a reverse peer and lets the CLI request a connection, but it does not yet drop you into a shell prompt inside that browser instance.
+Practical consequences:
 
-## 10. Fully Working Alternative Today
+- good fit: Clawser shell commands, normal command output, interactive shell use from the Rust CLI
+- not a good fit: `vim`, `tmux`, `top`, `less`, curses apps, job control, or programs that require real `/dev/tty` semantics
 
-If you need a real interactive shell now, run `wsh-server` on the target host and connect directly to that host instead of trying to reverse-connect into the browser tab.
+So the reverse browser path is now usable, but it should be understood as an emulated PTY-like terminal backed by the browser shell runtime.
+
+## 11. Fully Working Alternative Today
+
+If you need a real interactive host shell with native PTY behavior, run `wsh-server` on the target host and connect directly to that host instead of reverse-connecting into the browser tab.
 
 ### On the target host
 
@@ -224,7 +385,9 @@ If the remote host has password auth enabled on `wsh-server`, you can also boots
 wsh -i operator copy-id alice@target.example.com
 ```
 
-## 11. If You Want Clawser to Reach the Host Instead
+`copy-id` prompts for the remote password unless `WSH_PASSWORD` is already set.
+
+## 12. If You Want Clawser to Reach the Host Instead
 
 If what you actually meant was "from Clawser, connect to a remote machine with `wsh`", use the Clawser terminal or the `wsh_*` tools instead of the reverse-connect flow:
 

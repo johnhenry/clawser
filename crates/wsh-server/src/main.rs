@@ -15,6 +15,7 @@ mod transport;
 
 use clap::Parser;
 use config::ServerConfig;
+use rustls::crypto::ring;
 use server::WshServer;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -67,6 +68,8 @@ struct Cli {
 
 #[tokio::main]
 async fn main() {
+    install_rustls_crypto_provider();
+
     let cli = Cli::parse();
 
     // Initialize tracing
@@ -156,6 +159,10 @@ async fn main() {
     }
 
     info!("wsh-server stopped");
+}
+
+fn install_rustls_crypto_provider() {
+    let _ = ring::default_provider().install_default();
 }
 
 /// Load TLS certificate and key from PEM files, returning a rustls ServerConfig.

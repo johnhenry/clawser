@@ -1,54 +1,68 @@
-//! WebTransport listener using quinn (QUIC).
-//!
-//! Accepts incoming QUIC connections, negotiates ALPN for WebTransport,
-//! and dispatches each connection to a handler task.
+//! Browser-compatible WebTransport listener using `wtransport`.
 
 use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::Arc;
+
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
+use wtransport::endpoint::endpoint_side;
+use wtransport::{Endpoint, Identity, ServerConfig};
 use wsh_core::{WshError, WshResult};
 
 /// A handle to an accepted WebTransport connection.
 pub struct WebTransportConnection {
-    /// The QUIC connection.
-    pub connection: quinn::Connection,
+    /// The established WebTransport session connection.
+    pub connection: wtransport::Connection,
     /// Remote address.
     pub remote_addr: SocketAddr,
 }
 
-/// Start the WebTransport (QUIC) listener.
-///
-/// Returns a receiver that yields accepted connections. The listener runs
-/// in a background task until the endpoint is dropped.
+/// Shared endpoint handle used to keep the listener alive.
+pub type WebTransportEndpoint = Arc<Endpoint<endpoint_side::Server>>;
+
+/// Start the WebTransport listener.
 pub async fn start_listener(
     bind_addr: SocketAddr,
-    tls_config: Arc<rustls::ServerConfig>,
-) -> WshResult<(quinn::Endpoint, mpsc::Receiver<WebTransportConnection>)> {
-    let quic_server_config = quinn::crypto::rustls::QuicServerConfig::try_from(tls_config)
-        .map_err(|e| WshError::Transport(format!("QUIC crypto config failed: {e}")))?;
-    let quinn_server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
+    cert_path: &Path,
+    key_path: &Path,
+) -> WshResult<(WebTransportEndpoint, mpsc::Receiver<WebTransportConnection>)> {
+    let identity = Identity::load_pemfiles(cert_path, key_path)
+        .await
+        .map_err(|e| WshError::Transport(format!("failed to load WebTransport identity: {e}")))?;
+    let server_config = ServerConfig::builder()
+        .with_bind_address(bind_addr)
+        .with_identity(identity)
+        .build();
+    let endpoint = Arc::new(
+        Endpoint::server(server_config)
+            .map_err(|e| WshError::Transport(format!("WebTransport bind failed: {e}")))?,
+    );
 
-    let endpoint = quinn::Endpoint::server(quinn_server_config, bind_addr)
-        .map_err(|e| WshError::Transport(format!("QUIC bind failed: {e}")))?;
-
-    info!(addr = %bind_addr, "WebTransport (QUIC) listener started");
+    info!(addr = %bind_addr, "WebTransport listener started");
 
     let (tx, rx) = mpsc::channel::<WebTransportConnection>(64);
-    let ep = endpoint.clone();
+    let listener_endpoint = endpoint.clone();
 
     tokio::spawn(async move {
         loop {
-            match ep.accept().await {
-                Some(incoming) => {
-                    let tx = tx.clone();
-                    tokio::spawn(async move {
-                        match incoming.await {
-                            Ok(conn) => {
-                                let remote = conn.remote_address();
-                                debug!(remote = %remote, "QUIC connection accepted");
+            let incoming_session = listener_endpoint.accept().await;
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                match incoming_session.await {
+                    Ok(session_request) => {
+                        let remote = session_request.remote_address();
+                        debug!(
+                            remote = %remote,
+                            authority = %session_request.authority(),
+                            path = %session_request.path(),
+                            "WebTransport session request accepted"
+                        );
+
+                        match session_request.accept().await {
+                            Ok(connection) => {
                                 let wt_conn = WebTransportConnection {
-                                    connection: conn,
+                                    connection,
                                     remote_addr: remote,
                                 };
                                 if tx.send(wt_conn).await.is_err() {
@@ -56,36 +70,54 @@ pub async fn start_listener(
                                 }
                             }
                             Err(e) => {
-                                warn!(error = %e, "QUIC handshake failed");
+                                warn!(remote = %remote, error = %e, "WebTransport session accept failed");
                             }
                         }
-                    });
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "WebTransport handshake failed");
+                    }
                 }
-                None => {
-                    info!("QUIC endpoint closed, stopping listener");
-                    break;
-                }
-            }
+            });
         }
     });
 
     Ok((endpoint, rx))
 }
 
-/// Accept a bidirectional stream from a QUIC connection (used as the control channel).
-pub async fn accept_bidi_stream(
-    conn: &quinn::Connection,
-) -> WshResult<(quinn::SendStream, quinn::RecvStream)> {
-    conn.accept_bi()
-        .await
-        .map_err(|e| WshError::Transport(format!("failed to accept bidi stream: {e}")))
-}
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Open a new bidirectional stream on a QUIC connection (for data channels).
-pub async fn open_bidi_stream(
-    conn: &quinn::Connection,
-) -> WshResult<(quinn::SendStream, quinn::RecvStream)> {
-    conn.open_bi()
+    use super::start_listener;
+    use wsh_core::WshError;
+
+    #[tokio::test]
+    async fn start_listener_fails_when_identity_files_are_missing() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let cert_path = PathBuf::from(format!("/tmp/wsh-missing-cert-{suffix}.pem"));
+        let key_path = PathBuf::from(format!("/tmp/wsh-missing-key-{suffix}.pem"));
+
+        let err = match start_listener(
+            "127.0.0.1:0".parse().unwrap(),
+            &cert_path,
+            &key_path,
+        )
         .await
-        .map_err(|e| WshError::Transport(format!("failed to open bidi stream: {e}")))
+        {
+            Ok(_) => panic!("listener startup unexpectedly succeeded"),
+            Err(err) => err,
+        };
+
+        match err {
+            WshError::Transport(message) => {
+                assert!(message.contains("failed to load WebTransport identity"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
 }

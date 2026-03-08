@@ -9,6 +9,7 @@
  */
 
 import { WebTransportTransport } from './transport.mjs';
+import { WebSocketTransport } from './transport-ws.mjs';
 import {
   MSG, AUTH_METHOD,
   hello, auth as authMsg, open as openMsg, close as closeMsg,
@@ -63,6 +64,9 @@ export class WshClient {
   /** @type {import('./transport.mjs').WshTransport|null} Active transport. */
   #transport = null;
 
+  /** @type {{ wt: () => import('./transport.mjs').WshTransport, ws: () => import('./transport.mjs').WshTransport }} */
+  #transportFactories;
+
   /** @type {Map<number, WshSession>} Active sessions keyed by channel ID. */
   #sessions = new Map();
 
@@ -86,6 +90,13 @@ export class WshClient {
 
   /** @type {number|null} Timestamp of last pong received. */
   #lastPong = null;
+
+  constructor({ transportFactories } = {}) {
+    this.#transportFactories = transportFactories || {
+      wt: () => new WebTransportTransport(),
+      ws: () => new WebSocketTransport(),
+    };
+  }
 
   // ── Callbacks ───────────────────────────────────────────────────────
 
@@ -209,7 +220,7 @@ export class WshClient {
    * @param {string} opts.username - Username for authentication
    * @param {CryptoKeyPair} [opts.keyPair] - Ed25519 key pair for pubkey auth
    * @param {string} [opts.password] - Password for password auth
-   * @param {'wt'|'ws'} [opts.transport] - Force a specific transport
+   * @param {'wt'|'ws'|'auto'} [opts.transport] - Force a specific transport
    * @param {number} [opts.timeout] - Auth handshake timeout in ms
    * @returns {Promise<string>} The server-assigned session ID
    */
@@ -233,15 +244,8 @@ export class WshClient {
 
     try {
       // ── Select and connect transport ──────────────────────────────
-      const transport = this.#createTransport(url, transportHint);
+      const transport = await this.#connectTransport(url, transportHint);
       this.#transport = transport;
-
-      // Wire transport callbacks before connecting.
-      transport.onControl = (msg) => this.#handleControl(msg);
-      transport.onClose = () => this.#handleTransportClose();
-      transport.onError = (err) => this.#handleTransportError(err);
-
-      await transport.connect(url);
       this.#state = STATE_CONNECTED;
 
       // ── Auth handshake ────────────────────────────────────────────
@@ -1180,26 +1184,76 @@ export class WshClient {
    * Create the appropriate transport based on URL scheme and hint.
    *
    * @param {string} url
-   * @param {'wt'|'ws'} [hint]
+   * @param {'wt'|'ws'|'auto'} [hint]
+   * @returns {Promise<import('./transport.mjs').WshTransport>}
+   * @private
+   */
+  async #connectTransport(url, hint) {
+    const attempts = this.#buildTransportAttempts(url, hint);
+    const errors = [];
+
+    for (const attempt of attempts) {
+      const transport = this.#createTransport(attempt.kind);
+      try {
+        await transport.connect(attempt.url);
+        this.#attachTransportHandlers(transport);
+        return transport;
+      } catch (err) {
+        errors.push(`${attempt.kind}: ${err?.message || err}`);
+        try {
+          await transport.close();
+        } catch {
+          // Ignore cleanup errors after a failed connect attempt.
+        }
+      }
+    }
+
+    throw new Error(`Connection failed across transports (${errors.join('; ')})`);
+  }
+
+  /**
+   * @param {'wt'|'ws'} kind
    * @returns {import('./transport.mjs').WshTransport}
    * @private
    */
-  #createTransport(url, hint) {
-    const isWebSocket = /^wss?:\/\//i.test(url);
-    const useWebSocket = hint === 'ws' || (isWebSocket && hint !== 'wt');
-
-    if (useWebSocket) {
-      // Lazy import guard: WebSocketTransport may not be bundled.
-      // Use dynamic import to avoid hard dependency.
-      // However, for synchronous construction we check if it's available.
-      // The user is expected to have imported it if they need WS.
-      throw new Error(
-        'WebSocket transport requires importing WebSocketTransport from ./transport-ws.mjs. ' +
-        'Use WshClient.withTransport() or pass a transport instance directly.'
-      );
+  #createTransport(kind) {
+    const factory = this.#transportFactories[kind];
+    if (!factory) {
+      throw new Error(`Unsupported transport: ${kind}`);
     }
+    return factory();
+  }
 
-    return new WebTransportTransport();
+  /**
+   * @param {string} url
+   * @param {'wt'|'ws'|'auto'} [hint]
+   * @returns {{ kind: 'wt'|'ws', url: string }[]}
+   * @private
+   */
+  #buildTransportAttempts(url, hint) {
+    if (hint === 'wt') {
+      return [{ kind: 'wt', url }];
+    }
+    if (hint === 'ws') {
+      return [{ kind: 'ws', url }];
+    }
+    if (/^wss?:\/\//i.test(url)) {
+      return [{ kind: 'ws', url }];
+    }
+    return [
+      { kind: 'wt', url },
+      { kind: 'ws', url },
+    ];
+  }
+
+  /**
+   * @param {import('./transport.mjs').WshTransport} transport
+   * @private
+   */
+  #attachTransportHandlers(transport) {
+    transport.onControl = (msg) => this.#handleControl(msg);
+    transport.onClose = () => this.#handleTransportClose();
+    transport.onError = (err) => this.#handleTransportError(err);
   }
 
   /**
@@ -1225,15 +1279,10 @@ export class WshClient {
    * @returns {Promise<string>} Session ID
    */
   async connectWithTransport(transport, url, opts) {
-    this.#transport = transport;
-    // Wire transport callbacks.
-    transport.onControl = (msg) => this.#handleControl(msg);
-    transport.onClose = () => this.#handleTransportClose();
-    transport.onError = (err) => this.#handleTransportError(err);
-
-    // Connect the transport.
     this.#state = STATE_CONNECTING;
     await transport.connect(url);
+    this.#attachTransportHandlers(transport);
+    this.#transport = transport;
     this.#state = STATE_CONNECTED;
 
     // Proceed with auth using the same logic.

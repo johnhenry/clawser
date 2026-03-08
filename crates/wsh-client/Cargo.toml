@@ -22,6 +22,7 @@ sha2 = "0.10"
 hex = "0.4"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 futures-util = "0.3"
+wtransport = { version = "0.7", features = ["dangerous-configuration"] }
 
 [dev-dependencies]
 tokio = { workspace = true }

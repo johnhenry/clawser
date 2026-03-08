@@ -6,16 +6,25 @@
 
 use futures_util::{SinkExt, StreamExt};
 use std::net::SocketAddr;
-use tokio::net::{TcpListener, TcpStream};
+use std::sync::Arc;
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::WebSocketStream;
+use tokio_rustls::TlsAcceptor;
 use tracing::{debug, error, info, warn};
 use wsh_core::{WshError, WshResult};
+
+pub(crate) trait WsIo: AsyncRead + AsyncWrite + Unpin + Send {}
+impl<T> WsIo for T where T: AsyncRead + AsyncWrite + Unpin + Send {}
+
+pub(crate) type BoxedWsIo = Box<dyn WsIo>;
 
 /// A handle to an accepted WebSocket connection.
 pub struct WebSocketConnection {
     /// The WebSocket stream (split into sink + stream in usage).
-    pub ws_stream: tokio_tungstenite::WebSocketStream<TcpStream>,
+    pub ws_stream: WebSocketStream<BoxedWsIo>,
     /// Remote address.
     pub remote_addr: SocketAddr,
 }
@@ -25,12 +34,14 @@ pub struct WebSocketConnection {
 /// Returns a receiver that yields accepted connections.
 pub async fn start_listener(
     bind_addr: SocketAddr,
+    tls_config: Arc<rustls::ServerConfig>,
 ) -> WshResult<mpsc::Receiver<WebSocketConnection>> {
     let tcp_listener = TcpListener::bind(bind_addr)
         .await
-        .map_err(|e| WshError::Transport(format!("WS bind failed: {e}")))?;
+        .map_err(|e| WshError::Transport(format!("WSS bind failed: {e}")))?;
+    let tls_acceptor = TlsAcceptor::from(tls_config);
 
-    info!(addr = %bind_addr, "WebSocket listener started");
+    info!(addr = %bind_addr, "WebSocket TLS listener started");
 
     let (tx, rx) = mpsc::channel::<WebSocketConnection>(64);
 
@@ -39,20 +50,29 @@ pub async fn start_listener(
             match tcp_listener.accept().await {
                 Ok((stream, addr)) => {
                     let tx = tx.clone();
+                    let tls_acceptor = tls_acceptor.clone();
                     tokio::spawn(async move {
-                        match tokio_tungstenite::accept_async(stream).await {
-                            Ok(ws_stream) => {
-                                debug!(remote = %addr, "WebSocket connection accepted");
-                                let conn = WebSocketConnection {
-                                    ws_stream,
-                                    remote_addr: addr,
-                                };
-                                if tx.send(conn).await.is_err() {
-                                    warn!("WebSocket connection channel closed");
+                        match tls_acceptor.accept(stream).await {
+                            Ok(tls_stream) => {
+                                let boxed_stream: BoxedWsIo = Box::new(tls_stream);
+                                match tokio_tungstenite::accept_async(boxed_stream).await {
+                                    Ok(ws_stream) => {
+                                        debug!(remote = %addr, "WebSocket connection accepted");
+                                        let conn = WebSocketConnection {
+                                            ws_stream,
+                                            remote_addr: addr,
+                                        };
+                                        if tx.send(conn).await.is_err() {
+                                            warn!("WebSocket connection channel closed");
+                                        }
+                                    }
+                                    Err(e) => {
+                                        warn!(remote = %addr, error = %e, "WebSocket handshake failed");
+                                    }
                                 }
                             }
                             Err(e) => {
-                                warn!(remote = %addr, error = %e, "WebSocket handshake failed");
+                                warn!(remote = %addr, error = %e, "TLS handshake failed");
                             }
                         }
                     });
@@ -69,7 +89,7 @@ pub async fn start_listener(
 
 /// Helper: send a binary message over a WebSocket.
 pub async fn ws_send_binary(
-    ws: &mut tokio_tungstenite::WebSocketStream<TcpStream>,
+    ws: &mut WebSocketStream<BoxedWsIo>,
     data: &[u8],
 ) -> WshResult<()> {
     ws.send(Message::Binary(data.to_vec().into()))
@@ -85,7 +105,7 @@ const MAX_WS_FRAME_SIZE: usize = 1_048_576;
 /// Returns `None` if the connection is closed. Text messages are ignored.
 /// Rejects frames larger than 1 MiB (consistent with QUIC transport limit).
 pub async fn ws_recv_binary(
-    ws: &mut tokio_tungstenite::WebSocketStream<TcpStream>,
+    ws: &mut WebSocketStream<BoxedWsIo>,
 ) -> WshResult<Option<Vec<u8>>> {
     loop {
         match ws.next().await {

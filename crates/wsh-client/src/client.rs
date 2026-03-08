@@ -1033,6 +1033,30 @@ mod tests {
         );
     }
 
+    #[test]
+    fn known_host_label_adds_default_webtransport_port() {
+        assert_eq!(
+            known_host_label("wt://example.com/wsh").unwrap(),
+            "example.com:443"
+        );
+    }
+
+    #[test]
+    fn known_host_label_preserves_explicit_webtransport_port() {
+        assert_eq!(
+            known_host_label("wt://example.com:5544/wsh").unwrap(),
+            "example.com:5544"
+        );
+    }
+
+    #[test]
+    fn known_host_label_preserves_ipv6_webtransport_authority() {
+        assert_eq!(
+            known_host_label("wt://[2001:db8::1]:5544/wsh").unwrap(),
+            "[2001:db8::1]:5544"
+        );
+    }
+
     #[tokio::test]
     async fn handle_incoming_routes_session_data_to_virtual_session() {
         let response_tx = Arc::new(Mutex::new(HashMap::new()));

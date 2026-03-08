@@ -12,20 +12,18 @@ Set up Clawser, create your first workspace, connect an LLM provider, and send y
 
 ## 1. Launch Clawser
 
-Serve the `web/` directory with any static file server and open it in your browser:
+Start the built-in local HTTPS server and open it in your browser:
 
 ```bash
-# Python
-python3 -m http.server 8080 --directory web
+npm start
 
-# Node
-npx serve web
-
-# Docker
-docker build -t clawser . && docker run -p 8080:80 clawser
+# Optional HTTP fallback
+npm run start:http
 ```
 
-Navigate to `http://localhost:8080`. You'll see the **Home Screen** with a list of workspaces and an **Accounts** section.
+`npm start` serves `web/` at `https://localhost:8080` and generates a cached localhost certificate on first run.
+
+Navigate to `https://localhost:8080`. You'll see the **Home Screen** with a list of workspaces and an **Accounts** section.
 
 ![Home screen](../screenshots/13-home-screen.png)
 

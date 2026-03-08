@@ -301,19 +301,20 @@ impl WshServer {
         let quic_addr: SocketAddr = format!("0.0.0.0:{}", server.config.port)
             .parse()
             .map_err(|e| WshError::Other(format!("invalid address: {e}")))?;
-
-        let ws_port = server.config.port.checked_add(1).ok_or_else(|| {
-            WshError::Other("WebSocket port overflow: base port + 1 exceeds u16".into())
-        })?;
-        let ws_addr: SocketAddr = format!("0.0.0.0:{ws_port}")
+        let ws_addr: SocketAddr = format!("0.0.0.0:{}", server.config.port)
             .parse()
             .map_err(|e| WshError::Other(format!("invalid address: {e}")))?;
 
         // Start WebTransport listener
-        let (_endpoint, mut wt_rx) = webtransport::start_listener(quic_addr, tls_config).await?;
+        let (_endpoint, mut wt_rx) = webtransport::start_listener(
+            quic_addr,
+            &server.config.cert_path,
+            &server.config.key_path,
+        )
+        .await?;
 
-        // Start WebSocket listener
-        let mut ws_rx = websocket::start_listener(ws_addr).await?;
+        // Start WebSocket listener on the same configured port over TCP/TLS.
+        let mut ws_rx = websocket::start_listener(ws_addr, tls_config).await?;
 
         // Start session GC + idle warning task
         let gc_sessions = server.sessions.clone();
@@ -481,8 +482,8 @@ impl WshServer {
         });
 
         info!(
-            quic_port = server.config.port,
-            ws_port,
+            webtransport_port = server.config.port,
+            websocket_port = server.config.port,
             relay = server.config.enable_relay,
             "wsh-server ready"
         );
@@ -520,7 +521,7 @@ impl WshServer {
         Ok(())
     }
 
-    /// Handle a WebTransport (QUIC) connection through the auth handshake.
+    /// Handle a WebTransport connection through the auth handshake.
     async fn handle_webtransport(
         &self,
         conn: webtransport::WebTransportConnection,
@@ -528,11 +529,15 @@ impl WshServer {
         let remote = conn.remote_addr;
         info!(remote = %remote, "handling WebTransport connection");
 
-        // Accept the first bidi stream as control channel
-        let (mut send, mut recv) = webtransport::accept_bidi_stream(&conn.connection).await?;
+        // Accept the first bidirectional stream as the control channel.
+        let (mut send, mut recv) = conn
+            .connection
+            .accept_bi()
+            .await
+            .map_err(|e| WshError::Transport(format!("WebTransport accept failed: {e}")))?;
 
         // Read HELLO
-        let hello_bytes = read_quic_frame(&mut recv).await?;
+        let hello_bytes = read_webtransport_frame(&mut recv).await?;
         let envelope: Envelope = cbor_decode(&hello_bytes)?;
 
         let hello = match (&envelope.msg_type, &envelope.payload) {
@@ -556,15 +561,15 @@ impl WshServer {
         let sh_frame = frame_encode(&hello_result.server_hello)?;
         send.write_all(&sh_frame)
             .await
-            .map_err(|e| WshError::Transport(format!("QUIC write failed: {e}")))?;
+            .map_err(|e| WshError::Transport(format!("WebTransport write failed: {e}")))?;
 
         let challenge_frame = frame_encode(&hello_result.challenge)?;
         send.write_all(&challenge_frame)
             .await
-            .map_err(|e| WshError::Transport(format!("QUIC write failed: {e}")))?;
+            .map_err(|e| WshError::Transport(format!("WebTransport write failed: {e}")))?;
 
         // Read AUTH
-        let auth_bytes = read_quic_frame(&mut recv).await?;
+        let auth_bytes = read_webtransport_frame(&mut recv).await?;
         let auth_envelope: Envelope = cbor_decode(&auth_bytes)?;
 
         let auth = match (&auth_envelope.msg_type, &auth_envelope.payload) {
@@ -577,7 +582,7 @@ impl WshServer {
             }
         };
 
-        // Rate limit check (QUIC)
+        // Rate limit check (WebTransport)
         {
             let ip = remote.ip();
             let rate_limited = {
@@ -644,7 +649,7 @@ impl WshServer {
                 let ok_frame = frame_encode(&ok)?;
                 send.write_all(&ok_frame)
                     .await
-                    .map_err(|e| WshError::Transport(format!("QUIC write failed: {e}")))?;
+                    .map_err(|e| WshError::Transport(format!("WebTransport write failed: {e}")))?;
 
                 info!(
                     remote = %remote,
@@ -888,11 +893,11 @@ impl WshServer {
 
     // ── Session message loops ──────────────────────────────────────────
 
-    /// Post-auth message loop over QUIC (WebTransport).
+    /// Post-auth message loop over WebTransport.
     async fn session_loop_quic(
         &self,
-        send: &mut quinn::SendStream,
-        recv: &mut quinn::RecvStream,
+        send: &mut wtransport::SendStream,
+        recv: &mut wtransport::RecvStream,
         ctx: &mut ConnectionContext,
         mut peer_rx: mpsc::Receiver<Envelope>,
     ) -> WshResult<()> {
@@ -922,7 +927,7 @@ impl WshServer {
                     let frame = frame_encode(&msg)?;
                     send.write_all(&frame)
                         .await
-                        .map_err(|e| WshError::Transport(format!("QUIC write: {e}")))?;
+                        .map_err(|e| WshError::Transport(format!("WebTransport write: {e}")))?;
                 }
 
                 Some(event) = data_rx.recv() => {
@@ -938,7 +943,7 @@ impl WshServer {
                     let frame = frame_encode(&msg)?;
                     send.write_all(&frame)
                         .await
-                        .map_err(|e| WshError::Transport(format!("QUIC write: {e}")))?;
+                        .map_err(|e| WshError::Transport(format!("WebTransport write: {e}")))?;
                 }
 
                 // Peer push messages (e.g. forwarded ReverseConnect)
@@ -946,10 +951,10 @@ impl WshServer {
                     let frame = frame_encode(&envelope)?;
                     send.write_all(&frame)
                         .await
-                        .map_err(|e| WshError::Transport(format!("QUIC write: {e}")))?;
+                        .map_err(|e| WshError::Transport(format!("WebTransport write: {e}")))?;
                 }
 
-                frame_result = read_quic_frame(recv) => {
+                frame_result = read_webtransport_frame(recv) => {
                     match frame_result {
                         Ok(data) => {
                             let envelope: Envelope = cbor_decode(&data)?;
@@ -957,11 +962,11 @@ impl WshServer {
                                 let frame = frame_encode(&response)?;
                                 send.write_all(&frame)
                                     .await
-                                    .map_err(|e| WshError::Transport(format!("QUIC write: {e}")))?;
+                                    .map_err(|e| WshError::Transport(format!("WebTransport write: {e}")))?;
                             }
                         }
                         Err(e) => {
-                            debug!(error = %e, "QUIC session ended");
+                            debug!(error = %e, "WebTransport session ended");
                             break;
                         }
                     }
@@ -3105,12 +3110,12 @@ fn build_inbound_open(event: &crate::gateway::listener::InboundEvent) -> Envelop
     }
 }
 
-/// Read a length-prefixed frame from a QUIC recv stream.
-async fn read_quic_frame(recv: &mut quinn::RecvStream) -> WshResult<Vec<u8>> {
+/// Read a length-prefixed frame from a WebTransport recv stream.
+async fn read_webtransport_frame(recv: &mut wtransport::RecvStream) -> WshResult<Vec<u8>> {
     let mut len_buf = [0u8; 4];
     recv.read_exact(&mut len_buf)
         .await
-        .map_err(|e| WshError::Transport(format!("QUIC read len failed: {e}")))?;
+        .map_err(|e| WshError::Transport(format!("WebTransport read len failed: {e}")))?;
     let len = u32::from_be_bytes(len_buf) as usize;
 
     if len > 1_048_576 {
@@ -3122,7 +3127,7 @@ async fn read_quic_frame(recv: &mut quinn::RecvStream) -> WshResult<Vec<u8>> {
     let mut buf = vec![0u8; len];
     recv.read_exact(&mut buf)
         .await
-        .map_err(|e| WshError::Transport(format!("QUIC read payload failed: {e}")))?;
+        .map_err(|e| WshError::Transport(format!("WebTransport read payload failed: {e}")))?;
 
     Ok(buf)
 }

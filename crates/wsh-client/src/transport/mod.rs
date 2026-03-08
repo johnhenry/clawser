@@ -1,8 +1,8 @@
 //! Transport layer auto-selection for wsh.
 //!
-//! Selects WebTransport (QUIC) or WebSocket based on the URL scheme:
+//! Selects WebTransport or WebSocket based on the URL scheme:
 //! - `wss://` or `ws://` → WebSocket
-//! - `https://` or `wt://` → WebTransport (QUIC)
+//! - `https://` or `wt://` → WebTransport
 
 pub mod websocket;
 pub mod webtransport;
@@ -122,45 +122,16 @@ pub async fn auto_connect(url: &str) -> WshResult<AnyTransport> {
             Ok(AnyTransport::WebSocket(session))
         }
         TransportKind::WebTransport => {
-            let (addr, server_name) = parse_webtransport_url(url)?;
-            let session = WebTransportSession::connect(&addr, &server_name).await?;
+            let session = WebTransportSession::connect(url).await?;
             Ok(AnyTransport::WebTransport(session))
         }
     }
 }
 
-/// Parse a WebTransport URL into `(host:port, server_name)`.
-fn parse_webtransport_url(url: &str) -> WshResult<(String, String)> {
-    // Strip the scheme
-    let without_scheme = if url.starts_with("https://") {
-        &url[8..]
-    } else if url.to_lowercase().starts_with("wt://") {
-        &url[5..]
-    } else {
-        return Err(WshError::Transport(format!(
-            "invalid WebTransport URL: {url}"
-        )));
-    };
-
-    // Strip path
-    let host_port = without_scheme.split('/').next().unwrap_or(without_scheme);
-
-    // Extract server name (without port)
-    let server_name = host_port.split(':').next().unwrap_or(host_port).to_string();
-
-    // Default port for QUIC/WebTransport
-    let addr = if host_port.contains(':') {
-        host_port.to_string()
-    } else {
-        format!("{host_port}:443")
-    };
-
-    Ok((addr, server_name))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transport::webtransport::normalize_webtransport_url;
 
     #[test]
     fn detect_websocket() {
@@ -187,22 +158,50 @@ mod tests {
     }
 
     #[test]
+    fn detect_transport_is_case_insensitive() {
+        assert_eq!(
+            detect_transport("WSS://example.com").unwrap(),
+            TransportKind::WebSocket
+        );
+        assert_eq!(
+            detect_transport("WT://example.com/wsh").unwrap(),
+            TransportKind::WebTransport
+        );
+    }
+
+    #[test]
+    fn detect_transport_rejects_bare_hosts() {
+        assert!(detect_transport("localhost:4422").is_err());
+        assert!(detect_transport("example.com").is_err());
+    }
+
+    #[test]
+    fn detect_webtransport_with_path_and_query() {
+        assert_eq!(
+            detect_transport("wt://example.com:4433/wsh?transport=web").unwrap(),
+            TransportKind::WebTransport
+        );
+    }
+
+    #[test]
     fn detect_unknown() {
         assert!(detect_transport("http://example.com").is_err());
         assert!(detect_transport("ftp://example.com").is_err());
     }
 
     #[test]
-    fn parse_wt_url() {
-        let (addr, name) = parse_webtransport_url("https://example.com:4433/wsh").unwrap();
-        assert_eq!(addr, "example.com:4433");
-        assert_eq!(name, "example.com");
+    fn normalize_wt_url_preserves_https() {
+        assert_eq!(
+            normalize_webtransport_url("https://example.com:4433/wsh").unwrap(),
+            "https://example.com:4433/wsh"
+        );
     }
 
     #[test]
-    fn parse_wt_url_default_port() {
-        let (addr, name) = parse_webtransport_url("https://example.com/wsh").unwrap();
-        assert_eq!(addr, "example.com:443");
-        assert_eq!(name, "example.com");
+    fn normalize_wt_url_accepts_legacy_alias() {
+        assert_eq!(
+            normalize_webtransport_url("wt://example.com/wsh").unwrap(),
+            "https://example.com/wsh"
+        );
     }
 }

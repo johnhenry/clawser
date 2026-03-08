@@ -17,7 +17,7 @@ echo "==> Copying WASM binary to web/..."
 cp "$WASM_SRC" "$WASM_DST"
 echo "    $(ls -lh "$WASM_DST" | awk '{print $5}') — $WASM_DST"
 
-echo "==> Serving at http://localhost:8080"
+echo "==> Serving at https://localhost:8080"
 echo "    Press Ctrl+C to stop."
 cd "$SCRIPT_DIR"
-python3 -m http.server 8080
+node ./serve-https.mjs

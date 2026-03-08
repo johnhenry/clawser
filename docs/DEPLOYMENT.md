@@ -4,20 +4,23 @@ Clawser is a pure client-side application — no backend server required. All pr
 
 ## Static File Server
 
-Serve the `web/` directory with any HTTP server:
+For local development, prefer the built-in HTTPS server:
 
 ```bash
-# Python
-python3 -m http.server 8080
-
-# Node.js (npx)
-npx serve .
-
-# Deno
-deno run --allow-net --allow-read https://deno.land/std/http/file_server.ts
+npm start
 ```
 
-Open `http://localhost:8080/web/` in Chrome 131+.
+This serves `web/` at `https://localhost:8080` and generates a cached localhost certificate on first run.
+
+Fallback HTTP options still work for basic development:
+
+```bash
+python3 -m http.server 8080 --directory web
+npm run start:http
+deno run --allow-net --allow-read https://deno.land/std/http/file_server.ts web
+```
+
+Open `https://localhost:8080/` in Chrome 131+.
 
 ## Docker
 
@@ -55,7 +58,7 @@ Clawser includes a `manifest.json` for PWA installation. When served over HTTPS,
 Append `?demo` or `?demo=true` to the URL to start Clawser in demo mode:
 
 ```
-http://localhost:8080/web/?demo=true
+https://localhost:8080/?demo=true
 ```
 
 Demo mode:
