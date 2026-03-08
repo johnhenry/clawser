@@ -618,17 +618,36 @@ function emitRust(schema) {
   out.push('}');
   out.push('');
 
+  out.push('impl Payload {');
+  out.push('    pub fn decode_for_msg_type(');
+  out.push('        msg_type: MsgType,');
+  out.push('        data: &[u8],');
+  out.push('    ) -> Result<Self, ciborium::de::Error<std::io::Error>> {');
+  out.push('        let cursor = std::io::Cursor::new(data);');
+  out.push('        match msg_type {');
+  out.push('            MsgType::Ping | MsgType::Pong => Ok(Self::PingPong(ciborium::from_reader(cursor)?)),');
+  for (const msg of rustMessages) {
+    if (msg.name === 'Ping' || msg.name === 'Pong') continue;
+    out.push(`            MsgType::${msg.name} => Ok(Self::${msg.name}(ciborium::from_reader(cursor)?)),`);
+  }
+  out.push('        }');
+  out.push('    }');
+  out.push('}');
+  out.push('');
+
   // Payload structs
   out.push('// ── Individual payload structs ────────────────────────────────────────');
   out.push('');
 
   // EmptyPayload
   out.push('#[derive(Debug, Clone, Serialize, Deserialize)]');
+  out.push('#[serde(deny_unknown_fields)]');
   out.push('pub struct EmptyPayload {}');
   out.push('');
 
   // PingPongPayload (shared)
   out.push('#[derive(Debug, Clone, Serialize, Deserialize)]');
+  out.push('#[serde(deny_unknown_fields)]');
   out.push('pub struct PingPongPayload {');
   out.push('    pub id: u64,');
   out.push('}');
@@ -643,6 +662,7 @@ function emitRust(schema) {
     const defaultFns = []; // collect {fnName, rustCode} for after the struct
 
     out.push('#[derive(Debug, Clone, Serialize, Deserialize)]');
+    out.push('#[serde(deny_unknown_fields)]');
     out.push(`pub struct ${msg.name}Payload {`);
 
     if (fieldEntries.length === 0) {

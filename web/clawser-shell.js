@@ -999,6 +999,7 @@ async function executePipeline(node, state, registry, opts) {
         } else {
           await opts.fs.writeFile(path, lastResult.stdout);
         }
+        lastResult = { ...lastResult, stdout: '' };
       } catch (e) {
         return { stdout: '', stderr: `redirect: ${e.message}`, exitCode: 1 };
       }

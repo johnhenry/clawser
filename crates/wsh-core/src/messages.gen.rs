@@ -382,17 +382,124 @@ pub enum Payload {
     Empty(EmptyPayload),
 }
 
+impl Payload {
+    pub fn decode_for_msg_type(
+        msg_type: MsgType,
+        data: &[u8],
+    ) -> Result<Self, ciborium::de::Error<std::io::Error>> {
+        let cursor = std::io::Cursor::new(data);
+        match msg_type {
+            MsgType::Ping | MsgType::Pong => Ok(Self::PingPong(ciborium::from_reader(cursor)?)),
+            MsgType::Hello => Ok(Self::Hello(ciborium::from_reader(cursor)?)),
+            MsgType::ServerHello => Ok(Self::ServerHello(ciborium::from_reader(cursor)?)),
+            MsgType::Challenge => Ok(Self::Challenge(ciborium::from_reader(cursor)?)),
+            MsgType::AuthMethods => Ok(Self::AuthMethods(ciborium::from_reader(cursor)?)),
+            MsgType::Auth => Ok(Self::Auth(ciborium::from_reader(cursor)?)),
+            MsgType::AuthOk => Ok(Self::AuthOk(ciborium::from_reader(cursor)?)),
+            MsgType::AuthFail => Ok(Self::AuthFail(ciborium::from_reader(cursor)?)),
+            MsgType::Open => Ok(Self::Open(ciborium::from_reader(cursor)?)),
+            MsgType::OpenOk => Ok(Self::OpenOk(ciborium::from_reader(cursor)?)),
+            MsgType::OpenFail => Ok(Self::OpenFail(ciborium::from_reader(cursor)?)),
+            MsgType::Resize => Ok(Self::Resize(ciborium::from_reader(cursor)?)),
+            MsgType::Signal => Ok(Self::Signal(ciborium::from_reader(cursor)?)),
+            MsgType::Exit => Ok(Self::Exit(ciborium::from_reader(cursor)?)),
+            MsgType::Close => Ok(Self::Close(ciborium::from_reader(cursor)?)),
+            MsgType::SessionData => Ok(Self::SessionData(ciborium::from_reader(cursor)?)),
+            MsgType::Error => Ok(Self::Error(ciborium::from_reader(cursor)?)),
+            MsgType::Attach => Ok(Self::Attach(ciborium::from_reader(cursor)?)),
+            MsgType::Resume => Ok(Self::Resume(ciborium::from_reader(cursor)?)),
+            MsgType::Rename => Ok(Self::Rename(ciborium::from_reader(cursor)?)),
+            MsgType::IdleWarning => Ok(Self::IdleWarning(ciborium::from_reader(cursor)?)),
+            MsgType::Shutdown => Ok(Self::Shutdown(ciborium::from_reader(cursor)?)),
+            MsgType::Snapshot => Ok(Self::Snapshot(ciborium::from_reader(cursor)?)),
+            MsgType::Presence => Ok(Self::Presence(ciborium::from_reader(cursor)?)),
+            MsgType::ControlChanged => Ok(Self::ControlChanged(ciborium::from_reader(cursor)?)),
+            MsgType::Metrics => Ok(Self::Metrics(ciborium::from_reader(cursor)?)),
+            MsgType::Clipboard => Ok(Self::Clipboard(ciborium::from_reader(cursor)?)),
+            MsgType::RecordingExport => Ok(Self::RecordingExport(ciborium::from_reader(cursor)?)),
+            MsgType::CommandJournal => Ok(Self::CommandJournal(ciborium::from_reader(cursor)?)),
+            MsgType::MetricsRequest => Ok(Self::MetricsRequest(ciborium::from_reader(cursor)?)),
+            MsgType::SuspendSession => Ok(Self::SuspendSession(ciborium::from_reader(cursor)?)),
+            MsgType::RestartPty => Ok(Self::RestartPty(ciborium::from_reader(cursor)?)),
+            MsgType::SessionListRequest => Ok(Self::SessionListRequest(ciborium::from_reader(cursor)?)),
+            MsgType::McpDiscover => Ok(Self::McpDiscover(ciborium::from_reader(cursor)?)),
+            MsgType::McpTools => Ok(Self::McpTools(ciborium::from_reader(cursor)?)),
+            MsgType::McpCall => Ok(Self::McpCall(ciborium::from_reader(cursor)?)),
+            MsgType::McpResult => Ok(Self::McpResult(ciborium::from_reader(cursor)?)),
+            MsgType::ReverseRegister => Ok(Self::ReverseRegister(ciborium::from_reader(cursor)?)),
+            MsgType::ReverseList => Ok(Self::ReverseList(ciborium::from_reader(cursor)?)),
+            MsgType::ReversePeers => Ok(Self::ReversePeers(ciborium::from_reader(cursor)?)),
+            MsgType::ReverseConnect => Ok(Self::ReverseConnect(ciborium::from_reader(cursor)?)),
+            MsgType::ReverseAccept => Ok(Self::ReverseAccept(ciborium::from_reader(cursor)?)),
+            MsgType::ReverseReject => Ok(Self::ReverseReject(ciborium::from_reader(cursor)?)),
+            MsgType::SessionList => Ok(Self::SessionList(ciborium::from_reader(cursor)?)),
+            MsgType::Detach => Ok(Self::Detach(ciborium::from_reader(cursor)?)),
+            MsgType::DetachOk => Ok(Self::DetachOk(ciborium::from_reader(cursor)?)),
+            MsgType::DetachFail => Ok(Self::DetachFail(ciborium::from_reader(cursor)?)),
+            MsgType::OpenTcp => Ok(Self::OpenTcp(ciborium::from_reader(cursor)?)),
+            MsgType::OpenUdp => Ok(Self::OpenUdp(ciborium::from_reader(cursor)?)),
+            MsgType::ResolveDns => Ok(Self::ResolveDns(ciborium::from_reader(cursor)?)),
+            MsgType::GatewayOk => Ok(Self::GatewayOk(ciborium::from_reader(cursor)?)),
+            MsgType::GatewayFail => Ok(Self::GatewayFail(ciborium::from_reader(cursor)?)),
+            MsgType::GatewayClose => Ok(Self::GatewayClose(ciborium::from_reader(cursor)?)),
+            MsgType::InboundOpen => Ok(Self::InboundOpen(ciborium::from_reader(cursor)?)),
+            MsgType::InboundAccept => Ok(Self::InboundAccept(ciborium::from_reader(cursor)?)),
+            MsgType::InboundReject => Ok(Self::InboundReject(ciborium::from_reader(cursor)?)),
+            MsgType::DnsResult => Ok(Self::DnsResult(ciborium::from_reader(cursor)?)),
+            MsgType::ListenRequest => Ok(Self::ListenRequest(ciborium::from_reader(cursor)?)),
+            MsgType::ListenOk => Ok(Self::ListenOk(ciborium::from_reader(cursor)?)),
+            MsgType::ListenFail => Ok(Self::ListenFail(ciborium::from_reader(cursor)?)),
+            MsgType::ListenClose => Ok(Self::ListenClose(ciborium::from_reader(cursor)?)),
+            MsgType::GatewayData => Ok(Self::GatewayData(ciborium::from_reader(cursor)?)),
+            MsgType::GuestInvite => Ok(Self::GuestInvite(ciborium::from_reader(cursor)?)),
+            MsgType::GuestJoin => Ok(Self::GuestJoin(ciborium::from_reader(cursor)?)),
+            MsgType::GuestRevoke => Ok(Self::GuestRevoke(ciborium::from_reader(cursor)?)),
+            MsgType::ShareSession => Ok(Self::ShareSession(ciborium::from_reader(cursor)?)),
+            MsgType::ShareRevoke => Ok(Self::ShareRevoke(ciborium::from_reader(cursor)?)),
+            MsgType::CompressBegin => Ok(Self::CompressBegin(ciborium::from_reader(cursor)?)),
+            MsgType::CompressAck => Ok(Self::CompressAck(ciborium::from_reader(cursor)?)),
+            MsgType::RateControl => Ok(Self::RateControl(ciborium::from_reader(cursor)?)),
+            MsgType::RateWarning => Ok(Self::RateWarning(ciborium::from_reader(cursor)?)),
+            MsgType::SessionLink => Ok(Self::SessionLink(ciborium::from_reader(cursor)?)),
+            MsgType::SessionUnlink => Ok(Self::SessionUnlink(ciborium::from_reader(cursor)?)),
+            MsgType::CopilotAttach => Ok(Self::CopilotAttach(ciborium::from_reader(cursor)?)),
+            MsgType::CopilotSuggest => Ok(Self::CopilotSuggest(ciborium::from_reader(cursor)?)),
+            MsgType::CopilotDetach => Ok(Self::CopilotDetach(ciborium::from_reader(cursor)?)),
+            MsgType::KeyExchange => Ok(Self::KeyExchange(ciborium::from_reader(cursor)?)),
+            MsgType::EncryptedFrame => Ok(Self::EncryptedFrame(ciborium::from_reader(cursor)?)),
+            MsgType::EchoAck => Ok(Self::EchoAck(ciborium::from_reader(cursor)?)),
+            MsgType::EchoState => Ok(Self::EchoState(ciborium::from_reader(cursor)?)),
+            MsgType::TermSync => Ok(Self::TermSync(ciborium::from_reader(cursor)?)),
+            MsgType::TermDiff => Ok(Self::TermDiff(ciborium::from_reader(cursor)?)),
+            MsgType::NodeAnnounce => Ok(Self::NodeAnnounce(ciborium::from_reader(cursor)?)),
+            MsgType::NodeRedirect => Ok(Self::NodeRedirect(ciborium::from_reader(cursor)?)),
+            MsgType::SessionGrant => Ok(Self::SessionGrant(ciborium::from_reader(cursor)?)),
+            MsgType::SessionRevoke => Ok(Self::SessionRevoke(ciborium::from_reader(cursor)?)),
+            MsgType::FileOp => Ok(Self::FileOp(ciborium::from_reader(cursor)?)),
+            MsgType::FileResult => Ok(Self::FileResult(ciborium::from_reader(cursor)?)),
+            MsgType::FileChunk => Ok(Self::FileChunk(ciborium::from_reader(cursor)?)),
+            MsgType::PolicyEval => Ok(Self::PolicyEval(ciborium::from_reader(cursor)?)),
+            MsgType::PolicyResult => Ok(Self::PolicyResult(ciborium::from_reader(cursor)?)),
+            MsgType::PolicyUpdate => Ok(Self::PolicyUpdate(ciborium::from_reader(cursor)?)),
+            MsgType::TerminalConfig => Ok(Self::TerminalConfig(ciborium::from_reader(cursor)?)),
+        }
+    }
+}
+
 // ── Individual payload structs ────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EmptyPayload {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PingPongPayload {
     pub id: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct HelloPayload {
     pub version: String,
     pub username: String,
@@ -403,6 +510,7 @@ pub struct HelloPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ServerHelloPayload {
     pub session_id: String,
     #[serde(default)]
@@ -412,17 +520,20 @@ pub struct ServerHelloPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ChallengePayload {
     #[serde(with = "serde_bytes")]
     pub nonce: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AuthMethodsPayload {
     pub methods: Vec<AuthMethod>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AuthPayload {
     pub method: AuthMethod,
     #[serde(default, skip_serializing_if = "Option::is_none", with = "option_bytes")]
@@ -434,6 +545,7 @@ pub struct AuthPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AuthOkPayload {
     pub session_id: String,
     #[serde(with = "serde_bytes")]
@@ -442,11 +554,13 @@ pub struct AuthOkPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AuthFailPayload {
     pub reason: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OpenPayload {
     pub kind: ChannelKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -460,6 +574,7 @@ pub struct OpenPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OpenOkPayload {
     pub channel_id: u32,
     #[serde(default)]
@@ -471,11 +586,13 @@ pub struct OpenOkPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OpenFailPayload {
     pub reason: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ResizePayload {
     pub channel_id: u32,
     pub cols: u16,
@@ -483,23 +600,27 @@ pub struct ResizePayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SignalPayload {
     pub channel_id: u32,
     pub signal: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ExitPayload {
     pub channel_id: u32,
     pub code: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ClosePayload {
     pub channel_id: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SessionDataPayload {
     pub channel_id: u32,
     #[serde(with = "serde_bytes")]
@@ -507,12 +628,14 @@ pub struct SessionDataPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ErrorPayload {
     pub code: u32,
     pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AttachPayload {
     pub session_id: String,
     #[serde(with = "serde_bytes")]
@@ -528,6 +651,7 @@ fn default_attach_mode() -> String {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ResumePayload {
     pub session_id: String,
     #[serde(with = "serde_bytes")]
@@ -536,17 +660,20 @@ pub struct ResumePayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RenamePayload {
     pub session_id: String,
     pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct IdleWarningPayload {
     pub expires_in: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ShutdownPayload {
     pub reason: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -554,21 +681,25 @@ pub struct ShutdownPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SnapshotPayload {
     pub label: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PresencePayload {
     pub attachments: Vec<AttachmentInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ControlChangedPayload {
     pub new_controller: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MetricsPayload {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cpu: Option<f64>,
@@ -581,12 +712,14 @@ pub struct MetricsPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ClipboardPayload {
     pub direction: String,
     pub data: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RecordingExportPayload {
     pub session_id: String,
     #[serde(default = "default_recording_export_format")]
@@ -600,6 +733,7 @@ fn default_recording_export_format() -> String {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CommandJournalPayload {
     pub session_id: String,
     pub command: String,
@@ -613,16 +747,19 @@ pub struct CommandJournalPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MetricsRequestPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SuspendSessionPayload {
     pub session_id: String,
     pub action: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RestartPtyPayload {
     pub session_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -630,30 +767,36 @@ pub struct RestartPtyPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SessionListRequestPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct McpDiscoverPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct McpToolsPayload {
     pub tools: Vec<McpToolSpec>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct McpCallPayload {
     pub tool: String,
     pub arguments: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct McpResultPayload {
     pub result: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReverseRegisterPayload {
     pub username: String,
     #[serde(default)]
@@ -663,21 +806,25 @@ pub struct ReverseRegisterPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReverseListPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReversePeersPayload {
     pub peers: Vec<PeerInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReverseConnectPayload {
     pub target_fingerprint: String,
     pub username: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReverseAcceptPayload {
     pub target_fingerprint: String,
     pub username: String,
@@ -686,6 +833,7 @@ pub struct ReverseAcceptPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReverseRejectPayload {
     pub target_fingerprint: String,
     pub username: String,
@@ -693,26 +841,31 @@ pub struct ReverseRejectPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SessionListPayload {
     pub sessions: Vec<SessionSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DetachPayload {
     pub session_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DetachOkPayload {
     pub session_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DetachFailPayload {
     pub reason: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OpenTcpPayload {
     pub gateway_id: u32,
     pub host: String,
@@ -720,6 +873,7 @@ pub struct OpenTcpPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OpenUdpPayload {
     pub gateway_id: u32,
     pub host: String,
@@ -727,6 +881,7 @@ pub struct OpenUdpPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ResolveDnsPayload {
     pub gateway_id: u32,
     pub name: String,
@@ -739,6 +894,7 @@ fn default_resolve_dns_record_type() -> String {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GatewayOkPayload {
     pub gateway_id: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -746,6 +902,7 @@ pub struct GatewayOkPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GatewayFailPayload {
     pub gateway_id: u32,
     pub code: u32,
@@ -753,6 +910,7 @@ pub struct GatewayFailPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GatewayClosePayload {
     pub gateway_id: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -760,6 +918,7 @@ pub struct GatewayClosePayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct InboundOpenPayload {
     pub listener_id: u32,
     pub channel_id: u32,
@@ -768,6 +927,7 @@ pub struct InboundOpenPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct InboundAcceptPayload {
     pub channel_id: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -775,6 +935,7 @@ pub struct InboundAcceptPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct InboundRejectPayload {
     pub channel_id: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -782,6 +943,7 @@ pub struct InboundRejectPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DnsResultPayload {
     pub gateway_id: u32,
     pub addresses: Vec<String>,
@@ -790,6 +952,7 @@ pub struct DnsResultPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ListenRequestPayload {
     pub listener_id: u32,
     pub port: u16,
@@ -802,23 +965,27 @@ fn default_listen_request_bind_addr() -> String {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ListenOkPayload {
     pub listener_id: u32,
     pub actual_port: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ListenFailPayload {
     pub listener_id: u32,
     pub reason: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ListenClosePayload {
     pub listener_id: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GatewayDataPayload {
     pub gateway_id: u32,
     #[serde(with = "serde_bytes")]
@@ -826,6 +993,7 @@ pub struct GatewayDataPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GuestInvitePayload {
     pub session_id: String,
     pub ttl: u64,
@@ -838,6 +1006,7 @@ fn default_guest_invite_permissions() -> Vec<String> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GuestJoinPayload {
     pub token: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -845,6 +1014,7 @@ pub struct GuestJoinPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GuestRevokePayload {
     pub token: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -852,6 +1022,7 @@ pub struct GuestRevokePayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ShareSessionPayload {
     pub session_id: String,
     #[serde(default = "default_share_session_mode")]
@@ -864,6 +1035,7 @@ fn default_share_session_mode() -> String {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ShareRevokePayload {
     pub share_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -871,6 +1043,7 @@ pub struct ShareRevokePayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CompressBeginPayload {
     pub algorithm: String,
     #[serde(default = "default_compress_begin_level")]
@@ -882,12 +1055,14 @@ fn default_compress_begin_level() -> u32 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CompressAckPayload {
     pub algorithm: String,
     pub accepted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RateControlPayload {
     pub session_id: String,
     pub max_bytes_per_sec: u64,
@@ -900,6 +1075,7 @@ fn default_rate_control_policy() -> String {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RateWarningPayload {
     pub session_id: String,
     pub queued_bytes: u64,
@@ -907,6 +1083,7 @@ pub struct RateWarningPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SessionLinkPayload {
     pub source_session: String,
     pub target_host: String,
@@ -916,6 +1093,7 @@ pub struct SessionLinkPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SessionUnlinkPayload {
     pub link_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -923,6 +1101,7 @@ pub struct SessionUnlinkPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CopilotAttachPayload {
     pub session_id: String,
     pub model: String,
@@ -931,6 +1110,7 @@ pub struct CopilotAttachPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CopilotSuggestPayload {
     pub session_id: String,
     pub suggestion: String,
@@ -939,6 +1119,7 @@ pub struct CopilotSuggestPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CopilotDetachPayload {
     pub session_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -946,6 +1127,7 @@ pub struct CopilotDetachPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct KeyExchangePayload {
     pub algorithm: String,
     #[serde(with = "serde_bytes")]
@@ -954,6 +1136,7 @@ pub struct KeyExchangePayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EncryptedFramePayload {
     #[serde(with = "serde_bytes")]
     pub nonce: Vec<u8>,
@@ -963,12 +1146,14 @@ pub struct EncryptedFramePayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EchoAckPayload {
     pub channel_id: u32,
     pub echo_seq: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EchoStatePayload {
     pub channel_id: u32,
     pub echo_seq: u64,
@@ -978,6 +1163,7 @@ pub struct EchoStatePayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TermSyncPayload {
     pub channel_id: u32,
     pub frame_seq: u64,
@@ -986,6 +1172,7 @@ pub struct TermSyncPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TermDiffPayload {
     pub channel_id: u32,
     pub frame_seq: u64,
@@ -995,6 +1182,7 @@ pub struct TermDiffPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NodeAnnouncePayload {
     pub node_id: String,
     pub endpoint: String,
@@ -1003,6 +1191,7 @@ pub struct NodeAnnouncePayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NodeRedirectPayload {
     pub target_node: String,
     pub target_endpoint: String,
@@ -1012,6 +1201,7 @@ pub struct NodeRedirectPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SessionGrantPayload {
     pub session_id: String,
     pub principal: String,
@@ -1024,6 +1214,7 @@ fn default_session_grant_permissions() -> Vec<String> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SessionRevokePayload {
     pub session_id: String,
     pub principal: String,
@@ -1032,6 +1223,7 @@ pub struct SessionRevokePayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FileOpPayload {
     pub channel_id: u32,
     pub op: String,
@@ -1043,6 +1235,7 @@ pub struct FileOpPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FileResultPayload {
     pub channel_id: u32,
     pub success: bool,
@@ -1053,6 +1246,7 @@ pub struct FileResultPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FileChunkPayload {
     pub channel_id: u32,
     pub offset: u64,
@@ -1062,6 +1256,7 @@ pub struct FileChunkPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PolicyEvalPayload {
     pub request_id: String,
     pub action: String,
@@ -1071,6 +1266,7 @@ pub struct PolicyEvalPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PolicyResultPayload {
     pub request_id: String,
     pub allowed: bool,
@@ -1079,6 +1275,7 @@ pub struct PolicyResultPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PolicyUpdatePayload {
     pub policy_id: String,
     pub rules: serde_json::Value,
@@ -1086,6 +1283,7 @@ pub struct PolicyUpdatePayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TerminalConfigPayload {
     pub channel_id: u32,
     pub frontend: String,

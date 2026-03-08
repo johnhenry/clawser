@@ -22,7 +22,7 @@ use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, warn};
 use wsh_core::keys::{load_authorized_keys, AuthorizedKey};
 use wsh_core::messages::*;
-use wsh_core::{cbor_decode, fingerprint, frame_encode, verify_token, WshError, WshResult};
+use wsh_core::{decode_envelope, fingerprint, frame_encode, verify_token, WshError, WshResult};
 
 /// Per-connection context threaded through the session loop.
 struct ConnectionContext {
@@ -538,7 +538,7 @@ impl WshServer {
 
         // Read HELLO
         let hello_bytes = read_webtransport_frame(&mut recv).await?;
-        let envelope: Envelope = cbor_decode(&hello_bytes)?;
+        let envelope = decode_envelope(&hello_bytes)?;
 
         let hello = match (&envelope.msg_type, &envelope.payload) {
             (MsgType::Hello, Payload::Hello(h)) => h.clone(),
@@ -570,7 +570,7 @@ impl WshServer {
 
         // Read AUTH
         let auth_bytes = read_webtransport_frame(&mut recv).await?;
-        let auth_envelope: Envelope = cbor_decode(&auth_bytes)?;
+        let auth_envelope = decode_envelope(&auth_bytes)?;
 
         let auth = match (&auth_envelope.msg_type, &auth_envelope.payload) {
             (MsgType::Auth, Payload::Auth(a)) => a.clone(),
@@ -708,10 +708,10 @@ impl WshServer {
         info!(remote = %remote, "handling WebSocket connection");
 
         // Read HELLO
-        let hello_bytes = websocket::ws_recv_binary(&mut conn.ws_stream)
+        let hello_bytes = websocket::ws_recv_control(&mut conn.ws_stream)
             .await?
             .ok_or_else(|| WshError::Transport("connection closed before HELLO".into()))?;
-        let envelope: Envelope = cbor_decode(&hello_bytes)?;
+        let envelope = decode_envelope(&hello_bytes)?;
 
         let hello = match (&envelope.msg_type, &envelope.payload) {
             (MsgType::Hello, Payload::Hello(h)) => h.clone(),
@@ -732,23 +732,23 @@ impl WshServer {
         let hello_result = handshake::handle_hello(&hello, &server_fingerprints, Some(&features))?;
 
         let sh_frame = frame_encode(&hello_result.server_hello)?;
-        websocket::ws_send_binary(&mut conn.ws_stream, &sh_frame).await?;
+        websocket::ws_send_control(&mut conn.ws_stream, &sh_frame).await?;
 
         let challenge_frame = frame_encode(&hello_result.challenge)?;
-        websocket::ws_send_binary(&mut conn.ws_stream, &challenge_frame).await?;
+        websocket::ws_send_control(&mut conn.ws_stream, &challenge_frame).await?;
 
         // Read AUTH
-        let auth_bytes = websocket::ws_recv_binary(&mut conn.ws_stream)
+        let auth_bytes = websocket::ws_recv_control(&mut conn.ws_stream)
             .await?
             .ok_or_else(|| WshError::Transport("connection closed before AUTH".into()))?;
-        let auth_envelope: Envelope = cbor_decode(&auth_bytes)?;
+        let auth_envelope = decode_envelope(&auth_bytes)?;
 
         let auth = match (&auth_envelope.msg_type, &auth_envelope.payload) {
             (MsgType::Auth, Payload::Auth(a)) => a.clone(),
             _ => {
                 let fail = handshake::build_auth_fail("expected AUTH message");
                 let fail_frame = frame_encode(&fail)?;
-                let _ = websocket::ws_send_binary(&mut conn.ws_stream, &fail_frame).await;
+                let _ = websocket::ws_send_control(&mut conn.ws_stream, &fail_frame).await;
                 return Err(WshError::InvalidMessage("expected AUTH message".into()));
             }
         };
@@ -763,7 +763,7 @@ impl WshServer {
             if rate_limited {
                 let fail = handshake::build_auth_fail("rate limited: too many auth attempts");
                 let fail_frame = frame_encode(&fail)?;
-                let _ = websocket::ws_send_binary(&mut conn.ws_stream, &fail_frame).await;
+                let _ = websocket::ws_send_control(&mut conn.ws_stream, &fail_frame).await;
                 return Err(WshError::AuthFailed("rate limited".into()));
             }
         }
@@ -777,13 +777,13 @@ impl WshServer {
                             let fail = handshake::build_auth_fail("invalid password");
                             let fail_frame = frame_encode(&fail)?;
                             let _ =
-                                websocket::ws_send_binary(&mut conn.ws_stream, &fail_frame).await;
+                                websocket::ws_send_control(&mut conn.ws_stream, &fail_frame).await;
                             return Err(WshError::AuthFailed("invalid password".into()));
                         }
                     } else {
                         let fail = handshake::build_auth_fail("unknown user");
                         let fail_frame = frame_encode(&fail)?;
-                        let _ = websocket::ws_send_binary(&mut conn.ws_stream, &fail_frame).await;
+                        let _ = websocket::ws_send_control(&mut conn.ws_stream, &fail_frame).await;
                         return Err(WshError::AuthFailed(
                             "unknown user for password auth".into(),
                         ));
@@ -792,7 +792,7 @@ impl WshServer {
                 None => {
                     let fail = handshake::build_auth_fail("password required");
                     let fail_frame = frame_encode(&fail)?;
-                    let _ = websocket::ws_send_binary(&mut conn.ws_stream, &fail_frame).await;
+                    let _ = websocket::ws_send_control(&mut conn.ws_stream, &fail_frame).await;
                     return Err(WshError::AuthFailed(
                         "password auth without password".into(),
                     ));
@@ -819,7 +819,7 @@ impl WshServer {
                     self.config.session_ttl,
                 );
                 let ok_frame = frame_encode(&ok)?;
-                websocket::ws_send_binary(&mut conn.ws_stream, &ok_frame).await?;
+                websocket::ws_send_control(&mut conn.ws_stream, &ok_frame).await?;
 
                 info!(
                     remote = %remote,
@@ -863,7 +863,7 @@ impl WshServer {
             Err(e) => {
                 let fail = handshake::build_auth_fail(&e.to_string());
                 let fail_frame = frame_encode(&fail)?;
-                let _ = websocket::ws_send_binary(&mut conn.ws_stream, &fail_frame).await;
+                let _ = websocket::ws_send_control(&mut conn.ws_stream, &fail_frame).await;
                 return Err(e);
             }
         }
@@ -957,7 +957,7 @@ impl WshServer {
                 frame_result = read_webtransport_frame(recv) => {
                     match frame_result {
                         Ok(data) => {
-                            let envelope: Envelope = cbor_decode(&data)?;
+                            let envelope = decode_envelope(&data)?;
                             if let Some(response) = self.dispatch_message(envelope, ctx, inbound_tx.clone(), data_tx.clone()).await? {
                                 let frame = frame_encode(&response)?;
                                 send.write_all(&frame)
@@ -1000,7 +1000,7 @@ impl WshServer {
                         }),
                     };
                     if let Ok(frame) = frame_encode(&shutdown_msg) {
-                        let _ = websocket::ws_send_binary(&mut conn.ws_stream, &frame).await;
+                        let _ = websocket::ws_send_control(&mut conn.ws_stream, &frame).await;
                     }
                     break;
                 }
@@ -1008,7 +1008,7 @@ impl WshServer {
                 Some(event) = inbound_rx.recv() => {
                     let msg = build_inbound_open(&event);
                     let frame = frame_encode(&msg)?;
-                    websocket::ws_send_binary(&mut conn.ws_stream, &frame).await?;
+                    websocket::ws_send_control(&mut conn.ws_stream, &frame).await?;
                 }
 
                 Some(event) = data_rx.recv() => {
@@ -1022,22 +1022,22 @@ impl WshServer {
                         }
                     };
                     let frame = frame_encode(&msg)?;
-                    websocket::ws_send_binary(&mut conn.ws_stream, &frame).await?;
+                    websocket::ws_send_control(&mut conn.ws_stream, &frame).await?;
                 }
 
                 // Peer push messages (e.g. forwarded ReverseConnect)
                 Some(envelope) = peer_rx.recv() => {
                     let frame = frame_encode(&envelope)?;
-                    websocket::ws_send_binary(&mut conn.ws_stream, &frame).await?;
+                    websocket::ws_send_control(&mut conn.ws_stream, &frame).await?;
                 }
 
-                ws_result = websocket::ws_recv_binary(&mut conn.ws_stream) => {
+                ws_result = websocket::ws_recv_control(&mut conn.ws_stream) => {
                     match ws_result {
                         Ok(Some(data)) => {
-                            let envelope: Envelope = cbor_decode(&data)?;
+                            let envelope = decode_envelope(&data)?;
                             if let Some(response) = self.dispatch_message(envelope, ctx, inbound_tx.clone(), data_tx.clone()).await? {
                                 let frame = frame_encode(&response)?;
-                                websocket::ws_send_binary(&mut conn.ws_stream, &frame).await?;
+                                websocket::ws_send_control(&mut conn.ws_stream, &frame).await?;
                             }
                         }
                         Ok(None) => {

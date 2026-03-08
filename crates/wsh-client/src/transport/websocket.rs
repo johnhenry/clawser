@@ -50,6 +50,25 @@ fn parse_frame_header(data: &[u8]) -> WshResult<(u8, u32, usize)> {
     Ok((frame_type, stream_id, 5))
 }
 
+fn decode_control_payload(data: &[u8]) -> WshResult<&[u8]> {
+    if data.len() < 4 {
+        return Err(WshError::Transport(format!(
+            "control payload too short: {} bytes",
+            data.len()
+        )));
+    }
+
+    let len = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
+    if data.len() != 4 + len {
+        return Err(WshError::Transport(format!(
+            "control payload length mismatch: declared {len}, got {} bytes",
+            data.len().saturating_sub(4)
+        )));
+    }
+
+    Ok(&data[4..])
+}
+
 /// A virtual byte stream backed by mpsc channels.
 struct VirtualStream {
     stream_id: u32,
@@ -224,7 +243,15 @@ impl WebSocketSession {
 
             match frame_type {
                 FRAME_CONTROL => {
-                    if control_tx.send(payload.to_vec()).await.is_err() {
+                    let control_payload = match decode_control_payload(payload) {
+                        Ok(payload) => payload,
+                        Err(e) => {
+                            tracing::warn!("invalid control payload: {}", e);
+                            continue;
+                        }
+                    };
+
+                    if control_tx.send(control_payload.to_vec()).await.is_err() {
                         tracing::debug!("control channel closed");
                         break;
                     }
@@ -356,5 +383,16 @@ impl TransportSession for WebSocketSession {
 impl Drop for WebSocketSession {
     fn drop(&mut self) {
         self.dispatch_handle.abort();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_control_payload;
+
+    #[test]
+    fn decode_control_payload_unwraps_inner_frame() {
+        let payload = decode_control_payload(&[0, 0, 0, 2, 0xa0, 0xf5]).unwrap();
+        assert_eq!(payload, &[0xa0, 0xf5]);
     }
 }

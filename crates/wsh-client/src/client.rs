@@ -10,7 +10,7 @@ use std::time::Duration;
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::time;
 
-use wsh_core::codec::{cbor_decode, frame_encode};
+use wsh_core::codec::{decode_envelope, frame_encode};
 use wsh_core::error::{WshError, WshResult};
 use wsh_core::messages::*;
 
@@ -100,9 +100,14 @@ impl WshClient {
     /// Returns the server-assigned session ID on success.
     pub async fn connect(url: &str, config: ConnectConfig) -> WshResult<Self> {
         let known_host = known_host_label(url)?;
+        let timeout = Duration::from_secs(config.timeout_secs);
 
-        // Auto-select and connect transport
-        let transport = transport::auto_connect(url).await?;
+        // Auto-select and connect transport within the configured connection timeout.
+        let transport = match time::timeout(timeout, transport::auto_connect(url)).await {
+            Ok(Ok(transport)) => transport,
+            Ok(Err(err)) => return Err(err),
+            Err(_) => return Err(WshError::Timeout),
+        };
         let transport = Arc::new(Mutex::new(transport));
 
         let (control_action_tx, control_action_rx) = mpsc::channel::<ControlAction>(256);
@@ -132,7 +137,6 @@ impl WshClient {
         };
 
         // Perform handshake with timeout
-        let timeout = Duration::from_secs(config.timeout_secs);
         let handshake_result = time::timeout(timeout, client.handshake(&config, &known_host)).await;
 
         match handshake_result {
@@ -488,7 +492,7 @@ impl WshClient {
 
         // Receive SERVER_HELLO
         let server_hello_data = self.recv_raw().await?;
-        let server_hello: Envelope = cbor_decode(&server_hello_data)?;
+        let server_hello = decode_envelope(&server_hello_data)?;
 
         let (server_session_id, server_fingerprints) = match &server_hello.payload {
             Payload::ServerHello(sh) => (sh.session_id.clone(), sh.fingerprints.clone()),
@@ -504,7 +508,7 @@ impl WshClient {
 
         // Receive CHALLENGE
         let challenge_data = self.recv_raw().await?;
-        let challenge: Envelope = cbor_decode(&challenge_data)?;
+        let challenge = decode_envelope(&challenge_data)?;
 
         let nonce = match &challenge.payload {
             Payload::Challenge(c) => c.nonce.clone(),
@@ -554,7 +558,7 @@ impl WshClient {
 
         // Receive AUTH_OK or AUTH_FAIL
         let auth_response_data = self.recv_raw().await?;
-        let auth_response: Envelope = cbor_decode(&auth_response_data)?;
+        let auth_response = decode_envelope(&auth_response_data)?;
 
         match auth_response.payload {
             Payload::AuthOk(ok) => {
@@ -567,9 +571,10 @@ impl WshClient {
                 Ok(ok.session_id)
             }
             Payload::AuthFail(fail) => Err(WshError::AuthFailed(fail.reason)),
-            _ => Err(WshError::InvalidMessage(
-                "expected AUTH_OK or AUTH_FAIL".into(),
-            )),
+            other => Err(WshError::InvalidMessage(format!(
+                "expected AUTH_OK or AUTH_FAIL, got msg_type={:?}, payload={:?}",
+                auth_response.msg_type, other
+            ))),
         }
     }
 
@@ -765,7 +770,7 @@ impl WshClient {
                 } => {
                     match result {
                         Ok(data) => {
-                            match cbor_decode::<Envelope>(&data) {
+                            match decode_envelope(&data) {
                                 Ok(envelope) => {
                                     Self::handle_incoming(
                                         envelope,

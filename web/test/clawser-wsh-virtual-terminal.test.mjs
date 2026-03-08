@@ -80,7 +80,32 @@ describe('browser virtual terminal', () => {
     await session.write('c\r');
 
     assert.deepEqual(shell.state.history, ['cb']);
-    assert.ok(sessionTraffic(sent).includes('ran:cb\n'));
+    assert.ok(sessionTraffic(sent).includes('ran:cb\r\n'));
+  });
+
+  it('normalizes command output newlines for terminal rendering', async () => {
+    const sent = [];
+    const shell = createShell();
+    const session = new VirtualTerminalSession({
+      participantKey: 'reverse:test:newlines',
+      channelId: 4,
+      shellFactory: async () => shell,
+      sendControl: async (msg) => sent.push(msg),
+    });
+
+    shell.exec = async (command) => {
+      shell.state.history.push(command);
+      return { stdout: 'a\nb\n', stderr: '', exitCode: 0 };
+    };
+
+    await session.start();
+    sent.length = 0;
+
+    await session.write('lines\r');
+
+    const traffic = sessionTraffic(sent);
+    assert.ok(traffic.includes('a\r\nb\r\n/$ '));
+    assert.ok(!traffic.includes('a\nb\n/$ '));
   });
 
   it('prints ^C and redraws the prompt when interrupting a running command', async () => {

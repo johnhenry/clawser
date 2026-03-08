@@ -399,4 +399,17 @@ describe('Stderr redirect execution', () => {
     assert.equal(files['/out.txt'], 'output');
     assert.equal(files['/err.txt'], 'errors');
   });
+
+  it('stdout redirect suppresses terminal output after writing the file', async () => {
+    const files = {};
+    const mockFs = {
+      readFile: async (p) => files[p] || '',
+      writeFile: async (p, c) => { files[p] = c; },
+    };
+    const shell = new ClawserShell({ fs: mockFs });
+    const result = await shell.exec('echo "hi" > hello');
+    assert.equal(result.stdout, '');
+    assert.equal(result.stderr, '');
+    assert.equal(files['/hello'], 'hi\n');
+  });
 });

@@ -31,6 +31,10 @@ function trimReplay(replay, limit) {
   return replay.slice(replay.length - limit);
 }
 
+function normalizeTerminalText(text) {
+  return String(text ?? '').replace(/\r?\n/g, '\r\n');
+}
+
 async function hashReplay(replay) {
   const subtle = globalThis.crypto?.subtle;
   if (!subtle) {
@@ -472,8 +476,9 @@ export class VirtualTerminalSession {
 
   async #sendText(text) {
     if (!text) return;
-    const data = textEncoder.encode(text);
-    this.#replay = trimReplay(this.#replay + text, this.#replayLimit);
+    const normalized = normalizeTerminalText(text);
+    const data = textEncoder.encode(normalized);
+    this.#replay = trimReplay(this.#replay + normalized, this.#replayLimit);
     await this.#sendControl(sessionDataMsg({
       channelId: this.#channelId,
       data,

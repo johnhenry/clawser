@@ -12,7 +12,9 @@ use crate::config::parse_target;
 pub struct ResolvedTarget {
     pub user: String,
     pub host: String,
+    pub port: u16,
     pub url: String,
+    pub fallback_urls: Vec<String>,
     pub transport: Option<String>,
 }
 
@@ -30,34 +32,54 @@ pub struct LastSession {
 pub fn resolve_target(target: &str, port: u16, transport: Option<&str>) -> Result<ResolvedTarget> {
     let (user, host) = parse_target(target)?;
     let transport = transport.map(ToString::to_string);
-    let scheme = match transport.as_deref() {
-        Some("wt") => "https",
-        Some("ws") | None => "ws",
-        Some(other) => anyhow::bail!("unknown transport: {other}"),
-    };
-    let url = format!("{scheme}://{host}:{port}");
+    let mut urls = connection_urls(&host, port, transport.as_deref())?;
+    let url = urls.remove(0);
     Ok(ResolvedTarget {
         user,
         host,
+        port,
         url,
+        fallback_urls: urls,
         transport,
     })
 }
 
 /// Connect and authenticate a client for a resolved target.
 pub async fn connect_client(resolved: &ResolvedTarget, identity: &str) -> Result<WshClient> {
-    let client = WshClient::connect(
-        &resolved.url,
-        ConnectConfig {
-            username: resolved.user.clone(),
-            key_name: Some(identity.to_string()),
-            ..Default::default()
-        },
+    let config = ConnectConfig {
+        username: resolved.user.clone(),
+        key_name: Some(identity.to_string()),
+        ..Default::default()
+    };
+
+    let mut attempts = Vec::with_capacity(1 + resolved.fallback_urls.len());
+    attempts.push((transport_label(&resolved.url), resolved.url.clone()));
+    attempts.extend(
+        resolved
+            .fallback_urls
+            .iter()
+            .cloned()
+            .map(|url| (transport_label(&url), url)),
+    );
+
+    let mut errors = Vec::new();
+    for (label, url) in attempts {
+        match WshClient::connect(&url, config.clone()).await {
+            Ok(client) => return Ok(client),
+            Err(err) => errors.push(format!("{label}: {err}")),
+        }
+    }
+
+    if errors.len() == 1 {
+        anyhow::bail!("failed to connect to {} ({})", resolved.url, errors[0]);
+    }
+
+    anyhow::bail!(
+        "failed to connect to {}:{} across transports ({})",
+        resolved.host,
+        resolved.port,
+        errors.join("; ")
     )
-    .await
-    .map_err(|e| anyhow::anyhow!("{e}"))
-    .with_context(|| format!("failed to connect to {}", resolved.url))?;
-    Ok(client)
 }
 
 /// Save the most recent successful connection for follow-up commands.
@@ -140,22 +162,53 @@ fn active_attachment_path() -> Result<PathBuf> {
     Ok(home.join(".wsh").join("active_attachment"))
 }
 
+fn connection_urls(host: &str, port: u16, transport: Option<&str>) -> Result<Vec<String>> {
+    match transport {
+        Some("wt") => Ok(vec![format!("https://{host}:{port}")]),
+        Some("ws") => Ok(vec![format!("wss://{host}:{port}")]),
+        None => Ok(vec![
+            format!("https://{host}:{port}"),
+            format!("wss://{host}:{port}"),
+        ]),
+        Some(other) => anyhow::bail!("unknown transport: {other}"),
+    }
+}
+
+fn transport_label(url: &str) -> &'static str {
+    if url.starts_with("https://") || url.starts_with("wt://") {
+        "wt"
+    } else {
+        "ws"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn resolve_target_defaults_to_ws() {
+    fn resolve_target_defaults_to_webtransport_then_websocket() {
         let resolved = resolve_target("alice@example.com", 4422, None).unwrap();
         assert_eq!(resolved.user, "alice");
         assert_eq!(resolved.host, "example.com");
-        assert_eq!(resolved.url, "ws://example.com:4422");
+        assert_eq!(resolved.port, 4422);
+        assert_eq!(resolved.url, "https://example.com:4422");
+        assert_eq!(resolved.fallback_urls, vec!["wss://example.com:4422"]);
     }
 
     #[test]
     fn resolve_target_supports_wt() {
         let resolved = resolve_target("bob@example.com", 4433, Some("wt")).unwrap();
         assert_eq!(resolved.url, "https://example.com:4433");
+        assert!(resolved.fallback_urls.is_empty());
         assert_eq!(resolved.transport.as_deref(), Some("wt"));
+    }
+
+    #[test]
+    fn resolve_target_supports_secure_websocket() {
+        let resolved = resolve_target("carol@example.com", 4422, Some("ws")).unwrap();
+        assert_eq!(resolved.url, "wss://example.com:4422");
+        assert!(resolved.fallback_urls.is_empty());
+        assert_eq!(resolved.transport.as_deref(), Some("ws"));
     }
 }

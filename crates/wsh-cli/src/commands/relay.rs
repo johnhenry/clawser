@@ -5,9 +5,10 @@
 
 use anyhow::{Context, Result};
 use tracing::{debug, info};
-use wsh_client::{ConnectConfig, SessionOpts, WshClient};
+use wsh_client::SessionOpts;
 use wsh_core::messages::*;
 
+use crate::commands::common::{connect_client, resolve_target};
 use crate::commands::interactive;
 use crate::terminal as term;
 
@@ -55,27 +56,14 @@ pub async fn run_reverse(
     let fingerprint = wsh_core::fingerprint(&public_bytes);
     let short_fp = &fingerprint[..fingerprint.len().min(12)];
 
-    let scheme = match transport {
-        Some("wt") => "https",
-        Some("ws") | None => "ws",
-        Some(other) => anyhow::bail!("unknown transport: {other}"),
-    };
-    let url = format!("{scheme}://{relay_host}:{port}");
-    debug!(url = %url, "relay URL");
+    let resolved = resolve_target(relay_host, port, transport)?;
+    debug!(url = %resolved.url, fallback_urls = ?resolved.fallback_urls, "relay URL");
 
     // Connect and authenticate
-    let username = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-    let client = WshClient::connect(
-        &url,
-        ConnectConfig {
-            username: username.clone(),
-            key_name: Some(identity.to_string()),
-            ..Default::default()
-        },
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!("{e}"))
-    .context("failed to connect to relay")?;
+    let username = resolved.user.clone();
+    let client = connect_client(&resolved, identity)
+        .await
+        .context("failed to connect to relay")?;
 
     // Take the reverse-connect receiver before sending registration
     let mut rc_rx = client
@@ -135,27 +123,13 @@ pub async fn run_peers(
 ) -> Result<()> {
     info!(relay = %relay_host, "listing peers");
 
-    let scheme = match transport {
-        Some("wt") => "https",
-        Some("ws") | None => "ws",
-        Some(other) => anyhow::bail!("unknown transport: {other}"),
-    };
-    let url = format!("{scheme}://{relay_host}:{port}");
-    debug!(url = %url, "relay URL");
+    let resolved = resolve_target(relay_host, port, transport)?;
+    debug!(url = %resolved.url, fallback_urls = ?resolved.fallback_urls, "relay URL");
 
     // Connect and authenticate
-    let username = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-    let client = WshClient::connect(
-        &url,
-        ConnectConfig {
-            username,
-            key_name: Some(identity.to_string()),
-            ..Default::default()
-        },
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!("{e}"))
-    .context("failed to connect to relay")?;
+    let client = connect_client(&resolved, identity)
+        .await
+        .context("failed to connect to relay")?;
 
     // Send ReverseList and wait for ReversePeers
     let list_msg = Envelope {
@@ -222,27 +196,14 @@ pub async fn run_connect(
 ) -> Result<()> {
     info!(relay = %relay_host, target = %target_fingerprint, "reverse connecting to peer");
 
-    let scheme = match transport {
-        Some("wt") => "https",
-        Some("ws") | None => "ws",
-        Some(other) => anyhow::bail!("unknown transport: {other}"),
-    };
-    let url = format!("{scheme}://{relay_host}:{port}");
-    debug!(url = %url, "relay URL");
+    let resolved = resolve_target(relay_host, port, transport)?;
+    debug!(url = %resolved.url, fallback_urls = ?resolved.fallback_urls, "relay URL");
 
     // Connect and authenticate
-    let username = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-    let client = WshClient::connect(
-        &url,
-        ConnectConfig {
-            username: username.clone(),
-            key_name: Some(identity.to_string()),
-            ..Default::default()
-        },
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!("{e}"))
-    .context("failed to connect to relay")?;
+    let username = resolved.user.clone();
+    let client = connect_client(&resolved, identity)
+        .await
+        .context("failed to connect to relay")?;
 
     let connect_msg = Envelope {
         msg_type: MsgType::ReverseConnect,

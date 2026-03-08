@@ -3,6 +3,7 @@
 //! Wire format: `[4-byte big-endian length][CBOR payload]`
 
 use crate::error::WshResult;
+use crate::messages::{Envelope, MsgType, Payload};
 use std::io::Cursor;
 
 /// Encode a serializable value into a length-prefixed CBOR frame.
@@ -22,6 +23,40 @@ pub fn cbor_decode<T: serde::de::DeserializeOwned>(data: &[u8]) -> WshResult<T> 
     let cursor = Cursor::new(data);
     let value: T = ciborium::from_reader(cursor)?;
     Ok(value)
+}
+
+/// Decode an envelope using the message type to disambiguate flattened payloads.
+pub fn decode_envelope(data: &[u8]) -> WshResult<Envelope> {
+    #[derive(serde::Deserialize)]
+    struct EnvelopeTypeOnly {
+        #[serde(rename = "type")]
+        msg_type: MsgType,
+    }
+
+    let header: EnvelopeTypeOnly = cbor_decode(data)?;
+    let value: ciborium::value::Value = cbor_decode(data)?;
+    let payload_value = match value {
+        ciborium::value::Value::Map(entries) => ciborium::value::Value::Map(
+            entries
+                .into_iter()
+                .filter(|(key, _)| !matches!(key, ciborium::value::Value::Text(text) if text == "type"))
+                .collect(),
+        ),
+        other => {
+            return Err(crate::error::WshError::Codec(format!(
+                "expected envelope map, got {:?}",
+                other
+            )))
+        }
+    };
+
+    let mut payload_bytes = Vec::new();
+    ciborium::into_writer(&payload_value, &mut payload_bytes)?;
+    let payload = Payload::decode_for_msg_type(header.msg_type, &payload_bytes)?;
+    Ok(Envelope {
+        msg_type: header.msg_type,
+        payload,
+    })
 }
 
 /// Streaming frame decoder: accumulates bytes and yields complete messages.
@@ -107,6 +142,7 @@ impl FrameDecoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::messages::{AuthOkPayload, ReverseListPayload};
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -189,5 +225,44 @@ mod tests {
 
         decoder.reset();
         assert_eq!(decoder.pending(), 0);
+    }
+
+    #[test]
+    fn envelope_payload_decode_respects_auth_ok_variant() {
+        let envelope = Envelope {
+            msg_type: MsgType::AuthOk,
+            payload: Payload::AuthOk(AuthOkPayload {
+                session_id: "session-123".into(),
+                token: vec![1, 2, 3, 4],
+                ttl: 30,
+            }),
+        };
+
+        let frame = frame_encode(&envelope).unwrap();
+        let decoded = decode_envelope(&frame[4..]).unwrap();
+
+        assert!(matches!(decoded.msg_type, MsgType::AuthOk));
+        match decoded.payload {
+            Payload::AuthOk(payload) => {
+                assert_eq!(payload.session_id, "session-123");
+                assert_eq!(payload.token, vec![1, 2, 3, 4]);
+                assert_eq!(payload.ttl, 30);
+            }
+            other => panic!("expected AuthOk payload, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn envelope_payload_decode_respects_empty_variant() {
+        let envelope = Envelope {
+            msg_type: MsgType::ReverseList,
+            payload: Payload::ReverseList(ReverseListPayload {}),
+        };
+
+        let frame = frame_encode(&envelope).unwrap();
+        let decoded = decode_envelope(&frame[4..]).unwrap();
+
+        assert!(matches!(decoded.msg_type, MsgType::ReverseList));
+        assert!(matches!(decoded.payload, Payload::ReverseList(_)));
     }
 }

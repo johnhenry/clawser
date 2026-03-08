@@ -161,24 +161,28 @@ function decodeValue(state) {
     case MT_UNSIGNED: return decodeUint(state, ai);
     case MT_NEGATIVE: return -1 - decodeUint(state, ai);
     case MT_BYTES: {
+      if (ai === BREAK) return decodeIndefiniteBytes(state);
       const len = decodeUint(state, ai);
       const bytes = state.data.slice(state.offset, state.offset + len);
       state.offset += len;
       return bytes;
     }
     case MT_TEXT: {
+      if (ai === BREAK) return decodeIndefiniteText(state);
       const len = decodeUint(state, ai);
       const text = decoder.decode(state.data.subarray(state.offset, state.offset + len));
       state.offset += len;
       return text;
     }
     case MT_ARRAY: {
+      if (ai === BREAK) return decodeIndefiniteArray(state);
       const len = decodeUint(state, ai);
       const arr = new Array(len);
       for (let i = 0; i < len; i++) arr[i] = decodeValue(state);
       return arr;
     }
     case MT_MAP: {
+      if (ai === BREAK) return decodeIndefiniteMap(state);
       const len = decodeUint(state, ai);
       const obj = {};
       for (let i = 0; i < len; i++) {
@@ -218,6 +222,58 @@ function decodeValue(state) {
     default:
       throw new Error(`cborDecode: unknown major type ${mt}`);
   }
+}
+
+function decodeIndefiniteBytes(state) {
+  const chunks = [];
+  while (!consumeBreak(state)) {
+    const chunk = decodeValue(state);
+    if (!(chunk instanceof Uint8Array)) {
+      throw new Error('cborDecode: invalid chunk in indefinite byte string');
+    }
+    chunks.push(chunk);
+  }
+  return concat(chunks);
+}
+
+function decodeIndefiniteText(state) {
+  let text = '';
+  while (!consumeBreak(state)) {
+    const chunk = decodeValue(state);
+    if (typeof chunk !== 'string') {
+      throw new Error('cborDecode: invalid chunk in indefinite text string');
+    }
+    text += chunk;
+  }
+  return text;
+}
+
+function decodeIndefiniteArray(state) {
+  const arr = [];
+  while (!consumeBreak(state)) {
+    arr.push(decodeValue(state));
+  }
+  return arr;
+}
+
+function decodeIndefiniteMap(state) {
+  const obj = {};
+  while (!consumeBreak(state)) {
+    const key = decodeValue(state);
+    obj[key] = decodeValue(state);
+  }
+  return obj;
+}
+
+function consumeBreak(state) {
+  if (state.offset >= state.data.length) {
+    throw new Error('cborDecode: unexpected end in indefinite value');
+  }
+  if (state.data[state.offset] === 0xff) {
+    state.offset += 1;
+    return true;
+  }
+  return false;
 }
 
 function decodeUint(state, ai) {

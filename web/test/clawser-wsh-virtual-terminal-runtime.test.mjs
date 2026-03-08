@@ -54,7 +54,7 @@ describe('VirtualTerminalSession', () => {
 
     assert.equal(session.closed, false);
     assert.ok(session.replay.includes('/$ '));
-    assert.ok(session.replay.includes('/\n'));
+    assert.ok(session.replay.includes('/\r\n'));
     assert.deepEqual(session.shell.state.history, ['pwd']);
   });
 
@@ -158,7 +158,7 @@ describe('VirtualTerminalManager', () => {
     });
 
     const traffic = decodeSessionTraffic(client.sent);
-    assert.ok(traffic.includes('/\n'));
+    assert.ok(traffic.includes('/\r\n'));
     assert.equal(manager.getChannel(participantKey, 11), null);
     assert.ok(client.sent.some((msg) => msg.type === MSG.EXIT));
     assert.ok(client.sent.some((msg) => msg.type === MSG.CLOSE));
@@ -218,7 +218,7 @@ describe('VirtualTerminalManager', () => {
     assert.equal(resumed, session);
     assert.equal(resumed.cols, 120);
     assert.equal(resumed.rows, 40);
-    assert.ok(decodeSessionTraffic(clientB.sent).includes('/\n'));
+    assert.ok(decodeSessionTraffic(clientB.sent).includes('/\r\n'));
 
     await manager.close();
   });
