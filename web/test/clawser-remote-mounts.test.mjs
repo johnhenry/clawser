@@ -49,4 +49,48 @@ describe('RemoteMountManager', () => {
     assert.equal(calls[1].opts.path, '/workspace/hello.txt')
     assert.equal(calls[2].opts.operation, 'write')
   })
+
+  it('detaches mounts and records audit when the remote path fails fatally', async () => {
+    const fs = new MountableFs()
+    const records = []
+    const manager = new RemoteMountManager({
+      mountableFs: fs,
+      runtimeRegistry: {
+        resolvePeer(selector) {
+          if (selector !== 'peer-1') return null
+          return { identity: { canonicalId: 'peer-1' } }
+        },
+      },
+      sessionBroker: {
+        async openSession() {
+          const error = new Error('Transport closed')
+          error.layer = 'transport'
+          error.code = 'transport-closed'
+          throw error
+        },
+      },
+      auditRecorder: {
+        async record(operation, payload) {
+          records.push({ operation, payload })
+        },
+      },
+    })
+
+    await manager.mountPeer('peer-1', {
+      mountPoint: '/mnt/peers/demo',
+      remotePath: '/workspace',
+    })
+
+    await assert.rejects(
+      () => fs.readMounted('/mnt/peers/demo/hello.txt'),
+      /Transport closed/,
+    )
+
+    assert.equal(fs.isMounted('/mnt/peers/demo'), false)
+    assert.deepEqual(
+      records.map((entry) => entry.operation),
+      ['remote_mount', 'remote_mount_operation', 'remote_mount_detached'],
+    )
+    assert.equal(records[1].payload.outcome, 'failure')
+  })
 })
