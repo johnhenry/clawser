@@ -29,11 +29,43 @@ fn reverse_accept_summary(accept: &ReverseAcceptPayload) -> String {
     } else {
         accept.capabilities.join(", ")
     };
+    let session_features = peer_session_features(
+        accept.supports_attach,
+        accept.supports_replay,
+        accept.supports_echo,
+        accept.supports_term_sync,
+    );
 
     format!(
-        "{} / {} [{}]",
-        accept.peer_type, accept.shell_backend, caps
+        "{} / {} [{}] {{{}}}",
+        accept.peer_type, accept.shell_backend, caps, session_features
     )
+}
+
+fn peer_session_features(
+    supports_attach: bool,
+    supports_replay: bool,
+    supports_echo: bool,
+    supports_term_sync: bool,
+) -> String {
+    let mut features = Vec::new();
+    if supports_attach {
+        features.push("attach");
+    }
+    if supports_replay {
+        features.push("replay");
+    }
+    if supports_echo {
+        features.push("echo");
+    }
+    if supports_term_sync {
+        features.push("sync");
+    }
+    if features.is_empty() {
+        "none".to_string()
+    } else {
+        features.join(",")
+    }
 }
 
 fn filter_peers(peers: Vec<PeerInfo>, options: &PeerQueryOptions) -> Vec<PeerInfo> {
@@ -233,12 +265,24 @@ pub async fn run_peers(
             );
         } else {
             println!(
-                "{:<14} {:<16} {:<14} {:<16} {:<20} {}",
-                "FINGERPRINT", "USERNAME", "TYPE", "BACKEND", "CAPABILITIES", "LAST SEEN"
+                "{:<14} {:<16} {:<14} {:<16} {:<18} {:<20} {}",
+                "FINGERPRINT",
+                "USERNAME",
+                "TYPE",
+                "BACKEND",
+                "SESSION",
+                "CAPABILITIES",
+                "LAST SEEN"
             );
             println!(
-                "{:<14} {:<16} {:<14} {:<16} {:<20} {}",
-                "───────────", "────────", "────", "───────", "────────────", "─────────"
+                "{:<14} {:<16} {:<14} {:<16} {:<18} {:<20} {}",
+                "───────────",
+                "────────",
+                "────",
+                "───────",
+                "───────",
+                "────────────",
+                "─────────"
             );
 
             if peers.is_empty() {
@@ -246,11 +290,17 @@ pub async fn run_peers(
             } else {
                 for peer in &peers {
                     println!(
-                        "{:<14} {:<16} {:<14} {:<16} {:<20} {}",
+                        "{:<14} {:<16} {:<14} {:<16} {:<18} {:<20} {}",
                         peer.fingerprint_short,
                         peer.username,
                         peer.peer_type,
                         peer.shell_backend,
+                        peer_session_features(
+                            peer.supports_attach,
+                            peer.supports_replay,
+                            peer.supports_echo,
+                            peer.supports_term_sync,
+                        ),
                         peer.capabilities.join(", "),
                         peer.last_seen
                             .map(|t| format!("{t}s ago"))
@@ -350,7 +400,8 @@ pub async fn run_connect(
 #[cfg(test)]
 mod tests {
     use super::{
-        filter_peers, parse_reverse_connect_response, reverse_accept_summary, PeerQueryOptions,
+        filter_peers, parse_reverse_connect_response, peer_session_features,
+        reverse_accept_summary, PeerQueryOptions,
     };
     use wsh_core::messages::{Payload, PeerInfo, ReverseAcceptPayload, ReverseRejectPayload};
 
@@ -368,8 +419,13 @@ mod tests {
                 supports_echo: true,
                 supports_term_sync: true,
             }),
-            "browser-shell / virtual-shell [shell]"
+            "browser-shell / virtual-shell [shell] {attach,replay,echo,sync}"
         );
+    }
+
+    #[test]
+    fn peer_session_features_reports_none_when_no_session_features_are_advertised() {
+        assert_eq!(peer_session_features(false, false, false, false), "none");
     }
 
     #[test]
