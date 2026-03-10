@@ -860,9 +860,9 @@ That asymmetry is the main roadmap driver below.
 - `[x]` Canonical runtime contracts, peer metadata, and protocol bindings are in place.
 - `[x]` Browser reverse peers are interactive and capability-gated through the shared runtime model.
 - `[x]` Reverse-host runtime exists with `wsh-agent`, relay registration, PTY/exec/file/tool/gateway exposure, and shared peer metadata.
-- `[~]` Attach/replay and route robustness are materially improved, but not yet fully uniform across every backend.
+- `[x]` Attach/replay and route robustness are now uniform across the supported Phase 7A backends, with backend-specific replay modes surfaced explicitly.
 - `[~]` BrowserMesh naming, policy, and trust integration are partially landed; template/preset mapping is still open.
-- `[~]` The remote UI and CLI now consume the shared runtime model, but the docs/support matrix and remaining duplicate surfaces are not fully closed.
+- `[~]` The remote UI and CLI now consume the shared runtime model, and the support matrix is documented, but remaining duplicate surfaces are not fully closed.
 - `[~]` Gateway/service/deploy/automation/filesystem/audit convergence is underway and partly implemented.
 - `[~]` VM peer support exists as a browser-side `vm-console` backend and runtime scaffold, but the MVP is not yet complete.
 - `[ ]` Final readiness verification is still open.
@@ -883,13 +883,13 @@ Committed Phase 7A work already includes:
 Goal: make the topology legible to contributors and users so the system stops looking more complete or more uniform than it really is.
 
 - [ ] Add a single canonical `wsh` topology diagram to docs: direct host, relay browser peer, relay host peer, future VM peer
-- [~] Split protocol terms clearly:
+- [x] Split protocol terms clearly:
   - `direct host session`
   - `reverse peer`
   - `virtual terminal`
   - `real PTY`
   - `peer capability`
-- [ ] Add a support matrix to `docs/WSH-INTO-CLAWSER.md` and `docs/CLI.md`
+- [x] Add a support matrix to `docs/WSH-INTO-CLAWSER.md` and `docs/CLI.md`
 - [x] Make the browser/runtime distinction visible in the CLI:
   - direct host sessions should say `PTY`
   - browser-backed sessions should say `virtual terminal`
@@ -1529,13 +1529,13 @@ This should be treated as mandatory roadmap scope, not optional polish.
 ##### Session Verification
 
 - [ ] open/resize/signal/close work through each supported path
-- [ ] attach/replay/reattach work through each supported path
-- [ ] peer metadata shown to operator matches actual backend behavior
+- [x] attach/replay/reattach work through each supported path
+- [x] peer metadata shown to operator matches actual backend behavior
 
 ##### Failure-Mode Verification
 
 - [ ] stale discovery record does not create phantom reachability
-- [ ] relay drop triggers resumable or explainable failure behavior
+- [x] relay drop triggers resumable or explainable failure behavior
 - [ ] conflicting relays do not corrupt the peer descriptor
 - [ ] identity-link mismatch does not merge unrelated peers
 
@@ -1622,9 +1622,9 @@ Scope:
   - `VM console`
 - [x] Wire `SessionData` to the VM console/serial stream
 - [x] Wire `Resize` where supported by the emulator
-- [~] Support `Ctrl+C`, `Ctrl+D`, and attach/replay if practical
+- [x] Support `Ctrl+C`, `Ctrl+D`, and attach/replay if practical
 - [x] Advertise guest-specific capabilities conservatively
-- [~] Add explicit UX labels so operators know they are connecting to a VM guest, not the browser shell
+- [x] Add explicit UX labels so operators know they are connecting to a VM guest, not the browser shell
 
 Stretch goals:
 
@@ -1800,14 +1800,14 @@ Why it matters:
 
 Required deliverables:
 
-- [ ] define consistent attach semantics across:
+- [x] define consistent attach semantics across:
   - direct host PTY
   - browser virtual terminal
   - reverse host peer
   - future VM peer
-- [ ] standardize replay metadata and term-sync behavior
-- [ ] let peers advertise whether replay is lossless, partial, or unsupported
-- [ ] preserve session labels and identity across reconnect
+- [x] standardize replay metadata and term-sync behavior
+- [x] let peers advertise whether replay is lossless, partial, or unsupported
+- [x] preserve session labels and identity across reconnect
 
 Desired UX outcome:
 

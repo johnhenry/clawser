@@ -146,6 +146,7 @@ pub async fn run(
     let public_key = auth::public_key_bytes(&verifying_key);
     let reconnect_delay = Duration::from_secs(reconnect_delay_secs.max(1));
     let resolved = resolve_target(relay_host, port, transport)?;
+    let mut service = reverse_host::ReverseHostService::new(options.clone());
 
     println!(
         "Starting wsh agent for {} on {}:{} (capabilities: {})",
@@ -185,11 +186,11 @@ pub async fn run(
             }
         };
 
-        let reverse_connect_rx = client
+        let mut reverse_connect_rx = client
             .take_reverse_connect_rx()
             .await
             .expect("reverse connect receiver already taken");
-        let relay_message_rx = client
+        let mut relay_message_rx = client
             .take_relay_message_rx()
             .await
             .expect("relay message receiver already taken");
@@ -258,11 +259,11 @@ pub async fn run(
             }
         });
 
-        let outcome = reverse_host::run_with_options(
+        let outcome = reverse_host::run_with_service(
+            &mut service,
             client.clone(),
-            reverse_connect_rx,
-            relay_message_rx,
-            options.clone(),
+            &mut reverse_connect_rx,
+            &mut relay_message_rx,
             Some(status_tx),
         )
         .await;
@@ -284,7 +285,6 @@ pub async fn run(
                 state
                     .update(|snapshot| {
                         snapshot.status = AgentLifecycleStatus::Backoff;
-                        snapshot.active_sessions = 0;
                         snapshot.last_error = Some("transport closed".to_string());
                         snapshot.last_event = Some("transport-closed".to_string());
                     })
@@ -379,6 +379,8 @@ fn reverse_host_options(capabilities: &[String]) -> Result<ReverseHostOptions> {
     }
     Ok(ReverseHostOptions {
         capabilities: normalized,
+        supports_attach: true,
+        supports_replay: true,
         ..ReverseHostOptions::default()
     })
 }
@@ -577,6 +579,8 @@ mod tests {
                 "gateway".to_string()
             ]
         );
+        assert!(options.supports_attach);
+        assert!(options.supports_replay);
     }
 
     #[test]

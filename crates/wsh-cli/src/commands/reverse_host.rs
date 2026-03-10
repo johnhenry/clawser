@@ -4,12 +4,12 @@
 //! serves them from a local PTY so another client can remote into this machine
 //! through a relay.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 
 use anyhow::{Context, Result};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
@@ -21,6 +21,8 @@ use tokio::time::{timeout, Duration};
 use tracing::{debug, info, warn};
 use wsh_client::WshClient;
 use wsh_core::messages::*;
+
+const DEFAULT_PTY_REPLAY_LIMIT: usize = 256 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReverseHostOptions {
@@ -94,6 +96,10 @@ impl ReverseHostOptions {
     }
 }
 
+fn same_reverse_request(left: &ReverseConnectPayload, right: &ReverseConnectPayload) -> bool {
+    left.username == right.username && left.target_fingerprint == right.target_fingerprint
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReverseHostRunOutcome {
     Interrupted,
@@ -118,8 +124,27 @@ pub async fn run_with_options(
     options: ReverseHostOptions,
     status_tx: Option<mpsc::Sender<ReverseHostStatusEvent>>,
 ) -> Result<ReverseHostRunOutcome> {
-    let (event_tx, mut event_rx) = mpsc::channel::<RuntimeEvent>(256);
-    let mut runtime = ReverseHostRuntime::new(client, options, status_tx);
+    let mut service = ReverseHostService::new(options);
+    let outcome = run_with_service(
+        &mut service,
+        client,
+        &mut reverse_connect_rx,
+        &mut relay_message_rx,
+        status_tx,
+    )
+    .await;
+    service.shutdown().await;
+    outcome
+}
+
+pub async fn run_with_service(
+    service: &mut ReverseHostService,
+    client: Arc<WshClient>,
+    reverse_connect_rx: &mut mpsc::Receiver<Envelope>,
+    relay_message_rx: &mut mpsc::Receiver<Envelope>,
+    status_tx: Option<mpsc::Sender<ReverseHostStatusEvent>>,
+) -> Result<ReverseHostRunOutcome> {
+    service.attach_client(client, status_tx).await;
     let mut reverse_channel_closed = false;
     let mut relay_channel_closed = false;
 
@@ -127,36 +152,72 @@ pub async fn run_with_options(
         tokio::select! {
             envelope = reverse_connect_rx.recv(), if !reverse_channel_closed => {
                 match envelope {
-                    Some(envelope) => runtime.handle_reverse_connect(envelope).await?,
+                    Some(envelope) => service.runtime.handle_reverse_connect(envelope).await?,
                     None => reverse_channel_closed = true,
                 }
             }
             envelope = relay_message_rx.recv(), if !relay_channel_closed => {
                 match envelope {
-                    Some(envelope) => runtime.handle_relay_message(envelope, event_tx.clone()).await?,
+                    Some(envelope) => service.runtime.handle_relay_message(envelope).await?,
                     None => relay_channel_closed = true,
                 }
             }
-            Some(event) = event_rx.recv() => {
-                runtime.handle_runtime_event(event).await?;
+            Some(event) = service.event_rx.recv() => {
+                service.runtime.handle_runtime_event(event).await?;
             }
             _ = tokio::signal::ctrl_c() => {
                 info!("reverse host runtime received Ctrl+C");
-                runtime.shutdown().await;
+                service.shutdown().await;
                 return Ok(ReverseHostRunOutcome::Interrupted);
             }
         }
 
         if reverse_channel_closed && relay_channel_closed {
             info!("reverse host runtime transport closed");
-            runtime.shutdown().await;
+            service.detach_client().await;
             return Ok(ReverseHostRunOutcome::TransportClosed);
         }
     }
 }
 
+pub struct ReverseHostService {
+    runtime: ReverseHostRuntime,
+    event_tx: mpsc::UnboundedSender<RuntimeEvent>,
+    event_rx: mpsc::UnboundedReceiver<RuntimeEvent>,
+}
+
+impl ReverseHostService {
+    pub fn new(options: ReverseHostOptions) -> Self {
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        Self {
+            runtime: ReverseHostRuntime::new(options),
+            event_tx,
+            event_rx,
+        }
+    }
+
+    async fn attach_client(
+        &mut self,
+        client: Arc<WshClient>,
+        status_tx: Option<mpsc::Sender<ReverseHostStatusEvent>>,
+    ) {
+        self.runtime
+            .attach_client(client, status_tx, self.event_tx.clone())
+            .await;
+    }
+
+    async fn detach_client(&mut self) {
+        self.runtime.detach_client().await;
+    }
+
+    pub async fn shutdown(&mut self) {
+        self.runtime.shutdown().await;
+    }
+}
+
 struct ReverseHostRuntime {
-    client: Arc<WshClient>,
+    client: Option<Arc<WshClient>>,
+    event_tx: Option<mpsc::UnboundedSender<RuntimeEvent>>,
     options: ReverseHostOptions,
     status_tx: Option<mpsc::Sender<ReverseHostStatusEvent>>,
     active_request: Option<ReverseConnectPayload>,
@@ -167,15 +228,12 @@ struct ReverseHostRuntime {
 }
 
 impl ReverseHostRuntime {
-    fn new(
-        client: Arc<WshClient>,
-        options: ReverseHostOptions,
-        status_tx: Option<mpsc::Sender<ReverseHostStatusEvent>>,
-    ) -> Self {
+    fn new(options: ReverseHostOptions) -> Self {
         Self {
-            client,
             options,
-            status_tx,
+            client: None,
+            event_tx: None,
+            status_tx: None,
             active_request: None,
             sessions: HashMap::new(),
             gateway_connections: HashMap::new(),
@@ -184,13 +242,65 @@ impl ReverseHostRuntime {
         }
     }
 
+    async fn attach_client(
+        &mut self,
+        client: Arc<WshClient>,
+        status_tx: Option<mpsc::Sender<ReverseHostStatusEvent>>,
+        event_tx: mpsc::UnboundedSender<RuntimeEvent>,
+    ) {
+        self.client = Some(client);
+        self.event_tx = Some(event_tx.clone());
+        self.status_tx = status_tx;
+        self.emit_session_count().await;
+    }
+
+    async fn detach_client(&mut self) {
+        self.client = None;
+        self.event_tx = None;
+        self.status_tx = None;
+        for session in self.sessions.values_mut() {
+            session.set_notifier(None);
+        }
+        let gateway_ids: Vec<u32> = self.gateway_connections.keys().copied().collect();
+        for gateway_id in gateway_ids {
+            self.close_gateway_connection(gateway_id).await;
+        }
+    }
+
+    fn client(&self) -> Result<Arc<WshClient>> {
+        self.client
+            .clone()
+            .context("reverse host runtime is not currently bound to a relay client")
+    }
+
     async fn handle_reverse_connect(&mut self, envelope: Envelope) -> Result<()> {
         let Payload::ReverseConnect(request) = envelope.payload else {
             return Ok(());
         };
 
         if self.active_request.is_some() || !self.sessions.is_empty() {
-            self.client
+            if self
+                .active_request
+                .as_ref()
+                .is_some_and(|existing| same_reverse_request(existing, &request))
+            {
+                info!(
+                    requester = %request.username,
+                    target = %request.target_fingerprint,
+                    "reattaching reverse host connection"
+                );
+                self.active_request = Some(request.clone());
+                self.client()?
+                    .send_fire_and_forget(Envelope {
+                        msg_type: MsgType::ReverseAccept,
+                        payload: Payload::ReverseAccept(self.options.reverse_accept_payload(request)),
+                    })
+                    .await
+                    .map_err(|err| anyhow::anyhow!("{err}"))?;
+                return Ok(());
+            }
+
+            self.client()?
                 .send_fire_and_forget(Envelope {
                     msg_type: MsgType::ReverseReject,
                     payload: Payload::ReverseReject(ReverseRejectPayload {
@@ -215,7 +325,7 @@ impl ReverseHostRuntime {
         })
         .await;
         self.active_request = Some(request.clone());
-        self.client
+        self.client()?
             .send_fire_and_forget(Envelope {
                 msg_type: MsgType::ReverseAccept,
                 payload: Payload::ReverseAccept(self.options.reverse_accept_payload(request)),
@@ -229,10 +339,9 @@ impl ReverseHostRuntime {
     async fn handle_relay_message(
         &mut self,
         envelope: Envelope,
-        event_tx: mpsc::Sender<RuntimeEvent>,
     ) -> Result<()> {
         match envelope.payload {
-            Payload::Open(open) => self.handle_open(open, event_tx).await,
+            Payload::Open(open) => self.handle_open(open).await,
             Payload::SessionData(data) => self.handle_session_data(data).await,
             Payload::Resize(resize) => self.handle_resize(resize).await,
             Payload::Signal(signal) => self.handle_signal(signal).await,
@@ -256,46 +365,69 @@ impl ReverseHostRuntime {
 
     async fn handle_runtime_event(&mut self, event: RuntimeEvent) -> Result<()> {
         match event {
-            RuntimeEvent::Output { channel_id, data } => {
-                self.client
-                    .send_fire_and_forget(Envelope {
-                        msg_type: MsgType::SessionData,
-                        payload: Payload::SessionData(SessionDataPayload { channel_id, data }),
-                    })
-                    .await
-                    .map_err(|err| anyhow::anyhow!("{err}"))?;
+            RuntimeEvent::OutputReady { channel_id } => {
+                let Some(session) = self.sessions.get_mut(&channel_id) else {
+                    return Ok(());
+                };
+
+                for data in session.take_pending_output() {
+                    self.client()?
+                        .send_fire_and_forget(Envelope {
+                            msg_type: MsgType::SessionData,
+                            payload: Payload::SessionData(SessionDataPayload { channel_id, data }),
+                        })
+                        .await
+                        .map_err(|err| anyhow::anyhow!("{err}"))?;
+                }
             }
             RuntimeEvent::Exited { channel_id, code } => {
-                self.client
-                    .send_fire_and_forget(Envelope {
-                        msg_type: MsgType::Exit,
-                        payload: Payload::Exit(ExitPayload { channel_id, code }),
-                    })
-                    .await
-                    .map_err(|err| anyhow::anyhow!("{err}"))?;
-                self.client
-                    .send_fire_and_forget(Envelope {
-                        msg_type: MsgType::Close,
-                        payload: Payload::Close(ClosePayload { channel_id }),
-                    })
-                    .await
-                    .map_err(|err| anyhow::anyhow!("{err}"))?;
-                self.drop_session(channel_id).await;
+                if self.client.is_some() {
+                    self.client()?
+                        .send_fire_and_forget(Envelope {
+                            msg_type: MsgType::Exit,
+                            payload: Payload::Exit(ExitPayload { channel_id, code }),
+                        })
+                        .await
+                        .map_err(|err| anyhow::anyhow!("{err}"))?;
+                    self.client()?
+                        .send_fire_and_forget(Envelope {
+                            msg_type: MsgType::Close,
+                            payload: Payload::Close(ClosePayload { channel_id }),
+                        })
+                        .await
+                        .map_err(|err| anyhow::anyhow!("{err}"))?;
+                    self.drop_session(channel_id).await;
+                }
             }
             RuntimeEvent::ReadFailed { channel_id, error } => {
                 warn!(channel_id, "reverse host PTY read failed: {error}");
-                self.drop_session(channel_id).await;
+                if self.client.is_some() {
+                    self.client()?
+                        .send_fire_and_forget(Envelope {
+                            msg_type: MsgType::Exit,
+                            payload: Payload::Exit(ExitPayload {
+                                channel_id,
+                                code: -1,
+                            }),
+                        })
+                        .await
+                        .map_err(|err| anyhow::anyhow!("{err}"))?;
+                    self.client()?
+                        .send_fire_and_forget(Envelope {
+                            msg_type: MsgType::Close,
+                            payload: Payload::Close(ClosePayload { channel_id }),
+                        })
+                        .await
+                        .map_err(|err| anyhow::anyhow!("{err}"))?;
+                    self.drop_session(channel_id).await;
+                }
             }
         }
 
         Ok(())
     }
 
-    async fn handle_open(
-        &mut self,
-        open: OpenPayload,
-        event_tx: mpsc::Sender<RuntimeEvent>,
-    ) -> Result<()> {
+    async fn handle_open(&mut self, open: OpenPayload) -> Result<()> {
         let kind = open.kind.clone();
         if !self.options.allows_kind(kind.clone()) {
             let reason = match kind {
@@ -305,6 +437,10 @@ impl ReverseHostRuntime {
                 _ => "unsupported channel kind for this reverse host",
             };
             return self.send_open_fail(reason).await;
+        }
+
+        if self.try_reattach_channel(&open).await? {
+            return Ok(());
         }
 
         let channel_id = self.next_channel_id;
@@ -320,18 +456,17 @@ impl ReverseHostRuntime {
                 let pty = LocalPty::spawn(command.as_deref(), cols, rows, env.as_ref())
                     .with_context(|| format!("failed to spawn local PTY for channel {channel_id}"))?;
                 let pty = Arc::new(pty);
-
-                let output_task = spawn_output_task(channel_id, pty.clone(), event_tx.clone());
-                let wait_task = spawn_wait_task(channel_id, pty.clone(), event_tx);
-
-                self.sessions.insert(
+                let notifier = self.event_tx.clone();
+                let session = ReverseHostPtySession::spawn(
                     channel_id,
-                    ReverseHostSession::Pty(ReverseHostPtySession {
-                        pty,
-                        output_task,
-                        wait_task,
-                    }),
+                    kind.clone(),
+                    command.clone(),
+                    cols,
+                    rows,
+                    pty,
+                    notifier,
                 );
+                self.sessions.insert(channel_id, ReverseHostSession::Pty(session));
 
                 match kind {
                     ChannelKind::Pty => vec!["resize".into(), "signal".into()],
@@ -353,7 +488,7 @@ impl ReverseHostRuntime {
             }
         };
 
-        self.client
+        self.client()?
             .send_fire_and_forget(Envelope {
                 msg_type: MsgType::OpenOk,
                 payload: Payload::OpenOk(OpenOkPayload {
@@ -371,6 +506,7 @@ impl ReverseHostRuntime {
     }
 
     async fn handle_session_data(&mut self, data: SessionDataPayload) -> Result<()> {
+        let client = self.client.clone();
         let Some(session) = self.sessions.get_mut(&data.channel_id) else {
             return Ok(());
         };
@@ -389,7 +525,9 @@ impl ReverseHostRuntime {
                     .with_context(|| format!("failed to handle file channel {}", data.channel_id))?;
 
                 for response in responses {
-                    self.client
+                    client
+                        .as_ref()
+                        .context("reverse host runtime is not currently bound to a relay client")?
                         .send_fire_and_forget(Envelope {
                             msg_type: MsgType::SessionData,
                             payload: Payload::SessionData(SessionDataPayload {
@@ -402,7 +540,9 @@ impl ReverseHostRuntime {
                 }
 
                 if session.should_close() {
-                    self.client
+                    client
+                        .as_ref()
+                        .context("reverse host runtime is not currently bound to a relay client")?
                         .send_fire_and_forget(Envelope {
                             msg_type: MsgType::Close,
                             payload: Payload::Close(ClosePayload {
@@ -464,7 +604,7 @@ impl ReverseHostRuntime {
         } else {
             Vec::new()
         };
-        self.client
+        self.client()?
             .send_fire_and_forget(Envelope {
                 msg_type: MsgType::McpTools,
                 payload: Payload::McpTools(McpToolsPayload { tools }),
@@ -484,7 +624,7 @@ impl ReverseHostRuntime {
                 }),
             }
         };
-        self.client
+        self.client()?
             .send_fire_and_forget(Envelope {
                 msg_type: MsgType::McpResult,
                 payload: Payload::McpResult(result),
@@ -509,9 +649,10 @@ impl ReverseHostRuntime {
         match TcpStream::connect((open.host.as_str(), open.port)).await {
             Ok(stream) => {
                 let resolved_addr = stream.peer_addr().ok().map(|addr| addr.to_string());
-                let connection = spawn_tcp_gateway(self.client.clone(), open.gateway_id, stream);
+                let connection =
+                    spawn_tcp_gateway(self.client()?, open.gateway_id, stream);
                 self.gateway_connections.insert(open.gateway_id, connection);
-                self.client
+                self.client()?
                     .send_fire_and_forget(Envelope {
                         msg_type: MsgType::GatewayOk,
                         payload: Payload::GatewayOk(GatewayOkPayload {
@@ -558,9 +699,9 @@ impl ReverseHostRuntime {
         }
 
         let resolved_addr = socket.peer_addr().ok().map(|addr| addr.to_string());
-        let connection = spawn_udp_gateway(self.client.clone(), open.gateway_id, socket);
+        let connection = spawn_udp_gateway(self.client()?, open.gateway_id, socket);
         self.gateway_connections.insert(open.gateway_id, connection);
-        self.client
+        self.client()?
             .send_fire_and_forget(Envelope {
                 msg_type: MsgType::GatewayOk,
                 payload: Payload::GatewayOk(GatewayOkPayload {
@@ -587,7 +728,7 @@ impl ReverseHostRuntime {
         match lookup_host((resolve.name.as_str(), 0)).await {
             Ok(addresses) => {
                 let addresses = filter_dns_addresses(addresses.map(|addr| addr.ip()), &resolve.record_type);
-                self.client
+                self.client()?
                     .send_fire_and_forget(Envelope {
                         msg_type: MsgType::DnsResult,
                         payload: Payload::DnsResult(DnsResultPayload {
@@ -624,7 +765,7 @@ impl ReverseHostRuntime {
     }
 
     async fn handle_listen_request(&self, request: ListenRequestPayload) -> Result<()> {
-        self.client
+        self.client()?
             .send_fire_and_forget(Envelope {
                 msg_type: MsgType::ListenFail,
                 payload: Payload::ListenFail(ListenFailPayload {
@@ -654,7 +795,7 @@ impl ReverseHostRuntime {
     }
 
     async fn send_gateway_fail(&self, gateway_id: u32, code: u32, message: &str) -> Result<()> {
-        self.client
+        self.client()?
             .send_fire_and_forget(Envelope {
                 msg_type: MsgType::GatewayFail,
                 payload: Payload::GatewayFail(GatewayFailPayload {
@@ -669,7 +810,7 @@ impl ReverseHostRuntime {
     }
 
     async fn send_gateway_close(&self, gateway_id: u32, reason: Option<String>) -> Result<()> {
-        self.client
+        self.client()?
             .send_fire_and_forget(Envelope {
                 msg_type: MsgType::GatewayClose,
                 payload: Payload::GatewayClose(GatewayClosePayload { gateway_id, reason }),
@@ -680,7 +821,7 @@ impl ReverseHostRuntime {
     }
 
     async fn send_open_fail(&self, reason: &str) -> Result<()> {
-        self.client
+        self.client()?
             .send_fire_and_forget(Envelope {
                 msg_type: MsgType::OpenFail,
                 payload: Payload::OpenFail(OpenFailPayload {
@@ -734,6 +875,70 @@ impl ReverseHostRuntime {
         })
         .await;
     }
+
+    async fn try_reattach_channel(&mut self, open: &OpenPayload) -> Result<bool> {
+        let client = self.client()?;
+        let matching_ids = self
+            .sessions
+            .iter()
+            .filter_map(|(channel_id, session)| {
+                session
+                    .matches_reattach(&open.kind, open.command.as_deref())
+                    .then_some(*channel_id)
+            })
+            .collect::<Vec<_>>();
+
+        if matching_ids.is_empty() {
+            return Ok(false);
+        }
+        if matching_ids.len() > 1 {
+            self.send_open_fail("multiple resumable sessions match this request")
+                .await?;
+            return Ok(true);
+        }
+
+        let channel_id = matching_ids[0];
+        let Some(session) = self.sessions.get_mut(&channel_id) else {
+            return Ok(false);
+        };
+        if let Some((cols, rows)) = open.cols.zip(open.rows) {
+            session.resize(cols, rows)?;
+        }
+        let capabilities = session.capabilities();
+        client
+            .send_fire_and_forget(Envelope {
+                msg_type: MsgType::OpenOk,
+                payload: Payload::OpenOk(OpenOkPayload {
+                    channel_id,
+                    stream_ids: vec![],
+                    data_mode: SessionDataMode::Virtual,
+                    capabilities,
+                }),
+            })
+            .await
+            .map_err(|err| anyhow::anyhow!("{err}"))?;
+        session.replay_to_client(&client, channel_id).await?;
+        if let Some(code) = session.exit_code() {
+            client
+                .send_fire_and_forget(Envelope {
+                    msg_type: MsgType::Exit,
+                    payload: Payload::Exit(ExitPayload { channel_id, code }),
+                })
+                .await
+                .map_err(|err| anyhow::anyhow!("{err}"))?;
+            client
+                .send_fire_and_forget(Envelope {
+                    msg_type: MsgType::Close,
+                    payload: Payload::Close(ClosePayload { channel_id }),
+                })
+                .await
+                .map_err(|err| anyhow::anyhow!("{err}"))?;
+            self.drop_session(channel_id).await;
+        } else if let Some(event_tx) = self.event_tx.clone() {
+            session.set_notifier(Some(event_tx));
+        }
+        Ok(true)
+    }
 }
 
 enum ReverseHostSession {
@@ -741,10 +946,80 @@ enum ReverseHostSession {
     File(ReverseHostFileSession),
 }
 
+impl ReverseHostSession {
+    fn set_notifier(&mut self, notifier: Option<mpsc::UnboundedSender<RuntimeEvent>>) {
+        if let Self::Pty(session) = self {
+            session.set_notifier(notifier);
+        }
+    }
+
+    fn matches_reattach(&self, kind: &ChannelKind, command: Option<&str>) -> bool {
+        match self {
+            Self::Pty(session) => session.matches_reattach(kind, command),
+            Self::File(_) => false,
+        }
+    }
+
+    fn capabilities(&self) -> Vec<String> {
+        match self {
+            Self::Pty(session) => session.capabilities(),
+            Self::File(_) => Vec::new(),
+        }
+    }
+
+    fn take_pending_output(&self) -> Vec<Vec<u8>> {
+        match self {
+            Self::Pty(session) => session.take_pending_output(),
+            Self::File(_) => Vec::new(),
+        }
+    }
+
+    fn resize(&self, cols: u16, rows: u16) -> Result<()> {
+        match self {
+            Self::Pty(session) => session.resize(cols, rows),
+            Self::File(_) => Ok(()),
+        }
+    }
+
+    async fn replay_to_client(&self, client: &Arc<WshClient>, channel_id: u32) -> Result<()> {
+        if let Self::Pty(session) = self {
+            let replay = session.replay_bytes();
+            session.clear_pending_output();
+            if !replay.is_empty() {
+                client
+                    .send_fire_and_forget(Envelope {
+                        msg_type: MsgType::SessionData,
+                        payload: Payload::SessionData(SessionDataPayload {
+                            channel_id,
+                            data: replay,
+                        }),
+                    })
+                    .await
+                    .map_err(|err| anyhow::anyhow!("{err}"))?;
+            }
+        }
+        Ok(())
+    }
+
+    fn exit_code(&self) -> Option<i32> {
+        match self {
+            Self::Pty(session) => session.exit_code(),
+            Self::File(_) => None,
+        }
+    }
+}
+
 struct ReverseHostPtySession {
+    kind: ChannelKind,
+    command: Option<String>,
+    capabilities: Vec<String>,
     pty: Arc<LocalPty>,
     output_task: tokio::task::JoinHandle<()>,
     wait_task: tokio::task::JoinHandle<()>,
+    replay: Arc<StdMutex<Vec<u8>>>,
+    pending_output: Arc<StdMutex<VecDeque<Vec<u8>>>>,
+    exit_code: Arc<StdMutex<Option<i32>>>,
+    notifier: Arc<StdMutex<Option<mpsc::UnboundedSender<RuntimeEvent>>>>,
 }
 
 struct ReverseGatewayConnection {
@@ -753,15 +1028,119 @@ struct ReverseGatewayConnection {
 }
 
 enum RuntimeEvent {
-    Output { channel_id: u32, data: Vec<u8> },
+    OutputReady { channel_id: u32 },
     Exited { channel_id: u32, code: i32 },
     ReadFailed { channel_id: u32, error: String },
+}
+
+impl ReverseHostPtySession {
+    fn spawn(
+        channel_id: u32,
+        kind: ChannelKind,
+        command: Option<String>,
+        _cols: u16,
+        _rows: u16,
+        pty: Arc<LocalPty>,
+        notifier: Option<mpsc::UnboundedSender<RuntimeEvent>>,
+    ) -> Self {
+        let replay = Arc::new(StdMutex::new(Vec::new()));
+        let pending_output = Arc::new(StdMutex::new(VecDeque::new()));
+        let exit_code = Arc::new(StdMutex::new(None));
+        let notifier = Arc::new(StdMutex::new(notifier));
+        let output_task = spawn_output_task(
+            channel_id,
+            pty.clone(),
+            replay.clone(),
+            pending_output.clone(),
+            notifier.clone(),
+            exit_code.clone(),
+        );
+        let wait_task = spawn_wait_task(
+            channel_id,
+            pty.clone(),
+            notifier.clone(),
+            exit_code.clone(),
+        );
+        Self {
+            kind: kind.clone(),
+            command,
+            capabilities: match kind {
+                ChannelKind::Pty => vec!["resize".into(), "signal".into()],
+                ChannelKind::Exec => vec!["signal".into()],
+                _ => Vec::new(),
+            },
+            pty,
+            output_task,
+            wait_task,
+            replay,
+            pending_output,
+            exit_code,
+            notifier,
+        }
+    }
+
+    fn set_notifier(&self, notifier: Option<mpsc::UnboundedSender<RuntimeEvent>>) {
+        *self
+            .notifier
+            .lock()
+            .expect("reverse host notifier lock poisoned") = notifier;
+    }
+
+    fn matches_reattach(&self, kind: &ChannelKind, command: Option<&str>) -> bool {
+        if &self.kind != kind {
+            return false;
+        }
+        match kind {
+            ChannelKind::Exec => self.command.as_deref() == Some(command.unwrap_or_default()),
+            _ => true,
+        }
+    }
+
+    fn capabilities(&self) -> Vec<String> {
+        self.capabilities.clone()
+    }
+
+    fn take_pending_output(&self) -> Vec<Vec<u8>> {
+        let mut pending = self
+            .pending_output
+            .lock()
+            .expect("reverse host pending output lock poisoned");
+        pending.drain(..).collect()
+    }
+
+    fn clear_pending_output(&self) {
+        self.pending_output
+            .lock()
+            .expect("reverse host pending output lock poisoned")
+            .clear();
+    }
+
+    fn replay_bytes(&self) -> Vec<u8> {
+        self.replay
+            .lock()
+            .expect("reverse host replay lock poisoned")
+            .clone()
+    }
+
+    fn exit_code(&self) -> Option<i32> {
+        *self
+            .exit_code
+            .lock()
+            .expect("reverse host exit code lock poisoned")
+    }
+
+    fn resize(&self, cols: u16, rows: u16) -> Result<()> {
+        self.pty.resize_blocking(cols, rows)
+    }
 }
 
 fn spawn_output_task(
     channel_id: u32,
     pty: Arc<LocalPty>,
-    event_tx: mpsc::Sender<RuntimeEvent>,
+    replay: Arc<StdMutex<Vec<u8>>>,
+    pending_output: Arc<StdMutex<VecDeque<Vec<u8>>>>,
+    notifier: Arc<StdMutex<Option<mpsc::UnboundedSender<RuntimeEvent>>>>,
+    exit_code: Arc<StdMutex<Option<i32>>>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         loop {
@@ -781,28 +1160,38 @@ fn spawn_output_task(
 
             match read_result {
                 Ok(Ok(Some(data))) => {
-                    if event_tx
-                        .send(RuntimeEvent::Output { channel_id, data })
-                        .await
-                        .is_err()
+                    append_replay(&replay, &data);
+                    if notifier
+                        .lock()
+                        .expect("reverse host notifier lock poisoned")
+                        .is_some()
                     {
-                        break;
+                        pending_output
+                            .lock()
+                            .expect("reverse host pending output lock poisoned")
+                            .push_back(data);
+                        notify_runtime(&notifier, RuntimeEvent::OutputReady { channel_id });
                     }
                 }
                 Ok(Ok(None)) => break,
                 Ok(Err(error)) => {
-                    let _ = event_tx
-                        .send(RuntimeEvent::ReadFailed { channel_id, error })
-                        .await;
+                    *exit_code
+                        .lock()
+                        .expect("reverse host exit code lock poisoned") = Some(-1);
+                    notify_runtime(&notifier, RuntimeEvent::ReadFailed { channel_id, error });
                     break;
                 }
                 Err(join_error) => {
-                    let _ = event_tx
-                        .send(RuntimeEvent::ReadFailed {
+                    *exit_code
+                        .lock()
+                        .expect("reverse host exit code lock poisoned") = Some(-1);
+                    notify_runtime(
+                        &notifier,
+                        RuntimeEvent::ReadFailed {
                             channel_id,
                             error: join_error.to_string(),
-                        })
-                        .await;
+                        },
+                    );
                     break;
                 }
             }
@@ -813,31 +1202,66 @@ fn spawn_output_task(
 fn spawn_wait_task(
     channel_id: u32,
     pty: Arc<LocalPty>,
-    event_tx: mpsc::Sender<RuntimeEvent>,
+    notifier: Arc<StdMutex<Option<mpsc::UnboundedSender<RuntimeEvent>>>>,
+    exit_code: Arc<StdMutex<Option<i32>>>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         match tokio::task::spawn_blocking(move || pty.wait_blocking()).await {
             Ok(Ok(code)) => {
-                let _ = event_tx.send(RuntimeEvent::Exited { channel_id, code }).await;
+                *exit_code
+                    .lock()
+                    .expect("reverse host exit code lock poisoned") = Some(code);
+                notify_runtime(&notifier, RuntimeEvent::Exited { channel_id, code });
             }
             Ok(Err(err)) => {
-                let _ = event_tx
-                    .send(RuntimeEvent::ReadFailed {
+                *exit_code
+                    .lock()
+                    .expect("reverse host exit code lock poisoned") = Some(-1);
+                notify_runtime(
+                    &notifier,
+                    RuntimeEvent::ReadFailed {
                         channel_id,
                         error: err.to_string(),
-                    })
-                    .await;
+                    },
+                );
             }
             Err(join_err) => {
-                let _ = event_tx
-                    .send(RuntimeEvent::ReadFailed {
+                *exit_code
+                    .lock()
+                    .expect("reverse host exit code lock poisoned") = Some(-1);
+                notify_runtime(
+                    &notifier,
+                    RuntimeEvent::ReadFailed {
                         channel_id,
                         error: join_err.to_string(),
-                    })
-                    .await;
+                    },
+                );
             }
         }
     })
+}
+
+fn append_replay(replay: &Arc<StdMutex<Vec<u8>>>, data: &[u8]) {
+    let mut replay = replay.lock().expect("reverse host replay lock poisoned");
+    replay.extend_from_slice(data);
+    if replay.len() > DEFAULT_PTY_REPLAY_LIMIT {
+        let excess = replay.len() - DEFAULT_PTY_REPLAY_LIMIT;
+        replay.drain(0..excess);
+    }
+}
+
+fn notify_runtime(
+    notifier: &Arc<StdMutex<Option<mpsc::UnboundedSender<RuntimeEvent>>>>,
+    event: RuntimeEvent,
+) {
+    if let Some(sender) = notifier
+        .lock()
+        .expect("reverse host notifier lock poisoned")
+        .as_ref()
+        .cloned()
+    {
+        let _ = sender.send(event);
+    }
 }
 
 #[derive(Default)]
@@ -1475,13 +1899,17 @@ fn default_shell() -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex as StdMutex};
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     use serde_json::json;
+    use tokio::sync::mpsc;
+    use wsh_core::messages::{ChannelKind, ReverseConnectPayload};
 
     use super::{
-        command_spec, filter_dns_addresses, try_parse_download_header, try_parse_upload_header,
-        LocalMcpBridge, ReverseHostFileSession, ReverseHostOptions,
+        append_replay, command_spec, filter_dns_addresses, same_reverse_request,
+        try_parse_download_header, try_parse_upload_header, LocalMcpBridge, LocalPty,
+        ReverseHostFileSession, ReverseHostOptions, ReverseHostPtySession, RuntimeEvent,
     };
 
     #[test]
@@ -1512,6 +1940,60 @@ mod tests {
             ..ReverseHostOptions::default()
         }
         .allows_kind(wsh_core::messages::ChannelKind::Exec));
+    }
+
+    #[test]
+    fn same_reverse_request_requires_matching_requester_and_target() {
+        let left = ReverseConnectPayload {
+            target_fingerprint: "fp".into(),
+            username: "alice".into(),
+        };
+        let right = ReverseConnectPayload {
+            target_fingerprint: "fp".into(),
+            username: "alice".into(),
+        };
+        let wrong_user = ReverseConnectPayload {
+            target_fingerprint: "fp".into(),
+            username: "bob".into(),
+        };
+
+        assert!(same_reverse_request(&left, &right));
+        assert!(!same_reverse_request(&left, &wrong_user));
+    }
+
+    #[test]
+    fn append_replay_keeps_only_the_tail_of_large_output() {
+        let replay = Arc::new(StdMutex::new(Vec::new()));
+        append_replay(&replay, &vec![b'a'; super::DEFAULT_PTY_REPLAY_LIMIT]);
+        append_replay(&replay, b"tail");
+
+        let stored = replay.lock().unwrap().clone();
+        assert_eq!(stored.len(), super::DEFAULT_PTY_REPLAY_LIMIT);
+        assert_eq!(&stored[stored.len() - 4..], b"tail");
+    }
+
+    #[tokio::test]
+    async fn reverse_host_pty_session_matches_exec_reconnects_by_command() {
+        let pty = Arc::new(LocalPty::spawn(Some("sleep 10"), 80, 24, None).unwrap());
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel::<RuntimeEvent>();
+        let session = ReverseHostPtySession::spawn(
+            7,
+            ChannelKind::Exec,
+            Some("printf hello".into()),
+            80,
+            24,
+            pty.clone(),
+            Some(event_tx),
+        );
+
+        assert!(session.matches_reattach(&ChannelKind::Exec, Some("printf hello")));
+        assert!(!session.matches_reattach(&ChannelKind::Exec, Some("pwd")));
+        assert!(!session.matches_reattach(&ChannelKind::Pty, None));
+
+        let _ = pty.kill_blocking();
+        session.output_task.abort();
+        session.wait_task.abort();
+        while event_rx.try_recv().is_ok() {}
     }
 
     #[test]

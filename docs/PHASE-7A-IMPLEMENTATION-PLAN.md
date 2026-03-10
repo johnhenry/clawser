@@ -26,7 +26,7 @@ As of **March 10, 2026**, implementation is in progress with the following phase
 - `[x]` Phase 1. Protocol And Descriptor Foundation
 - `[x]` Phase 2. Remote Runtime Registry And Session Broker
 - `[~]` Phase 3. Reverse Host Parity With `wsh-agent`
-- `[~]` Phase 4. Attach, Replay, And Route Robustness
+- `[x]` Phase 4. Attach, Replay, And Route Robustness
 - `[~]` Phase 5. BrowserMesh Policy, Naming, And Trust Convergence
 - `[~]` Phase 6. UI And CLI Convergence
 - `[~]` Phase 7. Gateway, Compute, Service, Deployment, And Automation Convergence
@@ -174,23 +174,23 @@ Status: `[~] Partial`
   - tools/MCP
   - gateway
 - [~] Add host lifecycle semantics:
-  - startup-on-login/boot support where practical
-  - reconnect behavior
-  - active-session tracking
-- [~] Ensure reverse-host interactive quality matches direct `wsh connect` closely enough to be the same product surface.
+  - [ ] startup-on-login/boot support where practical
+  - [x] reconnect behavior
+  - [x] active-session tracking
+- [x] Ensure reverse-host interactive quality matches direct `wsh connect` closely enough to be the same product surface.
 
 ### 4. Attach, Replay, And Route Robustness
 Exit gate: reconnects and reattach behavior are consistent across backends.
 
-Status: `[~] Partial`
+Status: `[x] Complete`
 
-- [~] Standardize attach/replay semantics across:
+- [x] Standardize attach/replay semantics across:
   - direct host PTY
   - reverse host PTY
   - browser virtual terminal
   - VM peer stub
 - [x] Standardize replay metadata and backend support hints.
-- [~] Preserve session labels and identity across reconnect.
+- [x] Preserve session labels and identity across reconnect.
 - [x] Ensure route failures are explainable:
   - stale discovery
   - relay denial

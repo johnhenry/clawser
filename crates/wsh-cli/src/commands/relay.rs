@@ -217,6 +217,8 @@ fn reverse_options(capabilities: &[String]) -> Result<ReverseHostOptions> {
 
     Ok(ReverseHostOptions {
         capabilities,
+        supports_attach: true,
+        supports_replay: true,
         ..ReverseHostOptions::default()
     })
 }
@@ -400,8 +402,8 @@ pub async fn run_connect(
 #[cfg(test)]
 mod tests {
     use super::{
-        filter_peers, parse_reverse_connect_response, peer_session_features,
-        reverse_accept_summary, PeerQueryOptions,
+        filter_peers, parse_reverse_connect_response, peer_session_features, reverse_accept_summary,
+        reverse_options, PeerQueryOptions,
     };
     use wsh_core::messages::{Payload, PeerInfo, ReverseAcceptPayload, ReverseRejectPayload};
 
@@ -503,5 +505,12 @@ mod tests {
         .unwrap_err();
 
         assert!(err.to_string().contains("busy"));
+    }
+
+    #[test]
+    fn reverse_options_advertise_attach_and_replay_for_host_peers() {
+        let options = reverse_options(&["shell".into(), "fs".into()]).unwrap();
+        assert!(options.supports_attach);
+        assert!(options.supports_replay);
     }
 }
