@@ -204,8 +204,8 @@ Exit gate: discovery, naming, ACL, and route ranking all inform remote access wi
 
 Status: `[~] Partial`
 
-- [ ] Map mesh ACL templates to `wsh` exposure presets.
-- [ ] Implement a canonical policy translation table and precedence order.
+- [x] Map mesh ACL templates to `wsh` exposure presets.
+- [x] Implement a canonical policy translation table and precedence order.
 - [~] Surface which layer denied a request in UX and telemetry.
 - [x] Integrate mesh naming into runtime resolution:
   - named peer lookup

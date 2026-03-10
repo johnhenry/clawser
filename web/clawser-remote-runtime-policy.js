@@ -5,6 +5,10 @@
  * session-intent gating decisions for the remote session broker.
  */
 
+function unique(values) {
+  return [...new Set((values || []).filter(Boolean))]
+}
+
 export const WSH_EXPOSURE_PRESETS = Object.freeze({
   guest: Object.freeze({
     shell: false,
@@ -29,6 +33,22 @@ export const WSH_EXPOSURE_PRESETS = Object.freeze({
   }),
 })
 
+export const MESH_SCOPE_TO_WSH_EXPOSURE = Object.freeze([
+  { scope: '*:*', grants: ['shell', 'exec', 'fs', 'tools', 'gateway'] },
+  { scope: 'gateway:*', grants: ['gateway'] },
+  { scope: 'network:*', grants: ['gateway'] },
+  { scope: 'tools:*', grants: ['tools'] },
+  { scope: 'agent:*', grants: ['tools'] },
+  { scope: 'chat:*', grants: ['tools'] },
+  { scope: 'files:read', grants: ['fs', 'tools'] },
+  { scope: 'files:write', grants: ['fs'] },
+  { scope: 'files:*', grants: ['fs', 'tools'] },
+  { scope: 'compute:submit', grants: ['shell', 'exec'] },
+  { scope: 'compute:*', grants: ['shell', 'exec'] },
+  { scope: 'shell:*', grants: ['shell', 'exec'] },
+  { scope: 'terminal:*', grants: ['shell', 'exec'] },
+])
+
 const INTENT_TO_EXPOSURE = Object.freeze({
   terminal: 'shell',
   exec: 'exec',
@@ -43,17 +63,62 @@ export function meshTemplateToWshExposure(templateName) {
   return WSH_EXPOSURE_PRESETS[templateName] || null
 }
 
+function scopeMatches(ruleScope, actualScope) {
+  if (actualScope === '*:*') return true
+  if (ruleScope === '*:*') return actualScope === '*:*'
+  if (ruleScope.endsWith(':*')) {
+    return actualScope === ruleScope || actualScope.startsWith(ruleScope.slice(0, -1))
+  }
+  return actualScope === ruleScope
+}
+
+export function meshScopesToWshExposure(scopes = []) {
+  const grants = new Set()
+  for (const scope of scopes) {
+    for (const rule of MESH_SCOPE_TO_WSH_EXPOSURE) {
+      if (scopeMatches(rule.scope, scope)) {
+        for (const grant of rule.grants) grants.add(grant)
+      }
+    }
+  }
+  return {
+    shell: grants.has('shell'),
+    exec: grants.has('exec'),
+    fs: grants.has('fs'),
+    tools: grants.has('tools'),
+    gateway: grants.has('gateway'),
+  }
+}
+
 export class RemoteRuntimePolicyAdapter {
   #peerRegistry
   #relayHealthProvider
+  #meshAcl
 
-  constructor({ peerRegistry = null, relayHealthProvider = null } = {}) {
+  constructor({ peerRegistry = null, relayHealthProvider = null, meshAcl = null } = {}) {
     this.#peerRegistry = peerRegistry
     this.#relayHealthProvider = relayHealthProvider
+    this.#meshAcl = meshAcl
   }
 
-  translateTemplate(templateName) {
-    return meshTemplateToWshExposure(templateName)
+  translateTemplate(templateName, descriptor = null) {
+    const preset = meshTemplateToWshExposure(templateName)
+    if (preset) return preset
+
+    const template = this.#meshAcl?.getTemplate?.(templateName)
+    if (template?.scopes) {
+      return meshScopesToWshExposure(template.scopes)
+    }
+
+    const inlineScopes = unique([
+      ...((descriptor?.metadata?.templateScopes) || []),
+      ...((descriptor?.metadata?.aclScopes) || []),
+    ])
+    if (inlineScopes.length > 0) {
+      return meshScopesToWshExposure(inlineScopes)
+    }
+
+    return null
   }
 
   checkTargetAccess(descriptor, target) {
@@ -65,7 +130,7 @@ export class RemoteRuntimePolicyAdapter {
     const templateName = descriptor?.metadata?.templateName
       || descriptor?.metadata?.aclTemplate
       || null
-    const preset = templateName ? this.translateTemplate(templateName) : null
+    const preset = templateName ? this.translateTemplate(templateName, descriptor) : this.translateTemplate(null, descriptor)
     if (preset && preset[exposureGate] === false) {
       return {
         allowed: false,
