@@ -3563,6 +3563,7 @@ dependencies = [
  "dialoguer",
  "dirs",
  "hex",
+ "portable-pty",
  "serde",
  "serde_json",
  "tempfile",

@@ -47,21 +47,7 @@ impl PtyHandle {
             .openpty(size)
             .map_err(|e| WshError::Other(format!("failed to open PTY: {e}")))?;
 
-        let mut cmd = if let Some(command) = command {
-            let parts: Vec<&str> = command.split_whitespace().collect();
-            if parts.is_empty() {
-                return Err(WshError::Other("empty command".into()));
-            }
-            let mut builder = CommandBuilder::new(parts[0]);
-            for arg in &parts[1..] {
-                builder.arg(arg);
-            }
-            builder
-        } else {
-            // Default shell
-            let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-            CommandBuilder::new(shell)
-        };
+        let mut cmd = build_command_builder(command)?;
 
         // Set environment variables
         if let Some(env_map) = env {
@@ -185,6 +171,33 @@ impl PtyHandle {
     }
 }
 
+fn build_command_builder(command: Option<&str>) -> WshResult<CommandBuilder> {
+    let shell = default_shell();
+    let (program, args) = command_spec(command, &shell)?;
+    let mut builder = CommandBuilder::new(program);
+    for arg in args {
+        builder.arg(arg);
+    }
+    Ok(builder)
+}
+
+fn command_spec(command: Option<&str>, shell: &str) -> WshResult<(String, Vec<String>)> {
+    match command {
+        Some(command) => {
+            let trimmed = command.trim();
+            if trimmed.is_empty() {
+                return Err(WshError::Other("empty command".into()));
+            }
+            Ok((shell.to_string(), vec!["-c".to_string(), trimmed.to_string()]))
+        }
+        None => Ok((shell.to_string(), Vec::new())),
+    }
+}
+
+fn default_shell() -> String {
+    std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
+}
+
 /// Detect OSC 52 clipboard escape sequences in PTY output.
 ///
 /// OSC 52 format: `\x1b]52;c;<base64-data>\x07` or `\x1b]52;c;<base64-data>\x1b\\`
@@ -207,4 +220,31 @@ pub fn detect_osc52(data: &[u8]) -> Option<String> {
 
     let payload = &remaining[..end];
     String::from_utf8(payload.to_vec()).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{command_spec, default_shell};
+
+    #[test]
+    fn command_spec_uses_shell_c_for_commands() {
+        let (program, args) = command_spec(Some("echo hello"), "/bin/sh").unwrap();
+        assert_eq!(program, "/bin/sh");
+        assert_eq!(args, vec!["-c".to_string(), "echo hello".to_string()]);
+    }
+
+    #[test]
+    fn command_spec_preserves_shell_syntax_in_single_argument() {
+        let command = r#"echo "a b" | sed 's/ /_/g' > out.txt"#;
+        let (_program, args) = command_spec(Some(command), "/bin/sh").unwrap();
+        assert_eq!(args[1], command);
+    }
+
+    #[test]
+    fn command_spec_uses_default_shell_for_interactive_sessions() {
+        let shell = default_shell();
+        let (program, args) = command_spec(None, &shell).unwrap();
+        assert_eq!(program, shell);
+        assert!(args.is_empty());
+    }
 }

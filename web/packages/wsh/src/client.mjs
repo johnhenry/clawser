@@ -601,9 +601,26 @@ export class WshClient {
    * @param {CryptoKeyPair} [opts.keyPair]
    * @param {string} [opts.password]
    * @param {object} [opts.expose] - Capabilities to expose { shell, fs, tools }
+   * @param {string} [opts.peerType]
+   * @param {string} [opts.shellBackend]
+   * @param {boolean} [opts.supportsAttach]
+   * @param {boolean} [opts.supportsReplay]
+   * @param {boolean} [opts.supportsEcho]
+   * @param {boolean} [opts.supportsTermSync]
    * @returns {Promise<string>} Session ID
    */
-  async connectReverse(url, { username, keyPair, password, expose = {} } = {}) {
+  async connectReverse(url, {
+    username,
+    keyPair,
+    password,
+    expose = {},
+    peerType = 'browser-shell',
+    shellBackend,
+    supportsAttach,
+    supportsReplay,
+    supportsEcho,
+    supportsTermSync,
+  } = {}) {
     // Authenticate normally first.
     const sessionId = await this.connect(url, { username, keyPair, password });
 
@@ -619,9 +636,21 @@ export class WshClient {
       publicKey = await exportPublicKeyRaw(keyPair.publicKey);
     }
 
+    const effectiveShellBackend = shellBackend || (expose.shell ? 'virtual-shell' : 'exec-only');
+
     // Register as a reverse peer.
     await this.#transport.sendControl(
-      reverseRegisterMsg({ username, capabilities, publicKey })
+      reverseRegisterMsg({
+        username,
+        capabilities,
+        peerType,
+        shellBackend: effectiveShellBackend,
+        supportsAttach: supportsAttach ?? effectiveShellBackend !== 'exec-only',
+        supportsReplay: supportsReplay ?? effectiveShellBackend !== 'exec-only',
+        supportsEcho: supportsEcho ?? effectiveShellBackend === 'virtual-shell',
+        supportsTermSync: supportsTermSync ?? effectiveShellBackend === 'virtual-shell',
+        publicKey,
+      })
     );
 
     return sessionId;

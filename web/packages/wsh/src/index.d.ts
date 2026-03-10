@@ -383,6 +383,12 @@ export function mcpResult(opts?: {
 export function reverseRegister(opts?: {
   username?: string;
   capabilities?: string[];
+  peerType?: string;
+  shellBackend?: string;
+  supportsAttach?: boolean;
+  supportsReplay?: boolean;
+  supportsEcho?: boolean;
+  supportsTermSync?: boolean;
   publicKey?: Uint8Array | null;
 }): WshMessage;
 
@@ -401,6 +407,12 @@ export function reverseAccept(opts?: {
   targetFingerprint?: string;
   username?: string;
   capabilities?: string[];
+  peerType?: string;
+  shellBackend?: string;
+  supportsAttach?: boolean;
+  supportsReplay?: boolean;
+  supportsEcho?: boolean;
+  supportsTermSync?: boolean;
 }): WshMessage;
 
 export function reverseReject(opts?: {
@@ -897,6 +909,12 @@ export interface WshConnectReverseOptions {
     fs?: boolean;
     tools?: boolean;
   };
+  peerType?: string;
+  shellBackend?: string;
+  supportsAttach?: boolean;
+  supportsReplay?: boolean;
+  supportsEcho?: boolean;
+  supportsTermSync?: boolean;
 }
 
 /** Options for WshClient.exec(). */
@@ -922,9 +940,17 @@ export interface WshSessionInfo {
 
 /** Peer information from reverse list. */
 export interface WshPeerInfo {
+  fingerprint: string;
   fingerprint_short: string;
   username: string;
   capabilities: string[];
+  peer_type: string;
+  shell_backend: string;
+  source: string;
+  supports_attach: boolean;
+  supports_replay: boolean;
+  supports_echo: boolean;
+  supports_term_sync: boolean;
   last_seen: number | null;
 }
 

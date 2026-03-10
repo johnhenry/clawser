@@ -761,6 +761,1733 @@ Turns Clawser into an OS-like platform that can serve HTTP requests entirely in 
 
 ---
 
+## Phase 7A: Remote Runtime Access Expansion (wsh)
+
+Priority: turn `wsh` from "remote shell and relay protocol" into a coherent remote-runtime fabric for hosts, browser peers, and eventually browser-hosted Linux guests.
+
+This phase sits before BrowserMesh on purpose. BrowserMesh is about decentralized identity, transport, and multi-peer coordination at mesh scale. `wsh` is the operator/runtime access plane: authentication, shell/file/tool sessions, relay-mediated reachability, and remote control of specific runtimes. The two systems complement each other, but `wsh` should be operationally solid on its own before deeper mesh abstractions depend on it.
+
+### Why This Matters
+
+Clawser now has three distinct remote-access stories, and they are no longer theoretical:
+
+1. **Direct host access** — a local or remote machine runs `wsh-server`; a CLI connects and gets a real PTY.
+2. **Relay-mediated browser access** — a live Clawser tab registers through a relay; a CLI reverse-connects into it and gets a browser-backed interactive terminal.
+3. **Peer capability routing** — reverse peers can expose shell, filesystem, and tool surfaces, not just a terminal.
+
+Those are enough to justify treating `wsh` as a first-class subsystem, not just a transport detail.
+
+The remaining gaps are mostly about symmetry and runtime diversity:
+
+- the browser peer path is now materially ahead of the Rust reverse-peer path
+- the relay protocol can broker peers, but not every peer type has an equally complete session runtime
+- browser-backed terminals work for normal shell workloads, but are still emulated PTY-like terminals, not kernel PTYs
+- there is not yet a clean way to treat a browser-hosted Linux guest as a `wsh` peer, even though the surrounding design now makes that feasible
+
+### Current Topology Matrix
+
+| Source | Target | Path | Status | Notes |
+|--------|--------|------|--------|-------|
+| Rust CLI | `wsh-server` host | Direct | **Complete** | Real host PTY, native Unix semantics, best terminal fidelity |
+| Rust CLI | `wsh-server` host | Via relay | **Partial by design** | Reachability model exists, but direct host connection is the preferred path when possible |
+| Rust CLI | Clawser browser tab | Via relay reverse-connect | **Complete for interactive shell workloads** | Browser-backed virtual terminal, capability-gated shell/tools/fs |
+| Browser tab | Relay | Reverse registration | **Complete** | WebTransport-first, secure WebSocket fallback |
+| Rust CLI | Relay-registered peer list | Via relay | **Complete** | `wsh peers` lists available reverse peers |
+| Rust CLI | Rust CLI reverse peer | Via relay | **Partial** | Registration exists; incoming session runtime is still much less complete than the browser path |
+| Any `wsh` client | Arbitrary peer type | Via relay | **Protocol-ready, runtime-specific** | Depends on whether that peer implements incoming `Open` / `SessionData` / `Resize` / `Signal` correctly |
+| Rust CLI | Browser-hosted Linux guest | Via relay | **Roadmap** | Best implemented as a new peer backend, not a special case inside the existing browser shell |
+
+### What `wsh` Is Good For
+
+- **Operator access to real hosts** — when you need a normal shell, file transfer, MCP bridge, or structured remote session with real PTY semantics.
+- **Reaching private/browser-bound runtimes** — when the target is a live browser tab, a local-only environment, or a machine that can dial out to a relay more easily than it can accept inbound connections.
+- **Capability-scoped remote control** — when you want to expose shell access without also exposing filesystem access, or tools without exposing a shell.
+- **Unified auth and trust-on-first-use** — when you want the same identity, `authorized_keys`, and known-host model across host and browser targets.
+- **Support and debugging workflows** — reproducing an issue inside the exact browser workspace or remote runtime the user is actually running.
+- **Future "runtime as peer" designs** — VM guests, lightweight sandboxes, and headless worker-backed environments all fit the session model better than ad hoc remote APIs.
+
+### What `wsh` Is Not Good For
+
+- **Pixel remoting** — it is not RDP, VNC, or full desktop streaming.
+- **Arbitrary GUI apps** — even with a browser-hosted Linux VM, `wsh` is a terminal/control plane first.
+- **Perfect PTY emulation in browser-only code** — browser terminals can be excellent, but they are still emulating PTY behavior unless backed by a real kernel PTY.
+- **Bulk media/data replication** — BrowserMesh, CRDT sync, content-addressed transfer, and specialized file protocols are better fits for multi-party data distribution.
+- **Topology-wide peer discovery and coordination** — that is BrowserMesh territory. `wsh` should remain focused on sessions, transport reachability, auth, and runtime access.
+
+### Design Principles For The Next `wsh` Layer
+
+1. **Preserve the distinction between real PTYs and emulated terminals.**
+   - `wsh-server` should remain the source of truth for real host PTY semantics.
+   - Browser-backed and VM-backed terminals should advertise themselves honestly as virtual session backends.
+
+2. **Make peer type explicit.**
+   - A reverse peer should not just be "a thing on the relay."
+   - It should describe whether it is a browser shell, host runtime, VM guest console, worker sandbox, or something else.
+
+3. **Keep the session API unified where possible.**
+   - `Open`, `SessionData`, `Resize`, `Signal`, `Exit`, `Close`, `Attach`, replay, and capability advertisement should stay common across peer types.
+   - Differences should live in backend adapters, not in ad hoc command forks.
+
+4. **Prefer small capability sets over implicit power.**
+   - Shell, filesystem, tools, gateway, and future VM/network capabilities should remain individually exposable.
+
+5. **Do not make BrowserMesh a prerequisite for `wsh`.**
+   - Relay-based `wsh` must remain usable in a simpler client/server deployment.
+   - BrowserMesh can later enrich peer discovery and routing, but should not be required for basic remote access.
+
+### Near-Term Status Interpretation
+
+The direct-host path is the "production-grade" one:
+
+- `wsh connect` to `wsh-server` is the right answer when the target is a normal machine you control.
+- It gives a real PTY, the clearest failure modes, and the least semantic mismatch.
+
+The browser reverse path is now "operator-usable":
+
+- good for shell commands, normal line-oriented workflows, and capability-gated remote access to a live tab
+- not intended as a replacement for a real Unix PTY
+
+The Rust reverse-peer path still needs parity work:
+
+- registration and reverse-connect signaling exist
+- peer discovery exists
+- the incoming session runtime on the non-browser side is not yet symmetric with the browser reverse peer
+
+That asymmetry is the main roadmap driver below.
+
+### Phase 7A.1: Documented Runtime Modes
+
+Goal: make the topology legible to contributors and users so the system stops looking more complete or more uniform than it really is.
+
+- [ ] Add a single canonical `wsh` topology diagram to docs: direct host, relay browser peer, relay host peer, future VM peer
+- [ ] Split protocol terms clearly:
+  - `direct host session`
+  - `reverse peer`
+  - `virtual terminal`
+  - `real PTY`
+  - `peer capability`
+- [ ] Add a support matrix to `docs/WSH-INTO-CLAWSER.md` and `docs/CLI.md`
+- [ ] Make the browser/runtime distinction visible in the CLI:
+  - direct host sessions should say `PTY`
+  - browser-backed sessions should say `virtual terminal`
+- [ ] Expose peer backend metadata in `wsh peers`
+  - example future fields: `peer_type`, `shell_backend`, `data_mode`
+
+Why first:
+
+- current implementation status is now nuanced enough that "remote shell works" is too vague to be trustworthy documentation
+- BrowserMesh planning will be cleaner if `wsh` topology is explicit before mesh routing starts depending on it
+
+### Phase 7A.2: Reverse Host Access For Non-Browser Peers
+
+Goal: make "remote into a local machine via relay" a first-class, symmetric workflow.
+
+This is the missing inverse of the browser work. Today, if a local machine can accept inbound access, the right answer is still `wsh-server` direct connect. But there are real cases where the host can dial out to a relay and cannot or should not expose a public inbound listener:
+
+- laptops behind NAT
+- ephemeral dev environments
+- CI/debug sandboxes
+- "support me" sessions initiated from the target machine outward
+
+Required work:
+
+- [ ] Implement a real incoming session runtime for Rust reverse peers
+  - replace the current placeholder loop in `crates/wsh-cli/src/commands/relay.rs`
+  - accept incoming `Open`
+  - create a session backend
+  - bridge `SessionData`, `Resize`, `Signal`, `Exit`, and `Close`
+- [ ] Decide the Rust reverse peer form factor:
+  - minimal: CLI process acts as the peer while it is running
+  - better: lightweight `wsh-agent` / `wsh-peer` daemon for persistent reverse presence
+- [ ] Support two backend modes for a reverse host peer:
+  - **host PTY mode** — spawn a real PTY locally and expose it via relay
+  - **exec/file/tool mode** — expose non-interactive capabilities without full shell access
+- [ ] Add peer capability policy for host reverse peers
+  - shell
+  - exec
+  - file transfer
+  - tools / MCP
+  - optional gateway/network features
+- [ ] Add host peer identity labels so relay listings distinguish:
+  - browser tab
+  - host agent
+  - headless daemon
+- [ ] Add lifecycle semantics for reverse host peers:
+  - manual foreground registration
+  - long-lived daemon registration
+  - reconnect and reattach after network flap
+
+Success criteria:
+
+- `wsh reverse <relay>` on a local machine can expose a real local PTY through the relay
+- another CLI can `wsh reverse-connect <fingerprint> <relay>` into that machine and get an interactive shell
+- the experience is materially equivalent to direct `wsh connect`, minus the extra relay hop
+
+Non-goals:
+
+- turning relay mode into the preferred path for machines that are already directly reachable
+- hiding the fact that relay mode is operationally more complex than direct host mode
+
+### Phase 7A.3: Peer Types And Capability Contracts
+
+Goal: stop treating all peers as morally the same when they clearly are not.
+
+Proposed peer classes:
+
+- **Host peer**
+  - backed by a real OS process environment
+  - can expose PTY, exec, file, MCP, gateway
+- **Browser shell peer**
+  - backed by `ClawserShell`
+  - exposes virtual terminal semantics, browser filesystem, browser tools
+- **VM guest peer**
+  - backed by a browser-hosted emulator/guest OS
+  - can expose guest console, optionally guest filesystem/network capabilities
+- **Worker/sandbox peer**
+  - backed by a headless JS/Worker runtime
+  - useful for compute and tool hosting, not necessarily interactive shell
+
+Protocol additions likely needed:
+
+- [ ] `peer_type` field in reverse registration and peer listing
+- [ ] `session_backend` or `shell_backend`
+  - `pty`
+  - `virtual-shell`
+  - `vm-console`
+  - `exec-only`
+- [ ] capability refinements
+  - `shell`
+  - `pty`
+  - `virtual_terminal`
+  - `fs`
+  - `tools`
+  - `mcp`
+  - `gateway`
+  - `vm_console`
+  - `vm_control`
+- [ ] optional UX hints
+  - `recommended_transport`
+  - `attach_supported`
+  - `predictive_echo_supported`
+  - `term_sync_supported`
+
+Why this matters:
+
+- the CLI can present more honest UX
+- policy can become capability-driven rather than product-name-driven
+- future VM and worker peers become natural extensions instead of hacks
+
+### Phase 7A.4: Direct Peer Access vs Relay-Mediated Peer Access
+
+Goal: clarify where `wsh` should and should not expand.
+
+Current recommendation:
+
+- keep relay-mediated reverse connections as the main `wsh` peer model
+- do not rush into direct peer-to-peer `wsh` transports until there is a concrete operational need
+
+Rationale:
+
+- the relay already solves discovery, auth rendezvous, and NAT reachability for the current product
+- direct peer-to-peer `wsh` would add another transport matrix on top of BrowserMesh and WebRTC
+- BrowserMesh is the more natural place for future decentralized peer discovery and routing
+
+Planned boundaries:
+
+- [ ] `wsh` remains the session/control plane
+- [ ] BrowserMesh may later supply peer discovery, trust, or route selection
+- [ ] BrowserMesh should not replace the `wsh` session model itself
+- [ ] if direct peer-to-peer `wsh` is ever added, it should be a transport backend under the same session protocol, not a new product surface
+
+### Phase 7A.5: BrowserMesh Integration Contract For `wsh`
+
+Goal: define exactly how `wsh` integrates with the existing peer-to-peer architecture so the two systems compose cleanly without duplicating identity, discovery, relay, policy, or session logic.
+
+This section exists because the current codebase already has most of the raw ingredients:
+
+- `ClawserPod` as the runtime root
+- mesh identity and wallet management
+- mesh peer registry and discovery
+- mesh transport negotiation
+- mesh relay client
+- mesh ACL and trust subsystems
+- a `wsh` identity bridge
+- a separate, working `wsh` session/auth/relay subsystem
+
+What is still missing is the **contract**: when a mesh peer is discovered, how does it become a `wsh` target? When a `wsh` peer is listed, how does it appear inside the mesh worldview? When trust and ACL exist in both places, which one decides what?
+
+The roadmap below answers that.
+
+#### Layer Ownership
+
+The first rule is to preserve a strict separation of concerns.
+
+**BrowserMesh owns:**
+
+- identity graph and pod identity lifecycle
+- peer discovery
+- trust scoring
+- ACL / invitation / roster models
+- route hints and topology knowledge
+- decentralized transport negotiation
+- resource and service advertisement
+
+**`wsh` owns:**
+
+- endpoint authentication and session handshake
+- session types (`pty`, `exec`, `file`, MCP/tool, gateway)
+- attach/replay/resume semantics
+- reverse-peer registration and reverse-connect flow
+- channel multiplexing and terminal/file/tool transport
+- direct host access and relay-mediated operator access
+
+**Shared responsibility:**
+
+- peer metadata and reachability description
+- identity conversion / reconciliation
+- policy mapping between mesh scopes and `wsh` capability exposure
+- transport selection when multiple viable paths exist
+
+#### Core Architectural Rule
+
+BrowserMesh may help discover, rank, and route to a peer.
+
+It must **not** replace `wsh` session semantics.
+
+In practice that means:
+
+- BrowserMesh can tell Clawser *which* peer to talk to and *which path is available*
+- `wsh` still decides *how the remote session is authenticated and opened*
+
+This preserves one session model instead of creating:
+
+- a mesh-native shell session model
+- a `wsh` shell session model
+- and a constant translation problem between them
+
+#### Canonical Runtime Objects
+
+To integrate the two stacks cleanly, the roadmap needs one shared vocabulary.
+
+##### 1. `RemoteIdentity`
+
+Represents the canonical identity of a remote runtime.
+
+Required properties:
+
+- canonical identity ID (base64url pod ID)
+- `wsh` fingerprint form (hex or short fingerprint for CLI compatibility)
+- identity links / aliases
+- display label
+- trust snapshot
+
+Source of truth:
+
+- BrowserMesh identity system
+- bridged to `wsh` via `clawser-mesh-wsh-bridge.js`
+
+Rule:
+
+- a remote runtime should never have separate "mesh identity" and "`wsh` identity" records that drift independently
+
+##### 2. `RemotePeerDescriptor`
+
+Represents one reachable peer/runtime regardless of how it was discovered.
+
+Required properties:
+
+- identity reference
+- peer label / human-friendly name
+- `peer_type`
+  - `host`
+  - `browser-shell`
+  - `vm-guest`
+  - `worker`
+- `shell_backend`
+  - `pty`
+  - `virtual-shell`
+  - `vm-console`
+  - `exec-only`
+- capabilities
+  - `shell`
+  - `pty`
+  - `virtual_terminal`
+  - `fs`
+  - `tools`
+  - `mcp`
+  - `gateway`
+  - `vm_console`
+  - `vm_control`
+- trust and policy summary
+- last-seen / liveness
+- source provenance
+  - mesh discovery
+  - mesh relay
+  - `wsh` relay
+  - manual bookmark
+  - direct host config
+
+Rule:
+
+- this should become the single row model used by peer listings, peer pickers, and future remote-runtime UIs
+
+##### 3. `ReachabilityDescriptor`
+
+Represents how a peer can be reached right now.
+
+Required properties:
+
+- `direct_wsh` endpoint(s), if any
+- reverse peer registration state, if any
+- shared relay coordinates, if any
+- mesh route hints, if any
+- supported transports
+  - `webrtc`
+  - `wsh-wt`
+  - `wsh-ws`
+  - future `wsh-over-mesh-stream`
+- auth expectations
+  - TOFU host key
+  - direct identity match
+  - relay-mediated peer accept
+
+Rule:
+
+- discovery and reachability are not the same thing
+- one peer can have multiple reachability options at the same time
+
+##### 4. `SessionTarget`
+
+Represents the resolved result of selecting one peer plus one access path.
+
+Required properties:
+
+- selected peer descriptor
+- selected transport path
+- selected relay, if any
+- selected session backend
+- session intent
+  - interactive shell
+  - exec
+  - file
+  - tool/MCP
+  - gateway/network
+
+Rule:
+
+- all connect flows should resolve into this object before opening a session
+
+#### Runtime Composition Inside Clawser
+
+The clean composition point is `ClawserPod`.
+
+`ClawserPod` already owns:
+
+- peer node
+- discovery manager
+- transport negotiator
+- relay client
+- sync, files, marketplace, quotas, payments, etc.
+
+That makes it the correct place to host the new integration surfaces.
+
+Proposed new modules:
+
+- [ ] `web/clawser-remote-runtime-registry.js`
+  - merges mesh-discovered peers, `wsh` reverse peers, and direct host bookmarks into canonical `RemotePeerDescriptor` records
+- [ ] `web/clawser-wsh-session-broker.js`
+  - resolves a `SessionTarget` and opens the appropriate `wsh` session path
+- [ ] `web/clawser-mesh-wsh-policy-adapter.js`
+  - maps mesh ACL/trust state to `wsh` exposure and session-policy decisions
+- [ ] `web/clawser-mesh-wsh-reachability.js`
+  - computes `ReachabilityDescriptor` objects from discovery + relay + direct config inputs
+- [ ] `web/clawser-mesh-wsh-peer-sync.js`
+  - consumes `wsh` relay registrations and feeds them into the runtime registry
+
+CLI-side or shared protocol work likely needed:
+
+- [ ] extend `web/packages/wsh/spec/wsh-v1.yaml`
+  - peer type metadata
+  - backend metadata
+  - capability refinements
+- [ ] add Rust-side peer descriptor support in `wsh-client` / `wsh-cli`
+- [ ] add JSON output format for machine-readable peer descriptors
+
+#### Discovery Unification Plan
+
+Today, peer knowledge is fragmented:
+
+- BrowserMesh discovery knows about pods and peer capabilities
+- the mesh relay knows about signaled peers
+- the `wsh` relay knows about reverse peers
+- direct `wsh` host targets are often entered manually
+
+That fragmentation is normal at this stage, but the roadmap should converge it.
+
+##### Discovery Inputs
+
+The future `RemoteRuntimeRegistry` should ingest:
+
+- mesh `DiscoveryManager` records
+- `MeshPeerManager` live connection state
+- `MeshRelayClient` presence announcements
+- `wsh peers` reverse peer listings
+- local direct-host bookmarks / known hosts
+- future VM/runtime advertisements
+
+##### Merge Rules
+
+- merge by canonical identity when there is a strong identity link
+- when only weak evidence exists, keep separate records until verified
+- never merge two peers only because they share a human label
+- preserve source provenance for each merged field
+
+##### Verification Requirements
+
+- [ ] test merging mesh and `wsh` identities via `MeshWshBridge`
+- [ ] test duplicate suppression
+- [ ] test conflicting peer metadata from different sources
+- [ ] test partial peer descriptors that gradually become fully resolved
+
+#### Policy And Trust Handoff
+
+This is where "no holes" matters most.
+
+There are at least four distinct policy layers, and the roadmap must keep them separate:
+
+##### Layer 1: Discovery Visibility
+
+Question:
+
+- may this peer be shown to me at all?
+
+Owned by:
+
+- BrowserMesh discovery / ACL / invitation / trust layer
+
+##### Layer 2: Reachability And Relay Use
+
+Question:
+
+- may I use this relay or route to reach that peer?
+
+Owned by:
+
+- mesh relay policy
+- `wsh` relay policy
+- trust thresholds
+- payment / quota policies if enabled
+
+##### Layer 3: Session Admission
+
+Question:
+
+- once I can reach the peer, may I open a shell/file/tool session?
+
+Owned by:
+
+- `wsh` session admission
+- reverse peer capability exposure
+- host `authorized_keys` / key options
+- browser local reverse-peer policy
+
+##### Layer 4: In-Session Capability Scope
+
+Question:
+
+- after the session opens, what exactly may I do?
+
+Owned by:
+
+- `wsh` capability gating
+- mesh ACL-derived defaults, where relevant
+- peer-local policy / workspace policy / VM policy
+
+##### Integration Rule
+
+Mesh ACL and trust may inform or prefilter `wsh` access.
+
+They must not silently bypass `wsh` authentication or capability checks.
+
+Examples:
+
+- a mesh ACL may hide a peer from discovery, but cannot make `authorized_keys` unnecessary on a host peer
+- a trust score may rank a relay higher, but cannot replace endpoint authentication
+- a browser permission preset may expose only tools, but cannot be overridden by a mesh hint alone
+
+##### Planned Deliverables
+
+- [ ] map mesh scope templates to `wsh` exposure presets
+- [ ] define a canonical policy translation table
+- [ ] document the precedence order when mesh and `wsh` policies disagree
+- [ ] add audit logging when one layer blocks something another layer would have allowed
+
+#### Transport And Routing Strategy
+
+This is the most important implementation choice.
+
+The roadmap should be explicit about staged transport integration rather than implying everything will converge at once.
+
+##### Stage 1: Mesh For Discovery, `wsh` For Sessions
+
+This should be the immediate integration model.
+
+Behavior:
+
+- BrowserMesh discovers peers, trust, and route hints
+- `wsh` opens sessions using the existing direct or relay-mediated paths
+- mesh data does not carry shell session traffic yet
+
+Why:
+
+- lowest risk
+- reuses the working `wsh` session/auth model
+- avoids premature duplication of session transport logic
+
+##### Stage 2: Optional `wsh` Over Mesh Streams
+
+This should be treated as a later optimization/extension, not the starting point.
+
+Behavior:
+
+- BrowserMesh stream transport becomes an optional substrate for carrying `wsh` session envelopes
+- `wsh` session semantics stay unchanged
+- the transport layer changes, not the session model
+
+Why:
+
+- lets WebRTC/mesh links carry shell/file/tool traffic when appropriate
+- keeps one session protocol instead of inventing a mesh-native session variant
+
+Prerequisites:
+
+- stable shared peer descriptors
+- stable session broker
+- clear transport capability advertisement
+- attach/replay semantics that work above an abstract transport
+
+##### Stage 3: Mesh-Assisted Route Selection
+
+Behavior:
+
+- a connect attempt can choose among:
+  - direct host endpoint
+  - `wsh` relay reverse peer
+  - mesh-assisted route
+  - future `wsh-over-mesh-stream`
+
+Selection inputs:
+
+- trust score
+- latency
+- peer type
+- capability match
+- relay availability
+- session intent
+
+#### Session Routing Algorithm
+
+The roadmap should lock down the decision order so implementations and tests can target something concrete.
+
+Recommended first-pass algorithm:
+
+1. **Resolve peer identity**
+   - from user target, bookmark, name, fingerprint, or peer picker
+2. **Build merged peer descriptor**
+   - from all discovery sources
+3. **Compute allowed reachability paths**
+   - remove paths blocked by ACL, trust, missing capability, or relay policy
+4. **Match session intent**
+   - interactive shell
+   - exec
+   - file
+   - tool/MCP
+5. **Prefer highest-fidelity backend**
+   - real PTY host
+   - reverse host PTY
+   - browser virtual shell
+   - VM console
+6. **Select best transport path**
+   - direct host
+   - reverse via relay
+   - future mesh stream
+7. **Open `wsh` session**
+   - using one common session broker
+8. **Record outcome**
+   - update peer liveness, trust evidence, route health, and audit log
+
+This algorithm should be shared between:
+
+- CLI peer selection flows
+- browser UI peer pickers
+- future automation / agent routing decisions
+
+#### Relay Convergence And Separation
+
+There are two relay stories in the codebase today:
+
+- BrowserMesh relay/signaling
+- `wsh` relay for reverse peers and sessions
+
+The roadmap should treat them as:
+
+- **logically separate today**
+- **optionally co-deployable later**
+
+That means:
+
+- the system must not assume one relay implementation replaces the other immediately
+- a future deployment may host both services behind one operator endpoint
+- but the product should keep their responsibilities distinct until the integration contract is proven
+
+Recommended rule:
+
+- BrowserMesh relay handles discovery/signaling/topology concerns
+- `wsh` relay handles session rendezvous and reverse-connect session traffic
+
+Possible later convergence:
+
+- shared operator deployment
+- shared identity/trust database
+- shared admission policy
+- separate logical protocols
+
+#### Integration With Existing BrowserMesh Phases
+
+This roadmap should explicitly map onto the existing BrowserMesh phases so the work can be scheduled and verified without ambiguity.
+
+##### Depends On Phase 8.1
+
+- identity convergence
+- trust model
+- transport negotiation
+- relay presence basics
+
+##### Depends On Phase 8.2
+
+- ACL / remote access control
+- streams and file transfer concepts
+- name resolution and user-facing peer addressing
+
+##### Depends On Phase 8.7
+
+- mature transport backend inventory
+- real transport probing and upgrade policy
+
+##### Depends On Phase 9
+
+- public BrowserMesh package surface should expose stable peer/runtime metadata once the contract is proven internally
+
+#### Verification Matrix For The Integration Contract
+
+This should be treated as mandatory roadmap scope, not optional polish.
+
+##### Identity And Descriptor Verification
+
+- [ ] one mesh identity and one `wsh` identity map to one canonical remote identity
+- [ ] mesh and `wsh` peer records merge deterministically
+- [ ] conflicting metadata is surfaced, not silently flattened
+- [ ] peer records survive reload / reconnect / relay re-registration
+
+##### Policy Verification
+
+- [ ] mesh ACL denial prevents peer selection
+- [ ] relay policy denial blocks route selection with an explainable error
+- [ ] `wsh` auth denial still blocks session open even if mesh trust is high
+- [ ] capability mismatch blocks the right session kinds
+
+##### Routing Verification
+
+- [ ] direct host chosen when available and appropriate
+- [ ] reverse relay path chosen when direct host is unavailable
+- [ ] browser peer chosen only for workloads it can actually serve
+- [ ] future VM peer chosen only when the requested capability/backend fits
+
+##### Session Verification
+
+- [ ] open/resize/signal/close work through each supported path
+- [ ] attach/replay/reattach work through each supported path
+- [ ] peer metadata shown to operator matches actual backend behavior
+
+##### Failure-Mode Verification
+
+- [ ] stale discovery record does not create phantom reachability
+- [ ] relay drop triggers resumable or explainable failure behavior
+- [ ] conflicting relays do not corrupt the peer descriptor
+- [ ] identity-link mismatch does not merge unrelated peers
+
+#### Deliverables Required Before Calling The Integration Complete
+
+- [ ] shared peer descriptor schema
+- [ ] remote runtime registry
+- [ ] session broker
+- [ ] policy adapter between mesh and `wsh`
+- [ ] deterministic routing algorithm
+- [ ] full integration test matrix across discovery, policy, transport, and session layers
+
+### Phase 7A.6: Browser-Hosted Linux Guest As A `wsh` Peer
+
+Goal: support an entire Linux environment running inside the browser and expose it through the same relay/peer model as other `wsh` targets.
+
+This is feasible in principle now.
+
+Relevant prior art:
+
+- JSLinux / TinyEMU can boot real Linux userlands in-browser
+- v86 can boot Linux guests and exposes serial-console-oriented interaction patterns
+
+The key design choice is **what exactly becomes the peer**.
+
+There are two credible models:
+
+#### Model A: VM Console Peer
+
+The browser remains the peer; the VM is a backend runtime behind it.
+
+- Clawser registers as a reverse peer as it already does today
+- instead of routing shell traffic into `ClawserShell`, it routes it into the VM console
+- the CLI still sees "a peer on the relay"
+- peer metadata says something like `peer_type=vm-guest`, `shell_backend=vm-console`
+
+Advantages:
+
+- fits the current reverse-browser architecture cleanly
+- no guest-side `wsh-server` packaging required
+- simpler to prototype with v86/JSLinux serial console or terminal output
+
+Limitations:
+
+- still only as good as the exposed console abstraction
+- filesystem, process, and networking operations are guest-specific and need adapters
+- fidelity depends on the emulator’s console surface
+
+#### Model B: Full Guest `wsh-server`
+
+The guest Linux distro becomes a real host from `wsh`’s perspective.
+
+- boot the Linux guest in the browser
+- run a native `wsh-server` inside the guest
+- either give it guest networking or bridge it through the browser host
+- treat it as a direct or relay-registered host target
+
+Advantages:
+
+- best semantic fidelity
+- real PTY behavior inside the guest
+- the guest can look like a normal Unix host to `wsh`
+
+Limitations:
+
+- much more complex bootstrapping
+- guest networking and key management become real infrastructure problems
+- substantially heavier startup and persistence story
+
+Recommended sequence:
+
+- [ ] **First** build Model A as a new browser peer backend
+- [ ] **Later** evaluate Model B if there is a need for true Unix fidelity inside the guest
+
+### Phase 7A.7: VM Peer MVP
+
+Goal: prove that a browser-hosted Linux guest can be reached through `wsh` without re-architecting the whole system.
+
+Scope:
+
+- [ ] Introduce a new browser-side terminal backend, e.g. `VmTerminalSession`
+- [ ] Add a runtime selector:
+  - `ClawserShell`
+  - `VM console`
+- [ ] Wire `SessionData` to the VM console/serial stream
+- [ ] Wire `Resize` where supported by the emulator
+- [ ] Support `Ctrl+C`, `Ctrl+D`, and attach/replay if practical
+- [ ] Advertise guest-specific capabilities conservatively
+- [ ] Add explicit UX labels so operators know they are connecting to a VM guest, not the browser shell
+
+Stretch goals:
+
+- [ ] guest filesystem bridge
+- [ ] upload/download into the guest
+- [ ] VM lifecycle controls (`start`, `stop`, `reset`, `snapshot`)
+- [ ] distro/image chooser
+
+Success criteria:
+
+- a browser-hosted Linux guest appears in `wsh peers`
+- `wsh reverse-connect` opens an interactive guest console
+- normal line-oriented Linux workflows are usable through the relay
+
+### Phase 7A.8: VM Peer Productionization
+
+Goal: decide whether browser-hosted Linux should remain a "console peer" feature or graduate into a real operator/runtime substrate.
+
+Questions to answer:
+
+- should the guest be ephemeral per tab, persisted per workspace, or restored from snapshots?
+- should the guest share Clawser identity material or have its own guest-side keys?
+- does the product want "developer sandbox in a tab", "portable demo environment", or "real long-lived personal Linux workspace"?
+- how much guest networking is acceptable in-browser?
+- is a guest console enough, or is a real guest-side `wsh-server` worth the complexity?
+
+Likely follow-up deliverables:
+
+- [ ] VM image management UI
+- [ ] snapshot/import/export
+- [ ] workspace-bound guest persistence
+- [ ] resource budgeting (memory, CPU, storage) in the browser
+- [ ] capability policy for VM control vs guest shell access
+
+### Phase 7A.9: Recommended Product Positioning
+
+If all of the above lands, the clean story should be:
+
+- **Use direct `wsh-server`** when the target is a real machine and you need real PTY semantics.
+- **Use reverse browser `wsh`** when the target is a live Clawser tab or browser runtime that cannot or should not accept inbound access.
+- **Use reverse host peers** when the machine can dial out but is not directly reachable.
+- **Use VM peers** when you want a portable, browser-hosted Linux environment accessible through the same relay/session/auth model.
+
+That gives Clawser four legitimate remote-runtime modes without pretending they are interchangeable.
+
+### Phase 7A.10: Adjacent Features Worth Implementing
+
+Goal: identify the features adjacent to the current `wsh` work that will materially improve operator usability, product coherence, and future extensibility.
+
+These are not random nice-to-haves. They are the features that close the gap between "the protocol basically works" and "remote runtime access is a dependable subsystem."
+
+#### Tranche 1: Must-Have Adjacent Work
+
+These should be treated as the next implementation wave after the current browser reverse-terminal work.
+
+##### 1. Reverse Host Peer Parity
+
+Problem:
+
+- the browser reverse peer can accept an incoming terminal session and behave like a usable remote shell
+- the Rust reverse peer path still mostly registers, waits, and exposes only a placeholder acceptance loop
+
+Why it matters:
+
+- it is the most obvious product asymmetry in the whole subsystem
+- it leaves "remote into a local machine through a relay" feeling half-promised
+- it prevents `wsh` from becoming a general remote-runtime plane instead of a browser-special case
+
+Required deliverables:
+
+- [ ] implement incoming session handling for Rust reverse peers
+- [ ] create a local session backend that can:
+  - spawn a PTY
+  - open an exec session
+  - relay file operations where supported
+  - later bridge MCP/tool calls
+- [ ] bridge reverse peer control messages end to end:
+  - `Open`
+  - `SessionData`
+  - `Resize`
+  - `Signal`
+  - `Exit`
+  - `Close`
+- [ ] ensure reverse peer sessions use the same interactive loop quality bar as direct sessions
+- [ ] add reconnect handling when the relay transport drops
+
+Success definition:
+
+- the relay path for a reverse host feels like a transport variation of direct `wsh connect`, not a different product
+
+##### 2. Peer Typing And Capability Metadata
+
+Problem:
+
+- `wsh peers` currently tells you that something is online, but not enough about what that thing actually is
+- hosts, browser tabs, and future VM guests should not be visually or semantically flattened into one row shape
+
+Why it matters:
+
+- the operator needs to know whether they are connecting to:
+  - a real host PTY
+  - a browser-backed virtual shell
+  - a VM guest console
+  - a worker/sandbox peer
+- policy, routing, and UX all become clearer when peer types are explicit
+
+Required deliverables:
+
+- [ ] extend reverse registration payloads to include backend identity
+- [ ] extend reverse peer listings to expose:
+  - `peer_type`
+  - `shell_backend`
+  - `capabilities`
+  - `attach_supported`
+  - `term_sync_supported`
+  - `predictive_echo_supported`
+- [ ] show this in the CLI table and JSON output
+- [ ] teach the CLI to label sessions clearly on connect/open
+
+Recommended peer type vocabulary:
+
+- `host`
+- `browser-shell`
+- `vm-guest`
+- `worker`
+
+Recommended shell backend vocabulary:
+
+- `pty`
+- `virtual-shell`
+- `vm-console`
+- `exec-only`
+
+##### 3. Long-Lived Reverse Host Agent
+
+Problem:
+
+- a foreground `wsh reverse` process is enough for demos and short-lived support sessions
+- it is not the right lifecycle model for a workstation, server, or semi-persistent endpoint
+
+Why it matters:
+
+- reverse host mode becomes operationally useful only when it survives normal process churn
+- persistent reverse peers make relay-mediated support and access much more realistic
+
+Required deliverables:
+
+- [ ] define a `wsh-agent` / `wsh-peer` daemon mode
+- [ ] support background registration and automatic reconnect
+- [ ] support startup-on-login / startup-on-boot integration where practical
+- [ ] add policy configuration for what the agent exposes by default
+- [ ] add status inspection commands
+  - connected/disconnected
+  - relay target
+  - active sessions
+  - exposed capabilities
+
+Non-goal:
+
+- turning `wsh-agent` into a giant management platform; it should stay focused on remote access lifecycle
+
+##### 4. Uniform Attach / Replay / Reattach
+
+Problem:
+
+- replay and reattach quality currently varies by backend
+- good remote access requires a story for dropped tabs, dropped relay links, and resumed operator sessions
+
+Why it matters:
+
+- robustness matters more than raw feature count once the remote shell basically works
+- users forgive a relay hop far more easily than they forgive a lost session
+
+Required deliverables:
+
+- [ ] define consistent attach semantics across:
+  - direct host PTY
+  - browser virtual terminal
+  - reverse host peer
+  - future VM peer
+- [ ] standardize replay metadata and term-sync behavior
+- [ ] let peers advertise whether replay is lossless, partial, or unsupported
+- [ ] preserve session labels and identity across reconnect
+
+Desired UX outcome:
+
+- reconnecting to an interrupted session should feel like resuming a runtime, not starting over blindly
+
+#### Tranche 2: Strongly Recommended Adjacent Work
+
+These are the features that make `wsh` more broadly useful beyond shell-only workflows.
+
+##### 5. First-Class Peer File And Tool Workflows
+
+Problem:
+
+- terminal access is only one-third of the value proposition
+- reverse peers should feel just as reachable for filesystem and tool/MCP operations as they do for shell access
+
+Why it matters:
+
+- many real workflows are:
+  - fetch a file
+  - inspect logs
+  - call a tool
+  - run one command
+  - transfer a result back
+- not "open an interactive shell and stay there forever"
+
+Required deliverables:
+
+- [ ] make upload/download first-class against reverse peers
+- [ ] support capability-aware file commands from the CLI
+- [ ] improve reverse MCP/tool invocation UX
+- [ ] allow peer policies to expose tools without necessarily exposing shell
+- [ ] make peer error messages explain capability denials clearly
+
+Examples of valuable workflows:
+
+- connect to a browser peer and fetch a generated artifact
+- connect to a reverse host peer and tail logs
+- invoke a peer-local MCP tool without opening a shell
+
+##### 6. Consent, Exposure, And Policy UX
+
+Problem:
+
+- once tabs, laptops, and future VMs can act as peers, the product needs much clearer consent and exposure controls
+
+Why it matters:
+
+- the system will be judged not just on power, but on whether remote exposure feels safe and understandable
+
+Required deliverables:
+
+- [ ] clear browser UI for what a tab is exposing:
+  - shell
+  - tools
+  - filesystem
+  - VM control
+- [ ] session approval and audit log where appropriate
+- [ ] richer `authorized_keys` option documentation and UI affordances
+- [ ] per-peer or per-identity exposure presets
+- [ ] visible remote-session status in the UI
+
+Desired effect:
+
+- a user should know exactly what becomes reachable when they run `wsh reverse`
+
+##### 7. Operator UX And Output Quality
+
+Problem:
+
+- the transport and session internals are now significantly more capable than the current CLI affordances suggest
+
+Why it matters:
+
+- a strong subsystem can still feel rough if it presents unclear output, weak defaults, or too much manual targeting
+
+Required deliverables:
+
+- [ ] `wsh peers --json`
+- [ ] richer table output with peer type and backend
+- [ ] convenience selectors:
+  - connect to only peer
+  - connect to last peer
+  - filter by capability
+  - filter by peer type
+- [ ] stronger error messages for:
+  - transport mismatch
+  - cert trust problems
+  - capability denials
+  - attach/replay unavailability
+- [ ] better session banners so operators know what they are entering
+
+##### 8. Local Setup And Bootstrap Quality
+
+Problem:
+
+- a lot of friction in `wsh` adoption comes from certificates, keys, relay startup, and trust setup rather than the session protocol itself
+
+Why it matters:
+
+- for local development and first-run experience, operational polish is multiplicative
+
+Required deliverables:
+
+- [ ] make trusted local relay setup easier
+- [ ] improve key generation/copy/authorization guidance
+- [ ] offer scripts or commands for local relay bootstrap
+- [ ] make relay startup diagnostics more explicit
+- [ ] add self-check commands for common failures
+
+Examples:
+
+- cert not trusted by browser
+- wrong relay hostname in browser vs CLI
+- missing key in `authorized_keys`
+- stale known-host entry
+
+#### Tranche 3: Strategic Extensions
+
+These should be pursued after the subsystem becomes symmetric and legible.
+
+##### 9. VM Guest Peer Backend
+
+Problem:
+
+- Clawser has a clear architectural path to "runtime in the browser," but not yet a general Linux runtime target
+
+Why it matters:
+
+- a VM peer unlocks portable demos, disposable sandboxes, and self-contained remote environments
+- it makes "browser-hosted Linux as a peer" a real product story instead of a thought experiment
+
+Required deliverables:
+
+- [ ] implement a VM console backend under the existing reverse-browser peer architecture
+- [ ] support at least one emulator/runtime integration cleanly
+- [ ] expose peer metadata that makes the VM nature explicit
+- [ ] ensure the UX does not misrepresent a VM console as a real host PTY
+
+##### 10. VM Lifecycle, Persistence, And Resource Controls
+
+Problem:
+
+- a console without lifecycle and persistence quickly becomes a novelty
+
+Why it matters:
+
+- if VM peers are going to matter operationally, they need image, storage, and lifecycle semantics
+
+Required deliverables:
+
+- [ ] VM start/stop/reset
+- [ ] snapshot/import/export
+- [ ] persistent workspace binding
+- [ ] resource budgeting
+  - memory
+  - CPU
+  - storage
+- [ ] capability split between:
+  - guest shell access
+  - guest filesystem
+  - VM administration
+
+##### 11. Mesh-Assisted Discovery Later
+
+Problem:
+
+- once BrowserMesh grows into a stronger discovery/routing layer, there will be pressure to fold `wsh` peer finding into it
+
+Why it matters:
+
+- this is the right long-term direction, but only after the `wsh` layer itself is stable and explicit
+
+Required deliverables:
+
+- [ ] keep `wsh` session/auth semantics independent
+- [ ] allow BrowserMesh to supply discovery and route hints later
+- [ ] avoid duplicating session semantics across mesh and `wsh`
+
+Target outcome:
+
+- BrowserMesh helps find and route to peers
+- `wsh` still owns remote session behavior
+
+### Phase 7A.11: Missed Integration Opportunities And Required Convergences
+
+Goal: capture the cross-subsystem integration opportunities that are easy to overlook because each subsystem already works in isolation, but that should be treated as required convergence work if Clawser is going to feel like one coherent operating environment.
+
+This section is intentionally separate from the adjacent-features list above.
+
+The previous section answered:
+
+- what additional `wsh`-adjacent features should exist
+
+This section answers:
+
+- which existing subsystems should be integrated with the remote-runtime plane and how
+
+The pattern to avoid is:
+
+- multiple peer models
+- multiple remote-access UIs
+- multiple capability systems
+- multiple routing systems
+- multiple audit trails
+
+all coexisting without a canonical integration contract.
+
+#### Convergence 1: Remote UI Stack Unification
+
+Current situation:
+
+- [clawser-ui-remote.js](/Users/johnhenry/Projects/clawser/web/clawser-ui-remote.js) already provides remote chat, remote terminal, remote file browser, and service browsing
+- the newer `wsh` remote-runtime work now provides a more explicit session/auth/relay model
+- these are adjacent enough that they risk becoming competing architectures
+
+Why this matters:
+
+- the user should not have to understand whether a remote terminal came from:
+  - the old peer-remote UI stack
+  - the mesh session stack
+  - the `wsh` reverse peer stack
+- the UI should present "remote runtime" as one concept with multiple backends, not multiple product silos
+
+Required convergence:
+
+- [ ] make the remote UI consume canonical `RemotePeerDescriptor` records instead of ad hoc peer/session objects
+- [ ] route all terminal/file/service openings through the session broker
+- [ ] distinguish clearly in the UI whether the target is:
+  - chat-only peer
+  - service peer
+  - browser shell peer
+  - host PTY peer
+  - VM guest peer
+- [ ] replace duplicated peer display logic with one reusable peer-card / peer-row model
+- [ ] ensure remote UI panels reflect actual backend capabilities rather than showing controls that will immediately fail
+
+Verification criteria:
+
+- opening a remote terminal from the UI and opening the same peer from the CLI resolve to the same runtime target model
+- remote file browser only appears when the peer advertises filesystem access
+- remote service browser and shell/file panels can coexist on the same peer descriptor without duplicating peer identity
+
+#### Convergence 2: Mesh Naming And Address Resolution Into `wsh`
+
+Current situation:
+
+- mesh naming is its own subsystem
+- `wsh` targeting still primarily thinks in terms of hostnames, relay fingerprints, and manual targets
+
+Why this matters:
+
+- names are the natural operator-facing handle once peers become numerous
+- if naming and runtime access remain separate, operators will keep translating mentally between peer names and session targets
+
+Required convergence:
+
+- [ ] let mesh names resolve to canonical remote peer descriptors
+- [ ] allow future `wsh` session targeting by name:
+  - `@alice`
+  - `@builder`
+  - `@guestbox@relay.example.com`
+- [ ] preserve the distinction between:
+  - naming a peer identity
+  - naming a specific endpoint
+  - naming a service hosted on a peer
+- [ ] define resolution precedence:
+  - explicit direct host target
+  - explicit fingerprint
+  - qualified mesh name
+  - local alias/bookmark
+- [ ] ensure name resolution never silently binds to the wrong peer when identities are ambiguous
+
+Verification criteria:
+
+- a named peer can be resolved from both UI and CLI
+- ambiguous names produce an explainable conflict, not silent misrouting
+- names survive relay changes because they bind to identity, not ephemeral transport coordinates
+
+#### Convergence 3: Peer Registry, Discovery, And Runtime Registry Unification
+
+Current situation:
+
+- mesh discovery has peer records
+- mesh relay has peer announcements
+- `wsh` relay has reverse peers
+- direct hosts are often stored separately as targets or bookmarks
+
+Why this matters:
+
+- if each of these produces a different peer list, Clawser will constantly fight itself at the product layer
+
+Required convergence:
+
+- [ ] build one canonical remote runtime registry that ingests:
+  - mesh discovery records
+  - mesh live peer state
+  - mesh relay announcements
+  - `wsh` reverse-peer listings
+  - direct host bookmarks
+  - future VM peer advertisements
+- [ ] preserve source provenance for every merged field
+- [ ] define deterministic merge rules for:
+  - identity match
+  - linked identity match
+  - conflicting capability reports
+  - conflicting transport information
+  - stale liveness data
+- [ ] provide one query surface for:
+  - peer picker UI
+  - CLI peer listings
+  - agent/routine targeting
+  - future marketplace/resource schedulers
+
+Verification criteria:
+
+- one runtime shows up once in product surfaces, even if discovered through multiple channels
+- stale discovery does not overwrite fresher relay/runtime state
+- direct host bookmarks can coexist with live-discovered peers without identity collisions
+
+#### Convergence 4: ACL Templates And `wsh` Exposure Presets
+
+Current situation:
+
+- mesh ACL already has scope templates and roster semantics in [clawser-mesh-acl.js](/Users/johnhenry/Projects/clawser/web/clawser-mesh-acl.js)
+- `wsh` exposure still largely thinks in terms of local flags and low-level capability advertisement
+
+Why this matters:
+
+- one of the strongest integration wins available is to let an operator describe remote access once and have both systems enforce compatible behavior
+
+Required convergence:
+
+- [ ] map mesh scope templates to `wsh` exposure presets
+- [ ] define a translation table between mesh scopes and `wsh` capabilities
+- [ ] support per-peer/per-identity presets that determine:
+  - shell access
+  - exec-only access
+  - filesystem access
+  - MCP/tool access
+  - gateway/network access
+  - VM control access
+- [ ] document precedence between:
+  - mesh ACL deny
+  - relay policy deny
+  - `wsh` local exposure deny
+  - host key/capability deny
+- [ ] add UX so the operator can see which layer denied a request
+
+Example translation direction:
+
+- mesh `guest` -> `tools + fs:read` but no shell
+- mesh `collaborator` -> `shell + fs + tools`
+- mesh `admin` -> full runtime access, subject to local `wsh` auth and host policy
+
+Verification criteria:
+
+- granting a mesh role changes the effective remote-access affordances consistently
+- a deny in any layer is explainable with the denying layer identified
+
+#### Convergence 5: Trust, Reputation, And Route Selection
+
+Current situation:
+
+- mesh trust and reputation are already planned or implemented as routing signals
+- `wsh` currently focuses on auth correctness and availability, not policy-aware ranking
+
+Why this matters:
+
+- once there are multiple routes, multiple relays, and multiple runtimes, the system needs a principled way to choose a path
+
+Required convergence:
+
+- [ ] incorporate mesh trust scores into route ranking, not session admission bypass
+- [ ] incorporate relay health and latency into `wsh` path selection
+- [ ] allow policy to require a minimum trust score for:
+  - relay use
+  - compute delegation
+  - filesystem exposure
+  - VM control
+- [ ] record observed runtime quality back into trust/reputation systems where appropriate
+  - uptime
+  - attach/resume reliability
+  - transfer reliability
+  - session acceptance behavior
+
+Hard rule:
+
+- trust can rank or suppress candidate paths
+- trust must not replace endpoint authentication or local capability checks
+
+Verification criteria:
+
+- lower-trust peers can still be visible but not necessarily chosen by default
+- path selection is deterministic for the same inputs
+- trust changes affect route ranking without changing identity or capability truth
+
+#### Convergence 6: Netway Gateway And Remote Runtime Routing
+
+Current situation:
+
+- Netway already treats `wsh` as a gateway substrate in [gateway-backend.mjs](/Users/johnhenry/Projects/clawser/web/packages/netway/src/gateway-backend.mjs)
+- mesh routing and remote-runtime access are still mostly described separately
+
+Why this matters:
+
+- gateway/network access is one of the most powerful things `wsh` can expose
+- it is also one of the riskiest, so it should be integrated with the richer mesh policy/trust/quota systems
+
+Required convergence:
+
+- [ ] allow gateway-capable peers to appear as remote runtime descriptors with explicit network capabilities
+- [ ] map mesh trust/quota/policy signals into gateway path selection
+- [ ] expose route provenance:
+  - local
+  - direct host gateway
+  - reverse host gateway
+  - browser-proxied gateway
+- [ ] ensure gateway exposure is policy-scoped independently from shell/tool access
+- [ ] integrate gateway session events into the same audit trail as shell/file sessions
+
+Verification criteria:
+
+- gateway paths are visible as capabilities on peers
+- policy can allow shell access while denying gateway use, and vice versa
+- reconnect/re-auth flows for gateway-backed sessions follow the same runtime registry logic as shell sessions
+
+#### Convergence 7: Federated Compute Using `wsh` As A Runtime Substrate
+
+Current situation:
+
+- [clawser-peer-compute.js](/Users/johnhenry/Projects/clawser/web/clawser-peer-compute.js) already orchestrates work across peers
+- it does not yet have a canonical way to distinguish "chat peer", "runtime peer", "host shell peer", or "VM compute peer"
+
+Why this matters:
+
+- compute delegation is a natural consumer of the remote-runtime fabric
+- host peers, browser peers, and VM peers should all be schedulable according to what they can actually run
+
+Required convergence:
+
+- [ ] let compute schedulers query the remote runtime registry rather than ad hoc peer lists
+- [ ] add capability classes relevant to compute:
+  - `exec`
+  - `shell`
+  - `wasm`
+  - `gpu`
+  - `vm_console`
+  - future guest-side execution APIs
+- [ ] allow schedulers to prefer:
+  - real host peers for heavy compute
+  - browser peers for light tool execution
+  - VM peers for isolated Linux workloads
+- [ ] tie compute execution records into the same audit and trust loops as interactive sessions
+
+Verification criteria:
+
+- compute dispatch can intentionally choose a real host over a browser shell when fidelity matters
+- peer capability mismatches are rejected before job dispatch, not after opaque failure
+
+#### Convergence 8: Virtual Server, Remote Services, And Runtime Hosting
+
+Current situation:
+
+- the Virtual Server subsystem and peer/service discovery are both present
+- remote runtimes are still treated mostly as shells or tool endpoints
+
+Why this matters:
+
+- once runtimes become first-class peers, they can also become first-class service hosts
+
+Required convergence:
+
+- [ ] allow remote runtime descriptors to advertise hosted services
+- [ ] let the Virtual Server subsystem bind services to a peer/runtime target
+- [ ] distinguish between:
+  - peer shell access
+  - peer service browsing
+  - peer service routing
+  - peer-hosted server management
+- [ ] make service discovery consume the same canonical peer/runtime model
+
+Verification criteria:
+
+- a peer can expose both an interactive shell and one or more hosted services under one identity
+- service browsing does not require a separate peer graph from runtime access
+
+#### Convergence 9: Apps, Skills, And Runtime Deployment Targets
+
+Current situation:
+
+- skills, apps, and installable runtime features already exist
+- remote peers are not yet first-class deployment targets
+
+Why this matters:
+
+- one of the strongest long-term product stories is that Clawser can not only connect to runtimes, but also provision or extend them
+
+Required convergence:
+
+- [ ] define which peer types can accept deploy/install actions
+- [ ] allow app/skill deployment targeting through the remote runtime registry
+- [ ] surface whether a peer supports:
+  - tool injection
+  - skill sync
+  - package install
+  - VM image/app loading
+- [ ] reflect deployment capability in policy, trust, and audit systems
+
+Verification criteria:
+
+- deploy/install actions target canonical peer descriptors
+- peers that cannot support deployment never present misleading deployment affordances
+
+#### Convergence 10: Audit, Observability, And Session Telemetry Unification
+
+Current situation:
+
+- mesh audit exists
+- `wsh` session events exist
+- remote UI and routing have their own event surfaces
+
+Why this matters:
+
+- as remote-runtime access becomes central, audit and observability cannot remain fragmented
+
+Required convergence:
+
+- [ ] log all remote session lifecycle events into a common audit/telemetry surface:
+  - discovery
+  - route selection
+  - relay use
+  - auth success/failure
+  - exposure changes
+  - session open/close
+  - file transfer
+  - tool invocation
+  - gateway use
+- [ ] distinguish operator actions from automated routing/runtime actions
+- [ ] expose cross-stack telemetry views:
+  - peer health
+  - route quality
+  - relay usage
+  - capability denials
+  - attach/replay reliability
+
+Verification criteria:
+
+- a single remote session can be followed across discovery, route selection, auth, and session lifecycle in one audit story
+- failures become explainable without correlating multiple unrelated subsystems manually
+
+#### Convergence 11: Remote Filesystems And Mount Semantics
+
+Current situation:
+
+- local mounts exist
+- remote file transfer exists
+- remote filesystems are not yet treated as mountable runtime surfaces
+
+Why this matters:
+
+- remote-runtime UX becomes much stronger if peers can feel like mountable spaces, not just ad hoc transfer endpoints
+
+Required convergence:
+
+- [ ] define remote filesystem mount semantics
+- [ ] integrate remote peers with the shell/filesystem model
+- [ ] distinguish:
+  - ad hoc file transfer
+  - live remote browsing
+  - mounted remote namespace
+- [ ] gate remote mounts by peer capability and trust/policy
+
+Possible user-facing models:
+
+- `/peers/<peer-id>/`
+- `peer://<name>/`
+- workspace mount aliases bound to peer descriptors
+
+Verification criteria:
+
+- remote mount state reflects peer liveness and capability
+- disconnected peers fail cleanly without corrupting local mount state
+
+#### Convergence 12: Routines, Daemon Mode, And Remote Runtime Automation
+
+Current situation:
+
+- routines and daemon mode already provide automation
+- remote peers are still mostly treated as manually invoked targets
+
+Why this matters:
+
+- a mature remote-runtime plane should be automatable
+
+Required convergence:
+
+- [ ] allow routines to target canonical remote runtime descriptors
+- [ ] support scheduled health checks, syncs, backups, and maintenance against peers
+- [ ] ensure daemon/background execution can reuse the same session broker as interactive flows
+- [ ] apply policy and audit consistently to automated sessions
+
+Verification criteria:
+
+- the same target resolution and route selection logic works in both interactive and automated contexts
+- background automation does not bypass the same policy and trust checks that interactive sessions obey
+
+#### Convergence 13: Product-Surface Unification
+
+Goal: ensure all of the above appears as one product, not a bag of adjacent subsystems.
+
+Required convergence:
+
+- [ ] one canonical peer picker
+- [ ] one canonical runtime/session status model
+- [ ] one canonical audit trail for remote access
+- [ ] one canonical capability display model
+- [ ] one canonical route explanation model
+
+This is the convergence that matters most to users.
+
+They do not care whether a feature came from:
+
+- BrowserMesh
+- `wsh`
+- Netway
+- Virtual Server
+- remote UI
+- peer compute
+
+They care whether:
+
+- they can find the peer
+- they can understand what it is
+- they can open the right session
+- they can trust what it exposes
+- they can tell what failed when it fails
+
+### Phase 7A.12: Explicit Non-Priorities
+
+Goal: state what should *not* absorb roadmap energy yet, even if it sounds adjacent.
+
+#### 1. Direct Peer-to-Peer `wsh` As A New Primary Transport
+
+Why not now:
+
+- the relay already solves the immediate reachability problem
+- BrowserMesh and WebRTC already create transport complexity
+- adding another first-class transport matrix now would fragment effort
+
+Condition for reconsideration:
+
+- only after relay-mediated peer access is mature, symmetric, and clearly insufficient for a real use case
+
+#### 2. GUI Remoting
+
+Why not now:
+
+- it is not what `wsh` is for
+- it would distort the product around a completely different interaction model
+
+Correct domain:
+
+- separate remote desktop tooling if ever needed
+
+#### 3. Pretending Browser Consoles Are Real PTYs
+
+Why not now:
+
+- the system is cleaner when PTY vs virtual terminal vs VM console distinctions stay explicit
+- a lot of engineering pain comes from trying to erase honest semantic boundaries
+
+Correct approach:
+
+- improve emulated terminals where they are useful
+- preserve real PTY paths where real PTY fidelity is required
+
+#### 4. Making BrowserMesh A Prerequisite For Basic `wsh`
+
+Why not now:
+
+- `wsh` should remain deployable in a simple relay/client/server model
+- BrowserMesh is an enrichment layer, not a requirement for remote operator access
+
+Correct relationship:
+
+- BrowserMesh may later augment discovery, trust, and routing
+- `wsh` should remain independently useful
+
+### Deliverables Before BrowserMesh Should Depend On This
+
+- [ ] Rust reverse host peer parity with the browser path
+- [ ] BrowserMesh ↔ `wsh` integration contract implemented as shared peer descriptors, runtime registry, and session broker
+- [ ] remote UI, naming, registry, ACL, gateway, compute, audit, and automation integrations all consume the same canonical peer/runtime model
+- [ ] clear precedence rules between mesh ACL/trust and `wsh` auth/capability policy
+- [ ] peer type and backend metadata in protocol + CLI output
+- [ ] docs that clearly distinguish PTY vs virtual terminal vs VM console
+- [ ] verification matrix covering discovery, merge, policy, routing, and session behavior across both stacks
+- [ ] one stable VM-console proof of concept
+- [ ] explicit product guidance on when to use direct host, reverse host, browser peer, and VM peer modes
+
+---
+
 ## Phase 8: BrowserMesh Integration
 
 Turns Clawser into a first-class node in the BrowserMesh decentralized mesh — peer-to-peer connectivity, cryptographic identity, CRDT replication, resource sharing, and payment channels. All mesh features are opt-in via `config.mesh.enabled`. Clawser works fully standalone; BrowserMesh makes it distributed.

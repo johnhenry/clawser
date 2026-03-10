@@ -50,6 +50,22 @@ function makeOrchestrator(overrides = {}) {
   })
 }
 
+function makeRuntimeRegistry(peers = []) {
+  const byId = new Map()
+  for (const peer of peers) {
+    const podId = peer.identity?.podId || peer.identity?.fingerprint || peer.identity?.canonicalId
+    byId.set(podId, peer)
+  }
+  return {
+    listPeers() {
+      return peers
+    },
+    resolvePeer(selector) {
+      return byId.get(selector) || null
+    },
+  }
+}
+
 function makeRemotePeer(overrides = {}) {
   return {
     label: 'Remote Pod',
@@ -234,6 +250,26 @@ describe('MeshOrchestrator', () => {
     assert.equal(remote.isLocal, false)
   })
 
+  it('listPods includes remote runtime registry peers', async () => {
+    const registryOrch = makeOrchestrator({
+      runtimeRegistry: makeRuntimeRegistry([
+        {
+          identity: { canonicalId: 'browser-fp', fingerprint: 'browser-fp', aliases: [] },
+          username: 'browser',
+          capabilities: ['shell'],
+          reachability: [{ kind: 'reverse-relay' }],
+          metadata: { status: 'online', services: ['terminal'] },
+        },
+      ]),
+    })
+
+    const pods = await registryOrch.listPods()
+    const runtimePeer = pods.find((pod) => pod.podId === 'browser-fp')
+    assert.ok(runtimePeer)
+    assert.equal(runtimePeer.label, 'browser')
+    assert.deepEqual(runtimePeer.services, ['terminal'])
+  })
+
   it('listPods filters by status', async () => {
     orch.addPeer('remote-1', makeRemotePeer({ status: 'online' }))
     orch.addPeer('remote-2', makeRemotePeer({ status: 'offline' }))
@@ -275,6 +311,30 @@ describe('MeshOrchestrator', () => {
   it('getPodStatus returns null for unknown pod', async () => {
     const status = await orch.getPodStatus('nonexistent')
     assert.equal(status, null)
+  })
+
+  it('getPodStatus falls back to the runtime registry', async () => {
+    const registryOrch = makeOrchestrator({
+      runtimeRegistry: makeRuntimeRegistry([
+        {
+          identity: { canonicalId: 'vm-peer', fingerprint: 'vm-peer', aliases: [] },
+          username: 'vm',
+          capabilities: ['shell', 'files'],
+          reachability: [{ kind: 'reverse-relay' }],
+          metadata: {
+            status: 'online',
+            resources: { cpu: 1, memory: 512, storage: 2048 },
+            services: ['ssh'],
+          },
+        },
+      ]),
+    })
+
+    const status = await registryOrch.getPodStatus('vm-peer')
+    assert.ok(status)
+    assert.deepEqual(status.capabilities, ['shell', 'files'])
+    assert.equal(status.resources.memory, 512)
+    assert.deepEqual(status.services, ['ssh'])
   })
 
   // -- execOnPod ------------------------------------------------------------
@@ -407,6 +467,30 @@ describe('MeshOrchestrator', () => {
     const remote = pods.find(p => p.podId === 'remote-1')
     assert.ok(remote)
     assert.equal(remote.activeTasks, 5)
+  })
+
+  it('topPods includes runtime registry peers', async () => {
+    const registryOrch = makeOrchestrator({
+      runtimeRegistry: makeRuntimeRegistry([
+        {
+          identity: { canonicalId: 'relay-peer', fingerprint: 'relay-peer', aliases: [] },
+          username: 'relay-peer',
+          capabilities: ['exec'],
+          reachability: [{ kind: 'reverse-relay' }],
+          metadata: {
+            status: 'online',
+            resources: { cpu: 2, memory: 1024, storage: 4096 },
+            activeTasks: 3,
+          },
+        },
+      ]),
+    })
+
+    const { pods } = await registryOrch.topPods()
+    const remote = pods.find((pod) => pod.podId === 'relay-peer')
+    assert.ok(remote)
+    assert.equal(remote.cpu, 2)
+    assert.equal(remote.activeTasks, 3)
   })
 
   // -- exposePod / routeService ---------------------------------------------

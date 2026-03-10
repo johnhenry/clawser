@@ -4,25 +4,79 @@
 //! - `peers`: connect to a relay and list available reverse peers
 
 use anyhow::{Context, Result};
+use std::sync::Arc;
 use tracing::{debug, info};
 use wsh_client::SessionOpts;
 use wsh_core::messages::*;
+use wsh_core::RemotePeerDescriptor;
 
 use crate::commands::common::{connect_client, resolve_target};
 use crate::commands::interactive;
+use crate::commands::reverse_host::{self, ReverseHostOptions};
 use crate::terminal as term;
 
+#[derive(Debug, Clone, Default)]
+pub struct PeerQueryOptions {
+    pub json: bool,
+    pub peer_type: Option<String>,
+    pub shell_backend: Option<String>,
+    pub capability: Option<String>,
+}
+
 fn reverse_accept_summary(accept: &ReverseAcceptPayload) -> String {
-    if accept.capabilities.is_empty() {
-        "(no capabilities advertised)".to_string()
+    let caps = if accept.capabilities.is_empty() {
+        "no capabilities".to_string()
     } else {
         accept.capabilities.join(", ")
+    };
+
+    format!(
+        "{} / {} [{}]",
+        accept.peer_type, accept.shell_backend, caps
+    )
+}
+
+fn filter_peers(peers: Vec<PeerInfo>, options: &PeerQueryOptions) -> Vec<PeerInfo> {
+    peers.into_iter()
+        .filter(|peer| {
+            options
+                .peer_type
+                .as_ref()
+                .map_or(true, |peer_type| &peer.peer_type == peer_type)
+        })
+        .filter(|peer| {
+            options
+                .shell_backend
+                .as_ref()
+                .map_or(true, |backend| &peer.shell_backend == backend)
+        })
+        .filter(|peer| {
+            options
+                .capability
+                .as_ref()
+                .map_or(true, |capability| {
+                    peer.capabilities.iter().any(|cap| cap == capability)
+                })
+        })
+        .collect()
+}
+
+fn reverse_connect_label(accept: &ReverseAcceptPayload) -> String {
+    if accept.capabilities.is_empty() {
+        format!("{} {}", accept.peer_type, accept.shell_backend)
+    } else {
+        format!(
+            "{} {} [{}]",
+            accept.peer_type,
+            accept.shell_backend,
+            accept.capabilities.join(", ")
+        )
     }
 }
 
-fn parse_reverse_connect_response(payload: Payload) -> Result<String> {
+fn parse_reverse_connect_response(payload: Payload) -> Result<ReverseAcceptPayload> {
     match payload {
-        Payload::ReverseAccept(accept) => Ok(reverse_accept_summary(&accept)),
+        Payload::ReverseAccept(accept) => Ok(accept),
         Payload::ReverseReject(reject) => {
             anyhow::bail!("peer rejected reverse connection: {}", reject.reason)
         }
@@ -55,30 +109,35 @@ pub async fn run_reverse(
     let public_bytes = wsh_client::auth::public_key_bytes(&verifying_key);
     let fingerprint = wsh_core::fingerprint(&public_bytes);
     let short_fp = &fingerprint[..fingerprint.len().min(12)];
+    let reverse_options = ReverseHostOptions::default();
 
     let resolved = resolve_target(relay_host, port, transport)?;
     debug!(url = %resolved.url, fallback_urls = ?resolved.fallback_urls, "relay URL");
 
     // Connect and authenticate
     let username = resolved.user.clone();
-    let client = connect_client(&resolved, identity)
+    let client = Arc::new(
+        connect_client(&resolved, identity)
         .await
-        .context("failed to connect to relay")?;
+        .context("failed to connect to relay")?,
+    );
 
     // Take the reverse-connect receiver before sending registration
-    let mut rc_rx = client
+    let rc_rx = client
         .take_reverse_connect_rx()
         .await
         .expect("reverse connect receiver already taken");
+    let relay_rx = client
+        .take_relay_message_rx()
+        .await
+        .expect("relay message receiver already taken");
 
     // Send ReverseRegister message (fire-and-forget, no reply expected)
     let register = Envelope {
         msg_type: MsgType::ReverseRegister,
-        payload: Payload::ReverseRegister(ReverseRegisterPayload {
-            username,
-            capabilities: vec!["pty".into(), "exec".into()],
-            public_key: public_bytes,
-        }),
+        payload: Payload::ReverseRegister(
+            reverse_options.reverse_register_payload(username, public_bytes),
+        ),
     };
     client
         .send_fire_and_forget(register)
@@ -88,23 +147,8 @@ pub async fn run_reverse(
 
     println!("Registered as peer {short_fp} on {relay_host}:{port}");
     println!("Waiting for connections... (Ctrl+C to stop)");
-
-    // Event loop: handle incoming reverse connections or Ctrl+C
-    loop {
-        tokio::select! {
-            Some(envelope) = rc_rx.recv() => {
-                if let Payload::ReverseConnect(p) = &envelope.payload {
-                    println!("Incoming connection from: {}", p.username);
-                    println!("  target: {}", p.target_fingerprint);
-                    // For now, just acknowledge. Full session handling comes later.
-                }
-            }
-            _ = tokio::signal::ctrl_c() => {
-                println!("\nDisconnecting...");
-                break;
-            }
-        }
-    }
+    reverse_host::run_with_options(client.clone(), rc_rx, relay_rx, reverse_options, None)
+        .await?;
 
     client
         .disconnect()
@@ -120,6 +164,7 @@ pub async fn run_peers(
     port: u16,
     identity: &str,
     transport: Option<&str>,
+    options: &PeerQueryOptions,
 ) -> Result<()> {
     info!(relay = %relay_host, "listing peers");
 
@@ -143,33 +188,48 @@ pub async fn run_peers(
         .map_err(|e| anyhow::anyhow!("{e}"))
         .context("failed to list peers")?;
 
-    // Display peers table
-    println!(
-        "{:<14} {:<16} {:<20} {}",
-        "FINGERPRINT", "USERNAME", "CAPABILITIES", "LAST SEEN"
-    );
-    println!(
-        "{:<14} {:<16} {:<20} {}",
-        "───────────", "────────", "────────────", "─────────"
-    );
-
     if let Payload::ReversePeers(peers) = response.payload {
-        if peers.peers.is_empty() {
-            println!("(no peers online)");
+        let peers = filter_peers(peers.peers, options);
+
+        if options.json {
+            let descriptors: Vec<RemotePeerDescriptor> = peers
+                .iter()
+                .map(|peer| RemotePeerDescriptor::from_wsh_peer_info(peer, relay_host, port))
+                .collect();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&descriptors).context("failed to serialize peers")?
+            );
         } else {
-            for peer in &peers.peers {
-                println!(
-                    "{:<14} {:<16} {:<20} {}",
-                    peer.fingerprint_short,
-                    peer.username,
-                    peer.capabilities.join(", "),
-                    peer.last_seen
-                        .map(|t| format!("{t}s ago"))
-                        .unwrap_or_else(|| "—".to_string()),
-                );
+            println!(
+                "{:<14} {:<16} {:<14} {:<16} {:<20} {}",
+                "FINGERPRINT", "USERNAME", "TYPE", "BACKEND", "CAPABILITIES", "LAST SEEN"
+            );
+            println!(
+                "{:<14} {:<16} {:<14} {:<16} {:<20} {}",
+                "───────────", "────────", "────", "───────", "────────────", "─────────"
+            );
+
+            if peers.is_empty() {
+                println!("(no peers online)");
+            } else {
+                for peer in &peers {
+                    println!(
+                        "{:<14} {:<16} {:<14} {:<16} {:<20} {}",
+                        peer.fingerprint_short,
+                        peer.username,
+                        peer.peer_type,
+                        peer.shell_backend,
+                        peer.capabilities.join(", "),
+                        peer.last_seen
+                            .map(|t| format!("{t}s ago"))
+                            .unwrap_or_else(|| "—".to_string()),
+                    );
+                }
             }
+
+            println!("\n{} peer(s).", peers.len());
         }
-        println!("\n{} peer(s).", peers.peers.len());
     } else {
         println!("(unexpected response)");
     }
@@ -221,8 +281,11 @@ pub async fn run_connect(
         .map_err(|e| anyhow::anyhow!("{e}"))
         .context("failed to reverse-connect to peer")?;
 
-    let caps = parse_reverse_connect_response(response.payload)?;
-    println!("Peer accepted reverse connection. Capabilities: {caps}");
+    let accept = parse_reverse_connect_response(response.payload)?;
+    println!(
+        "Peer accepted reverse connection. Backend: {}",
+        reverse_accept_summary(&accept)
+    );
 
     let (cols, rows) = term::get_terminal_size();
     let session = client
@@ -237,7 +300,14 @@ pub async fn run_connect(
         .map_err(|e| anyhow::anyhow!("{e}"))
         .context("failed to open reverse PTY session")?;
 
-    interactive::run_session(session, &format!("peer {target_fingerprint}")).await?;
+    interactive::run_session(
+        session,
+        &format!(
+            "peer {target_fingerprint} ({})",
+            reverse_connect_label(&accept)
+        ),
+    )
+    .await?;
     client
         .disconnect()
         .await
@@ -248,31 +318,92 @@ pub async fn run_connect(
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_reverse_connect_response, reverse_accept_summary};
-    use wsh_core::messages::{Payload, ReverseAcceptPayload, ReverseRejectPayload};
+    use super::{
+        filter_peers, parse_reverse_connect_response, reverse_accept_summary, PeerQueryOptions,
+    };
+    use wsh_core::messages::{Payload, PeerInfo, ReverseAcceptPayload, ReverseRejectPayload};
 
     #[test]
-    fn reverse_accept_summary_falls_back_when_no_capabilities_are_advertised() {
+    fn reverse_accept_summary_includes_backend_and_capabilities() {
         assert_eq!(
             reverse_accept_summary(&ReverseAcceptPayload {
                 target_fingerprint: "fp".into(),
                 username: "user".into(),
-                capabilities: vec![],
+                capabilities: vec!["shell".into()],
+                peer_type: "browser-shell".into(),
+                shell_backend: "virtual-shell".into(),
+                supports_attach: true,
+                supports_replay: true,
+                supports_echo: true,
+                supports_term_sync: true,
             }),
-            "(no capabilities advertised)"
+            "browser-shell / virtual-shell [shell]"
         );
     }
 
     #[test]
+    fn filter_peers_applies_type_backend_and_capability_filters() {
+        let peers = vec![
+            PeerInfo {
+                fingerprint: "host".into(),
+                fingerprint_short: "host".into(),
+                username: "host".into(),
+                capabilities: vec!["shell".into(), "fs".into()],
+                peer_type: "host".into(),
+                shell_backend: "pty".into(),
+                source: "wsh-relay".into(),
+                supports_attach: true,
+                supports_replay: true,
+                supports_echo: false,
+                supports_term_sync: false,
+                last_seen: Some(1),
+            },
+            PeerInfo {
+                fingerprint: "browser".into(),
+                fingerprint_short: "browser".into(),
+                username: "browser".into(),
+                capabilities: vec!["shell".into()],
+                peer_type: "browser-shell".into(),
+                shell_backend: "virtual-shell".into(),
+                source: "wsh-relay".into(),
+                supports_attach: true,
+                supports_replay: true,
+                supports_echo: true,
+                supports_term_sync: true,
+                last_seen: Some(2),
+            },
+        ];
+
+        let filtered = filter_peers(
+            peers,
+            &PeerQueryOptions {
+                json: false,
+                peer_type: Some("browser-shell".into()),
+                shell_backend: Some("virtual-shell".into()),
+                capability: Some("shell".into()),
+            },
+        );
+
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].username, "browser");
+    }
+
+    #[test]
     fn parse_reverse_connect_response_accepts_reverse_accept() {
-        let caps = parse_reverse_connect_response(Payload::ReverseAccept(ReverseAcceptPayload {
+        let accept = parse_reverse_connect_response(Payload::ReverseAccept(ReverseAcceptPayload {
             target_fingerprint: "fp".into(),
             username: "user".into(),
-            capabilities: vec!["shell".into(), "tools".into()],
+            capabilities: vec!["shell".into()],
+            peer_type: "browser-shell".into(),
+            shell_backend: "virtual-shell".into(),
+            supports_attach: true,
+            supports_replay: true,
+            supports_echo: true,
+            supports_term_sync: true,
         }))
         .unwrap();
-
-        assert_eq!(caps, "shell, tools");
+        assert_eq!(accept.peer_type, "browser-shell");
+        assert_eq!(accept.shell_backend, "virtual-shell");
     }
 
     #[test]
@@ -284,8 +415,6 @@ mod tests {
         }))
         .unwrap_err();
 
-        assert!(err
-            .to_string()
-            .contains("peer rejected reverse connection: busy"));
+        assert!(err.to_string().contains("busy"));
     }
 }

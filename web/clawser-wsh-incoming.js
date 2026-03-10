@@ -493,6 +493,12 @@ export async function handleReverseConnect(msg) {
     targetFingerprint: msg.target_fingerprint,
     username: msg.username,
     capabilities: capabilityList(capabilities),
+    peerType: 'browser-shell',
+    shellBackend: 'virtual-shell',
+    supportsAttach: true,
+    supportsReplay: true,
+    supportsEcho: true,
+    supportsTermSync: true,
   }));
 }
 

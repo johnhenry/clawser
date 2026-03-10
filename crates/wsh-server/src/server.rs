@@ -10,7 +10,7 @@ use crate::gateway::policy::{GatewayPolicy, GatewayPolicyEnforcer};
 use crate::gateway::GatewayEvent;
 use crate::handshake;
 use crate::mcp::{McpBridge, McpProxy};
-use crate::relay::{PeerRegistry, RelayBroker};
+use crate::relay::{PeerMetadata, PeerRegistry, RelayBroker};
 use crate::session::SessionManager;
 use crate::transport::{websocket, webtransport};
 use std::collections::HashMap;
@@ -1267,6 +1267,14 @@ impl WshServer {
                         fp.clone(),
                         p.username.clone(),
                         p.capabilities.clone(),
+                        PeerMetadata {
+                            peer_type: p.peer_type.clone(),
+                            shell_backend: p.shell_backend.clone(),
+                            supports_attach: p.supports_attach,
+                            supports_replay: p.supports_replay,
+                            supports_echo: p.supports_echo,
+                            supports_term_sync: p.supports_term_sync,
+                        },
                         Some(cid),
                     )
                     .await;
@@ -1283,6 +1291,7 @@ impl WshServer {
                 let peers: Vec<PeerInfo> = entries
                     .iter()
                     .map(|e| PeerInfo {
+                        fingerprint: e.fingerprint.clone(),
                         fingerprint_short: if e.fingerprint.len() >= 8 {
                             e.fingerprint[..8].to_string()
                         } else {
@@ -1290,6 +1299,13 @@ impl WshServer {
                         },
                         username: e.username.clone(),
                         capabilities: e.capabilities.clone(),
+                        peer_type: e.peer_type.clone(),
+                        shell_backend: e.shell_backend.clone(),
+                        source: "wsh-relay".to_string(),
+                        supports_attach: e.supports_attach,
+                        supports_replay: e.supports_replay,
+                        supports_echo: e.supports_echo,
+                        supports_term_sync: e.supports_term_sync,
                         last_seen: Some(e.last_seen.elapsed().as_secs()),
                     })
                     .collect();

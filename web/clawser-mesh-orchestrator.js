@@ -230,6 +230,8 @@ export class MeshOrchestrator {
   #router
   /** @type {Function|null} */
   #onLog
+  /** @type {object|null} */
+  #runtimeRegistry
   /** @type {Map<string, object>} podId -> peer info */
   #knownPeers = new Map()
   /** @type {Map<string, object>} name -> { podId, port } */
@@ -249,9 +251,10 @@ export class MeshOrchestrator {
    * @param {object} [opts.serviceAdvertiser] - ServiceAdvertiser or null
    * @param {object} [opts.serviceBrowser]    - ServiceBrowser or null
    * @param {object} [opts.router]            - MeshRouter or null
+   * @param {object} [opts.runtimeRegistry]   - RemoteRuntimeRegistry or null
    * @param {Function} [opts.onLog]           - Logging callback
    */
-  constructor({ peerNode, serviceAdvertiser, serviceBrowser, router, onLog }) {
+  constructor({ peerNode, serviceAdvertiser, serviceBrowser, router, runtimeRegistry, onLog }) {
     if (!peerNode) {
       throw new Error('peerNode is required')
     }
@@ -259,6 +262,7 @@ export class MeshOrchestrator {
     this.#serviceAdvertiser = serviceAdvertiser ?? null
     this.#serviceBrowser = serviceBrowser ?? null
     this.#router = router ?? null
+    this.#runtimeRegistry = runtimeRegistry ?? null
     this.#onLog = onLog ?? null
   }
 
@@ -314,6 +318,21 @@ export class MeshOrchestrator {
       }))
     }
 
+    const knownPodIds = new Set(pods.map((pod) => pod.podId))
+    for (const descriptor of this.#runtimeDescriptors()) {
+      const podId = this.#descriptorPodId(descriptor)
+      if (knownPodIds.has(podId)) continue
+      knownPodIds.add(podId)
+      pods.push(new PodInfo({
+        podId,
+        label: this.#descriptorLabel(descriptor),
+        status: this.#descriptorStatus(descriptor, podId),
+        services: descriptor.metadata?.services || [],
+        connections: descriptor.reachability?.length || 0,
+        isLocal: false,
+      }))
+    }
+
     // Apply filter
     if (filter && filter !== 'all') {
       return pods.filter(p => p.status === filter)
@@ -343,7 +362,20 @@ export class MeshOrchestrator {
     }
 
     const info = this.#knownPeers.get(podId)
-    if (!info) return null
+    if (!info) {
+      const descriptor = this.#runtimeDescriptorForPodId(podId)
+      if (!descriptor) return null
+      return new PodStatus({
+        podId,
+        status: this.#descriptorStatus(descriptor, podId),
+        capabilities: descriptor.capabilities || [],
+        services: descriptor.metadata?.services || [],
+        connections: descriptor.reachability?.length || 0,
+        uptime: descriptor.metadata?.uptime ?? 0,
+        resources: descriptor.metadata?.resources || {},
+        isLocal: false,
+      })
+    }
 
     return new PodStatus({
       podId,
@@ -493,6 +525,22 @@ export class MeshOrchestrator {
       }))
     }
 
+    const knownPodIds = new Set(pods.map((pod) => pod.podId))
+    for (const descriptor of this.#runtimeDescriptors()) {
+      const podId = this.#descriptorPodId(descriptor)
+      if (knownPodIds.has(podId)) continue
+      knownPodIds.add(podId)
+      const resources = descriptor.metadata?.resources || {}
+      pods.push(new PodResourceInfo({
+        podId,
+        cpu: resources.cpu ?? 0,
+        memory: resources.memory ?? 0,
+        storage: resources.storage ?? 0,
+        activeTasks: descriptor.metadata?.activeTasks ?? 0,
+        status: this.#descriptorStatus(descriptor, podId),
+      }))
+    }
+
     return { pods }
   }
 
@@ -617,6 +665,42 @@ export class MeshOrchestrator {
       }
     }
     return services
+  }
+
+  #runtimeDescriptors() {
+    if (!this.#runtimeRegistry || typeof this.#runtimeRegistry.listPeers !== 'function') {
+      return []
+    }
+    return this.#runtimeRegistry.listPeers()
+  }
+
+  #runtimeDescriptorForPodId(podId) {
+    if (!this.#runtimeRegistry || typeof this.#runtimeRegistry.resolvePeer !== 'function') {
+      return null
+    }
+    return this.#runtimeRegistry.resolvePeer(podId)
+  }
+
+  #descriptorPodId(descriptor) {
+    return descriptor.identity?.podId
+      || descriptor.identity?.fingerprint
+      || descriptor.identity?.canonicalId
+      || descriptor.username
+  }
+
+  #descriptorLabel(descriptor) {
+    return descriptor.metadata?.name
+      || descriptor.username
+      || descriptor.identity?.aliases?.[0]
+      || this.#descriptorPodId(descriptor)
+  }
+
+  #descriptorStatus(descriptor, podId) {
+    if (this.#draining.has(podId)) return 'draining'
+    const route = (descriptor.reachability || [])[0]
+    const status = descriptor.metadata?.status
+    if (status) return status
+    return route ? 'online' : 'unknown'
   }
 }
 

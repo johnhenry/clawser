@@ -589,6 +589,24 @@ messages:
         capabilities:
           type: "string[]"
           default: "[]"
+        peer_type:
+          type: string
+          default: '"host"'
+        shell_backend:
+          type: string
+          default: '"pty"'
+        supports_attach:
+          type: bool
+          default: false
+        supports_replay:
+          type: bool
+          default: false
+        supports_echo:
+          type: bool
+          default: false
+        supports_term_sync:
+          type: bool
+          default: false
         public_key:
           type: bytes
           required: true
@@ -638,6 +656,24 @@ messages:
         capabilities:
           type: "string[]"
           default: "[]"
+        peer_type:
+          type: string
+          default: '"host"'
+        shell_backend:
+          type: string
+          default: '"pty"'
+        supports_attach:
+          type: bool
+          default: false
+        supports_replay:
+          type: bool
+          default: false
+        supports_echo:
+          type: bool
+          default: false
+        supports_term_sync:
+          type: bool
+          default: false
 
     ReverseReject:
       code: 0x55
@@ -1520,6 +1556,9 @@ nested_types:
 
   PeerInfo:
     fields:
+      fingerprint:
+        type: string
+        required: true
       fingerprint_short:
         type: string
         required: true
@@ -1529,6 +1568,27 @@ nested_types:
       capabilities:
         type: "string[]"
         default: "[]"
+      peer_type:
+        type: string
+        default: '"host"'
+      shell_backend:
+        type: string
+        default: '"pty"'
+      source:
+        type: string
+        default: '"wsh-relay"'
+      supports_attach:
+        type: bool
+        default: false
+      supports_replay:
+        type: bool
+        default: false
+      supports_echo:
+        type: bool
+        default: false
+      supports_term_sync:
+        type: bool
+        default: false
       last_seen:
         type: u64
         required: false

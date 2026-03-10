@@ -80,6 +80,8 @@ pub struct WshClient {
     connected: Arc<Mutex<bool>>,
     /// Receiver for incoming ReverseConnect notifications (take-once).
     reverse_connect_rx: Arc<Mutex<Option<mpsc::Receiver<Envelope>>>>,
+    /// Receiver for relay-forwarded control/data messages (take-once).
+    relay_message_rx: Arc<Mutex<Option<mpsc::Receiver<Envelope>>>>,
 }
 
 /// Server-provided session summary from `SessionList`.
@@ -121,6 +123,8 @@ impl WshClient {
         // Channel for unsolicited incoming ReverseConnect messages
         let (rc_tx, rc_rx) = mpsc::channel::<Envelope>(16);
         let reverse_connect_rx = Arc::new(Mutex::new(Some(rc_rx)));
+        let (relay_tx, relay_rx) = mpsc::channel::<Envelope>(128);
+        let relay_message_rx = Arc::new(Mutex::new(Some(relay_rx)));
 
         let mut client = Self {
             transport: transport.clone(),
@@ -134,6 +138,7 @@ impl WshClient {
             response_tx: response_tx.clone(),
             connected: connected.clone(),
             reverse_connect_rx,
+            relay_message_rx,
         };
 
         // Perform handshake with timeout
@@ -165,6 +170,7 @@ impl WshClient {
                     connected,
                     outgoing_tx_clone,
                     Some(rc_tx),
+                    Some(relay_tx),
                 )
                 .await;
             })
@@ -240,6 +246,13 @@ impl WshClient {
     /// subsequent calls.
     pub async fn take_reverse_connect_rx(&self) -> Option<mpsc::Receiver<Envelope>> {
         self.reverse_connect_rx.lock().await.take()
+    }
+
+    /// Take the relay-message receiver for handling forwarded control/data messages.
+    ///
+    /// Can only be called once.
+    pub async fn take_relay_message_rx(&self) -> Option<mpsc::Receiver<Envelope>> {
+        self.relay_message_rx.lock().await.take()
     }
 
     /// Send a control message without waiting for any response (fire-and-forget).
@@ -710,6 +723,7 @@ impl WshClient {
         connected: Arc<Mutex<bool>>,
         outgoing_tx: mpsc::Sender<Vec<u8>>,
         reverse_connect_tx: Option<mpsc::Sender<Envelope>>,
+        relay_message_tx: Option<mpsc::Sender<Envelope>>,
     ) {
         loop {
             let is_connected = { *connected.lock().await };
@@ -778,6 +792,7 @@ impl WshClient {
                                         &sessions,
                                         &outgoing_tx,
                                         &reverse_connect_tx,
+                                        &relay_message_tx,
                                     ).await;
                                 }
                                 Err(e) => {
@@ -806,6 +821,7 @@ impl WshClient {
         sessions: &Arc<Mutex<HashMap<u32, Arc<WshSession>>>>,
         outgoing_tx: &mpsc::Sender<Vec<u8>>,
         reverse_connect_tx: &Option<mpsc::Sender<Envelope>>,
+        relay_message_tx: &Option<mpsc::Sender<Envelope>>,
     ) {
         let msg_type_u8: u8 = envelope.msg_type.into();
 
@@ -872,11 +888,17 @@ impl WshClient {
                         sessions.remove(&channel_id);
                     }
                 } else {
-                    tracing::debug!(
-                        channel_id,
-                        msg_type = ?envelope.msg_type,
-                        "received session control message for unknown channel"
-                    );
+                    if let Some(tx) = relay_message_tx {
+                        if let Err(err) = tx.send(envelope).await {
+                            tracing::debug!("relay message channel closed: {err}");
+                        }
+                    } else {
+                        tracing::debug!(
+                            channel_id,
+                            msg_type = ?envelope.msg_type,
+                            "received session control message for unknown channel"
+                        );
+                    }
                 }
             }
 
@@ -919,13 +941,47 @@ impl WshClient {
                     }
                 }
 
-                tracing::debug!(
-                    "unhandled control message: {:?}",
-                    MsgType::try_from(msg_type_u8)
-                );
+                drop(responses);
+
+                if is_relay_forwardable(envelope.msg_type) {
+                    if let Some(tx) = relay_message_tx {
+                        if let Err(err) = tx.send(envelope).await {
+                            tracing::debug!("relay message channel closed: {err}");
+                        }
+                        return;
+                    }
+                }
+
+                tracing::debug!("unhandled control message: {:?}", MsgType::try_from(msg_type_u8));
             }
         }
     }
+}
+
+fn is_relay_forwardable(msg_type: MsgType) -> bool {
+    matches!(
+        msg_type,
+        MsgType::Open
+            | MsgType::OpenOk
+            | MsgType::OpenFail
+            | MsgType::Close
+            | MsgType::Exit
+            | MsgType::Resize
+            | MsgType::Signal
+            | MsgType::SessionData
+            | MsgType::GatewayData
+            | MsgType::GatewayOk
+            | MsgType::GatewayFail
+            | MsgType::GatewayClose
+            | MsgType::McpDiscover
+            | MsgType::McpTools
+            | MsgType::McpCall
+            | MsgType::McpResult
+            | MsgType::EchoAck
+            | MsgType::EchoState
+            | MsgType::TermSync
+            | MsgType::TermDiff
+    )
 }
 
 fn envelope_channel_id(envelope: &Envelope) -> Option<u32> {
@@ -1088,6 +1144,7 @@ mod tests {
             &sessions,
             &outgoing_tx,
             &None,
+            &None,
         )
         .await;
 
@@ -1121,11 +1178,45 @@ mod tests {
             &sessions,
             &outgoing_tx,
             &None,
+            &None,
         )
         .await;
 
         assert_eq!(session.state().await, crate::session::SessionState::Closed);
         assert!(!sessions.lock().await.contains_key(&22));
+    }
+
+    #[tokio::test]
+    async fn handle_incoming_routes_unknown_session_messages_to_relay_channel() {
+        let response_tx = Arc::new(Mutex::new(HashMap::new()));
+        let sessions = Arc::new(Mutex::new(HashMap::new()));
+        let (outgoing_tx, _outgoing_rx) = mpsc::channel(4);
+        let (relay_tx, mut relay_rx) = mpsc::channel(4);
+
+        WshClient::handle_incoming(
+            Envelope {
+                msg_type: MsgType::SessionData,
+                payload: Payload::SessionData(SessionDataPayload {
+                    channel_id: 99,
+                    data: b"whoami\n".to_vec(),
+                }),
+            },
+            &response_tx,
+            &sessions,
+            &outgoing_tx,
+            &None,
+            &Some(relay_tx),
+        )
+        .await;
+
+        let forwarded = relay_rx.recv().await.expect("missing relay-forwarded message");
+        match forwarded.payload {
+            Payload::SessionData(payload) => {
+                assert_eq!(payload.channel_id, 99);
+                assert_eq!(payload.data, b"whoami\n");
+            }
+            other => panic!("unexpected payload: {:?}", other),
+        }
     }
 
     #[tokio::test]
@@ -1149,6 +1240,7 @@ mod tests {
             response_tx: response_tx.clone(),
             connected: Arc::new(Mutex::new(true)),
             reverse_connect_rx: Arc::new(Mutex::new(None)),
+            relay_message_rx: Arc::new(Mutex::new(None)),
         };
 
         let response_task = tokio::spawn(async move {

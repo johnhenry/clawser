@@ -5,6 +5,7 @@ import {
   MSG,
   WshClient,
   openOk,
+  reverseRegister,
   reverseAccept,
   reverseReject,
   sessionData,
@@ -34,10 +35,27 @@ describe('wsh reverse handshake protocol', () => {
   });
 
   it('reverse accept and reject constructors are exported', () => {
+    const register = reverseRegister({
+      username: 'browser',
+      capabilities: ['shell'],
+      peerType: 'browser-shell',
+      shellBackend: 'virtual-shell',
+      supportsAttach: true,
+      supportsReplay: true,
+      supportsEcho: true,
+      supportsTermSync: true,
+      publicKey: new Uint8Array([1, 2, 3]),
+    });
     const accept = reverseAccept({
       targetFingerprint: 'SHA256:target',
       username: 'cli-user',
       capabilities: ['shell'],
+      peerType: 'browser-shell',
+      shellBackend: 'virtual-shell',
+      supportsAttach: true,
+      supportsReplay: true,
+      supportsEcho: true,
+      supportsTermSync: true,
     });
     const reject = reverseReject({
       targetFingerprint: 'SHA256:target',
@@ -45,7 +63,12 @@ describe('wsh reverse handshake protocol', () => {
       reason: 'busy',
     });
 
+    assert.equal(register.type, MSG.REVERSE_REGISTER);
+    assert.equal(register.peer_type, 'browser-shell');
+    assert.equal(register.shell_backend, 'virtual-shell');
     assert.equal(accept.type, MSG.REVERSE_ACCEPT);
+    assert.equal(accept.peer_type, 'browser-shell');
+    assert.equal(accept.shell_backend, 'virtual-shell');
     assert.equal(reject.type, MSG.REVERSE_REJECT);
   });
 

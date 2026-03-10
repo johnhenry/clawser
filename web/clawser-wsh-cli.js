@@ -24,10 +24,15 @@ const FLAG_SPEC = {
   i: 'identity',
   t: 'transport',
   v: 'verbose',
+  j: 'json',
   port: 'value',
   identity: 'value',
   transport: 'value',
+  type: 'value',
+  backend: 'value',
+  capability: 'value',
   verbose: true,
+  json: true,
 };
 
 // ── Help Text ─────────────────────────────────────────────────────
@@ -68,6 +73,10 @@ Options:
   -p, --port <PORT>                Server port [default: 4422]
   -i, --identity <KEY>             Key name [default: default]
   -t, --transport <ws|wt>          Force transport type
+  -j, --json                       Emit JSON for machine consumption
+      --type <TYPE>                Filter peers by type
+      --backend <BACKEND>          Filter peers by shell backend
+      --capability <CAP>           Filter peers by capability
   -v, --verbose                    Verbose output
 `;
 
@@ -403,6 +412,8 @@ export function registerWshCli(registry, getAgent, getShell) {
         username: parsed.user || 'browser',
         keyPair,
         expose,
+        peerType: flags.type || 'browser-shell',
+        shellBackend: flags.backend || (expose.shell ? 'virtual-shell' : 'exec-only'),
       });
       client.__clawserExposeCapabilities = { ...expose };
 
@@ -469,9 +480,26 @@ export function registerWshCli(registry, getAgent, getShell) {
       }
 
       // Send ReverseList and wait for ReversePeers
-      const peers = await client.listPeers();
+      let peers = await client.listPeers();
+      if (flags.type) {
+        peers = peers.filter((peer) => peer.peer_type === flags.type);
+      }
+      if (flags.backend) {
+        peers = peers.filter((peer) => peer.shell_backend === flags.backend);
+      }
+      if (flags.capability) {
+        peers = peers.filter((peer) => (peer.capabilities || []).includes(flags.capability));
+      }
 
-      const lines = ['FINGERPRINT    USERNAME         CAPABILITIES         LAST SEEN'];
+      if (flags.json) {
+        return {
+          stdout: `${JSON.stringify(peers, null, 2)}\n`,
+          stderr: '',
+          exitCode: 0,
+        };
+      }
+
+      const lines = ['FINGERPRINT    USERNAME         TYPE           BACKEND         CAPABILITIES         LAST SEEN'];
       if (peers.length === 0) {
         lines.push('(no peers online)');
       } else {
@@ -481,6 +509,8 @@ export function registerWshCli(registry, getAgent, getShell) {
           lines.push(
             `${(p.fingerprint_short || '').padEnd(15)}` +
             `${(p.username || '').padEnd(17)}` +
+            `${(p.peer_type || 'host').padEnd(15)}` +
+            `${(p.shell_backend || 'pty').padEnd(16)}` +
             `${caps.padEnd(21)}` +
             `${lastSeen}`
           );

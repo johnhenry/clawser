@@ -585,6 +585,12 @@ Category: **reverse**
 |-------|------|----------|---------|
 | `username` | `string` | yes | — |
 | `capabilities` | `string[]` | no | `[]` |
+| `peer_type` | `string` | no | `"host"` |
+| `shell_backend` | `string` | no | `"pty"` |
+| `supports_attach` | `bool` | no | `false` |
+| `supports_replay` | `bool` | no | `false` |
+| `supports_echo` | `bool` | no | `false` |
+| `supports_term_sync` | `bool` | no | `false` |
 | `public_key` | `bytes` | yes | — |
 
 ### ReverseList (`0x51`)
@@ -627,6 +633,12 @@ Category: **reverse**
 | `target_fingerprint` | `string` | yes | — |
 | `username` | `string` | yes | — |
 | `capabilities` | `string[]` | no | `[]` |
+| `peer_type` | `string` | no | `"host"` |
+| `shell_backend` | `string` | no | `"pty"` |
+| `supports_attach` | `bool` | no | `false` |
+| `supports_replay` | `bool` | no | `false` |
+| `supports_echo` | `bool` | no | `false` |
+| `supports_term_sync` | `bool` | no | `false` |
 
 ### ReverseReject (`0x55`)
 
@@ -1249,9 +1261,17 @@ Category: **terminal**
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
+| `fingerprint` | `string` | yes | — |
 | `fingerprint_short` | `string` | yes | — |
 | `username` | `string` | yes | — |
 | `capabilities` | `string[]` | no | `[]` |
+| `peer_type` | `string` | no | `"host"` |
+| `shell_backend` | `string` | no | `"pty"` |
+| `source` | `string` | no | `"wsh-relay"` |
+| `supports_attach` | `bool` | no | `false` |
+| `supports_replay` | `bool` | no | `false` |
+| `supports_echo` | `bool` | no | `false` |
+| `supports_term_sync` | `bool` | no | `false` |
 | `last_seen` | `u64` | no | — |
 
 ### McpToolSpec

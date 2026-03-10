@@ -59,6 +59,9 @@ describe('ClawserPod.initMesh() — subsystem bootstrap', () => {
       'consensusManager',
       'relayClient',
       'nameResolver',
+      'remoteRuntimeRegistry',
+      'remoteSessionBroker',
+      'remotePolicyAdapter',
       'appRegistry',
       'appStore',
       'orchestrator',
@@ -95,6 +98,9 @@ describe('ClawserPod.initMesh() — subsystem bootstrap', () => {
     assert.ok(pod.consensusManager, 'consensusManager getter')
     assert.ok(pod.relayClient, 'relayClient getter')
     assert.ok(pod.nameResolver, 'nameResolver getter')
+    assert.ok(pod.remoteRuntimeRegistry, 'remoteRuntimeRegistry getter')
+    assert.ok(pod.remoteSessionBroker, 'remoteSessionBroker getter')
+    assert.ok(pod.remotePolicyAdapter, 'remotePolicyAdapter getter')
     assert.ok(pod.appRegistry, 'appRegistry getter')
     assert.ok(pod.appStore, 'appStore getter')
     assert.ok(pod.orchestrator, 'orchestrator getter')
@@ -145,6 +151,9 @@ describe('ClawserPod.initMesh() — subsystem bootstrap', () => {
     assert.equal(pod.consensusManager, null)
     assert.equal(pod.relayClient, null)
     assert.equal(pod.nameResolver, null)
+    assert.equal(pod.remoteRuntimeRegistry, null)
+    assert.equal(pod.remoteSessionBroker, null)
+    assert.equal(pod.remotePolicyAdapter, null)
     assert.equal(pod.appRegistry, null)
     assert.equal(pod.appStore, null)
     assert.equal(pod.orchestrator, null)

@@ -102,6 +102,8 @@ describe('clawser-wsh-incoming', () => {
     assert.ok(getIncomingSession(participantKey));
     assert.equal(client.sent[0].type, MSG.REVERSE_ACCEPT);
     assert.deepEqual(client.sent[0].capabilities, ['shell', 'tools', 'fs']);
+    assert.equal(client.sent[0].peer_type, 'browser-shell');
+    assert.equal(client.sent[0].shell_backend, 'virtual-shell');
 
     await client.onRelayMessage({
       type: MSG.OPEN,
@@ -123,7 +125,7 @@ describe('clawser-wsh-incoming', () => {
 
     const traffic = decodeSessionTraffic(client.sent);
     assert.ok(traffic.includes('/$ '));
-    assert.ok(traffic.includes('/\n'));
+    assert.match(traffic, /\/\r?\n/);
   });
 
   it('rejects PTY opens when shell access was not exposed', async () => {
@@ -200,6 +202,6 @@ describe('clawser-wsh-incoming', () => {
 
     const replay = decodeSessionTraffic(clientB.sent);
     assert.ok(replay.includes('/$ '));
-    assert.ok(replay.includes('/\n'));
+    assert.match(replay, /\/\r?\n/);
   });
 });

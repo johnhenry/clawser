@@ -10,6 +10,30 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 use wsh_core::identity::FingerprintIndex;
 
+/// Additional metadata advertised by a reverse peer.
+#[derive(Debug, Clone)]
+pub struct PeerMetadata {
+    pub peer_type: String,
+    pub shell_backend: String,
+    pub supports_attach: bool,
+    pub supports_replay: bool,
+    pub supports_echo: bool,
+    pub supports_term_sync: bool,
+}
+
+impl Default for PeerMetadata {
+    fn default() -> Self {
+        Self {
+            peer_type: "host".to_string(),
+            shell_backend: "pty".to_string(),
+            supports_attach: false,
+            supports_replay: false,
+            supports_echo: false,
+            supports_term_sync: false,
+        }
+    }
+}
+
 /// A registered peer available for reverse connections.
 #[derive(Debug, Clone)]
 pub struct PeerEntry {
@@ -19,6 +43,18 @@ pub struct PeerEntry {
     pub username: String,
     /// Capabilities advertised by the peer.
     pub capabilities: Vec<String>,
+    /// Canonical peer category.
+    pub peer_type: String,
+    /// Shell/runtime backend exposed by the peer.
+    pub shell_backend: String,
+    /// Whether the peer supports attach semantics.
+    pub supports_attach: bool,
+    /// Whether the peer supports replay semantics.
+    pub supports_replay: bool,
+    /// Whether the peer emits echo telemetry.
+    pub supports_echo: bool,
+    /// Whether the peer emits terminal sync telemetry.
+    pub supports_term_sync: bool,
     /// When the peer registered.
     pub registered_at: Instant,
     /// Last heartbeat / activity.
@@ -56,7 +92,13 @@ impl PeerRegistry {
         username: String,
         capabilities: Vec<String>,
     ) -> u64 {
-        self.register_with_conn_id(fingerprint, username, capabilities, None)
+        self.register_with_conn_id(
+            fingerprint,
+            username,
+            capabilities,
+            PeerMetadata::default(),
+            None,
+        )
             .await
     }
 
@@ -66,6 +108,7 @@ impl PeerRegistry {
         fingerprint: String,
         username: String,
         capabilities: Vec<String>,
+        metadata: PeerMetadata,
         server_conn_id: Option<u64>,
     ) -> u64 {
         let conn_id = match server_conn_id {
@@ -83,6 +126,12 @@ impl PeerRegistry {
             fingerprint: fingerprint.clone(),
             username: username.clone(),
             capabilities,
+            peer_type: metadata.peer_type,
+            shell_backend: metadata.shell_backend,
+            supports_attach: metadata.supports_attach,
+            supports_replay: metadata.supports_replay,
+            supports_echo: metadata.supports_echo,
+            supports_term_sync: metadata.supports_term_sync,
             registered_at: now,
             last_seen: now,
             connection_id: conn_id,

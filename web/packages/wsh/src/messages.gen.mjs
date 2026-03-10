@@ -461,11 +461,17 @@ export function mcpResult({ result } = {}) {
   };
 }
 
-export function reverseRegister({ username, capabilities = [], publicKey } = {}) {
+export function reverseRegister({ username, capabilities = [], peerType = "host", shellBackend = "pty", supportsAttach = false, supportsReplay = false, supportsEcho = false, supportsTermSync = false, publicKey } = {}) {
   return {
     type: MSG.REVERSE_REGISTER,
     username,
     capabilities,
+    peer_type: peerType,
+    shell_backend: shellBackend,
+    supports_attach: supportsAttach,
+    supports_replay: supportsReplay,
+    supports_echo: supportsEcho,
+    supports_term_sync: supportsTermSync,
     public_key: publicKey,
   };
 }
@@ -489,12 +495,18 @@ export function reverseConnect({ targetFingerprint, username } = {}) {
   };
 }
 
-export function reverseAccept({ targetFingerprint, username, capabilities = [] } = {}) {
+export function reverseAccept({ targetFingerprint, username, capabilities = [], peerType = "host", shellBackend = "pty", supportsAttach = false, supportsReplay = false, supportsEcho = false, supportsTermSync = false } = {}) {
   return {
     type: MSG.REVERSE_ACCEPT,
     target_fingerprint: targetFingerprint,
     username,
     capabilities,
+    peer_type: peerType,
+    shell_backend: shellBackend,
+    supports_attach: supportsAttach,
+    supports_replay: supportsReplay,
+    supports_echo: supportsEcho,
+    supports_term_sync: supportsTermSync,
   };
 }
 

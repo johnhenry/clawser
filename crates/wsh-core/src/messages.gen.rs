@@ -801,8 +801,28 @@ pub struct ReverseRegisterPayload {
     pub username: String,
     #[serde(default)]
     pub capabilities: Vec<String>,
+    #[serde(default = "default_reverse_register_peer_type")]
+    pub peer_type: String,
+    #[serde(default = "default_reverse_register_shell_backend")]
+    pub shell_backend: String,
+    #[serde(default)]
+    pub supports_attach: bool,
+    #[serde(default)]
+    pub supports_replay: bool,
+    #[serde(default)]
+    pub supports_echo: bool,
+    #[serde(default)]
+    pub supports_term_sync: bool,
     #[serde(with = "serde_bytes")]
     pub public_key: Vec<u8>,
+}
+
+fn default_reverse_register_peer_type() -> String {
+    "host".to_string()
+}
+
+fn default_reverse_register_shell_backend() -> String {
+    "pty".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -830,6 +850,26 @@ pub struct ReverseAcceptPayload {
     pub username: String,
     #[serde(default)]
     pub capabilities: Vec<String>,
+    #[serde(default = "default_reverse_accept_peer_type")]
+    pub peer_type: String,
+    #[serde(default = "default_reverse_accept_shell_backend")]
+    pub shell_backend: String,
+    #[serde(default)]
+    pub supports_attach: bool,
+    #[serde(default)]
+    pub supports_replay: bool,
+    #[serde(default)]
+    pub supports_echo: bool,
+    #[serde(default)]
+    pub supports_term_sync: bool,
+}
+
+fn default_reverse_accept_peer_type() -> String {
+    "host".to_string()
+}
+
+fn default_reverse_accept_shell_backend() -> String {
+    "pty".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1301,10 +1341,25 @@ pub struct AttachmentInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeerInfo {
+    pub fingerprint: String,
     pub fingerprint_short: String,
     pub username: String,
     #[serde(default)]
     pub capabilities: Vec<String>,
+    #[serde(default)]
+    pub peer_type: String,
+    #[serde(default)]
+    pub shell_backend: String,
+    #[serde(default)]
+    pub source: String,
+    #[serde(default)]
+    pub supports_attach: bool,
+    #[serde(default)]
+    pub supports_replay: bool,
+    #[serde(default)]
+    pub supports_echo: bool,
+    #[serde(default)]
+    pub supports_term_sync: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_seen: Option<u64>,
 }

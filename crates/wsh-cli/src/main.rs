@@ -108,10 +108,32 @@ enum Command {
         relay_host: String,
     },
 
+    /// Run a long-lived reverse-host agent
+    Agent {
+        #[command(subcommand)]
+        command: AgentCommand,
+    },
+
     /// List peers available on a relay
     Peers {
         /// Relay host
         relay_host: String,
+
+        /// Emit JSON instead of a human table
+        #[arg(long)]
+        json: bool,
+
+        /// Filter peers by type (`host`, `browser-shell`, `vm-guest`, `worker`)
+        #[arg(long = "type")]
+        peer_type: Option<String>,
+
+        /// Filter peers by shell backend (`pty`, `virtual-shell`, `vm-console`, `exec-only`)
+        #[arg(long = "backend")]
+        shell_backend: Option<String>,
+
+        /// Filter peers by required capability
+        #[arg(long)]
+        capability: Option<String>,
     },
 
     /// Reverse connect to a browser peer via relay
@@ -126,6 +148,33 @@ enum Command {
     Tools {
         /// Target host (optional, uses config default)
         host: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum AgentCommand {
+    /// Run the reverse-host agent and keep reconnecting through the relay
+    Run {
+        /// Relay host
+        relay_host: String,
+
+        /// Delay before reconnect attempts
+        #[arg(long, default_value_t = 3)]
+        reconnect_delay_secs: u64,
+
+        /// Capabilities to expose (`shell`, `exec`)
+        #[arg(long = "capability")]
+        capabilities: Vec<String>,
+    },
+
+    /// Show the most recent agent state snapshot
+    Status {
+        /// Emit JSON instead of human-readable output
+        #[arg(long)]
+        json: bool,
+
+        /// Relay host for an exact agent status lookup
+        relay_host: Option<String>,
     },
 }
 
@@ -188,8 +237,47 @@ async fn main() {
         Some(Command::Reverse { relay_host }) => {
             commands::relay::run_reverse(&relay_host, port, &identity, transport.as_deref()).await
         }
-        Some(Command::Peers { relay_host }) => {
-            commands::relay::run_peers(&relay_host, port, &identity, transport.as_deref()).await
+        Some(Command::Agent { command }) => match command {
+            AgentCommand::Run {
+                relay_host,
+                reconnect_delay_secs,
+                capabilities,
+            } => {
+                commands::agent::run(
+                    &relay_host,
+                    port,
+                    &identity,
+                    transport.as_deref(),
+                    reconnect_delay_secs,
+                    &capabilities,
+                )
+                .await
+            }
+            AgentCommand::Status { json, relay_host } => {
+                commands::agent::run_status(relay_host.as_deref(), port, &identity, json).await
+            }
+        },
+        Some(Command::Peers {
+            relay_host,
+            json,
+            peer_type,
+            shell_backend,
+            capability,
+        }) => {
+            let options = commands::relay::PeerQueryOptions {
+                json,
+                peer_type,
+                shell_backend,
+                capability,
+            };
+            commands::relay::run_peers(
+                &relay_host,
+                port,
+                &identity,
+                transport.as_deref(),
+                &options,
+            )
+            .await
         }
         Some(Command::ReverseConnect {
             fingerprint,

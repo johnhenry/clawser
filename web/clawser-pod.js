@@ -24,6 +24,9 @@ import { MeshRelayClient } from './clawser-mesh-relay.js'
 import { MeshNameResolver } from './clawser-mesh-naming.js'
 import { AppRegistry, AppStore } from './clawser-mesh-apps.js'
 import { MeshOrchestrator } from './clawser-mesh-orchestrator.js'
+import { RemoteRuntimeRegistry } from './clawser-remote-runtime-registry.js'
+import { RemoteSessionBroker } from './clawser-remote-session-broker.js'
+import { RemoteRuntimePolicyAdapter } from './clawser-remote-runtime-policy.js'
 
 export class ClawserPod extends Pod {
   #peerNode = null
@@ -48,6 +51,9 @@ export class ClawserPod extends Pod {
   #appRegistry = null
   #appStore = null
   #orchestrator = null
+  #remoteRuntimeRegistry = null
+  #remoteSessionBroker = null
+  #remotePolicyAdapter = null
 
   get peerNode() { return this.#peerNode }
   get swarmCoordinator() { return this.#swarmCoordinator }
@@ -71,6 +77,9 @@ export class ClawserPod extends Pod {
   get appRegistry() { return this.#appRegistry }
   get appStore() { return this.#appStore }
   get orchestrator() { return this.#orchestrator }
+  get remoteRuntimeRegistry() { return this.#remoteRuntimeRegistry }
+  get remoteSessionBroker() { return this.#remoteSessionBroker }
+  get remotePolicyAdapter() { return this.#remotePolicyAdapter }
 
   /**
    * Initialize the full mesh subsystem on top of the Pod's identity.
@@ -176,12 +185,33 @@ export class ClawserPod extends Pod {
     // 19. MeshNameResolver — mesh name resolution
     this.#nameResolver = new MeshNameResolver()
 
-    // 20. AppRegistry + AppStore — app lifecycle
+    // 20. RemoteRuntimeRegistry + RemoteSessionBroker — canonical remote runtime model
+    this.#remoteRuntimeRegistry = new RemoteRuntimeRegistry()
+    this.#remotePolicyAdapter = new RemoteRuntimePolicyAdapter({
+      peerRegistry: this.#registry,
+    })
+    this.#remoteSessionBroker = new RemoteSessionBroker({
+      runtimeRegistry: this.#remoteRuntimeRegistry,
+      nameResolver: this.#nameResolver,
+      policyAdapter: this.#remotePolicyAdapter,
+    })
+
+    this.#discoveryManager.onPeerDiscovered((record) => {
+      this.#remoteRuntimeRegistry?.ingestMeshDiscovery(record)
+    })
+    this.#relayClient.onPeerAnnounce((peer) => {
+      this.#remoteRuntimeRegistry?.ingestMeshRelayPeer(peer)
+    })
+
+    // 21. AppRegistry + AppStore — app lifecycle
     this.#appRegistry = new AppRegistry({ localPodId: podId })
     this.#appStore = new AppStore({ localPodId: podId })
 
-    // 21. MeshOrchestrator — pod orchestration (must be after peerNode)
-    this.#orchestrator = new MeshOrchestrator({ peerNode: this.#peerNode })
+    // 22. MeshOrchestrator — pod orchestration (must be after peerNode)
+    this.#orchestrator = new MeshOrchestrator({
+      peerNode: this.#peerNode,
+      runtimeRegistry: this.#remoteRuntimeRegistry,
+    })
 
     return {
       peerNode: this.#peerNode,
@@ -201,6 +231,9 @@ export class ClawserPod extends Pod {
       consensusManager: this.#consensusManager,
       relayClient: this.#relayClient,
       nameResolver: this.#nameResolver,
+      remoteRuntimeRegistry: this.#remoteRuntimeRegistry,
+      remoteSessionBroker: this.#remoteSessionBroker,
+      remotePolicyAdapter: this.#remotePolicyAdapter,
       appRegistry: this.#appRegistry,
       appStore: this.#appStore,
       orchestrator: this.#orchestrator,
@@ -241,6 +274,9 @@ export class ClawserPod extends Pod {
     this.#consensusManager = null
     this.#relayClient = null
     this.#nameResolver = null
+    this.#remoteRuntimeRegistry = null
+    this.#remoteSessionBroker = null
+    this.#remotePolicyAdapter = null
     this.#appRegistry = null
     this.#appStore = null
     this.#orchestrator = null

@@ -73,6 +73,8 @@ export class WshConnectTool extends BrowserTool {
           username: user,
           keyPair,
           expose,
+          peerType: 'browser-shell',
+          shellBackend: expose.shell ? 'virtual-shell' : 'exec-only',
         });
         client.__clawserExposeCapabilities = { ...expose };
         // Wire incoming session handler if available, chaining with any existing handler
