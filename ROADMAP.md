@@ -855,22 +855,45 @@ The Rust reverse-peer path still needs parity work:
 
 That asymmetry is the main roadmap driver below.
 
+### Phase 7A Status Dashboard (March 10, 2026)
+
+- `[x]` Canonical runtime contracts, peer metadata, and protocol bindings are in place.
+- `[x]` Browser reverse peers are interactive and capability-gated through the shared runtime model.
+- `[x]` Reverse-host runtime exists with `wsh-agent`, relay registration, PTY/exec/file/tool/gateway exposure, and shared peer metadata.
+- `[~]` Attach/replay and route robustness are materially improved, but not yet fully uniform across every backend.
+- `[~]` BrowserMesh naming, policy, and trust integration are partially landed; template/preset mapping is still open.
+- `[~]` The remote UI and CLI now consume the shared runtime model, but the docs/support matrix and remaining duplicate surfaces are not fully closed.
+- `[~]` Gateway/service/deploy/automation/filesystem/audit convergence is underway and partly implemented.
+- `[~]` VM peer support exists as a browser-side `vm-console` backend and runtime scaffold, but the MVP is not yet complete.
+- `[ ]` Final readiness verification is still open.
+
+Committed Phase 7A work already includes:
+
+- canonical `RemoteIdentity` / `RemotePeerDescriptor` / `ReachabilityDescriptor` / `SessionTarget`
+- richer `wsh` peer metadata and `wsh peers --json`
+- shared runtime registry, policy adapter, and session broker
+- reverse-host `wsh-agent`
+- broker-backed remote shell/file/service UI
+- browser virtual file sessions for reverse peers
+- route health tracking and backend-aware session hints
+- browser-side `vm-console` backend hooks and runtime registry plumbing
+
 ### Phase 7A.1: Documented Runtime Modes
 
 Goal: make the topology legible to contributors and users so the system stops looking more complete or more uniform than it really is.
 
 - [ ] Add a single canonical `wsh` topology diagram to docs: direct host, relay browser peer, relay host peer, future VM peer
-- [ ] Split protocol terms clearly:
+- [~] Split protocol terms clearly:
   - `direct host session`
   - `reverse peer`
   - `virtual terminal`
   - `real PTY`
   - `peer capability`
 - [ ] Add a support matrix to `docs/WSH-INTO-CLAWSER.md` and `docs/CLI.md`
-- [ ] Make the browser/runtime distinction visible in the CLI:
+- [x] Make the browser/runtime distinction visible in the CLI:
   - direct host sessions should say `PTY`
   - browser-backed sessions should say `virtual terminal`
-- [ ] Expose peer backend metadata in `wsh peers`
+- [x] Expose peer backend metadata in `wsh peers`
   - example future fields: `peer_type`, `shell_backend`, `data_mode`
 
 Why first:
@@ -891,28 +914,28 @@ This is the missing inverse of the browser work. Today, if a local machine can a
 
 Required work:
 
-- [ ] Implement a real incoming session runtime for Rust reverse peers
+- [~] Implement a real incoming session runtime for Rust reverse peers
   - replace the current placeholder loop in `crates/wsh-cli/src/commands/relay.rs`
   - accept incoming `Open`
   - create a session backend
   - bridge `SessionData`, `Resize`, `Signal`, `Exit`, and `Close`
-- [ ] Decide the Rust reverse peer form factor:
+- [x] Decide the Rust reverse peer form factor:
   - minimal: CLI process acts as the peer while it is running
   - better: lightweight `wsh-agent` / `wsh-peer` daemon for persistent reverse presence
-- [ ] Support two backend modes for a reverse host peer:
+- [x] Support two backend modes for a reverse host peer:
   - **host PTY mode** — spawn a real PTY locally and expose it via relay
   - **exec/file/tool mode** — expose non-interactive capabilities without full shell access
-- [ ] Add peer capability policy for host reverse peers
+- [x] Add peer capability policy for host reverse peers
   - shell
   - exec
   - file transfer
   - tools / MCP
   - optional gateway/network features
-- [ ] Add host peer identity labels so relay listings distinguish:
+- [x] Add host peer identity labels so relay listings distinguish:
   - browser tab
   - host agent
   - headless daemon
-- [ ] Add lifecycle semantics for reverse host peers:
+- [~] Add lifecycle semantics for reverse host peers:
   - manual foreground registration
   - long-lived daemon registration
   - reconnect and reattach after network flap
@@ -1593,15 +1616,15 @@ Goal: prove that a browser-hosted Linux guest can be reached through `wsh` witho
 
 Scope:
 
-- [ ] Introduce a new browser-side terminal backend, e.g. `VmTerminalSession`
-- [ ] Add a runtime selector:
+- [x] Introduce a new browser-side terminal backend, e.g. `VmTerminalSession`
+- [x] Add a runtime selector:
   - `ClawserShell`
   - `VM console`
-- [ ] Wire `SessionData` to the VM console/serial stream
-- [ ] Wire `Resize` where supported by the emulator
-- [ ] Support `Ctrl+C`, `Ctrl+D`, and attach/replay if practical
-- [ ] Advertise guest-specific capabilities conservatively
-- [ ] Add explicit UX labels so operators know they are connecting to a VM guest, not the browser shell
+- [x] Wire `SessionData` to the VM console/serial stream
+- [x] Wire `Resize` where supported by the emulator
+- [~] Support `Ctrl+C`, `Ctrl+D`, and attach/replay if practical
+- [x] Advertise guest-specific capabilities conservatively
+- [~] Add explicit UX labels so operators know they are connecting to a VM guest, not the browser shell
 
 Stretch goals:
 

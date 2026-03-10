@@ -18,6 +18,28 @@ This program is complete only when:
 - UI, CLI, automation, gateway, compute, and service flows all consume that same model
 - the verification matrix in the roadmap passes end to end
 
+## Status Snapshot
+
+As of **March 10, 2026**, implementation is in progress with the following phase status:
+
+- `[x]` Phase 0. Contract Freeze And Harness
+- `[x]` Phase 1. Protocol And Descriptor Foundation
+- `[x]` Phase 2. Remote Runtime Registry And Session Broker
+- `[~]` Phase 3. Reverse Host Parity With `wsh-agent`
+- `[~]` Phase 4. Attach, Replay, And Route Robustness
+- `[~]` Phase 5. BrowserMesh Policy, Naming, And Trust Convergence
+- `[~]` Phase 6. UI And CLI Convergence
+- `[~]` Phase 7. Gateway, Compute, Service, Deployment, And Automation Convergence
+- `[~]` Phase 8. Remote Filesystem And Audit Unification
+- `[~]` Phase 9. VM Peer MVP
+- `[ ]` Phase 10. Final Verification And Readiness Gate
+
+Current interpretation:
+
+- `[x]` means the phase exit gate is substantially met for the current Phase 7A scope.
+- `[~]` means major implementation is present, but at least one exit-gate item is still incomplete.
+- `[ ]` means the phase has not yet reached implementation-ready completion.
+
 ## Interface Changes
 
 Public and semi-public additions to implement:
@@ -49,21 +71,23 @@ Public and semi-public additions to implement:
 ### 0. Contract Freeze And Harness
 Exit gate: all core contracts are explicit and test harnesses exist before feature expansion.
 
-- Define one canonical schema for:
+Status: `[x] Complete`
+
+- [x] Define one canonical schema for:
   - `RemoteIdentity`
   - `RemotePeerDescriptor`
   - `ReachabilityDescriptor`
   - `SessionTarget`
-- Freeze peer vocabularies:
+- [x] Freeze peer vocabularies:
   - `peer_type`: `host`, `browser-shell`, `vm-guest`, `worker`
   - `shell_backend`: `pty`, `virtual-shell`, `vm-console`, `exec-only`
-- Freeze policy precedence:
+- [x] Freeze policy precedence:
   - discovery visibility
   - relay/path permission
   - session admission
   - in-session capability scope
-- Freeze route-selection algorithm and document it as normative.
-- Build a deterministic multi-peer test harness covering:
+- [x] Freeze route-selection algorithm and document it as normative.
+- [x] Build a deterministic multi-peer test harness covering:
   - direct host
   - reverse browser peer
   - reverse host peer
@@ -72,7 +96,7 @@ Exit gate: all core contracts are explicit and test harnesses exist before featu
   - conflicting metadata
   - relay loss
   - capability mismatch
-- Add ADR-style docs for:
+- [x] Add ADR-style docs for:
   - layer ownership
   - relay separation
   - identity convergence
@@ -82,119 +106,131 @@ Exit gate: all core contracts are explicit and test harnesses exist before featu
 ### 1. Protocol And Descriptor Foundation
 Exit gate: both JS and Rust can represent the same peer/runtime metadata and expose it in machine-readable form.
 
-- Extend the `wsh` schema and generated bindings with:
+Status: `[x] Complete`
+
+- [x] Extend the `wsh` schema and generated bindings with:
   - peer type/backend metadata
   - capability refinements
   - attach/echo/sync support hints
-- Add shared descriptor conversion on both sides:
+- [x] Add shared descriptor conversion on both sides:
   - raw `wsh` peer listing -> `RemotePeerDescriptor`
   - mesh identity -> `RemoteIdentity`
-- Update `wsh peers` output:
+- [x] Update `wsh peers` output:
   - human table
   - JSON output
   - backend labels
-- Add CLI-visible distinction between:
+- [x] Add CLI-visible distinction between:
   - real PTY host sessions
   - browser virtual terminals
   - future VM consoles
-- Ensure peer listings preserve source provenance and do not silently flatten conflicting facts.
+- [x] Ensure peer listings preserve source provenance and do not silently flatten conflicting facts.
 
 ### 2. Remote Runtime Registry And Session Broker
 Exit gate: one canonical runtime registry exists, and all session opens route through a single broker.
 
-- Implement the remote runtime registry in the browser runtime:
+Status: `[x] Complete`
+
+- [x] Implement the remote runtime registry in the browser runtime:
   - ingest mesh discovery
   - ingest mesh peer state
   - ingest mesh relay presence
   - ingest `wsh` reverse peers
   - ingest direct host bookmarks
-- Implement deterministic merge rules:
+- [x] Implement deterministic merge rules:
   - canonical identity match
   - linked identity match
   - conflict preservation
   - stale/fresh liveness handling
-- Implement reachability resolution:
+- [x] Implement reachability resolution:
   - direct host endpoint
   - reverse relay path
   - future mesh-stream path placeholder
-- Implement a session broker:
+- [x] Implement a session broker:
   - resolve `SessionTarget`
   - choose best backend for session intent
   - open the `wsh` session through one code path
-- Integrate the broker into `ClawserPod`-level service wiring so the runtime registry becomes the single dependency for remote access surfaces.
+- [x] Integrate the broker into `ClawserPod`-level service wiring so the runtime registry becomes the single dependency for remote access surfaces.
 
 ### 3. Reverse Host Parity With `wsh-agent`
 Exit gate: a local machine can expose a real PTY through a relay as a first-class peer.
 
-- Implement `wsh-agent` as the primary reverse-host runtime:
+Status: `[~] Partial`
+
+- [x] Implement `wsh-agent` as the primary reverse-host runtime:
   - background registration
   - reconnect
   - policy-configured exposure
   - session status inspection
-- Support foreground `wsh reverse` as a thin operational mode, not the architectural center.
-- Add reverse host incoming session handling:
+- [x] Support foreground `wsh reverse` as a thin operational mode, not the architectural center.
+- [x] Add reverse host incoming session handling:
   - PTY backend
   - exec backend
   - control/data bridge
   - close/exit semantics
-- Add reverse host capability policy:
+- [x] Add reverse host capability policy:
   - shell
   - exec
   - file
   - tools/MCP
   - gateway
-- Add host lifecycle semantics:
+- [~] Add host lifecycle semantics:
   - startup-on-login/boot support where practical
   - reconnect behavior
   - active-session tracking
-- Ensure reverse-host interactive quality matches direct `wsh connect` closely enough to be the same product surface.
+- [~] Ensure reverse-host interactive quality matches direct `wsh connect` closely enough to be the same product surface.
 
 ### 4. Attach, Replay, And Route Robustness
 Exit gate: reconnects and reattach behavior are consistent across backends.
 
-- Standardize attach/replay semantics across:
+Status: `[~] Partial`
+
+- [~] Standardize attach/replay semantics across:
   - direct host PTY
   - reverse host PTY
   - browser virtual terminal
   - VM peer stub
-- Standardize replay metadata and backend support hints.
-- Preserve session labels and identity across reconnect.
-- Ensure route failures are explainable:
+- [x] Standardize replay metadata and backend support hints.
+- [~] Preserve session labels and identity across reconnect.
+- [x] Ensure route failures are explainable:
   - stale discovery
   - relay denial
   - capability mismatch
   - auth failure
   - transport loss
-- Feed route outcomes back into runtime health and trust evidence without changing auth truth.
+- [x] Feed route outcomes back into runtime health and trust evidence without changing auth truth.
 
 ### 5. BrowserMesh Policy, Naming, And Trust Convergence
 Exit gate: discovery, naming, ACL, and route ranking all inform remote access without replacing `wsh` semantics.
 
-- Map mesh ACL templates to `wsh` exposure presets.
-- Implement a canonical policy translation table and precedence order.
-- Surface which layer denied a request in UX and telemetry.
-- Integrate mesh naming into runtime resolution:
+Status: `[~] Partial`
+
+- [ ] Map mesh ACL templates to `wsh` exposure presets.
+- [ ] Implement a canonical policy translation table and precedence order.
+- [~] Surface which layer denied a request in UX and telemetry.
+- [x] Integrate mesh naming into runtime resolution:
   - named peer lookup
   - qualified relay names
   - explicit disambiguation on conflicts
-- Integrate trust and relay health into route ranking:
+- [~] Integrate trust and relay health into route ranking:
   - trust affects ranking/filtering
   - never bypasses endpoint auth or session capability checks
-- Keep BrowserMesh relay and `wsh` relay logically separate while allowing shared operator deployment later.
+- [x] Keep BrowserMesh relay and `wsh` relay logically separate while allowing shared operator deployment later.
 
 ### 6. UI And CLI Convergence
 Exit gate: users see one remote-runtime product, not multiple overlapping systems.
 
-- Make the remote UI consume `RemotePeerDescriptor` records only.
-- Route terminal, file, and service openings through the session broker.
-- Replace duplicated peer cards/rows with one canonical display model.
-- Add one canonical peer picker and route explanation surface.
-- Update CLI UX:
+Status: `[~] Partial`
+
+- [x] Make the remote UI consume `RemotePeerDescriptor` records only.
+- [x] Route terminal, file, and service openings through the session broker.
+- [~] Replace duplicated peer cards/rows with one canonical display model.
+- [x] Add one canonical peer picker and route explanation surface.
+- [x] Update CLI UX:
   - `wsh peers --json`
   - richer peer table
   - backend-aware banners
   - selectors for only/last/filter-by-capability/filter-by-type
-- Update docs:
+- [ ] Update docs:
   - topology diagram
   - support matrix
   - PTY vs virtual terminal vs VM console
@@ -203,21 +239,23 @@ Exit gate: users see one remote-runtime product, not multiple overlapping system
 ### 7. Gateway, Compute, Service, Deployment, And Automation Convergence
 Exit gate: existing advanced subsystems target the canonical runtime model instead of private peer logic.
 
-- Netway/gateway:
+Status: `[~] Partial`
+
+- [~] Netway/gateway:
   - expose gateway-capable peers in the runtime registry
   - policy-scope gateway separately from shell/tools
   - record gateway use in audit/telemetry
-- Federated compute:
+- [ ] Federated compute:
   - schedule against runtime descriptors, not ad hoc peer lists
   - select peers by actual execution capability/backend
-- Virtual Server/service hosting:
+- [~] Virtual Server/service hosting:
   - let runtimes advertise hosted services
   - bind service browsing/routing to the same peer/runtime model
-- Apps/skills deployment:
+- [x] Apps/skills deployment:
   - define deployable peer classes
   - expose deployment capability as peer metadata
   - route deployment actions through the runtime registry
-- Routines/daemon automation:
+- [x] Routines/daemon automation:
   - target canonical runtime descriptors
   - use the same session broker as interactive flows
   - apply the same policy/audit rules
@@ -225,13 +263,15 @@ Exit gate: existing advanced subsystems target the canonical runtime model inste
 ### 8. Remote Filesystem And Audit Unification
 Exit gate: remote runtimes have coherent file semantics and a unified audit story.
 
-- Define remote filesystem access modes:
+Status: `[~] Partial`
+
+- [~] Define remote filesystem access modes:
   - transfer
   - live browse
   - mount
-- Integrate remote mounts with the shell/filesystem model.
-- Ensure disconnected peers fail cleanly without corrupting mount state.
-- Unify audit and observability across:
+- [x] Integrate remote mounts with the shell/filesystem model.
+- [~] Ensure disconnected peers fail cleanly without corrupting mount state.
+- [~] Unify audit and observability across:
   - discovery
   - route selection
   - auth
@@ -240,7 +280,7 @@ Exit gate: remote runtimes have coherent file semantics and a unified audit stor
   - tool invocation
   - gateway use
   - automation
-- Expose cross-stack telemetry:
+- [~] Expose cross-stack telemetry:
   - peer health
   - relay usage
   - route quality
@@ -250,23 +290,27 @@ Exit gate: remote runtimes have coherent file semantics and a unified audit stor
 ### 9. VM Peer MVP
 Exit gate: one browser-hosted Linux VM can be discovered and reached as a real peer target.
 
-- Implement a VM console backend under the browser reverse-peer architecture.
-- Add runtime selection between browser shell and VM console.
-- Wire:
+Status: `[~] Partial`
+
+- [x] Implement a VM console backend under the browser reverse-peer architecture.
+- [x] Add runtime selection between browser shell and VM console.
+- [~] Wire:
   - `SessionData`
   - `Resize`
   - `Ctrl+C`
   - `Ctrl+D`
   - attach/replay where practical
-- Expose VM-specific metadata and capabilities conservatively.
-- Make the UX explicit that this is a VM console, not a host PTY.
-- Support one emulator/runtime cleanly.
-- Do not implement guest-side `wsh-server` in this program.
+- [x] Expose VM-specific metadata and capabilities conservatively.
+- [~] Make the UX explicit that this is a VM console, not a host PTY.
+- [~] Support one emulator/runtime cleanly.
+- [x] Do not implement guest-side `wsh-server` in this program.
 
 ### 10. Final Verification And Readiness Gate
 Exit gate: all roadmap deliverables before BrowserMesh dependency are satisfied.
 
-- Run the full verification matrix for:
+Status: `[ ] Pending`
+
+- [ ] Run the full verification matrix for:
   - identity merge
   - discovery merge
   - policy precedence
@@ -277,7 +321,7 @@ Exit gate: all roadmap deliverables before BrowserMesh dependency are satisfied.
   - naming resolution
   - gateway/compute/service/automation targeting
   - VM peer behavior
-- Confirm all product surfaces consume the same canonical runtime model:
+- [ ] Confirm all product surfaces consume the same canonical runtime model:
   - UI
   - CLI
   - routines
@@ -286,7 +330,7 @@ Exit gate: all roadmap deliverables before BrowserMesh dependency are satisfied.
   - compute
   - services
   - deployment
-- Close only when the “Deliverables Before BrowserMesh Should Depend On This” checklist is fully satisfied.
+- [ ] Close only when the “Deliverables Before BrowserMesh Should Depend On This” checklist is fully satisfied.
 
 ## Test Plan
 
