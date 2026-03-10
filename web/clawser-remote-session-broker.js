@@ -94,7 +94,10 @@ export class RemoteSessionBroker {
 
   selectRoute(selector, opts = {}) {
     const { descriptor, target } = this.resolveTarget(selector, opts)
-    const ranked = this.#registry.computeReachability(descriptor, { intent: target.intent })
+    let ranked = this.#registry.computeReachability(descriptor, { intent: target.intent })
+    if (this.#policyAdapter?.rankRoutes) {
+      ranked = this.#policyAdapter.rankRoutes(descriptor, target, ranked)
+    }
     if (!ranked.length) {
       throw new Error(`No viable routes for ${target.selector}`)
     }
@@ -108,10 +111,13 @@ export class RemoteSessionBroker {
 
   explainRoute(selector, opts = {}) {
     const selected = this.selectRoute(selector, opts)
+    const policyReasons = selected.route?.policy?.reasons?.length
+      ? ` (${selected.route.policy.reasons.join(', ')})`
+      : ''
     return {
       ...selected,
       connectionKind: connectionKindForRoute(selected.route),
-      reason: `${selected.descriptor.peerType}/${selected.descriptor.shellBackend} via ${selected.route.kind}`,
+      reason: `${selected.descriptor.peerType}/${selected.descriptor.shellBackend} via ${selected.route.kind}${policyReasons}`,
     }
   }
 
@@ -135,17 +141,23 @@ export class RemoteSessionBroker {
   }
 
   #resolveNamedTarget(selector) {
-    if (!this.#nameResolver || typeof selector !== 'string') return null
+    if (typeof selector !== 'string') return null
     if (!selector.startsWith('@') && !selector.startsWith('mesh://')) {
       return null
     }
 
-    const resolved = this.#nameResolver.resolve(selector)
-    if (!resolved?.fingerprint) return null
+    if (this.#nameResolver) {
+      const resolved = this.#nameResolver.resolve(selector)
+      if (resolved?.fingerprint) {
+        return this.#registry.resolvePeer(resolved.fingerprint)
+          || this.#registry.resolvePeer(resolved.record?.metadata?.podId || '')
+          || null
+      }
+    }
 
-    return this.#registry.resolvePeer(resolved.fingerprint)
-      || this.#registry.resolvePeer(resolved.record?.metadata?.podId || '')
-      || null
+    const alias = namedAlias(selector)
+    if (!alias) return null
+    return this.#registry.resolvePeer(alias) || this.#registry.resolvePeer(`@${alias}`) || null
   }
 
   #connectorForRoute(route) {
@@ -161,4 +173,17 @@ export class RemoteSessionBroker {
         return null
     }
   }
+}
+
+function namedAlias(selector) {
+  if (selector.startsWith('@')) {
+    const withoutAt = selector.slice(1)
+    if (withoutAt.includes('@')) return null
+    return withoutAt || null
+  }
+  if (selector.startsWith('mesh://')) {
+    const remainder = selector.slice('mesh://'.length)
+    return remainder.split('/')[0] || null
+  }
+  return null
 }

@@ -242,4 +242,77 @@ describe('RemoteSessionBroker', () => {
 
     assert.equal(resolved.descriptor.username, 'alice')
   })
+
+  it('resolves @name through runtime registry aliases without a name resolver', () => {
+    const registry = new RemoteRuntimeRegistry()
+    registry.ingestDescriptor(createRemotePeerDescriptor({
+      identity: createRemoteIdentity({
+        canonicalId: 'builder-peer',
+        aliases: ['builder'],
+      }),
+      username: 'builder',
+      peerType: 'host',
+      shellBackend: 'pty',
+      capabilities: ['shell'],
+      reachability: [
+        createReachabilityDescriptor({
+          kind: 'direct-host',
+          source: 'direct-bookmark',
+          endpoint: 'builder.local:4422',
+          capabilities: ['shell'],
+        }),
+      ],
+      sources: ['direct-bookmark'],
+    }))
+    registry.linkName('builder', 'builder-peer')
+
+    const broker = new RemoteSessionBroker({ runtimeRegistry: registry })
+    const resolved = broker.resolveTarget('@builder', { intent: 'terminal' })
+
+    assert.equal(resolved.descriptor.identity.canonicalId, 'builder-peer')
+  })
+
+  it('includes route-policy reasons in route explanations', () => {
+    const registry = new RemoteRuntimeRegistry()
+    registry.ingestDescriptor(createRemotePeerDescriptor({
+      identity: createRemoteIdentity({ canonicalId: 'host:relay' }),
+      username: 'relay-host',
+      peerType: 'host',
+      shellBackend: 'pty',
+      capabilities: ['shell'],
+      reachability: [
+        createReachabilityDescriptor({
+          kind: 'reverse-relay',
+          source: 'wsh-relay',
+          relayHost: 'relay.example',
+          relayPort: 4422,
+          capabilities: ['shell'],
+        }),
+      ],
+      sources: ['wsh-relay'],
+    }))
+
+    const broker = new RemoteSessionBroker({
+      runtimeRegistry: registry,
+      policyAdapter: {
+        checkTargetAccess() {
+          return { allowed: true }
+        },
+        rankRoutes(_descriptor, _target, routes) {
+          return routes.map((route) => ({
+            ...route,
+            policy: {
+              allowed: true,
+              layer: 'route-policy',
+              scoreAdjustment: 6,
+              reasons: ['relay-healthy'],
+            },
+          }))
+        },
+      },
+    })
+
+    const selection = broker.explainRoute('host:relay', { intent: 'terminal' })
+    assert.match(selection.reason, /relay-healthy/)
+  })
 })

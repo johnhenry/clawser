@@ -60,4 +60,42 @@ describe('RemoteRuntimePolicyAdapter', () => {
     const tools = broker.resolveTarget('guest-peer', { intent: 'tools' })
     assert.equal(tools.descriptor.username, 'guest')
   })
+
+  it('ranks routes using relay health signals', () => {
+    const adapter = new RemoteRuntimePolicyAdapter({
+      relayHealthProvider: (relayHost) => (relayHost === 'healthy.example' ? 'healthy' : 'degraded'),
+    })
+    const descriptor = createRemotePeerDescriptor({
+      identity: createRemoteIdentity({ canonicalId: 'peer-1', fingerprint: 'peer-1' }),
+      username: 'operator',
+      peerType: 'host',
+      shellBackend: 'pty',
+      capabilities: ['shell'],
+      reachability: [],
+      sources: ['wsh-relay'],
+    })
+
+    const ranked = adapter.rankRoutes(
+      descriptor,
+      { intent: 'terminal' },
+      [
+        createReachabilityDescriptor({
+          kind: 'reverse-relay',
+          source: 'wsh-relay',
+          relayHost: 'degraded.example',
+          relayPort: 4422,
+        }),
+        createReachabilityDescriptor({
+          kind: 'reverse-relay',
+          source: 'wsh-relay',
+          relayHost: 'healthy.example',
+          relayPort: 4422,
+        }),
+      ],
+    )
+
+    assert.equal(ranked[0].relayHost, 'healthy.example')
+    assert.match(ranked[0].policy.reasons.join(','), /relay-healthy/)
+    assert.match(ranked[1].policy.reasons.join(','), /relay-degraded/)
+  })
 })

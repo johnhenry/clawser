@@ -45,9 +45,11 @@ export function meshTemplateToWshExposure(templateName) {
 
 export class RemoteRuntimePolicyAdapter {
   #peerRegistry
+  #relayHealthProvider
 
-  constructor({ peerRegistry = null } = {}) {
+  constructor({ peerRegistry = null, relayHealthProvider = null } = {}) {
     this.#peerRegistry = peerRegistry
+    this.#relayHealthProvider = relayHealthProvider
   }
 
   translateTemplate(templateName) {
@@ -94,5 +96,105 @@ export class RemoteRuntimePolicyAdapter {
         ? `mesh ACL template "${templateName}" permits ${target.intent}`
         : 'no mesh ACL template mapped to target',
     }
+  }
+
+  rankRoutes(descriptor, target, routes) {
+    const scored = routes.map((route, index) => {
+      const decision = this.evaluateRoute(descriptor, target, route)
+      return {
+        route,
+        decision,
+        index,
+      }
+    })
+
+    scored.sort((left, right) => {
+      if (right.decision.scoreAdjustment !== left.decision.scoreAdjustment) {
+        return right.decision.scoreAdjustment - left.decision.scoreAdjustment
+      }
+      return left.index - right.index
+    })
+
+    return scored.map((entry) => ({
+      ...entry.route,
+      policy: entry.decision,
+    }))
+  }
+
+  evaluateRoute(descriptor, target, route) {
+    const reasons = []
+    let scoreAdjustment = 0
+
+    const trustLevel = this.#trustLevelFor(descriptor)
+    if (trustLevel != null) {
+      if (trustLevel >= 0.75) {
+        scoreAdjustment += 15
+        reasons.push(`trusted:${trustLevel.toFixed(2)}`)
+      } else if (trustLevel >= 0.25) {
+        scoreAdjustment += 5
+        reasons.push(`moderately-trusted:${trustLevel.toFixed(2)}`)
+      } else {
+        scoreAdjustment -= 10
+        reasons.push(`low-trust:${trustLevel.toFixed(2)}`)
+      }
+    }
+
+    const latency = descriptor?.metadata?.latency
+    if (Number.isFinite(latency)) {
+      if (latency <= 75) {
+        scoreAdjustment += 4
+        reasons.push(`low-latency:${latency}`)
+      } else if (latency >= 250) {
+        scoreAdjustment -= 4
+        reasons.push(`high-latency:${latency}`)
+      }
+    }
+
+    const relayHealth = this.#relayHealthFor(route)
+    if (relayHealth === 'healthy') {
+      scoreAdjustment += 6
+      reasons.push('relay-healthy')
+    } else if (relayHealth === 'degraded') {
+      scoreAdjustment -= 6
+      reasons.push('relay-degraded')
+    } else if (relayHealth === 'offline') {
+      scoreAdjustment -= 30
+      reasons.push('relay-offline')
+    }
+
+    if (target.intent === 'gateway' && trustLevel != null && trustLevel < 0.5) {
+      scoreAdjustment -= 10
+      reasons.push('gateway-requires-higher-trust')
+    }
+
+    return {
+      allowed: true,
+      layer: 'route-policy',
+      scoreAdjustment,
+      reasons,
+    }
+  }
+
+  #trustLevelFor(descriptor) {
+    const fingerprint = descriptor?.identity?.fingerprint
+    if (this.#peerRegistry && fingerprint && this.#peerRegistry.getTrust) {
+      return this.#peerRegistry.getTrust(fingerprint)
+    }
+    if (Number.isFinite(descriptor?.metadata?.trustLevel)) {
+      return descriptor.metadata.trustLevel
+    }
+    return null
+  }
+
+  #relayHealthFor(route) {
+    if (!route?.relayHost) return null
+    if (!this.#relayHealthProvider) return route.health || null
+    if (typeof this.#relayHealthProvider === 'function') {
+      return this.#relayHealthProvider(route.relayHost, route) || null
+    }
+    if (typeof this.#relayHealthProvider.getHealth === 'function') {
+      return this.#relayHealthProvider.getHealth(route.relayHost, route) || null
+    }
+    return route.health || null
   }
 }

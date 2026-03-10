@@ -197,10 +197,33 @@ export class ClawserPod extends Pod {
     })
 
     this.#discoveryManager.onPeerDiscovered((record) => {
-      this.#remoteRuntimeRegistry?.ingestMeshDiscovery(record)
+      const descriptor = this.#remoteRuntimeRegistry?.ingestMeshDiscovery(record)
+      if (!descriptor) return
+      if (record.label) {
+        this.#remoteRuntimeRegistry?.linkName(record.label, descriptor.identity.canonicalId)
+      }
+      if (record.metadata?.meshName) {
+        this.#remoteRuntimeRegistry?.linkName(record.metadata.meshName, descriptor.identity.canonicalId)
+      }
+      if (record.metadata?.wshFingerprint) {
+        this.#remoteRuntimeRegistry?.linkIdentity({
+          canonicalId: descriptor.identity.canonicalId,
+          alias: record.metadata.wshFingerprint,
+        })
+      }
     })
     this.#relayClient.onPeerAnnounce((peer) => {
-      this.#remoteRuntimeRegistry?.ingestMeshRelayPeer(peer)
+      const descriptor = this.#remoteRuntimeRegistry?.ingestMeshRelayPeer(peer)
+      if (!descriptor) return
+      if (peer.username) {
+        this.#remoteRuntimeRegistry?.linkName(peer.username, descriptor.identity.canonicalId)
+      }
+      if (peer.label) {
+        this.#remoteRuntimeRegistry?.linkName(peer.label, descriptor.identity.canonicalId)
+      }
+      if (peer.metadata?.meshName) {
+        this.#remoteRuntimeRegistry?.linkName(peer.metadata.meshName, descriptor.identity.canonicalId)
+      }
     })
 
     // 21. AppRegistry + AppStore — app lifecycle
