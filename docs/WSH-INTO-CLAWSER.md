@@ -9,6 +9,41 @@ The first thing to know is that Clawser itself is a browser app. There is no alw
 
 If your goal is specifically to reach a live Clawser tab, use the reverse-connect flow below. If your goal is a real host PTY with full Unix terminal semantics, use the direct `wsh-server` path in the last section.
 
+## Topology At A Glance
+
+| Mode | Source | Target | Transport Path | Terminal Type | Status |
+|------|--------|--------|----------------|---------------|--------|
+| Direct host | Rust `wsh` CLI or browser `wsh` client | `wsh-server` on a host | Direct `https://host:port` | Real PTY | Complete |
+| Reverse browser peer | Rust `wsh` CLI | Live Clawser tab | Relay-mediated reverse connect | Virtual terminal | Complete for interactive shell workloads |
+| Reverse host peer | Rust `wsh` CLI | Relay-registered host agent | Relay-mediated reverse connect | Real PTY | Partial |
+| VM guest peer | Rust `wsh` CLI | Browser-hosted VM console | Relay-mediated reverse connect | VM console | Partial / MVP |
+
+Use this rule of thumb:
+
+- choose **direct host** when you need full Unix PTY behavior
+- choose **reverse browser peer** when you need to reach a live tab/workspace
+- choose **reverse host peer** when the machine can dial out but should not expose an inbound listener
+- choose **VM guest peer** only when you specifically want a browser-hosted guest runtime rather than the normal browser shell
+
+## Support Matrix
+
+| Capability | Direct host | Reverse browser peer | Reverse host peer | VM guest peer |
+|------------|-------------|----------------------|-------------------|---------------|
+| Interactive shell | Yes | Yes | Yes | Yes |
+| Real PTY semantics | Yes | No | Yes | No |
+| File transfer | Yes | Yes | Yes | Partial |
+| Tool / MCP access | Yes | Yes | Yes | Partial |
+| Attach / replay | Yes | Yes | Partial | Partial |
+| Echo / term sync hints | Host-driven | Yes | Partial | No |
+
+Terminology used in this guide:
+
+- **Direct host session**: a normal `wsh connect` session into `wsh-server`
+- **Reverse peer**: a runtime that registered outward to a relay and can be reached with `wsh reverse-connect`
+- **Virtual terminal**: a browser-backed, PTY-like terminal stream implemented in app/runtime code rather than by the host kernel
+- **Real PTY**: a host/kernel terminal device backing an interactive shell
+- **Peer capability**: the advertised surfaces a reverse peer exposes, such as `shell`, `fs`, `tools`, or `gateway`
+
 ## Before You Start
 
 This guide uses four different command surfaces:

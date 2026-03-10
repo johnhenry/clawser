@@ -69,6 +69,60 @@ clawser exit                  Exit agent chat mode
 
 ---
 
+## WSH CLI
+
+Clawser ships two `wsh` surfaces:
+
+- the browser shell command `wsh` inside the Clawser terminal
+- the Rust CLI binary `wsh` from `crates/wsh-cli`
+
+Use the browser `wsh` when the command should run inside the live Clawser tab. Use the Rust CLI when the command should run from your normal OS shell.
+
+### WSH Topology
+
+| Mode | Typical Command | Result |
+|------|------------------|--------|
+| Direct host | `wsh alice@host.example.com` | Opens a direct `wsh-server` session backed by a real PTY |
+| Reverse browser peer | `wsh -i operator reverse-connect <fingerprint> relay.example.com` | Opens a relay-mediated session into a live Clawser tab |
+| Reverse host peer | `wsh -i operator reverse-connect <fingerprint> relay.example.com` | Opens a relay-mediated session into a host agent |
+| Peer discovery | `wsh -i operator peers relay.example.com --json` | Lists relay-registered peers with backend/session hints |
+
+### WSH Support Matrix
+
+| Surface | Direct host | Reverse browser peer | Reverse host peer | VM guest peer |
+|---------|-------------|----------------------|-------------------|---------------|
+| Interactive shell | Yes | Yes | Yes | Yes |
+| Real PTY | Yes | No | Yes | No |
+| File transfer | Yes | Yes | Yes | Partial |
+| Tools / MCP | Yes | Yes | Yes | Partial |
+| Attach / replay hints | Yes | Yes | Partial | Partial |
+
+### Common Rust CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `wsh connect user@host` | Open an interactive direct-host PTY session |
+| `wsh user@host command` | Run one-off exec on a direct host |
+| `wsh keygen [name]` | Generate an Ed25519 identity |
+| `wsh keys` | List stored identities |
+| `wsh copy-id user@host` | Install a public key on a host running `wsh-server` |
+| `wsh peers relay.example.com` | List reverse peers on a relay |
+| `wsh peers relay.example.com --json` | Emit canonical peer/runtime metadata as JSON |
+| `wsh reverse relay.example.com` | Run a foreground reverse-host registration |
+| `wsh agent run relay.example.com` | Run the long-lived reverse-host agent |
+| `wsh reverse-connect <fingerprint> relay.example.com` | Connect to a relay-registered peer |
+
+### Backend Labels
+
+When `wsh peers` or the remote-runtime UI shows backend metadata, use these meanings:
+
+- `host / pty`: real host session with a kernel-backed PTY
+- `browser-shell / virtual-shell`: live Clawser browser shell over the virtual terminal path
+- `vm-guest / vm-console`: browser-hosted guest console
+- `worker / exec-only`: non-interactive runtime that advertises exec-style capability only
+
+---
+
 ## Base Shell Builtins
 
 **File**: `web/clawser-shell.js`
