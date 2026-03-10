@@ -245,7 +245,7 @@ Status: `[~] Partial`
   - expose gateway-capable peers in the runtime registry
   - policy-scope gateway separately from shell/tools
   - record gateway use in audit/telemetry
-- [ ] Federated compute:
+- [x] Federated compute:
   - schedule against runtime descriptors, not ad hoc peer lists
   - select peers by actual execution capability/backend
 - [~] Virtual Server/service hosting:
@@ -270,7 +270,7 @@ Status: `[~] Partial`
   - live browse
   - mount
 - [x] Integrate remote mounts with the shell/filesystem model.
-- [~] Ensure disconnected peers fail cleanly without corrupting mount state.
+- [x] Ensure disconnected peers fail cleanly without corrupting mount state.
 - [~] Unify audit and observability across:
   - discovery
   - route selection
