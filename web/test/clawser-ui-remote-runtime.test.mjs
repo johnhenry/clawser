@@ -105,6 +105,37 @@ describe('renderRemoteRuntimePanel', () => {
     assert.match(html, /data-selector="browser:beta" data-view="files" disabled/);
     assert.match(html, /data-selector="browser:beta" data-view="services" disabled/);
   });
+
+  it('labels vm-console sessions as VM guest consoles', () => {
+    const registry = new RemoteRuntimeRegistry();
+    registry.ingestDescriptor(createRemotePeerDescriptor({
+      identity: createRemoteIdentity({
+        canonicalId: 'vm:gamma',
+        fingerprint: 'ce46c9c7abcdef0123456789abcdef03',
+      }),
+      username: 'gamma',
+      peerType: 'vm-guest',
+      shellBackend: 'vm-console',
+      capabilities: ['shell'],
+      reachability: [
+        createReachabilityDescriptor({
+          kind: 'reverse-relay',
+          source: 'wsh-relay',
+          relayHost: 'localhost',
+          relayPort: 4422,
+          lastSeen: Date.now(),
+        }),
+      ],
+    }));
+
+    const html = renderRemoteRuntimePanel(registry, {
+      activeSelector: 'vm:gamma',
+      activeView: { kind: 'terminal', client: {} },
+    });
+
+    assert.match(html, /VM Guest Console/);
+    assert.match(html, /browser-hosted VM console/);
+  });
 });
 
 describe('supportHintsForRuntime', () => {

@@ -227,14 +227,16 @@ function _appendChatMessage(container, msg, localPodId, isLocal) {
  * @returns {string} HTML string
  */
 export function renderRemoteTerminal(terminalClient, session) {
+  const title = session?.terminalTitle || 'Remote Terminal'
+  const welcome = session?.terminalWelcome || 'Connected to remote shell. Type a command below.'
   return `
     <div class="rc-panel rc-terminal-panel">
       <div class="rc-panel-header">
-        <span class="rc-panel-title">Remote Terminal</span>
+        <span class="rc-panel-title">${esc(title)}</span>
         <span class="rc-panel-peer" title="${esc(session.pubKey || '')}">${esc(truncId(session.pubKey || session.remotePodId || ''))}</span>
       </div>
       <div class="rc-terminal-output" id="rcTerminalOutput">
-        <div class="rc-terminal-welcome">Connected to remote shell. Type a command below.</div>
+        <div class="rc-terminal-welcome">${esc(welcome)}</div>
       </div>
       <div class="rc-terminal-input-row">
         <span class="rc-terminal-prompt">$</span>
@@ -696,9 +698,14 @@ export function renderRemoteRuntimePanel(runtimeRegistry, {
     </div>`
 
   if (activePeer && activeView?.kind === 'terminal') {
+    const isVmGuest = activePeer.peerType === 'vm-guest' || activePeer.shellBackend === 'vm-console'
     detailHtml = renderRemoteTerminal(activeView.client, {
       pubKey: peerDisplayId(activePeer),
       remotePodId: activePeer.identity?.canonicalId,
+      terminalTitle: isVmGuest ? 'VM Guest Console' : 'Remote Terminal',
+      terminalWelcome: isVmGuest
+        ? 'Connected to a browser-hosted VM console. Terminal behavior is guest-backed, not a host PTY.'
+        : 'Connected to remote shell. Type a command below.',
     })
   } else if (activePeer && activeView?.kind === 'files') {
     detailHtml = renderRemoteFiles(activeView.client, {
