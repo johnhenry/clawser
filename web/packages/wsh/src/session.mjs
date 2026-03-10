@@ -266,6 +266,38 @@ export class WshSession {
   }
 
   /**
+   * Read one chunk from the session data plane.
+   *
+   * Returns `null` on EOF.
+   *
+   * @returns {Promise<Uint8Array|null>}
+   */
+  async read() {
+    if (this.#dataMode === 'virtual') {
+      if (this.#virtualBackend === null) {
+        if (this.#state === STATE_CLOSED) {
+          return null;
+        }
+        throw new Error('Session not yet activated — virtual backend unavailable');
+      }
+      const { done, value } = await this.#virtualBackend.read();
+      return done ? null : value || new Uint8Array();
+    }
+
+    if (!this.#stdoutReadable) {
+      throw new Error('Session not yet bound — stdout stream unavailable');
+    }
+
+    const reader = this.#stdoutReadable.getReader();
+    try {
+      const { done, value } = await reader.read();
+      return done ? null : value || new Uint8Array();
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  /**
    * Request the remote PTY to resize.
    *
    * @param {number} cols - Terminal columns
@@ -326,7 +358,6 @@ export class WshSession {
 
     this.#stdinWriter = null;
     this.#stdoutReadable = null;
-    this.#virtualBackend = null;
     this.#emitClose();
   }
 
@@ -341,6 +372,7 @@ export class WshSession {
     switch (msg.type) {
       case MSG.SESSION_DATA: {
         if (msg.data && msg.data.byteLength > 0) {
+          this.#virtualBackend?.pushData(msg.data);
           try {
             this.onData?.(msg.data);
           } catch (err) {
@@ -365,6 +397,7 @@ export class WshSession {
         if (this.#state !== STATE_CLOSED) {
           this.#state = STATE_CLOSED;
           this.#abort.abort();
+          this.#virtualBackend?.close();
           this.#releaseStreams();
           this.#emitClose();
         }
@@ -494,7 +527,7 @@ export class WshSession {
     }
     this.#stdinWriter = null;
     this.#stdoutReadable = null;
-    this.#virtualBackend = null;
+    this.#virtualBackend?.close();
   }
 
   /**

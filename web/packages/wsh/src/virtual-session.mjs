@@ -36,6 +36,12 @@ export class WshVirtualSessionBackend {
 
   /** @type {object|null} */
   #lastTermDiff = null;
+  /** @type {Uint8Array[]} */
+  #readQueue = [];
+  /** @type {Array<{resolve: function({done:boolean,value?:Uint8Array}):void,reject:function(Error):void}>} */
+  #readWaiters = [];
+  /** @type {boolean} */
+  #closed = false;
 
   /**
    * @param {function(object): Promise<void>} sendControl
@@ -57,6 +63,37 @@ export class WshVirtualSessionBackend {
         data: normalizeSessionData(data),
       })
     );
+  }
+
+  async read() {
+    if (this.#readQueue.length > 0) {
+      return { done: false, value: this.#readQueue.shift() };
+    }
+    if (this.#closed) {
+      return { done: true, value: undefined };
+    }
+    return await new Promise((resolve, reject) => {
+      this.#readWaiters.push({ resolve, reject });
+    });
+  }
+
+  pushData(data) {
+    const bytes = data instanceof Uint8Array ? data : normalizeSessionData(data);
+    const waiter = this.#readWaiters.shift();
+    if (waiter) {
+      waiter.resolve({ done: false, value: bytes });
+      return;
+    }
+    this.#readQueue.push(bytes);
+  }
+
+  close() {
+    if (this.#closed) return;
+    this.#closed = true;
+    while (this.#readWaiters.length > 0) {
+      const waiter = this.#readWaiters.shift();
+      waiter?.resolve({ done: true, value: undefined });
+    }
   }
 
   get lastEchoAck() {

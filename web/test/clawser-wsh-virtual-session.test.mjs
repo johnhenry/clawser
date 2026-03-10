@@ -69,6 +69,76 @@ class MockTransport extends WshTransport {
   }
 }
 
+class VirtualFileTransport extends MockTransport {
+  uploadPayloads = [];
+  downloadData = new Uint8Array();
+  #uploadChunks = [];
+  #fileMode = null;
+  #currentChannelId = null;
+
+  constructor({ downloadData = new Uint8Array() } = {}) {
+    super();
+    this.downloadData = downloadData;
+  }
+
+  async _doSendControl(msg) {
+    this.sent.push(msg);
+
+    if (msg.type === MSG.HELLO) {
+      setTimeout(() => {
+        this.deliver(serverHello({ sessionId: 'srv-1', features: ['reverse'] }));
+      }, 0);
+      return;
+    }
+
+    if (msg.type === MSG.AUTH) {
+      setTimeout(() => {
+        this.deliver(authOk({ sessionId: 'sess-1', token: 'resume-token' }));
+      }, 0);
+      return;
+    }
+
+    if (msg.type === MSG.OPEN) {
+      this.#fileMode = msg.command;
+      this.#currentChannelId = 17;
+      setTimeout(() => {
+        this.deliver(openOk({ channelId: 17, dataMode: 'virtual', capabilities: [] }));
+      }, 0);
+      return;
+    }
+
+    if (msg.type === MSG.SESSION_DATA && msg.channel_id === this.#currentChannelId) {
+      if (this.#fileMode?.startsWith('upload:')) {
+        this.#uploadChunks.push(msg.data);
+        if (this.#uploadChunks.length >= 2) {
+          this.uploadPayloads.push(concatBytes(this.#uploadChunks));
+          this.deliver(sessionData({ channelId: this.#currentChannelId, data: new Uint8Array([0x6f, 0x6b]) }));
+          this.deliver({ type: MSG.CLOSE, channel_id: this.#currentChannelId });
+        }
+      } else if (this.#fileMode?.startsWith('download:')) {
+        const size = new Uint8Array(8);
+        new DataView(size.buffer).setBigUint64(0, BigInt(this.downloadData.byteLength));
+        this.deliver(sessionData({
+          channelId: this.#currentChannelId,
+          data: concatBytes([size, this.downloadData]),
+        }));
+        this.deliver({ type: MSG.CLOSE, channel_id: this.#currentChannelId });
+      }
+    }
+  }
+}
+
+function concatBytes(chunks) {
+  const total = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+  const output = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return output;
+}
+
 class TrackingTransport extends MockTransport {
   constructor(kind, attempts, connectError = null) {
     super();
@@ -358,6 +428,52 @@ describe('wsh virtual sessions', () => {
     assert.equal(session.lastTermDiff.base_seq, 7);
     assert.deepEqual(Array.from(session.lastTermSync.state_hash), [1, 2, 3]);
 
+    await client.disconnect();
+  });
+
+  it('reads virtual session data through session.read()', async () => {
+    const { client, transport } = await createAuthenticatedClient();
+    transport.queueOpenResponse(openOk({ channelId: 46, dataMode: 'virtual' }));
+
+    const session = await client.openSession({ type: 'pty' });
+    transport.deliver(sessionData({ channelId: 46, data: new Uint8Array([1, 2, 3]) }));
+    transport.deliver({ type: MSG.CLOSE, channel_id: 46 });
+
+    const first = await session.read();
+    const second = await session.read();
+
+    assert.deepEqual(Array.from(first), [1, 2, 3]);
+    assert.equal(second, null);
+    await client.disconnect();
+  });
+
+  it('uploads files over virtual file sessions', async () => {
+    const transport = new VirtualFileTransport();
+    const { client } = await createAuthenticatedClient(transport);
+    const payload = new Uint8Array([10, 20, 30, 40]);
+
+    await client.upload(payload, '/tmp/demo.bin');
+
+    assert.equal(transport.uploadPayloads.length, 1);
+    const uploaded = transport.uploadPayloads[0];
+    const view = new DataView(uploaded.buffer, uploaded.byteOffset, uploaded.byteLength);
+    const pathLen = view.getUint32(0);
+    const path = new TextDecoder().decode(uploaded.subarray(4, 4 + pathLen));
+    const size = Number(view.getBigUint64(4 + pathLen));
+    assert.equal(path, '/tmp/demo.bin');
+    assert.equal(size, payload.byteLength);
+    assert.deepEqual(Array.from(uploaded.subarray(12 + pathLen)), Array.from(payload));
+    await client.disconnect();
+  });
+
+  it('downloads files over virtual file sessions', async () => {
+    const payload = new Uint8Array([5, 6, 7, 8, 9]);
+    const transport = new VirtualFileTransport({ downloadData: payload });
+    const { client } = await createAuthenticatedClient(transport);
+
+    const data = await client.download('/tmp/demo.bin');
+
+    assert.deepEqual(Array.from(data), Array.from(payload));
     await client.disconnect();
   });
 });

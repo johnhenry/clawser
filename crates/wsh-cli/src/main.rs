@@ -106,6 +106,10 @@ enum Command {
     Reverse {
         /// Relay host
         relay_host: String,
+
+        /// Capabilities to expose (`shell`, `exec`, `fs`, `tools`, `gateway`)
+        #[arg(long = "capability")]
+        capabilities: Vec<String>,
     },
 
     /// Run a long-lived reverse-host agent
@@ -162,7 +166,7 @@ enum AgentCommand {
         #[arg(long, default_value_t = 3)]
         reconnect_delay_secs: u64,
 
-        /// Capabilities to expose (`shell`, `exec`)
+        /// Capabilities to expose (`shell`, `exec`, `fs`, `tools`, `gateway`)
         #[arg(long = "capability")]
         capabilities: Vec<String>,
     },
@@ -234,8 +238,18 @@ async fn main() {
         Some(Command::Scp { src, dst }) => {
             commands::scp::run(&src, &dst, port, &identity, transport.as_deref()).await
         }
-        Some(Command::Reverse { relay_host }) => {
-            commands::relay::run_reverse(&relay_host, port, &identity, transport.as_deref()).await
+        Some(Command::Reverse {
+            relay_host,
+            capabilities,
+        }) => {
+            commands::relay::run_reverse(
+                &relay_host,
+                port,
+                &identity,
+                transport.as_deref(),
+                &capabilities,
+            )
+            .await
         }
         Some(Command::Agent { command }) => match command {
             AgentCommand::Run {

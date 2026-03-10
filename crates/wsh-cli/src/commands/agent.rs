@@ -366,9 +366,14 @@ pub async fn run_status(
 fn reverse_host_options(capabilities: &[String]) -> Result<ReverseHostOptions> {
     let normalized = normalize_capabilities(capabilities);
     for capability in &normalized {
-        if capability != "shell" && capability != "exec" {
+        if capability != "shell"
+            && capability != "exec"
+            && capability != "fs"
+            && capability != "tools"
+            && capability != "gateway"
+        {
             anyhow::bail!(
-                "unsupported reverse-host capability `{capability}`; only shell and exec are available today"
+                "unsupported reverse-host capability `{capability}`; supported capabilities are shell, exec, fs, tools, and gateway"
             );
         }
     }
@@ -549,9 +554,29 @@ mod tests {
     }
 
     #[test]
-    fn reverse_host_options_rejects_unsupported_capabilities() {
-        let err = reverse_host_options(&["fs".to_string()]).unwrap_err();
+    fn reverse_host_options_rejects_unknown_capabilities() {
+        let err = reverse_host_options(&["bogus".to_string()]).unwrap_err();
         assert!(err.to_string().contains("unsupported reverse-host capability"));
+    }
+
+    #[test]
+    fn reverse_host_options_accepts_phase_7a_capabilities() {
+        let options = reverse_host_options(&[
+            "shell".to_string(),
+            "fs".to_string(),
+            "tools".to_string(),
+            "gateway".to_string(),
+        ])
+        .unwrap();
+        assert_eq!(
+            options.capabilities,
+            vec![
+                "shell".to_string(),
+                "fs".to_string(),
+                "tools".to_string(),
+                "gateway".to_string()
+            ]
+        );
     }
 
     #[test]

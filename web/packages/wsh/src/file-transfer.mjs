@@ -47,6 +47,21 @@ export class WshFileTransfer {
    * @returns {Promise<{ success: boolean, bytesTransferred: number }>}
    */
   async upload(data, remotePath, { onProgress, timeout = RESPONSE_TIMEOUT_MS } = {}) {
+    if (typeof this.#client.upload === 'function') {
+      await this.#client.upload(data, remotePath, {
+        onProgress: (value) => {
+          if (typeof value === 'number') {
+            onProgress?.({ sent: value, total: data.byteLength ?? data.length ?? 0 });
+            return;
+          }
+          onProgress?.(value);
+        },
+        timeout,
+      });
+      const bytes = data instanceof Uint8Array ? data.byteLength : data.byteLength ?? data.length ?? 0;
+      return { success: true, bytesTransferred: bytes };
+    }
+
     const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
     if (!(bytes instanceof Uint8Array)) {
       throw new TypeError('Data must be a Uint8Array or ArrayBuffer');
@@ -131,6 +146,10 @@ export class WshFileTransfer {
    * @returns {Promise<Uint8Array>} File content
    */
   async download(remotePath, { onProgress, timeout = RESPONSE_TIMEOUT_MS } = {}) {
+    if (typeof this.#client.download === 'function') {
+      return await this.#client.download(remotePath, { onProgress, timeout });
+    }
+
     if (!remotePath || typeof remotePath !== 'string') {
       throw new Error('remotePath is required');
     }

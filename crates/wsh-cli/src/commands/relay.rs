@@ -94,6 +94,7 @@ pub async fn run_reverse(
     port: u16,
     identity: &str,
     transport: Option<&str>,
+    capabilities: &[String],
 ) -> Result<()> {
     info!(relay = %relay_host, "registering as reverse peer");
 
@@ -109,7 +110,7 @@ pub async fn run_reverse(
     let public_bytes = wsh_client::auth::public_key_bytes(&verifying_key);
     let fingerprint = wsh_core::fingerprint(&public_bytes);
     let short_fp = &fingerprint[..fingerprint.len().min(12)];
-    let reverse_options = ReverseHostOptions::default();
+    let reverse_options = reverse_options(capabilities)?;
 
     let resolved = resolve_target(relay_host, port, transport)?;
     debug!(url = %resolved.url, fallback_urls = ?resolved.fallback_urls, "relay URL");
@@ -156,6 +157,36 @@ pub async fn run_reverse(
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     Ok(())
+}
+
+fn reverse_options(capabilities: &[String]) -> Result<ReverseHostOptions> {
+    let capabilities = if capabilities.is_empty() {
+        vec!["shell".to_string(), "exec".to_string()]
+    } else {
+        capabilities
+            .iter()
+            .map(|value| value.trim().to_ascii_lowercase())
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>()
+    };
+
+    for capability in &capabilities {
+        if capability != "shell"
+            && capability != "exec"
+            && capability != "fs"
+            && capability != "tools"
+            && capability != "gateway"
+        {
+            anyhow::bail!(
+                "unsupported reverse-host capability `{capability}`; supported capabilities are shell, exec, fs, tools, and gateway"
+            );
+        }
+    }
+
+    Ok(ReverseHostOptions {
+        capabilities,
+        ..ReverseHostOptions::default()
+    })
 }
 
 /// List peers available on a relay host.

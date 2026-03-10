@@ -47,6 +47,74 @@ const DEFAULT_AUTH_TIMEOUT   = 10_000;  // ms
 const DEFAULT_OPEN_TIMEOUT   = 10_000;  // ms
 const DEFAULT_PING_INTERVAL  = 30_000;  // ms
 const DEFAULT_EXEC_TIMEOUT   = 60_000;  // ms
+const FILE_CHUNK_SIZE        = 65_536;
+
+const textEncoder = new TextEncoder();
+
+function buildUploadHeader(path, totalSize) {
+  const pathBytes = textEncoder.encode(path);
+  const header = new Uint8Array(4 + pathBytes.length + 8);
+  const view = new DataView(header.buffer);
+  view.setUint32(0, pathBytes.length);
+  header.set(pathBytes, 4);
+  writeU64(header, 4 + pathBytes.length, totalSize);
+  return header;
+}
+
+function buildDownloadHeader(path) {
+  const pathBytes = textEncoder.encode(path);
+  const header = new Uint8Array(4 + pathBytes.length);
+  const view = new DataView(header.buffer);
+  view.setUint32(0, pathBytes.length);
+  header.set(pathBytes, 4);
+  return header;
+}
+
+function writeU64(buffer, offset, value) {
+  const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+  const big = BigInt(value);
+  view.setBigUint64(offset, big);
+}
+
+function decodeU64(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return Number(view.getBigUint64(0));
+}
+
+function createSessionReader(session) {
+  let remainder = new Uint8Array();
+  return {
+    async readExact(totalBytes) {
+      const output = new Uint8Array(totalBytes);
+      let offset = 0;
+
+      while (offset < totalBytes) {
+        if (remainder.byteLength === 0) {
+          const chunk = await session.read();
+          if (chunk === null) {
+            return null;
+          }
+          remainder = chunk;
+        }
+
+        const take = Math.min(totalBytes - offset, remainder.byteLength);
+        output.set(remainder.subarray(0, take), offset);
+        offset += take;
+        remainder = remainder.subarray(take);
+      }
+
+      return output;
+    },
+    async readChunk() {
+      if (remainder.byteLength > 0) {
+        const chunk = remainder;
+        remainder = new Uint8Array();
+        return chunk;
+      }
+      return await session.read();
+    },
+  };
+}
 
 // ── Client class ──────────────────────────────────────────────────────
 
@@ -686,8 +754,28 @@ export class WshClient {
   async reverseConnectTo(targetFingerprint, timeout = DEFAULT_OPEN_TIMEOUT) {
     this.#assertAuthenticated('reverseConnectTo');
 
+    const response = await this.reverseConnect(targetFingerprint, timeout);
+    return response;
+  }
+
+  /**
+   * Initiate a reverse connection and wait for accept/reject.
+   *
+   * @param {string} targetFingerprint
+   * @param {number} [timeout=10000]
+   * @returns {Promise<object>}
+   */
+  async reverseConnect(targetFingerprint, timeout = DEFAULT_OPEN_TIMEOUT) {
+    this.#assertAuthenticated('reverseConnect');
+
     await this.#transport.sendControl(
       reverseConnectMsg({ targetFingerprint, username: '' })
+    );
+
+    return this.#waitForMessage(
+      [MSG.REVERSE_ACCEPT, MSG.REVERSE_REJECT],
+      timeout,
+      'Timed out waiting for reverse-connect response'
     );
   }
 
@@ -719,51 +807,30 @@ export class WshClient {
    */
   async upload(blob, remotePath, { onProgress } = {}) {
     this.#assertAuthenticated('upload');
-
-    // Open a file channel.
-    await this.#transport.sendControl(
-      openMsg({ kind: 'file', command: `upload:${remotePath}` })
-    );
-
-    const response = await this.#waitForMessage(
-      [MSG.OPEN_OK, MSG.OPEN_FAIL],
-      DEFAULT_OPEN_TIMEOUT,
-      'Timed out waiting for upload channel'
-    );
-
-    if (response.type === MSG.OPEN_FAIL) {
-      throw new Error(`Upload failed: ${response.reason || 'rejected'}`);
-    }
-
-    const channelId = response.channel_id;
-    const stream = await this.#transport.openStream();
-    const writer = stream.writable.getWriter();
+    const session = await this.openSession({ type: 'file', command: `upload:${remotePath}` });
+    const data = blob instanceof Blob
+      ? new Uint8Array(await blob.arrayBuffer())
+      : blob;
+    const total = data.byteLength;
+    const header = buildUploadHeader(remotePath, total);
+    let sent = 0;
 
     try {
-      // Convert to Uint8Array if it's a Blob.
-      const data = blob instanceof Blob
-        ? new Uint8Array(await blob.arrayBuffer())
-        : blob;
-
-      // Write in 64 KiB chunks for progress tracking.
-      const chunkSize = 65536;
-      let sent = 0;
-      for (let i = 0; i < data.byteLength; i += chunkSize) {
-        const end = Math.min(i + chunkSize, data.byteLength);
-        await writer.write(data.subarray(i, end));
+      await session.write(header);
+      for (let i = 0; i < total; i += FILE_CHUNK_SIZE) {
+        const end = Math.min(i + FILE_CHUNK_SIZE, total);
+        await session.write(data.subarray(i, end));
         sent = end;
         onProgress?.(sent);
       }
-    } finally {
-      await writer.close().catch(() => {});
-    }
 
-    // Wait for the server to confirm the upload.
-    await this.#waitForMessage(
-      [MSG.CLOSE, MSG.EXIT],
-      DEFAULT_OPEN_TIMEOUT,
-      'Timed out waiting for upload confirmation'
-    );
+      const ack = await session.read();
+      if (ack === null) {
+        throw new Error('Upload failed: unexpected EOF waiting for server acknowledgement');
+      }
+    } finally {
+      await session.close().catch(() => {});
+    }
   }
 
   /**
@@ -774,45 +841,34 @@ export class WshClient {
    */
   async download(remotePath) {
     this.#assertAuthenticated('download');
-
-    await this.#transport.sendControl(
-      openMsg({ kind: 'file', command: `download:${remotePath}` })
-    );
-
-    const response = await this.#waitForMessage(
-      [MSG.OPEN_OK, MSG.OPEN_FAIL],
-      DEFAULT_OPEN_TIMEOUT,
-      'Timed out waiting for download channel'
-    );
-
-    if (response.type === MSG.OPEN_FAIL) {
-      throw new Error(`Download failed: ${response.reason || 'rejected'}`);
-    }
-
-    const stream = await this.#transport.openStream();
-    const reader = stream.readable.getReader();
-    const chunks = [];
+    const session = await this.openSession({ type: 'file', command: `download:${remotePath}` });
 
     try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
+      const reader = createSessionReader(session);
+      await session.write(buildDownloadHeader(remotePath));
+
+      const sizeChunk = await reader.readExact(8);
+      if (sizeChunk === null) {
+        throw new Error('Download failed: unexpected EOF reading file size');
       }
+      const totalSize = decodeU64(sizeChunk);
+      const data = new Uint8Array(totalSize);
+      let offset = 0;
+
+      while (offset < totalSize) {
+        const chunk = await reader.readChunk();
+        if (chunk === null) {
+          throw new Error('Download failed: unexpected EOF reading file payload');
+        }
+        const remaining = totalSize - offset;
+        data.set(chunk.subarray(0, remaining), offset);
+        offset += Math.min(chunk.byteLength, remaining);
+      }
+
+      return data;
     } finally {
-      reader.releaseLock();
+      await session.close().catch(() => {});
     }
-
-    // Concatenate chunks.
-    const totalLength = chunks.reduce((sum, c) => sum + c.byteLength, 0);
-    const result = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const chunk of chunks) {
-      result.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-
-    return result;
   }
 
   // ── MCP integration ─────────────────────────────────────────────────

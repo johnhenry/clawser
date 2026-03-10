@@ -5,12 +5,19 @@
 //! through a relay.
 
 use std::collections::HashMap;
+use std::fs::File;
 use std::io::{Read, Write};
+use std::net::IpAddr;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+use serde_json::{json, Value};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{lookup_host, TcpStream, UdpSocket};
 use tokio::sync::mpsc;
+use tokio::time::{timeout, Duration};
 use tracing::{debug, info, warn};
 use wsh_client::WshClient;
 use wsh_core::messages::*;
@@ -70,6 +77,19 @@ impl ReverseHostOptions {
             supports_replay: self.supports_replay,
             supports_echo: self.supports_echo,
             supports_term_sync: self.supports_term_sync,
+        }
+    }
+
+    fn has_capability(&self, capability: &str) -> bool {
+        self.capabilities.iter().any(|value| value == capability)
+    }
+
+    fn allows_kind(&self, kind: ChannelKind) -> bool {
+        match kind {
+            ChannelKind::Pty => self.has_capability("shell"),
+            ChannelKind::Exec => self.has_capability("exec") || self.has_capability("shell"),
+            ChannelKind::File => self.has_capability("fs"),
+            _ => false,
         }
     }
 }
@@ -141,6 +161,8 @@ struct ReverseHostRuntime {
     status_tx: Option<mpsc::Sender<ReverseHostStatusEvent>>,
     active_request: Option<ReverseConnectPayload>,
     sessions: HashMap<u32, ReverseHostSession>,
+    gateway_connections: HashMap<u32, ReverseGatewayConnection>,
+    mcp: LocalMcpBridge,
     next_channel_id: u32,
 }
 
@@ -156,6 +178,8 @@ impl ReverseHostRuntime {
             status_tx,
             active_request: None,
             sessions: HashMap::new(),
+            gateway_connections: HashMap::new(),
+            mcp: LocalMcpBridge::default(),
             next_channel_id: 1,
         }
     }
@@ -213,9 +237,16 @@ impl ReverseHostRuntime {
             Payload::Resize(resize) => self.handle_resize(resize).await,
             Payload::Signal(signal) => self.handle_signal(signal).await,
             Payload::Close(close) => self.handle_close(close).await,
-            Payload::McpDiscover(_) | Payload::McpCall(_) => {
-                self.send_open_fail("reverse host tools are not exposed yet").await
-            }
+            Payload::McpDiscover(_) => self.handle_mcp_discover().await,
+            Payload::McpCall(call) => self.handle_mcp_call(call).await,
+            Payload::OpenTcp(open) => self.handle_open_tcp(open).await,
+            Payload::OpenUdp(open) => self.handle_open_udp(open).await,
+            Payload::ResolveDns(resolve) => self.handle_resolve_dns(resolve).await,
+            Payload::GatewayData(data) => self.handle_gateway_data(data).await,
+            Payload::GatewayClose(close) => self.handle_gateway_close(close).await,
+            Payload::ListenRequest(request) => self.handle_listen_request(request).await,
+            Payload::InboundAccept(accept) => self.handle_inbound_accept(accept).await,
+            Payload::InboundReject(reject) => self.handle_inbound_reject(reject).await,
             other => {
                 debug!("ignoring unsupported reverse-host relay message: {:?}", other);
                 Ok(())
@@ -265,38 +296,62 @@ impl ReverseHostRuntime {
         open: OpenPayload,
         event_tx: mpsc::Sender<RuntimeEvent>,
     ) -> Result<()> {
-        match open.kind {
-            ChannelKind::Pty | ChannelKind::Exec => {}
-            _ => {
-                return self
-                    .send_open_fail("reverse host currently supports only pty and exec channels")
-                    .await;
-            }
+        let kind = open.kind.clone();
+        if !self.options.allows_kind(kind.clone()) {
+            let reason = match kind {
+                ChannelKind::Pty => "shell access not permitted for this reverse host",
+                ChannelKind::Exec => "exec access not permitted for this reverse host",
+                ChannelKind::File => "file transfer not permitted for this reverse host",
+                _ => "unsupported channel kind for this reverse host",
+            };
+            return self.send_open_fail(reason).await;
         }
 
         let channel_id = self.next_channel_id;
         self.next_channel_id += 1;
 
-        let cols = open.cols.unwrap_or(80);
-        let rows = open.rows.unwrap_or(24);
-        let command = open.command.clone();
-        let env = open.env.clone();
+        let capabilities = match kind {
+            ChannelKind::Pty | ChannelKind::Exec => {
+                let cols = open.cols.unwrap_or(80);
+                let rows = open.rows.unwrap_or(24);
+                let command = open.command.clone();
+                let env = open.env.clone();
 
-        let pty = LocalPty::spawn(command.as_deref(), cols, rows, env.as_ref())
-            .with_context(|| format!("failed to spawn local PTY for channel {channel_id}"))?;
-        let pty = Arc::new(pty);
+                let pty = LocalPty::spawn(command.as_deref(), cols, rows, env.as_ref())
+                    .with_context(|| format!("failed to spawn local PTY for channel {channel_id}"))?;
+                let pty = Arc::new(pty);
 
-        let output_task = spawn_output_task(channel_id, pty.clone(), event_tx.clone());
-        let wait_task = spawn_wait_task(channel_id, pty.clone(), event_tx);
+                let output_task = spawn_output_task(channel_id, pty.clone(), event_tx.clone());
+                let wait_task = spawn_wait_task(channel_id, pty.clone(), event_tx);
 
-        self.sessions.insert(
-            channel_id,
-            ReverseHostSession {
-                pty,
-                output_task,
-                wait_task,
-            },
-        );
+                self.sessions.insert(
+                    channel_id,
+                    ReverseHostSession::Pty(ReverseHostPtySession {
+                        pty,
+                        output_task,
+                        wait_task,
+                    }),
+                );
+
+                match kind {
+                    ChannelKind::Pty => vec!["resize".into(), "signal".into()],
+                    ChannelKind::Exec => vec!["signal".into()],
+                    _ => vec![],
+                }
+            }
+            ChannelKind::File => {
+                let file_session = ReverseHostFileSession::from_command(open.command.as_deref())
+                    .with_context(|| format!("failed to prepare file channel {channel_id}"))?;
+                self.sessions
+                    .insert(channel_id, ReverseHostSession::File(file_session));
+                Vec::new()
+            }
+            _ => {
+                return self
+                    .send_open_fail("reverse host currently supports only pty, exec, and file channels")
+                    .await;
+            }
+        };
 
         self.client
             .send_fire_and_forget(Envelope {
@@ -305,11 +360,7 @@ impl ReverseHostRuntime {
                     channel_id,
                     stream_ids: vec![],
                     data_mode: SessionDataMode::Virtual,
-                    capabilities: match open.kind {
-                        ChannelKind::Pty => vec!["resize".into(), "signal".into()],
-                        ChannelKind::Exec => vec!["signal".into()],
-                        _ => vec![],
-                    },
+                    capabilities,
                 }),
             })
             .await
@@ -320,15 +371,51 @@ impl ReverseHostRuntime {
     }
 
     async fn handle_session_data(&mut self, data: SessionDataPayload) -> Result<()> {
-        let Some(session) = self.sessions.get(&data.channel_id) else {
+        let Some(session) = self.sessions.get_mut(&data.channel_id) else {
             return Ok(());
         };
 
-        let pty = session.pty.clone();
-        tokio::task::spawn_blocking(move || pty.write_blocking(&data.data))
-            .await
-            .map_err(|err| anyhow::anyhow!("join error: {err}"))?
-            .with_context(|| format!("failed to write to PTY channel {}", data.channel_id))
+        match session {
+            ReverseHostSession::Pty(session) => {
+                let pty = session.pty.clone();
+                tokio::task::spawn_blocking(move || pty.write_blocking(&data.data))
+                    .await
+                    .map_err(|err| anyhow::anyhow!("join error: {err}"))?
+                    .with_context(|| format!("failed to write to PTY channel {}", data.channel_id))
+            }
+            ReverseHostSession::File(session) => {
+                let responses = session
+                    .handle_data(&data.data)
+                    .with_context(|| format!("failed to handle file channel {}", data.channel_id))?;
+
+                for response in responses {
+                    self.client
+                        .send_fire_and_forget(Envelope {
+                            msg_type: MsgType::SessionData,
+                            payload: Payload::SessionData(SessionDataPayload {
+                                channel_id: data.channel_id,
+                                data: response,
+                            }),
+                        })
+                        .await
+                        .map_err(|err| anyhow::anyhow!("{err}"))?;
+                }
+
+                if session.should_close() {
+                    self.client
+                        .send_fire_and_forget(Envelope {
+                            msg_type: MsgType::Close,
+                            payload: Payload::Close(ClosePayload {
+                                channel_id: data.channel_id,
+                            }),
+                        })
+                        .await
+                        .map_err(|err| anyhow::anyhow!("{err}"))?;
+                    self.drop_session(data.channel_id).await;
+                }
+                Ok(())
+            }
+        }
     }
 
     async fn handle_resize(&mut self, resize: ResizePayload) -> Result<()> {
@@ -336,11 +423,16 @@ impl ReverseHostRuntime {
             return Ok(());
         };
 
-        let pty = session.pty.clone();
-        tokio::task::spawn_blocking(move || pty.resize_blocking(resize.cols, resize.rows))
-            .await
-            .map_err(|err| anyhow::anyhow!("join error: {err}"))?
-            .with_context(|| format!("failed to resize PTY channel {}", resize.channel_id))
+        match session {
+            ReverseHostSession::Pty(session) => {
+                let pty = session.pty.clone();
+                tokio::task::spawn_blocking(move || pty.resize_blocking(resize.cols, resize.rows))
+                    .await
+                    .map_err(|err| anyhow::anyhow!("join error: {err}"))?
+                    .with_context(|| format!("failed to resize PTY channel {}", resize.channel_id))
+            }
+            ReverseHostSession::File(_) => Ok(()),
+        }
     }
 
     async fn handle_signal(&mut self, signal: SignalPayload) -> Result<()> {
@@ -348,16 +440,242 @@ impl ReverseHostRuntime {
             return Ok(());
         };
 
-        let pty = session.pty.clone();
-        let signal_name = signal.signal.clone();
-        tokio::task::spawn_blocking(move || pty.signal_blocking(&signal_name))
-            .await
-            .map_err(|err| anyhow::anyhow!("join error: {err}"))?
-            .with_context(|| format!("failed to signal PTY channel {}", signal.channel_id))
+        match session {
+            ReverseHostSession::Pty(session) => {
+                let pty = session.pty.clone();
+                let signal_name = signal.signal.clone();
+                tokio::task::spawn_blocking(move || pty.signal_blocking(&signal_name))
+                    .await
+                    .map_err(|err| anyhow::anyhow!("join error: {err}"))?
+                    .with_context(|| format!("failed to signal PTY channel {}", signal.channel_id))
+            }
+            ReverseHostSession::File(_) => Ok(()),
+        }
     }
 
     async fn handle_close(&mut self, close: ClosePayload) -> Result<()> {
         self.drop_session(close.channel_id).await;
+        Ok(())
+    }
+
+    async fn handle_mcp_discover(&self) -> Result<()> {
+        let tools = if self.options.has_capability("tools") {
+            self.mcp.list_tools()
+        } else {
+            Vec::new()
+        };
+        self.client
+            .send_fire_and_forget(Envelope {
+                msg_type: MsgType::McpTools,
+                payload: Payload::McpTools(McpToolsPayload { tools }),
+            })
+            .await
+            .map_err(|err| anyhow::anyhow!("{err}"))?;
+        Ok(())
+    }
+
+    async fn handle_mcp_call(&self, call: McpCallPayload) -> Result<()> {
+        let result = if self.options.has_capability("tools") {
+            self.mcp.call(&call).await
+        } else {
+            McpResultPayload {
+                result: json!({
+                    "error": "tool access not permitted for this reverse host",
+                }),
+            }
+        };
+        self.client
+            .send_fire_and_forget(Envelope {
+                msg_type: MsgType::McpResult,
+                payload: Payload::McpResult(result),
+            })
+            .await
+            .map_err(|err| anyhow::anyhow!("{err}"))?;
+        Ok(())
+    }
+
+    async fn handle_open_tcp(&mut self, open: OpenTcpPayload) -> Result<()> {
+        if !self.options.has_capability("gateway") {
+            return self
+                .send_gateway_fail(open.gateway_id, 5, "gateway access not permitted for this reverse host")
+                .await;
+        }
+        if self.gateway_connections.contains_key(&open.gateway_id) {
+            return self
+                .send_gateway_fail(open.gateway_id, 4, "gateway id already in use")
+                .await;
+        }
+
+        match TcpStream::connect((open.host.as_str(), open.port)).await {
+            Ok(stream) => {
+                let resolved_addr = stream.peer_addr().ok().map(|addr| addr.to_string());
+                let connection = spawn_tcp_gateway(self.client.clone(), open.gateway_id, stream);
+                self.gateway_connections.insert(open.gateway_id, connection);
+                self.client
+                    .send_fire_and_forget(Envelope {
+                        msg_type: MsgType::GatewayOk,
+                        payload: Payload::GatewayOk(GatewayOkPayload {
+                            gateway_id: open.gateway_id,
+                            resolved_addr,
+                        }),
+                    })
+                    .await
+                    .map_err(|err| anyhow::anyhow!("{err}"))?;
+                Ok(())
+            }
+            Err(err) => {
+                self.send_gateway_fail(open.gateway_id, 1, &err.to_string())
+                    .await
+            }
+        }
+    }
+
+    async fn handle_open_udp(&mut self, open: OpenUdpPayload) -> Result<()> {
+        if !self.options.has_capability("gateway") {
+            return self
+                .send_gateway_fail(open.gateway_id, 5, "gateway access not permitted for this reverse host")
+                .await;
+        }
+        if self.gateway_connections.contains_key(&open.gateway_id) {
+            return self
+                .send_gateway_fail(open.gateway_id, 4, "gateway id already in use")
+                .await;
+        }
+
+        let bind_addr = if open.host.contains(':') { "[::]:0" } else { "0.0.0.0:0" };
+        let socket = match UdpSocket::bind(bind_addr).await {
+            Ok(socket) => socket,
+            Err(err) => {
+                return self
+                    .send_gateway_fail(open.gateway_id, 1, &err.to_string())
+                    .await;
+            }
+        };
+        if let Err(err) = socket.connect((open.host.as_str(), open.port)).await {
+            return self
+                .send_gateway_fail(open.gateway_id, 1, &err.to_string())
+                .await;
+        }
+
+        let resolved_addr = socket.peer_addr().ok().map(|addr| addr.to_string());
+        let connection = spawn_udp_gateway(self.client.clone(), open.gateway_id, socket);
+        self.gateway_connections.insert(open.gateway_id, connection);
+        self.client
+            .send_fire_and_forget(Envelope {
+                msg_type: MsgType::GatewayOk,
+                payload: Payload::GatewayOk(GatewayOkPayload {
+                    gateway_id: open.gateway_id,
+                    resolved_addr,
+                }),
+            })
+            .await
+            .map_err(|err| anyhow::anyhow!("{err}"))?;
+        Ok(())
+    }
+
+    async fn handle_resolve_dns(&self, resolve: ResolveDnsPayload) -> Result<()> {
+        if !self.options.has_capability("gateway") {
+            return self
+                .send_gateway_fail(
+                    resolve.gateway_id,
+                    5,
+                    "gateway access not permitted for this reverse host",
+                )
+                .await;
+        }
+
+        match lookup_host((resolve.name.as_str(), 0)).await {
+            Ok(addresses) => {
+                let addresses = filter_dns_addresses(addresses.map(|addr| addr.ip()), &resolve.record_type);
+                self.client
+                    .send_fire_and_forget(Envelope {
+                        msg_type: MsgType::DnsResult,
+                        payload: Payload::DnsResult(DnsResultPayload {
+                            gateway_id: resolve.gateway_id,
+                            addresses,
+                            ttl: None,
+                        }),
+                    })
+                    .await
+                    .map_err(|err| anyhow::anyhow!("{err}"))?;
+                Ok(())
+            }
+            Err(err) => self
+                .send_gateway_fail(resolve.gateway_id, 3, &err.to_string())
+                .await,
+        }
+    }
+
+    async fn handle_gateway_data(&mut self, data: GatewayDataPayload) -> Result<()> {
+        let Some(connection) = self.gateway_connections.get(&data.gateway_id) else {
+            return Ok(());
+        };
+        if connection.write_tx.send(data.data).await.is_err() {
+            self.gateway_connections.remove(&data.gateway_id);
+            self.send_gateway_close(data.gateway_id, Some("gateway closed".to_string()))
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn handle_gateway_close(&mut self, close: GatewayClosePayload) -> Result<()> {
+        self.close_gateway_connection(close.gateway_id).await;
+        Ok(())
+    }
+
+    async fn handle_listen_request(&self, request: ListenRequestPayload) -> Result<()> {
+        self.client
+            .send_fire_and_forget(Envelope {
+                msg_type: MsgType::ListenFail,
+                payload: Payload::ListenFail(ListenFailPayload {
+                    listener_id: request.listener_id,
+                    reason: "reverse host listeners are not implemented yet".to_string(),
+                }),
+            })
+            .await
+            .map_err(|err| anyhow::anyhow!("{err}"))?;
+        Ok(())
+    }
+
+    async fn handle_inbound_accept(&self, accept: InboundAcceptPayload) -> Result<()> {
+        debug!(channel_id = accept.channel_id, "ignoring inbound accept for unsupported reverse listener");
+        Ok(())
+    }
+
+    async fn handle_inbound_reject(&self, reject: InboundRejectPayload) -> Result<()> {
+        debug!(channel_id = reject.channel_id, "ignoring inbound reject for unsupported reverse listener");
+        Ok(())
+    }
+
+    async fn close_gateway_connection(&mut self, gateway_id: u32) {
+        if let Some(connection) = self.gateway_connections.remove(&gateway_id) {
+            connection.task.abort();
+        }
+    }
+
+    async fn send_gateway_fail(&self, gateway_id: u32, code: u32, message: &str) -> Result<()> {
+        self.client
+            .send_fire_and_forget(Envelope {
+                msg_type: MsgType::GatewayFail,
+                payload: Payload::GatewayFail(GatewayFailPayload {
+                    gateway_id,
+                    code,
+                    message: message.to_string(),
+                }),
+            })
+            .await
+            .map_err(|err| anyhow::anyhow!("{err}"))?;
+        Ok(())
+    }
+
+    async fn send_gateway_close(&self, gateway_id: u32, reason: Option<String>) -> Result<()> {
+        self.client
+            .send_fire_and_forget(Envelope {
+                msg_type: MsgType::GatewayClose,
+                payload: Payload::GatewayClose(GatewayClosePayload { gateway_id, reason }),
+            })
+            .await
+            .map_err(|err| anyhow::anyhow!("{err}"))?;
         Ok(())
     }
 
@@ -376,10 +694,15 @@ impl ReverseHostRuntime {
 
     async fn drop_session(&mut self, channel_id: u32) {
         if let Some(session) = self.sessions.remove(&channel_id) {
-            let pty = session.pty.clone();
-            let _ = tokio::task::spawn_blocking(move || pty.kill_blocking()).await;
-            session.output_task.abort();
-            session.wait_task.abort();
+            match session {
+                ReverseHostSession::Pty(session) => {
+                    let pty = session.pty.clone();
+                    let _ = tokio::task::spawn_blocking(move || pty.kill_blocking()).await;
+                    session.output_task.abort();
+                    session.wait_task.abort();
+                }
+                ReverseHostSession::File(_) => {}
+            }
         }
 
         if self.sessions.is_empty() {
@@ -392,6 +715,10 @@ impl ReverseHostRuntime {
         let channel_ids: Vec<u32> = self.sessions.keys().copied().collect();
         for channel_id in channel_ids {
             self.drop_session(channel_id).await;
+        }
+        let gateway_ids: Vec<u32> = self.gateway_connections.keys().copied().collect();
+        for gateway_id in gateway_ids {
+            self.close_gateway_connection(gateway_id).await;
         }
     }
 
@@ -409,10 +736,20 @@ impl ReverseHostRuntime {
     }
 }
 
-struct ReverseHostSession {
+enum ReverseHostSession {
+    Pty(ReverseHostPtySession),
+    File(ReverseHostFileSession),
+}
+
+struct ReverseHostPtySession {
     pty: Arc<LocalPty>,
     output_task: tokio::task::JoinHandle<()>,
     wait_task: tokio::task::JoinHandle<()>,
+}
+
+struct ReverseGatewayConnection {
+    write_tx: mpsc::Sender<Vec<u8>>,
+    task: tokio::task::JoinHandle<()>,
 }
 
 enum RuntimeEvent {
@@ -501,6 +838,499 @@ fn spawn_wait_task(
             }
         }
     })
+}
+
+#[derive(Default)]
+struct LocalMcpBridge;
+
+impl LocalMcpBridge {
+    fn list_tools(&self) -> Vec<McpToolSpec> {
+        vec![
+            McpToolSpec {
+                name: "shell.exec".to_string(),
+                description: "Execute a shell command on the reverse host".to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "command": { "type": "string", "description": "Shell command to execute" },
+                        "cwd": { "type": "string", "description": "Optional working directory" }
+                    },
+                    "required": ["command"],
+                }),
+            },
+            McpToolSpec {
+                name: "fs.read_file".to_string(),
+                description: "Read a UTF-8 text file from the reverse host".to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "Absolute or relative file path" }
+                    },
+                    "required": ["path"],
+                }),
+            },
+            McpToolSpec {
+                name: "fs.write_file".to_string(),
+                description: "Write a UTF-8 text file on the reverse host".to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "Absolute or relative file path" },
+                        "content": { "type": "string", "description": "Text content to write" },
+                        "append": { "type": "boolean", "description": "Append instead of overwrite" }
+                    },
+                    "required": ["path", "content"],
+                }),
+            },
+            McpToolSpec {
+                name: "fs.list_dir".to_string(),
+                description: "List entries in a directory on the reverse host".to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "Directory path" }
+                    },
+                    "required": ["path"],
+                }),
+            },
+        ]
+    }
+
+    async fn call(&self, call: &McpCallPayload) -> McpResultPayload {
+        let result = match call.tool.as_str() {
+            "shell.exec" => self.exec_tool(&call.arguments).await,
+            "fs.read_file" => self.read_file_tool(&call.arguments).await,
+            "fs.write_file" => self.write_file_tool(&call.arguments).await,
+            "fs.list_dir" => self.list_dir_tool(&call.arguments).await,
+            _ => Err(anyhow::anyhow!("unknown tool: {}", call.tool)),
+        };
+
+        match result {
+            Ok(result) => McpResultPayload { result },
+            Err(err) => McpResultPayload {
+                result: json!({ "error": err.to_string() }),
+            },
+        }
+    }
+
+    async fn exec_tool(&self, arguments: &Value) -> Result<Value> {
+        let command = required_string_arg(arguments, "command")?;
+        let mut cmd = tokio::process::Command::new(default_shell());
+        cmd.arg("-c").arg(command);
+        if let Some(cwd) = optional_string_arg(arguments, "cwd")? {
+            cmd.current_dir(cwd);
+        }
+
+        let output = timeout(Duration::from_secs(30), cmd.output())
+            .await
+            .context("shell.exec timed out")?
+            .context("shell.exec failed")?;
+        Ok(json!({
+            "stdout": String::from_utf8_lossy(&output.stdout),
+            "stderr": String::from_utf8_lossy(&output.stderr),
+            "exit_code": output.status.code().unwrap_or(-1),
+        }))
+    }
+
+    async fn read_file_tool(&self, arguments: &Value) -> Result<Value> {
+        let path = required_string_arg(arguments, "path")?;
+        let content = tokio::fs::read_to_string(path)
+            .await
+            .context("failed to read file")?;
+        Ok(json!({ "path": path, "content": content }))
+    }
+
+    async fn write_file_tool(&self, arguments: &Value) -> Result<Value> {
+        let path = required_string_arg(arguments, "path")?;
+        let content = required_string_arg(arguments, "content")?;
+        let append = arguments
+            .get("append")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        ensure_parent_dir(path).await?;
+        if append {
+            let mut file = tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .await
+                .context("failed to open file for append")?;
+            file.write_all(content.as_bytes())
+                .await
+                .context("failed to append file")?;
+        } else {
+            tokio::fs::write(path, content)
+                .await
+                .context("failed to write file")?;
+        }
+        Ok(json!({ "path": path, "bytes_written": content.len(), "append": append }))
+    }
+
+    async fn list_dir_tool(&self, arguments: &Value) -> Result<Value> {
+        let path = required_string_arg(arguments, "path")?;
+        let mut dir = tokio::fs::read_dir(path)
+            .await
+            .context("failed to read directory")?;
+        let mut entries = Vec::new();
+        while let Some(entry) = dir.next_entry().await.context("failed to iterate directory")? {
+            let metadata = entry.metadata().await.context("failed to stat directory entry")?;
+            entries.push(json!({
+                "name": entry.file_name().to_string_lossy().to_string(),
+                "path": entry.path(),
+                "is_dir": metadata.is_dir(),
+                "size": metadata.len(),
+            }));
+        }
+        Ok(json!({ "path": path, "entries": entries }))
+    }
+}
+
+struct ReverseHostFileSession {
+    state: FileSessionState,
+}
+
+impl ReverseHostFileSession {
+    fn from_command(command: Option<&str>) -> Result<Self> {
+        let command = command.unwrap_or_default();
+        let Some((mode, path)) = command.split_once(':') else {
+            anyhow::bail!("file channels require upload:<path> or download:<path>");
+        };
+        let path = PathBuf::from(path);
+        let state = match mode {
+            "upload" => FileSessionState::Upload(UploadState::new(path)),
+            "download" => FileSessionState::Download(DownloadState::new(path)),
+            _ => anyhow::bail!("unsupported file mode `{mode}`"),
+        };
+        Ok(Self { state })
+    }
+
+    fn handle_data(&mut self, chunk: &[u8]) -> Result<Vec<Vec<u8>>> {
+        match &mut self.state {
+            FileSessionState::Upload(state) => {
+                state.ingest(chunk)?;
+                if state.is_complete() {
+                    return Ok(vec![b"ok".to_vec()]);
+                }
+                Ok(Vec::new())
+            }
+            FileSessionState::Download(state) => state.ingest(chunk),
+        }
+    }
+
+    fn should_close(&self) -> bool {
+        match &self.state {
+            FileSessionState::Upload(state) => state.is_complete(),
+            FileSessionState::Download(state) => state.sent,
+        }
+    }
+}
+
+enum FileSessionState {
+    Upload(UploadState),
+    Download(DownloadState),
+}
+
+struct UploadState {
+    requested_path: PathBuf,
+    header_buf: Vec<u8>,
+    writer: Option<File>,
+    expected_size: Option<u64>,
+    received: u64,
+    complete: bool,
+}
+
+impl UploadState {
+    fn new(path: PathBuf) -> Self {
+        Self {
+            requested_path: path,
+            header_buf: Vec::new(),
+            writer: None,
+            expected_size: None,
+            received: 0,
+            complete: false,
+        }
+    }
+
+    fn ingest(&mut self, chunk: &[u8]) -> Result<()> {
+        if self.complete {
+            return Ok(());
+        }
+
+        let mut remaining: Vec<u8> = chunk.to_vec();
+        if self.expected_size.is_none() {
+            self.header_buf.extend_from_slice(chunk);
+            let Some((path, total_size, consumed)) = try_parse_upload_header(&self.header_buf)? else {
+                return Ok(());
+            };
+            if path != self.requested_path {
+                anyhow::bail!(
+                    "upload path mismatch: requested {}, header {}",
+                    self.requested_path.display(),
+                    path.display()
+                );
+            }
+            ensure_parent_dir_sync(&path)?;
+            let writer = File::create(&path)
+                .with_context(|| format!("failed to create {}", path.display()))?;
+            self.writer = Some(writer);
+            self.expected_size = Some(total_size);
+            remaining = self.header_buf[consumed..].to_vec();
+            self.header_buf.clear();
+        }
+
+        if !remaining.is_empty() {
+            let writer = self
+                .writer
+                .as_mut()
+                .context("upload writer not initialized")?;
+            writer.write_all(&remaining)?;
+            writer.flush()?;
+            self.received += remaining.len() as u64;
+        }
+
+        if self.received >= self.expected_size.unwrap_or(0) {
+            self.complete = true;
+        }
+
+        Ok(())
+    }
+
+    fn is_complete(&self) -> bool {
+        self.complete
+    }
+}
+
+struct DownloadState {
+    requested_path: PathBuf,
+    header_buf: Vec<u8>,
+    sent: bool,
+}
+
+impl DownloadState {
+    fn new(path: PathBuf) -> Self {
+        Self {
+            requested_path: path,
+            header_buf: Vec::new(),
+            sent: false,
+        }
+    }
+
+    fn ingest(&mut self, chunk: &[u8]) -> Result<Vec<Vec<u8>>> {
+        if self.sent {
+            return Ok(Vec::new());
+        }
+
+        self.header_buf.extend_from_slice(chunk);
+        let Some((path, _consumed)) = try_parse_download_header(&self.header_buf)? else {
+            return Ok(Vec::new());
+        };
+        if path != self.requested_path {
+            anyhow::bail!(
+                "download path mismatch: requested {}, header {}",
+                self.requested_path.display(),
+                path.display()
+            );
+        }
+
+        let data = std::fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
+        let mut payload = Vec::with_capacity(8 + data.len());
+        payload.extend_from_slice(&(data.len() as u64).to_be_bytes());
+        payload.extend_from_slice(&data);
+        self.sent = true;
+        Ok(vec![payload])
+    }
+}
+
+fn try_parse_upload_header(buf: &[u8]) -> Result<Option<(PathBuf, u64, usize)>> {
+    if buf.len() < 4 {
+        return Ok(None);
+    }
+    let path_len = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
+    if buf.len() < 4 + path_len + 8 {
+        return Ok(None);
+    }
+    let path = std::str::from_utf8(&buf[4..4 + path_len]).context("invalid upload path header")?;
+    let total_offset = 4 + path_len;
+    let total_size = u64::from_be_bytes(
+        buf[total_offset..total_offset + 8]
+            .try_into()
+            .expect("header slice length should be 8"),
+    );
+    Ok(Some((PathBuf::from(path), total_size, total_offset + 8)))
+}
+
+fn try_parse_download_header(buf: &[u8]) -> Result<Option<(PathBuf, usize)>> {
+    if buf.len() < 4 {
+        return Ok(None);
+    }
+    let path_len = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
+    if buf.len() < 4 + path_len {
+        return Ok(None);
+    }
+    let path = std::str::from_utf8(&buf[4..4 + path_len]).context("invalid download path header")?;
+    Ok(Some((PathBuf::from(path), 4 + path_len)))
+}
+
+fn spawn_tcp_gateway(
+    client: Arc<WshClient>,
+    gateway_id: u32,
+    stream: TcpStream,
+) -> ReverseGatewayConnection {
+    let (write_tx, mut write_rx) = mpsc::channel::<Vec<u8>>(64);
+    let task = tokio::spawn(async move {
+        let (mut reader, mut writer) = stream.into_split();
+        let mut buf = vec![0_u8; 8192];
+        loop {
+            tokio::select! {
+                read = reader.read(&mut buf) => {
+                    match read {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            let data = buf[..n].to_vec();
+                            let _ = client
+                                .send_fire_and_forget(Envelope {
+                                    msg_type: MsgType::GatewayData,
+                                    payload: Payload::GatewayData(GatewayDataPayload { gateway_id, data }),
+                                })
+                                .await;
+                        }
+                        Err(err) => {
+                            warn!(gateway_id, "reverse host TCP gateway read failed: {err}");
+                            break;
+                        }
+                    }
+                }
+                payload = write_rx.recv() => {
+                    match payload {
+                        Some(payload) => {
+                            if let Err(err) = writer.write_all(&payload).await {
+                                warn!(gateway_id, "reverse host TCP gateway write failed: {err}");
+                                break;
+                            }
+                        }
+                        None => break,
+                    }
+                }
+            }
+        }
+
+        let _ = client
+            .send_fire_and_forget(Envelope {
+                msg_type: MsgType::GatewayClose,
+                payload: Payload::GatewayClose(GatewayClosePayload {
+                    gateway_id,
+                    reason: Some("gateway stream closed".to_string()),
+                }),
+            })
+            .await;
+    });
+
+    ReverseGatewayConnection { write_tx, task }
+}
+
+fn spawn_udp_gateway(
+    client: Arc<WshClient>,
+    gateway_id: u32,
+    socket: UdpSocket,
+) -> ReverseGatewayConnection {
+    let socket = Arc::new(socket);
+    let (write_tx, mut write_rx) = mpsc::channel::<Vec<u8>>(64);
+    let task = tokio::spawn(async move {
+        let mut buf = vec![0_u8; 8192];
+        loop {
+            tokio::select! {
+                read = socket.recv(&mut buf) => {
+                    match read {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            let data = buf[..n].to_vec();
+                            let _ = client
+                                .send_fire_and_forget(Envelope {
+                                    msg_type: MsgType::GatewayData,
+                                    payload: Payload::GatewayData(GatewayDataPayload { gateway_id, data }),
+                                })
+                                .await;
+                        }
+                        Err(err) => {
+                            warn!(gateway_id, "reverse host UDP gateway recv failed: {err}");
+                            break;
+                        }
+                    }
+                }
+                payload = write_rx.recv() => {
+                    match payload {
+                        Some(payload) => {
+                            if let Err(err) = socket.send(&payload).await {
+                                warn!(gateway_id, "reverse host UDP gateway send failed: {err}");
+                                break;
+                            }
+                        }
+                        None => break,
+                    }
+                }
+            }
+        }
+
+        let _ = client
+            .send_fire_and_forget(Envelope {
+                msg_type: MsgType::GatewayClose,
+                payload: Payload::GatewayClose(GatewayClosePayload {
+                    gateway_id,
+                    reason: Some("gateway datagram stream closed".to_string()),
+                }),
+            })
+            .await;
+    });
+
+    ReverseGatewayConnection { write_tx, task }
+}
+
+fn filter_dns_addresses(addresses: impl Iterator<Item = IpAddr>, record_type: &str) -> Vec<String> {
+    let record_type = record_type.trim().to_ascii_uppercase();
+    addresses
+        .filter(|address| match record_type.as_str() {
+            "A" => address.is_ipv4(),
+            "AAAA" => address.is_ipv6(),
+            _ => true,
+        })
+        .map(|address| address.to_string())
+        .collect()
+}
+
+fn required_string_arg<'a>(arguments: &'a Value, key: &str) -> Result<&'a str> {
+    arguments
+        .get(key)
+        .and_then(Value::as_str)
+        .with_context(|| format!("missing required string argument `{key}`"))
+}
+
+fn optional_string_arg<'a>(arguments: &'a Value, key: &str) -> Result<Option<&'a str>> {
+    match arguments.get(key) {
+        Some(Value::String(value)) => Ok(Some(value)),
+        Some(_) => anyhow::bail!("argument `{key}` must be a string"),
+        None => Ok(None),
+    }
+}
+
+async fn ensure_parent_dir(path: &str) -> Result<()> {
+    if let Some(parent) = Path::new(path).parent() {
+        if !parent.as_os_str().is_empty() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .with_context(|| format!("failed to create {}", parent.display()))?;
+        }
+    }
+    Ok(())
+}
+
+fn ensure_parent_dir_sync(path: &Path) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create {}", parent.display()))?;
+        }
+    }
+    Ok(())
 }
 
 struct LocalPty {
@@ -645,7 +1475,14 @@ fn default_shell() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::command_spec;
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+    use serde_json::json;
+
+    use super::{
+        command_spec, filter_dns_addresses, try_parse_download_header, try_parse_upload_header,
+        LocalMcpBridge, ReverseHostFileSession, ReverseHostOptions,
+    };
 
     #[test]
     fn reverse_host_command_spec_uses_shell_c() {
@@ -659,5 +1496,96 @@ mod tests {
         let command = r#"echo "a b" > hello.txt"#;
         let (_program, args) = command_spec(Some(command), "/bin/sh").unwrap();
         assert_eq!(args[1], command);
+    }
+
+    #[test]
+    fn reverse_host_options_gate_channel_kinds() {
+        let options = ReverseHostOptions {
+            capabilities: vec!["shell".into(), "fs".into()],
+            ..ReverseHostOptions::default()
+        };
+        assert!(options.allows_kind(wsh_core::messages::ChannelKind::Pty));
+        assert!(options.allows_kind(wsh_core::messages::ChannelKind::Exec));
+        assert!(options.allows_kind(wsh_core::messages::ChannelKind::File));
+        assert!(!ReverseHostOptions {
+            capabilities: vec!["fs".into()],
+            ..ReverseHostOptions::default()
+        }
+        .allows_kind(wsh_core::messages::ChannelKind::Exec));
+    }
+
+    #[test]
+    fn upload_header_parser_extracts_path_and_size() {
+        let path = "/tmp/demo.txt";
+        let total_size = 42_u64;
+        let mut header = Vec::new();
+        header.extend_from_slice(&(path.len() as u32).to_be_bytes());
+        header.extend_from_slice(path.as_bytes());
+        header.extend_from_slice(&total_size.to_be_bytes());
+
+        let parsed = try_parse_upload_header(&header).unwrap().unwrap();
+        assert_eq!(parsed.0, std::path::PathBuf::from(path));
+        assert_eq!(parsed.1, total_size);
+        assert_eq!(parsed.2, header.len());
+    }
+
+    #[test]
+    fn download_header_parser_extracts_path() {
+        let path = "/tmp/demo.txt";
+        let mut header = Vec::new();
+        header.extend_from_slice(&(path.len() as u32).to_be_bytes());
+        header.extend_from_slice(path.as_bytes());
+
+        let parsed = try_parse_download_header(&header).unwrap().unwrap();
+        assert_eq!(parsed.0, std::path::PathBuf::from(path));
+        assert_eq!(parsed.1, header.len());
+    }
+
+    #[test]
+    fn download_session_returns_size_prefixed_payload() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let path = tempdir.path().join("hello.txt");
+        std::fs::write(&path, b"hello").unwrap();
+        let mut session =
+            ReverseHostFileSession::from_command(Some(&format!("download:{}", path.display())))
+                .unwrap();
+        let mut header = Vec::new();
+        let path_str = path.to_string_lossy();
+        header.extend_from_slice(&(path_str.len() as u32).to_be_bytes());
+        header.extend_from_slice(path_str.as_bytes());
+
+        let responses = session.handle_data(&header).unwrap();
+        assert_eq!(responses.len(), 1);
+        assert_eq!(
+            u64::from_be_bytes(responses[0][..8].try_into().unwrap()),
+            5
+        );
+        assert_eq!(&responses[0][8..], b"hello");
+        assert!(session.should_close());
+    }
+
+    #[tokio::test]
+    async fn local_mcp_bridge_lists_and_executes_tools() {
+        let bridge = LocalMcpBridge;
+        let tools = bridge.list_tools();
+        assert!(tools.iter().any(|tool| tool.name == "shell.exec"));
+
+        let result = bridge
+            .call(&wsh_core::messages::McpCallPayload {
+                tool: "shell.exec".to_string(),
+                arguments: json!({ "command": "printf hello" }),
+            })
+            .await;
+        assert_eq!(result.result["stdout"], "hello");
+    }
+
+    #[test]
+    fn dns_filter_respects_record_type() {
+        let addresses = vec![
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            IpAddr::V6(Ipv6Addr::LOCALHOST),
+        ];
+        assert_eq!(filter_dns_addresses(addresses.clone().into_iter(), "A"), vec!["127.0.0.1"]);
+        assert_eq!(filter_dns_addresses(addresses.into_iter(), "AAAA"), vec!["::1"]);
     }
 }
