@@ -16,6 +16,12 @@ let virtualNetwork = null;
 /** @type {Map<string, object>} handle → socket | listener | datagram socket */
 const handles = new Map();
 
+/** @type {GatewayBackend|null} */
+let remoteRuntimeGatewayBackend = null;
+
+/** @type {BrokerGatewayClient|null} */
+let remoteRuntimeGatewayClient = null;
+
 let handleCounter = 0;
 
 /**
@@ -42,6 +48,124 @@ function getNetwork() {
     virtualNetwork = new VirtualNetwork();
   }
   return virtualNetwork;
+}
+
+function gatewayCandidateScore(peer, broker) {
+  let score = 0;
+  if (peer.peerType === 'host') score += 40;
+  if (peer.peerType === 'browser-shell') score += 20;
+  if (peer.shellBackend === 'pty') score += 20;
+  if (peer.shellBackend === 'vm-console') score += 10;
+  try {
+    const explanation = broker?.explainRoute?.(peer.identity?.canonicalId || peer.identity?.fingerprint, { intent: 'gateway' });
+    if (explanation?.route?.kind === 'direct-host') score += 30;
+    if (explanation?.route?.kind === 'reverse-relay') score += 20;
+    if (explanation?.route?.health === 'online') score += 10;
+    if (explanation?.route?.health === 'degraded') score -= 10;
+    score -= Number.isFinite(explanation?.health?.failures) ? explanation.health.failures * 5 : 0;
+  } catch {
+    score -= 50;
+  }
+  return score;
+}
+
+function selectGatewayPeer(broker, selector = null) {
+  if (selector) return selector;
+  const peers = broker?.listTargets?.({ capability: 'gateway' }) || [];
+  if (!peers.length) return null;
+  const ranked = [...peers].sort((left, right) => {
+    return gatewayCandidateScore(right, broker) - gatewayCandidateScore(left, broker);
+  });
+  const selected = ranked[0];
+  return selected?.identity?.canonicalId || selected?.identity?.fingerprint || null;
+}
+
+class BrokerGatewayClient {
+  #broker;
+  #selector;
+  #onLog;
+  #connection = null;
+  #connecting = null;
+
+  constructor({ remoteSessionBroker, selector = null, onLog = null } = {}) {
+    this.#broker = remoteSessionBroker ?? null;
+    this.#selector = selector;
+    this.#onLog = onLog;
+    this.onGatewayMessage = null;
+  }
+
+  configure({ remoteSessionBroker, selector = null, onLog = null } = {}) {
+    this.#broker = remoteSessionBroker ?? this.#broker;
+    this.#selector = selector ?? this.#selector;
+    if (onLog !== null) this.#onLog = onLog;
+  }
+
+  get state() {
+    if (this.#connection?.client?.state) {
+      return this.#connection.client.state;
+    }
+    return this.#broker ? 'authenticated' : 'disconnected';
+  }
+
+  async sendControl(msg) {
+    const connection = await this.#ensureConnection();
+    return connection.client.sendControl(msg);
+  }
+
+  async close() {
+    const current = this.#connection;
+    this.#connection = null;
+    this.#connecting = null;
+    if (current?.close) {
+      await current.close().catch(() => {});
+    }
+  }
+
+  async #ensureConnection() {
+    if (this.#connection?.client?.state === 'authenticated') {
+      return this.#connection;
+    }
+    if (this.#connecting) {
+      return this.#connecting;
+    }
+    this.#connecting = this.#openConnection();
+    try {
+      const connection = await this.#connecting;
+      this.#connection = connection;
+      return connection;
+    } finally {
+      this.#connecting = null;
+    }
+  }
+
+  async #openConnection() {
+    if (!this.#broker) {
+      throw new Error('remoteSessionBroker is required for gateway operations');
+    }
+    const selector = selectGatewayPeer(this.#broker, this.#selector);
+    if (!selector) {
+      throw new Error('No gateway-capable runtime is available');
+    }
+    this.#onLog?.(2, `Binding netway gateway to remote runtime ${selector}`);
+    const result = await this.#broker.openSession(selector, {
+      intent: 'gateway',
+      requiredCapabilities: ['gateway'],
+    });
+    const client = result?.client;
+    if (!client || typeof client.sendControl !== 'function') {
+      throw new Error(`Remote gateway target "${selector}" did not provide a WSH client`);
+    }
+    client.onGatewayMessage = (message) => {
+      this.onGatewayMessage?.(message);
+    };
+    return {
+      selector,
+      client,
+      close: async () => {
+        await result?.close?.().catch(() => {});
+      },
+    };
+  }
 }
 
 // ── netway_connect ────────────────────────────────────────────────────
@@ -456,4 +580,57 @@ export function registerNetwayTools(registry) {
  */
 export function getVirtualNetwork() {
   return getNetwork();
+}
+
+export function configureRemoteRuntimeGateway({
+  remoteSessionBroker,
+  selector = null,
+  onLog = null,
+} = {}) {
+  if (!remoteRuntimeGatewayClient) {
+    remoteRuntimeGatewayClient = new BrokerGatewayClient({
+      remoteSessionBroker,
+      selector,
+      onLog,
+    });
+  } else {
+    remoteRuntimeGatewayClient.configure({
+      remoteSessionBroker,
+      selector,
+      onLog,
+    });
+  }
+
+  if (!remoteRuntimeGatewayBackend) {
+    remoteRuntimeGatewayBackend = new GatewayBackend({ wshClient: remoteRuntimeGatewayClient });
+    const network = getNetwork();
+    network.addBackend('tcp', remoteRuntimeGatewayBackend);
+    network.addBackend('udp', remoteRuntimeGatewayBackend);
+  }
+
+  return remoteRuntimeGatewayBackend;
+}
+
+export async function resetNetwayToolsForTests() {
+  for (const entry of handles.values()) {
+    try {
+      if (entry.type === 'stream') await entry.socket.close();
+      else if (entry.type === 'listener') entry.listener.close();
+      else if (entry.type === 'datagram') entry.socket.close();
+    } catch {}
+  }
+  handles.clear();
+  handleCounter = 0;
+  if (remoteRuntimeGatewayBackend) {
+    await remoteRuntimeGatewayBackend.close().catch(() => {});
+  }
+  if (remoteRuntimeGatewayClient) {
+    await remoteRuntimeGatewayClient.close().catch(() => {});
+  }
+  remoteRuntimeGatewayBackend = null;
+  remoteRuntimeGatewayClient = null;
+  if (virtualNetwork) {
+    await virtualNetwork.close().catch(() => {});
+  }
+  virtualNetwork = null;
 }

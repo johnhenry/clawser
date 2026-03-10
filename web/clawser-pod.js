@@ -30,6 +30,7 @@ import { RemoteSessionBroker } from './clawser-remote-session-broker.js'
 import { RemoteRuntimePolicyAdapter } from './clawser-remote-runtime-policy.js'
 import { createRemoteWshConnectors } from './clawser-remote-runtime-wsh.js'
 import { RemoteRuntimeAuditRecorder } from './clawser-remote-runtime-audit.js'
+import { configureRemoteRuntimeGateway } from './clawser-netway-tools.js'
 
 export class ClawserPod extends Pod {
   #peerNode = null
@@ -215,6 +216,9 @@ export class ClawserPod extends Pod {
       policyAdapter: this.#remotePolicyAdapter,
       connectors: this.#remoteWshConnectors,
       auditRecorder: this.#remoteAuditRecorder,
+    })
+    configureRemoteRuntimeGateway({
+      remoteSessionBroker: this.#remoteSessionBroker,
     })
 
     this.#discoveryManager.onPeerDiscovered((record) => {

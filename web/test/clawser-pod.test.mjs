@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import { Pod } from '../packages/pod/src/pod.mjs'
 import { PodIdentity } from '../packages/mesh-primitives/src/identity.mjs'
 import { ClawserPod } from '../clawser-pod.js'
+import { getVirtualNetwork, resetNetwayToolsForTests } from '../clawser-netway-tools.js'
 
 // Stub BroadcastChannel for Node
 class StubBroadcastChannel {
@@ -217,6 +218,7 @@ describe('ClawserPod identity unification', () => {
     if (cpod && cpod.state !== 'shutdown' && cpod.state !== 'idle') {
       await cpod.shutdown({ silent: true })
     }
+    await resetNetwayToolsForTests()
   })
 
   it('mesh wallet uses the same podId as the Pod base class', async () => {
@@ -238,5 +240,16 @@ describe('ClawserPod identity unification', () => {
     // PeerNode should use the same podId
     assert.equal(peerNode.podId, basePodId,
       'PeerNode podId should equal Pod podId')
+  })
+
+  it('initMesh configures tcp and udp gateway schemes on the shared virtual network', async () => {
+    cpod = new ClawserPod()
+    const g = makeGlobal()
+    await cpod.boot({ globalThis: g, discoveryTimeout: 50, handshakeTimeout: 50 })
+    await cpod.initMesh()
+
+    const schemes = getVirtualNetwork().schemes
+    assert.ok(schemes.includes('tcp'))
+    assert.ok(schemes.includes('udp'))
   })
 })

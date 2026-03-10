@@ -96,3 +96,17 @@ export declare function registerNetwayTools(registry: unknown): void;
  * Public accessor for the shared VirtualNetwork singleton.
  */
 export declare function getVirtualNetwork(): unknown;
+
+/**
+ * Bind the shared tcp/udp GatewayBackend to the canonical remote session broker.
+ */
+export declare function configureRemoteRuntimeGateway(opts?: {
+  remoteSessionBroker?: unknown;
+  selector?: string | null;
+  onLog?: ((level: number, message: string) => void) | null;
+}): unknown;
+
+/**
+ * Test-only helper that clears global netway singleton state.
+ */
+export declare function resetNetwayToolsForTests(): Promise<void>;
