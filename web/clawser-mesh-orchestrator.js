@@ -17,6 +17,7 @@ const BrowserTool = globalThis.BrowserTool || class {
 }
 
 import { MESH_TYPE } from './packages/mesh-primitives/src/constants.mjs'
+import { ComputeRequest, ResourceDescriptor, ResourceScorer } from './clawser-mesh-resources.js'
 
 // ---------------------------------------------------------------------------
 // Wire constants (re-exported from canonical registry)
@@ -234,6 +235,8 @@ export class MeshOrchestrator {
   #runtimeRegistry
   /** @type {object|null} */
   #remoteSessionBroker
+  /** @type {object|null} */
+  #resourceRegistry
   /** @type {Map<string, object>} podId -> peer info */
   #knownPeers = new Map()
   /** @type {Map<string, object>} name -> { podId, port } */
@@ -255,9 +258,10 @@ export class MeshOrchestrator {
    * @param {object} [opts.router]            - MeshRouter or null
    * @param {object} [opts.runtimeRegistry]   - RemoteRuntimeRegistry or null
    * @param {object} [opts.remoteSessionBroker] - RemoteSessionBroker or null
+   * @param {object} [opts.resourceRegistry] - ResourceRegistry or null
    * @param {Function} [opts.onLog]           - Logging callback
    */
-  constructor({ peerNode, serviceAdvertiser, serviceBrowser, router, runtimeRegistry, remoteSessionBroker, onLog }) {
+  constructor({ peerNode, serviceAdvertiser, serviceBrowser, router, runtimeRegistry, remoteSessionBroker, resourceRegistry, onLog }) {
     if (!peerNode) {
       throw new Error('peerNode is required')
     }
@@ -267,6 +271,7 @@ export class MeshOrchestrator {
     this.#router = router ?? null
     this.#runtimeRegistry = runtimeRegistry ?? null
     this.#remoteSessionBroker = remoteSessionBroker ?? null
+    this.#resourceRegistry = resourceRegistry ?? null
     this.#onLog = onLog ?? null
   }
 
@@ -563,18 +568,94 @@ export class MeshOrchestrator {
   }
 
   async runAutomationOnPod(podId, command) {
+    return this.runComputeTask({ selector: podId, command })
+  }
+
+  async listComputeCandidates(constraints = {}) {
+    return this.#collectComputeDescriptors(constraints).map((descriptor) => ({
+      podId: descriptor.podId,
+      resources: { ...descriptor.resources },
+      capabilities: [...descriptor.capabilities],
+      availability: descriptor.availability,
+      source: descriptor.source || 'resource-registry',
+    }))
+  }
+
+  selectComputeTarget({ selector = null, constraints = {}, request = null } = {}) {
+    const nextRequest = request instanceof ComputeRequest
+      ? request
+      : new ComputeRequest({
+          moduleType: 'js',
+          moduleCid: 'runtime-task',
+          entry: 'main',
+          constraints,
+          requesterId: this.localPodId,
+        })
+
+    const descriptors = this.#collectComputeDescriptors(nextRequest.constraints || {})
+    if (selector) {
+      const selected = descriptors.find((descriptor) => descriptor.podId === selector)
+      if (!selected) {
+        throw new Error(`Pod "${selector}" is not available for compute`)
+      }
+      return {
+        podId: selected.podId,
+        descriptor: selected,
+        request: nextRequest,
+        source: selected.source || 'resource-registry',
+      }
+    }
+
+    const selected = ResourceScorer.selectBest(nextRequest, descriptors)
+    if (!selected) {
+      throw new Error('No compute-capable runtime matches the requested constraints')
+    }
+    return {
+      podId: selected.podId,
+      descriptor: selected,
+      request: nextRequest,
+      source: selected.source || 'resource-registry',
+    }
+  }
+
+  async runComputeTask({ selector = null, command, constraints = {}, timeoutMs = null } = {}) {
     if (!command || typeof command !== 'string') {
       throw new Error('command is required')
     }
+
+    const selection = this.selectComputeTarget({ selector, constraints })
+    const podId = selection.podId
     const runtime = this.#resolveRuntime(podId)
     if (runtime && this.#remoteSessionBroker) {
       const result = await this.#remoteSessionBroker.openSession(podId, {
         intent: 'automation',
         command,
+        timeout: timeoutMs || selection.request?.constraints?.timeoutMs || 30_000,
       })
-      return { output: result.output || '', exitCode: result.exitCode ?? 0 }
+      return {
+        podId,
+        output: result.output || '',
+        exitCode: result.exitCode ?? 0,
+        source: selection.source,
+      }
     }
-    return this.execOnPod(podId, command)
+
+    if (podId === this.localPodId && this.#peerNode.exec) {
+      const result = await this.#peerNode.exec(command)
+      return { podId, output: result.output || '', exitCode: result.exitCode ?? 0, source: 'local' }
+    }
+
+    const info = this.#knownPeers.get(podId)
+    if (info?.exec) {
+      const result = await info.exec(command)
+      return { podId, output: result.output || '', exitCode: result.exitCode ?? 0, source: 'known-peer' }
+    }
+    if (info?.send) {
+      info.send({ type: 'compute', command, constraints })
+      return { podId, output: `Compute task sent to ${podId}`, exitCode: 0, source: 'known-peer' }
+    }
+
+    throw new Error(`Pod "${podId}" does not support compute execution`)
   }
 
   // -- Pod management -------------------------------------------------------
@@ -826,6 +907,112 @@ export class MeshOrchestrator {
     if (status) return status
     return route ? 'online' : 'unknown'
   }
+
+  #collectComputeDescriptors(constraints = {}) {
+    const merged = new Map()
+    const descriptors = []
+
+    const localDescriptor = new ResourceDescriptor({
+      podId: this.localPodId,
+      resources: this.#peerNode.resources || {},
+      capabilities: dedupeStrings([
+        ...(this.#peerNode.capabilities || []),
+        ...(this.#peerNode.exec ? ['compute'] : []),
+      ]),
+      availability: this.#draining.has(this.localPodId) ? 'busy' : 'online',
+    })
+    if (localDescriptor.capabilities.includes('compute')) {
+      localDescriptor.source = 'local'
+      descriptors.push(localDescriptor)
+    }
+
+    if (this.#resourceRegistry?.discover) {
+      for (const descriptor of this.#resourceRegistry.discover(constraints)) {
+        descriptors.push(Object.assign(ResourceDescriptor.fromJSON(descriptor.toJSON()), {
+          source: descriptor.source || 'resource-registry',
+        }))
+      }
+    }
+
+    for (const peer of this.#runtimeDescriptors()) {
+      const descriptor = runtimePeerToComputeDescriptor(peer)
+      if (!descriptor) continue
+      if (constraints && !descriptor.matches(constraints)) continue
+      descriptors.push(descriptor)
+    }
+
+    for (const descriptor of descriptors) {
+      const existing = merged.get(descriptor.podId)
+      merged.set(descriptor.podId, existing ? mergeResourceDescriptors(existing, descriptor) : descriptor)
+    }
+
+    return [...merged.values()]
+  }
+}
+
+function runtimePeerToComputeDescriptor(peer) {
+  const podId = peer?.identity?.podId
+    || peer?.identity?.fingerprint
+    || peer?.identity?.canonicalId
+    || peer?.username
+  if (!podId) return null
+  const capabilities = dedupeStrings([
+    ...(peer.capabilities || []),
+    ...((peer.capabilities || []).some((cap) => cap === 'shell' || cap === 'exec' || cap === 'tools')
+      ? ['compute']
+      : []),
+  ])
+  if (!capabilities.includes('compute')) {
+    return null
+  }
+  const route = (peer.reachability || [])[0] || null
+  const availability = route?.health === 'offline'
+    ? 'offline'
+    : route?.health === 'degraded'
+      ? 'busy'
+      : 'online'
+  const descriptor = new ResourceDescriptor({
+    podId,
+    resources: peer.metadata?.resources || {},
+    capabilities,
+    availability,
+  })
+  descriptor.source = 'runtime-registry'
+  return descriptor
+}
+
+function mergeResourceDescriptors(base, incoming) {
+  const merged = new ResourceDescriptor({
+    podId: base.podId,
+    resources: {
+      cpu: incoming.resources.cpu || base.resources.cpu,
+      gpu: incoming.resources.gpu || base.resources.gpu,
+      memory: incoming.resources.memory || base.resources.memory,
+      storage: incoming.resources.storage || base.resources.storage,
+      bandwidth: incoming.resources.bandwidth || base.resources.bandwidth,
+    },
+    capabilities: dedupeStrings([...(base.capabilities || []), ...(incoming.capabilities || [])]),
+    availability: availabilityPriority(incoming.availability) > availabilityPriority(base.availability)
+      ? incoming.availability
+      : base.availability,
+  })
+  merged.source = incoming.source || base.source || 'resource-registry'
+  return merged
+}
+
+function availabilityPriority(value) {
+  switch (value) {
+    case 'online':
+      return 3
+    case 'busy':
+      return 2
+    default:
+      return 1
+  }
+}
+
+function dedupeStrings(values) {
+  return [...new Set((values || []).filter(Boolean))]
 }
 
 function deriveSkillName(skillContent) {
@@ -1047,6 +1234,49 @@ export class MeshctlTopTool extends BrowserTool {
   }
 }
 
+// ── meshctl_compute ──────────────────────────────────────────────────
+
+export class MeshctlComputeTool extends BrowserTool {
+  #orchestrator
+
+  constructor(orchestrator) {
+    super()
+    this.#orchestrator = orchestrator
+  }
+
+  get name() { return 'meshctl_compute' }
+  get description() { return 'Select a compute-capable runtime and execute a task through the shared remote runtime broker' }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        podId: { type: 'string', description: 'Optional target pod ID (omit to auto-select)' },
+        command: { type: 'string', description: 'Command to execute' },
+        prefer: { type: 'string', description: 'Resource preference: gpu, cpu, any' },
+      },
+      required: ['command'],
+    }
+  }
+  get permission() { return 'network' }
+
+  async execute({ podId, command, prefer } = {}) {
+    try {
+      const result = await this.#orchestrator.runComputeTask({
+        selector: podId || null,
+        command,
+        constraints: prefer ? { prefer } : {},
+      })
+      return {
+        success: result.exitCode === 0,
+        output: `[${result.podId}] ${result.output}`.trim(),
+        error: result.exitCode !== 0 ? `Exit code: ${result.exitCode}` : undefined,
+      }
+    } catch (err) {
+      return { success: false, output: '', error: `Compute failed: ${err.message}` }
+    }
+  }
+}
+
 // ── meshctl_expose ────────────────────────────────────────────────────
 
 export class MeshctlExposeTool extends BrowserTool {
@@ -1128,7 +1358,7 @@ export class MeshctlDrainTool extends BrowserTool {
 
 /**
  * Register 'meshctl' as a compound command in the shell registry.
- * Subcommands: pods, status, exec, deploy, top, expose, drain
+ * Subcommands: pods, status, exec, deploy, top, compute, expose, drain
  *
  * @param {import('./clawser-shell.js').CommandRegistry} shellRegistry
  * @param {MeshOrchestrator} orchestrator
@@ -1192,6 +1422,19 @@ export function registerMeshctlBuiltins(shellRegistry, orchestrator) {
         return { stdout: lines.join('\n') + '\n', stderr: '', exitCode: 0 }
       }
 
+      case 'compute': {
+        const [targetOrAuto, ...commandParts] = rest
+        const selector = targetOrAuto && targetOrAuto !== 'auto' ? targetOrAuto : null
+        const command = targetOrAuto ? commandParts.join(' ') : ''
+        if (!command) return { stdout: '', stderr: 'Usage: meshctl compute <podId|auto> <command>\n', exitCode: 1 }
+        try {
+          const result = await orchestrator.runComputeTask({ selector, command })
+          return { stdout: `[${result.podId}] ${result.output}`.trimEnd() + '\n', stderr: '', exitCode: result.exitCode }
+        } catch (err) {
+          return { stdout: '', stderr: err.message + '\n', exitCode: 1 }
+        }
+      }
+
       case 'expose': {
         // meshctl expose <podId> <port> <name>
         const [ePodId, ePort, eName] = rest
@@ -1215,7 +1458,7 @@ export function registerMeshctlBuiltins(shellRegistry, orchestrator) {
       default:
         return {
           stdout: '',
-          stderr: `Unknown subcommand: ${subcommand || '(none)'}. Available: pods, status, exec, deploy, top, expose, drain\n`,
+          stderr: `Unknown subcommand: ${subcommand || '(none)'}. Available: pods, status, exec, deploy, top, compute, expose, drain\n`,
           exitCode: 1,
         }
     }
@@ -1242,6 +1485,7 @@ export function createMeshctlTools(orchestrator) {
     new MeshctlExecTool(orchestrator),
     new MeshctlDeployTool(orchestrator),
     new MeshctlTopTool(orchestrator),
+    new MeshctlComputeTool(orchestrator),
     new MeshctlExposeTool(orchestrator),
     new MeshctlDrainTool(orchestrator),
   ]

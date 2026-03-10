@@ -267,6 +267,7 @@ export class ClawserPod extends Pod {
       serviceBrowser: this.#serviceBrowser,
       runtimeRegistry: this.#remoteRuntimeRegistry,
       remoteSessionBroker: this.#remoteSessionBroker,
+      resourceRegistry: this.#resourceRegistry,
     })
 
     return {

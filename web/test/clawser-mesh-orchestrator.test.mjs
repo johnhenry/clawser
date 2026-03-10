@@ -19,6 +19,7 @@ import {
   MeshctlExecTool,
   MeshctlDeployTool,
   MeshctlTopTool,
+  MeshctlComputeTool,
   MeshctlExposeTool,
   MeshctlDrainTool,
   registerMeshctlBuiltins,
@@ -511,6 +512,94 @@ describe('MeshOrchestrator', () => {
     assert.equal(calls[2].opts.intent, 'automation')
   })
 
+  it('listComputeCandidates merges resource registry and runtime peers', async () => {
+    const registryOrch = makeOrchestrator({
+      peerNode: makePeerNode({
+        exec: async () => ({ output: '', exitCode: 0 }),
+      }),
+      resourceRegistry: {
+        discover() {
+          return [
+            new PodResourceInfo({
+              podId: 'gpu-peer',
+              cpu: 16,
+              memory: 32768,
+              storage: 102400,
+              activeTasks: 1,
+              status: 'online',
+            }),
+          ].map((info) => ({
+            toJSON() {
+              return {
+                podId: info.podId,
+                resources: {
+                  cpu: info.cpu,
+                  memory: info.memory,
+                  storage: info.storage,
+                },
+                capabilities: ['compute', 'gpu'],
+                availability: info.status,
+              }
+            },
+            source: 'resource-registry',
+          }))
+        },
+      },
+      runtimeRegistry: makeRuntimeRegistry([
+        {
+          identity: { canonicalId: 'relay-peer', fingerprint: 'relay-peer', aliases: [] },
+          username: 'relay-peer',
+          capabilities: ['exec'],
+          reachability: [{ kind: 'reverse-relay', health: 'online' }],
+          metadata: {
+            resources: { cpu: 4, memory: 4096, storage: 8192 },
+          },
+        },
+      ]),
+    })
+
+    const candidates = await registryOrch.listComputeCandidates()
+
+    assert.ok(candidates.some((candidate) => candidate.podId === 'local-pod'))
+    assert.ok(candidates.some((candidate) => candidate.podId === 'gpu-peer'))
+    assert.ok(candidates.some((candidate) => candidate.podId === 'relay-peer'))
+  })
+
+  it('runComputeTask auto-selects broker-backed runtime peers', async () => {
+    const calls = []
+    const registryOrch = makeOrchestrator({
+      peerNode: makePeerNode({
+        exec: undefined,
+        capabilities: ['wasm'],
+      }),
+      runtimeRegistry: makeRuntimeRegistry([
+        {
+          identity: { canonicalId: 'relay-peer', fingerprint: 'relay-peer', aliases: [] },
+          username: 'relay-peer',
+          capabilities: ['exec'],
+          reachability: [{ kind: 'reverse-relay', health: 'online' }],
+          metadata: {
+            resources: { cpu: 8, memory: 8192, storage: 16384 },
+          },
+        },
+      ]),
+      remoteSessionBroker: {
+        async openSession(selector, opts) {
+          calls.push({ selector, opts })
+          return { output: 'compute ok', exitCode: 0 }
+        },
+      },
+    })
+
+    const result = await registryOrch.runComputeTask({ command: 'node job.mjs' })
+
+    assert.equal(result.podId, 'relay-peer')
+    assert.equal(result.output, 'compute ok')
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].selector, 'relay-peer')
+    assert.equal(calls[0].opts.intent, 'automation')
+  })
+
   // -- drainPod -------------------------------------------------------------
 
   it('drainPod disconnects peer and returns success', async () => {
@@ -703,13 +792,13 @@ describe('BrowserTool subclasses — basics', () => {
     tools = createMeshctlTools(orch)
   })
 
-  it('createMeshctlTools returns array of 7 tools', () => {
-    assert.equal(tools.length, 7)
+  it('createMeshctlTools returns array of 8 tools', () => {
+    assert.equal(tools.length, 8)
   })
 
   it('all have unique names', () => {
     const names = tools.map(t => t.name)
-    assert.equal(new Set(names).size, 7)
+    assert.equal(new Set(names).size, 8)
   })
 
   it('all have descriptions', () => {
@@ -731,6 +820,7 @@ describe('BrowserTool subclasses — basics', () => {
       meshctl_exec: 'network',
       meshctl_deploy: 'write',
       meshctl_top: 'read',
+      meshctl_compute: 'network',
       meshctl_expose: 'network',
       meshctl_drain: 'network',
     }
@@ -739,9 +829,10 @@ describe('BrowserTool subclasses — basics', () => {
     }
   })
 
-  it('tool names are meshctl_pods, meshctl_status, meshctl_exec, meshctl_deploy, meshctl_top, meshctl_expose, meshctl_drain', () => {
+  it('tool names are meshctl_pods, meshctl_status, meshctl_exec, meshctl_deploy, meshctl_top, meshctl_compute, meshctl_expose, meshctl_drain', () => {
     const names = tools.map(t => t.name).sort()
     assert.deepEqual(names, [
+      'meshctl_compute',
       'meshctl_deploy',
       'meshctl_drain',
       'meshctl_exec',
@@ -916,6 +1007,41 @@ describe('MeshctlTopTool', () => {
 })
 
 // ---------------------------------------------------------------------------
+// MeshctlComputeTool
+// ---------------------------------------------------------------------------
+
+describe('MeshctlComputeTool', () => {
+  let orch, tool
+
+  beforeEach(() => {
+    orch = makeOrchestrator({
+      peerNode: makePeerNode({
+        exec: async (cmd) => ({ output: `computed: ${cmd}`, exitCode: 0 }),
+      }),
+    })
+    tool = new MeshctlComputeTool(orch)
+  })
+
+  it('runs compute tasks and returns output', async () => {
+    const result = await tool.execute({ podId: 'local-pod', command: 'npm test' })
+    assert.ok(result.success)
+    assert.match(result.output, /\[local-pod\] computed: npm test/)
+  })
+
+  it('returns an error when compute execution fails', async () => {
+    orch = makeOrchestrator({
+      peerNode: makePeerNode({
+        exec: async () => ({ output: 'boom', exitCode: 2 }),
+      }),
+    })
+    tool = new MeshctlComputeTool(orch)
+    const result = await tool.execute({ podId: 'local-pod', command: 'npm test' })
+    assert.equal(result.success, false)
+    assert.match(result.error, /Exit code: 2/)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // MeshctlExposeTool
 // ---------------------------------------------------------------------------
 
@@ -1030,6 +1156,22 @@ describe('registerMeshctlBuiltins', () => {
     const result = await registered.meshctl.handler({ args: ['top'] })
     assert.equal(result.exitCode, 0)
     assert.match(result.stdout, /local-pod/)
+  })
+
+  it('meshctl compute subcommand auto-selects a target', async () => {
+    const registered = {}
+    const shellRegistry = {
+      register(name, handler, meta) { registered[name] = { handler, meta } },
+    }
+    const orch = makeOrchestrator({
+      peerNode: makePeerNode({
+        exec: async (cmd) => ({ output: `computed: ${cmd}`, exitCode: 0 }),
+      }),
+    })
+    registerMeshctlBuiltins(shellRegistry, orch)
+    const result = await registered.meshctl.handler({ args: ['compute', 'auto', 'npm', 'test'] })
+    assert.equal(result.exitCode, 0)
+    assert.match(result.stdout, /\[local-pod\] computed: npm test/)
   })
 
   it('meshctl expose subcommand requires all args', async () => {
