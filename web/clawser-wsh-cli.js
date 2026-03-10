@@ -416,6 +416,10 @@ export function registerWshCli(registry, getAgent, getShell) {
         shellBackend: flags.backend || (expose.shell ? 'virtual-shell' : 'exec-only'),
       });
       client.__clawserExposeCapabilities = { ...expose };
+      client.__clawserPeerMetadata = {
+        peerType: flags.type || 'browser-shell',
+        shellBackend: flags.backend || (expose.shell ? 'virtual-shell' : 'exec-only'),
+      };
 
       // Wire incoming handler, chaining with any existing handler
       if (typeof globalThis.__wshIncomingHandler === 'function') {

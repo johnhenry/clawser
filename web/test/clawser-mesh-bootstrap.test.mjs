@@ -50,6 +50,8 @@ describe('ClawserPod.initMesh() — subsystem bootstrap', () => {
       'streamMultiplexer',
       'fileTransfer',
       'serviceDirectory',
+      'serviceAdvertiser',
+      'serviceBrowser',
       'syncEngine',
       'resourceRegistry',
       'meshMarketplace',
@@ -62,6 +64,7 @@ describe('ClawserPod.initMesh() — subsystem bootstrap', () => {
       'remoteRuntimeRegistry',
       'remoteSessionBroker',
       'remotePolicyAdapter',
+      'remoteAuditRecorder',
       'appRegistry',
       'appStore',
       'orchestrator',
@@ -89,6 +92,8 @@ describe('ClawserPod.initMesh() — subsystem bootstrap', () => {
     assert.ok(pod.streamMultiplexer, 'streamMultiplexer getter')
     assert.ok(pod.fileTransfer, 'fileTransfer getter')
     assert.ok(pod.serviceDirectory, 'serviceDirectory getter')
+    assert.ok(pod.serviceAdvertiser, 'serviceAdvertiser getter')
+    assert.ok(pod.serviceBrowser, 'serviceBrowser getter')
     assert.ok(pod.syncEngine, 'syncEngine getter')
     assert.ok(pod.resourceRegistry, 'resourceRegistry getter')
     assert.ok(pod.meshMarketplace, 'meshMarketplace getter')
@@ -101,6 +106,7 @@ describe('ClawserPod.initMesh() — subsystem bootstrap', () => {
     assert.ok(pod.remoteRuntimeRegistry, 'remoteRuntimeRegistry getter')
     assert.ok(pod.remoteSessionBroker, 'remoteSessionBroker getter')
     assert.ok(pod.remotePolicyAdapter, 'remotePolicyAdapter getter')
+    assert.ok(pod.remoteAuditRecorder, 'remoteAuditRecorder getter')
     assert.ok(pod.appRegistry, 'appRegistry getter')
     assert.ok(pod.appStore, 'appStore getter')
     assert.ok(pod.orchestrator, 'orchestrator getter')
@@ -142,6 +148,8 @@ describe('ClawserPod.initMesh() — subsystem bootstrap', () => {
     assert.equal(pod.streamMultiplexer, null)
     assert.equal(pod.fileTransfer, null)
     assert.equal(pod.serviceDirectory, null)
+    assert.equal(pod.serviceAdvertiser, null)
+    assert.equal(pod.serviceBrowser, null)
     assert.equal(pod.syncEngine, null)
     assert.equal(pod.resourceRegistry, null)
     assert.equal(pod.meshMarketplace, null)
@@ -154,6 +162,7 @@ describe('ClawserPod.initMesh() — subsystem bootstrap', () => {
     assert.equal(pod.remoteRuntimeRegistry, null)
     assert.equal(pod.remoteSessionBroker, null)
     assert.equal(pod.remotePolicyAdapter, null)
+    assert.equal(pod.remoteAuditRecorder, null)
     assert.equal(pod.appRegistry, null)
     assert.equal(pod.appStore, null)
     assert.equal(pod.orchestrator, null)

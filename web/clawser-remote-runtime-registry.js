@@ -313,6 +313,76 @@ export class RemoteRuntimeRegistry {
     return scored.map((entry) => entry.route)
   }
 
+  recordRouteOutcome(selector, route, {
+    status = 'success',
+    reason = null,
+    layer = null,
+    timestamp = Date.now(),
+  } = {}) {
+    const descriptor = typeof selector === 'string' ? this.resolvePeer(selector) : selector
+    if (!descriptor || !route) return null
+
+    const nextRoutes = descriptor.reachability.map((candidate) => {
+      if (routeKey(candidate) !== routeKey(route)) return candidate
+      const failures = candidate.failures || 0
+      return {
+        ...candidate,
+        health: status === 'success' ? 'healthy' : 'degraded',
+        lastSeen: timestamp,
+        lastOutcome: status,
+        lastOutcomeReason: reason,
+        lastOutcomeLayer: layer,
+        failures: status === 'success' ? failures : failures + 1,
+      }
+    })
+
+    const nextDescriptor = createRemotePeerDescriptor({
+      ...descriptor,
+      reachability: nextRoutes,
+      metadata: {
+        ...(descriptor.metadata || {}),
+        lastRouteOutcome: {
+          status,
+          reason,
+          layer,
+          timestamp,
+        },
+      },
+    })
+
+    this.#descriptors.set(descriptor.identity.canonicalId, nextDescriptor)
+    this.#indexAliases(nextDescriptor)
+    return nextDescriptor
+  }
+
+  ingestServiceAdvertisement(service) {
+    if (!service?.podId) return null
+    const descriptor = this.resolvePeer(service.podId)
+      || this.resolvePeer(`@${service.podId}`)
+    if (!descriptor) return null
+
+    const services = unique([
+      ...((descriptor.metadata || {}).services || []),
+      service.name,
+    ])
+
+    const nextDescriptor = createRemotePeerDescriptor({
+      ...descriptor,
+      metadata: {
+        ...(descriptor.metadata || {}),
+        services,
+        serviceDetails: {
+          ...((descriptor.metadata || {}).serviceDetails || {}),
+          [service.name]: { ...service },
+        },
+      },
+    })
+
+    this.#descriptors.set(descriptor.identity.canonicalId, nextDescriptor)
+    this.#indexAliases(nextDescriptor)
+    return nextDescriptor
+  }
+
   #indexAliases(descriptor) {
     for (const alias of descriptor.identity.aliases || []) {
       this.#aliases.set(alias, descriptor.identity.canonicalId)
@@ -345,6 +415,9 @@ export class RemoteRuntimeRegistry {
 
     if (route.transport === 'webrtc') score += 5
     if (route.lastSeen != null) score += Math.max(0, 10 - Math.floor((Date.now() - route.lastSeen) / 1000))
+    if (route.health === 'healthy') score += 10
+    if (route.health === 'degraded') score -= 8
+    if (route.health === 'offline') score -= 25
 
     return score
   }

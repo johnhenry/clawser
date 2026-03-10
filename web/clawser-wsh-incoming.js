@@ -57,6 +57,14 @@ function getParticipantCapabilities(client) {
     || { shell: true, tools: true, fs: true };
 }
 
+function getParticipantMetadata(client) {
+  return client?.__clawserPeerMetadata
+    || {
+      peerType: 'browser-shell',
+      shellBackend: 'virtual-shell',
+    };
+}
+
 function capabilityList(capabilities) {
   return Object.entries(capabilities || {})
     .filter(([, enabled]) => !!enabled)
@@ -446,6 +454,7 @@ export async function handleReverseConnect(msg) {
     targetFingerprint: msg.target_fingerprint,
   });
   const capabilities = getParticipantCapabilities(activeClient);
+  const metadata = getParticipantMetadata(activeClient);
 
   await closeContextsForClient(activeClient, participantKey);
 
@@ -465,6 +474,8 @@ export async function handleReverseConnect(msg) {
     targetFingerprint: msg.target_fingerprint,
     client: activeClient,
     capabilities,
+    peerType: metadata.peerType,
+    shellBackend: metadata.shellBackend,
     tenantId,
   });
 
@@ -474,6 +485,8 @@ export async function handleReverseConnect(msg) {
       targetFingerprint: msg.target_fingerprint,
       client: activeClient,
       capabilities,
+      peerType: metadata.peerType,
+      shellBackend: metadata.shellBackend,
       tenantId,
     });
   } else {
@@ -493,8 +506,8 @@ export async function handleReverseConnect(msg) {
     targetFingerprint: msg.target_fingerprint,
     username: msg.username,
     capabilities: capabilityList(capabilities),
-    peerType: 'browser-shell',
-    shellBackend: 'virtual-shell',
+    peerType: metadata.peerType || 'browser-shell',
+    shellBackend: metadata.shellBackend || 'virtual-shell',
     supportsAttach: true,
     supportsReplay: true,
     supportsEcho: true,

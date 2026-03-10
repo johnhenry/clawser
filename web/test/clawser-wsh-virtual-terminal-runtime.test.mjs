@@ -222,4 +222,44 @@ describe('VirtualTerminalManager', () => {
 
     await manager.close();
   });
+
+  it('uses the VM console factory for vm-console peers', async () => {
+    const client = {
+      sent: [],
+      async sendRelayControl(msg) {
+        this.sent.push(msg);
+      },
+    };
+    let vmFactoryCalls = 0;
+    const manager = new VirtualTerminalManager({
+      shellFactory: async () => createFakeShell(),
+      vmConsoleFactory: async () => {
+        vmFactoryCalls += 1;
+        return createFakeShell();
+      },
+    });
+    const participantKey = buildReverseParticipantKey({
+      username: 'vm',
+      targetFingerprint: 'SHA256:vm',
+    });
+
+    await manager.registerPeerContext({
+      participantKey,
+      username: 'vm',
+      targetFingerprint: 'SHA256:vm',
+      client,
+      capabilities: { shell: true, tools: false, fs: false },
+      peerType: 'vm-guest',
+      shellBackend: 'vm-console',
+    });
+
+    await manager.openChannel(participantKey, {
+      channelId: 15,
+      kind: 'exec',
+      command: 'pwd',
+    });
+
+    assert.equal(vmFactoryCalls, 1);
+    await manager.close();
+  });
 });

@@ -232,6 +232,8 @@ export class MeshOrchestrator {
   #onLog
   /** @type {object|null} */
   #runtimeRegistry
+  /** @type {object|null} */
+  #remoteSessionBroker
   /** @type {Map<string, object>} podId -> peer info */
   #knownPeers = new Map()
   /** @type {Map<string, object>} name -> { podId, port } */
@@ -252,9 +254,10 @@ export class MeshOrchestrator {
    * @param {object} [opts.serviceBrowser]    - ServiceBrowser or null
    * @param {object} [opts.router]            - MeshRouter or null
    * @param {object} [opts.runtimeRegistry]   - RemoteRuntimeRegistry or null
+   * @param {object} [opts.remoteSessionBroker] - RemoteSessionBroker or null
    * @param {Function} [opts.onLog]           - Logging callback
    */
-  constructor({ peerNode, serviceAdvertiser, serviceBrowser, router, runtimeRegistry, onLog }) {
+  constructor({ peerNode, serviceAdvertiser, serviceBrowser, router, runtimeRegistry, remoteSessionBroker, onLog }) {
     if (!peerNode) {
       throw new Error('peerNode is required')
     }
@@ -263,6 +266,7 @@ export class MeshOrchestrator {
     this.#serviceBrowser = serviceBrowser ?? null
     this.#router = router ?? null
     this.#runtimeRegistry = runtimeRegistry ?? null
+    this.#remoteSessionBroker = remoteSessionBroker ?? null
     this.#onLog = onLog ?? null
   }
 
@@ -411,6 +415,17 @@ export class MeshOrchestrator {
       return { output: `Local execution not supported`, exitCode: 1 }
     }
 
+    const runtime = this.#resolveRuntime(podId)
+    if (runtime && this.#remoteSessionBroker) {
+      const result = await this.#remoteSessionBroker.openSession(podId, {
+        intent: 'exec',
+        command,
+      })
+      if (typeof result?.output === 'string') {
+        return { output: result.output, exitCode: result.exitCode ?? 0 }
+      }
+    }
+
     const info = this.#knownPeers.get(podId)
     if (!info) {
       throw new Error(`Pod "${podId}" not found`)
@@ -441,6 +456,19 @@ export class MeshOrchestrator {
       return { success: false, error: 'skillContent is required' }
     }
 
+    const runtime = this.#resolveRuntime(podId)
+    if (runtime && this.#remoteSessionBroker) {
+      const skillName = deriveSkillName(skillContent)
+      const path = `/.skills/${skillName}/SKILL.md`
+      await this.#remoteSessionBroker.openSession(podId, {
+        intent: 'files',
+        operation: 'upload',
+        path,
+        data: skillContent,
+      })
+      return { success: true, path }
+    }
+
     const info = this.#knownPeers.get(podId)
     if (!info) {
       return { success: false, error: `Pod "${podId}" not found` }
@@ -457,6 +485,96 @@ export class MeshOrchestrator {
     }
 
     return { success: false, error: `Pod "${podId}" does not support deployment` }
+  }
+
+  async listRemoteServices(filter = {}) {
+    const discovered = []
+
+    if (this.#serviceBrowser?.discover) {
+      for (const service of this.#serviceBrowser.discover(filter)) {
+        discovered.push({ ...service, source: 'service-browser' })
+      }
+    }
+
+    for (const descriptor of this.#runtimeDescriptors()) {
+      const podId = this.#descriptorPodId(descriptor)
+      const details = descriptor.metadata?.serviceDetails || {}
+      const names = descriptor.metadata?.services || Object.keys(details)
+      for (const name of names) {
+        const detail = details[name] || { name }
+        if (filter.type && detail.type && detail.type !== filter.type) continue
+        if (filter.podId && filter.podId !== podId) continue
+        discovered.push({
+          ...detail,
+          name,
+          podId,
+          source: 'runtime-registry',
+        })
+      }
+    }
+
+    return discovered
+  }
+
+  async browseRemoteFiles(podId, path = '/') {
+    const runtime = this.#resolveRuntime(podId)
+    if (runtime && this.#remoteSessionBroker) {
+      const result = await this.#remoteSessionBroker.openSession(podId, {
+        intent: 'files',
+        operation: 'list',
+        path,
+      })
+      return { entries: result.entries || [] }
+    }
+    throw new Error(`Pod "${podId}" does not support remote filesystem browsing`)
+  }
+
+  async readRemoteFile(podId, path) {
+    if (!path || typeof path !== 'string') {
+      throw new Error('path is required')
+    }
+    const runtime = this.#resolveRuntime(podId)
+    if (runtime && this.#remoteSessionBroker) {
+      const result = await this.#remoteSessionBroker.openSession(podId, {
+        intent: 'files',
+        operation: 'read',
+        path,
+      })
+      return result.content || ''
+    }
+    throw new Error(`Pod "${podId}" does not support remote file reads`)
+  }
+
+  async writeRemoteFile(podId, path, content) {
+    if (!path || typeof path !== 'string') {
+      throw new Error('path is required')
+    }
+    const runtime = this.#resolveRuntime(podId)
+    if (runtime && this.#remoteSessionBroker) {
+      await this.#remoteSessionBroker.openSession(podId, {
+        intent: 'files',
+        operation: 'write',
+        path,
+        data: content,
+      })
+      return { success: true }
+    }
+    throw new Error(`Pod "${podId}" does not support remote file writes`)
+  }
+
+  async runAutomationOnPod(podId, command) {
+    if (!command || typeof command !== 'string') {
+      throw new Error('command is required')
+    }
+    const runtime = this.#resolveRuntime(podId)
+    if (runtime && this.#remoteSessionBroker) {
+      const result = await this.#remoteSessionBroker.openSession(podId, {
+        intent: 'automation',
+        command,
+      })
+      return { output: result.output || '', exitCode: result.exitCode ?? 0 }
+    }
+    return this.execOnPod(podId, command)
   }
 
   // -- Pod management -------------------------------------------------------
@@ -681,6 +799,12 @@ export class MeshOrchestrator {
     return this.#runtimeRegistry.resolvePeer(podId)
   }
 
+  #resolveRuntime(podId) {
+    return this.#runtimeDescriptorForPodId(podId)
+      || this.#runtimeRegistry?.resolvePeer?.(`@${podId}`)
+      || null
+  }
+
   #descriptorPodId(descriptor) {
     return descriptor.identity?.podId
       || descriptor.identity?.fingerprint
@@ -702,6 +826,19 @@ export class MeshOrchestrator {
     if (status) return status
     return route ? 'online' : 'unknown'
   }
+}
+
+function deriveSkillName(skillContent) {
+  const frontmatter = /^---\s*[\r\n]+([\s\S]*?)[\r\n]+---/.exec(skillContent)
+  if (frontmatter) {
+    const nameMatch = /(?:^|\n)name:\s*([a-zA-Z0-9._-]+)/.exec(frontmatter[1])
+    if (nameMatch?.[1]) return nameMatch[1]
+  }
+  const heading = /^#\s+([^\r\n]+)/m.exec(skillContent)
+  if (heading?.[1]) {
+    return heading[1].trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-')
+  }
+  return `skill-${Date.now().toString(36)}`
 }
 
 // ---------------------------------------------------------------------------

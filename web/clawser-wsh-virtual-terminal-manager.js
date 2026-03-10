@@ -26,13 +26,15 @@ export function buildReverseParticipantKey({ username = '', targetFingerprint = 
 
 export class VirtualTerminalManager {
   #shellFactory;
+  #vmConsoleFactory;
   #contexts = new Map();
 
-  constructor({ shellFactory } = {}) {
+  constructor({ shellFactory, vmConsoleFactory = null } = {}) {
     if (typeof shellFactory !== 'function') {
       throw new Error('shellFactory is required');
     }
     this.#shellFactory = shellFactory;
+    this.#vmConsoleFactory = vmConsoleFactory;
   }
 
   async registerPeerContext({
@@ -41,6 +43,9 @@ export class VirtualTerminalManager {
     targetFingerprint,
     client,
     capabilities,
+    peerType = 'browser-shell',
+    shellBackend = 'virtual-shell',
+    vmRuntimeId = null,
     tenantId = null,
   } = {}) {
     if (!participantKey) {
@@ -56,6 +61,9 @@ export class VirtualTerminalManager {
       existing.targetFingerprint = targetFingerprint || existing.targetFingerprint;
       existing.client = client;
       existing.capabilities = normalizeCapabilities(capabilities);
+      existing.peerType = peerType || existing.peerType;
+      existing.shellBackend = shellBackend || existing.shellBackend;
+      existing.vmRuntimeId = vmRuntimeId || existing.vmRuntimeId || null;
       existing.tenantId = tenantId;
       existing.state = 'active';
       existing.pendingReattachChannelIds = new Set(existing.channels.keys());
@@ -68,6 +76,9 @@ export class VirtualTerminalManager {
       targetFingerprint: targetFingerprint || '',
       client,
       capabilities: normalizeCapabilities(capabilities),
+      peerType,
+      shellBackend,
+      vmRuntimeId,
       tenantId,
       state: 'active',
       channels: new Map(),
@@ -90,6 +101,8 @@ export class VirtualTerminalManager {
       tenantId: context.tenantId,
       state: context.state,
       capabilities: { ...context.capabilities },
+      peerType: context.peerType,
+      shellBackend: context.shellBackend,
       channelIds: [...context.channels.keys()],
       pendingReattachChannelIds: [...context.pendingReattachChannelIds],
     }));
@@ -120,7 +133,7 @@ export class VirtualTerminalManager {
       command,
       cols,
       rows,
-      shellFactory: () => this.#shellFactory({ participantKey, channelId, kind }),
+      shellFactory: () => this.#createShell({ context, participantKey, channelId, kind }),
       sendControl: (msg) => context.client.sendRelayControl(msg),
     });
 
@@ -233,5 +246,22 @@ export class VirtualTerminalManager {
       throw new Error(`Unknown reverse terminal channel: ${channelId}`);
     }
     return session;
+  }
+
+  async #createShell({ context, participantKey, channelId, kind }) {
+    if (context?.shellBackend === 'vm-console' && this.#vmConsoleFactory) {
+      return this.#vmConsoleFactory({
+        peerContext: context,
+        participantKey,
+        channelId,
+        kind,
+      });
+    }
+    return this.#shellFactory({
+      peerContext: context,
+      participantKey,
+      channelId,
+      kind,
+    });
   }
 }

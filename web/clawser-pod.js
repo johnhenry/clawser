@@ -24,9 +24,12 @@ import { MeshRelayClient } from './clawser-mesh-relay.js'
 import { MeshNameResolver } from './clawser-mesh-naming.js'
 import { AppRegistry, AppStore } from './clawser-mesh-apps.js'
 import { MeshOrchestrator } from './clawser-mesh-orchestrator.js'
+import { ServiceAdvertiser, ServiceBrowser } from './clawser-peer-services.js'
 import { RemoteRuntimeRegistry } from './clawser-remote-runtime-registry.js'
 import { RemoteSessionBroker } from './clawser-remote-session-broker.js'
 import { RemoteRuntimePolicyAdapter } from './clawser-remote-runtime-policy.js'
+import { createRemoteWshConnectors } from './clawser-remote-runtime-wsh.js'
+import { RemoteRuntimeAuditRecorder } from './clawser-remote-runtime-audit.js'
 
 export class ClawserPod extends Pod {
   #peerNode = null
@@ -39,6 +42,8 @@ export class ClawserPod extends Pod {
   #streamMultiplexer = null
   #fileTransfer = null
   #serviceDirectory = null
+  #serviceAdvertiser = null
+  #serviceBrowser = null
   #syncEngine = null
   #resourceRegistry = null
   #meshMarketplace = null
@@ -54,6 +59,8 @@ export class ClawserPod extends Pod {
   #remoteRuntimeRegistry = null
   #remoteSessionBroker = null
   #remotePolicyAdapter = null
+  #remoteWshConnectors = null
+  #remoteAuditRecorder = null
 
   get peerNode() { return this.#peerNode }
   get swarmCoordinator() { return this.#swarmCoordinator }
@@ -65,6 +72,8 @@ export class ClawserPod extends Pod {
   get streamMultiplexer() { return this.#streamMultiplexer }
   get fileTransfer() { return this.#fileTransfer }
   get serviceDirectory() { return this.#serviceDirectory }
+  get serviceAdvertiser() { return this.#serviceAdvertiser }
+  get serviceBrowser() { return this.#serviceBrowser }
   get syncEngine() { return this.#syncEngine }
   get resourceRegistry() { return this.#resourceRegistry }
   get meshMarketplace() { return this.#meshMarketplace }
@@ -80,6 +89,7 @@ export class ClawserPod extends Pod {
   get remoteRuntimeRegistry() { return this.#remoteRuntimeRegistry }
   get remoteSessionBroker() { return this.#remoteSessionBroker }
   get remotePolicyAdapter() { return this.#remotePolicyAdapter }
+  get remoteAuditRecorder() { return this.#remoteAuditRecorder }
 
   /**
    * Initialize the full mesh subsystem on top of the Pod's identity.
@@ -156,6 +166,8 @@ export class ClawserPod extends Pod {
 
     // 11. ServiceDirectory — svc:// routing
     this.#serviceDirectory = new ServiceDirectory({ localPodId: podId })
+    this.#serviceAdvertiser = new ServiceAdvertiser({ localPodId: podId })
+    this.#serviceBrowser = new ServiceBrowser()
 
     // 12. MeshSyncEngine — CRDT state synchronization
     this.#syncEngine = new MeshSyncEngine({ nodeId: podId })
@@ -190,10 +202,19 @@ export class ClawserPod extends Pod {
     this.#remotePolicyAdapter = new RemoteRuntimePolicyAdapter({
       peerRegistry: this.#registry,
     })
+    this.#remoteWshConnectors = createRemoteWshConnectors({
+      username: podId,
+    })
+    this.#remoteAuditRecorder = new RemoteRuntimeAuditRecorder({
+      auditChain: this.#auditChain,
+      authorId: podId,
+    })
     this.#remoteSessionBroker = new RemoteSessionBroker({
       runtimeRegistry: this.#remoteRuntimeRegistry,
       nameResolver: this.#nameResolver,
       policyAdapter: this.#remotePolicyAdapter,
+      connectors: this.#remoteWshConnectors,
+      auditRecorder: this.#remoteAuditRecorder,
     })
 
     this.#discoveryManager.onPeerDiscovered((record) => {
@@ -225,6 +246,15 @@ export class ClawserPod extends Pod {
         this.#remoteRuntimeRegistry?.linkName(peer.metadata.meshName, descriptor.identity.canonicalId)
       }
     })
+    this.#serviceBrowser.on?.('discovered', (service) => {
+      this.#remoteRuntimeRegistry?.ingestServiceAdvertisement(service)
+    })
+    this.#serviceBrowser.on?.('lost', (service) => {
+      this.#remoteAuditRecorder?.record('remote_service_lost', {
+        podId: service?.podId || null,
+        name: service?.name || null,
+      })
+    })
 
     // 21. AppRegistry + AppStore — app lifecycle
     this.#appRegistry = new AppRegistry({ localPodId: podId })
@@ -233,7 +263,10 @@ export class ClawserPod extends Pod {
     // 22. MeshOrchestrator — pod orchestration (must be after peerNode)
     this.#orchestrator = new MeshOrchestrator({
       peerNode: this.#peerNode,
+      serviceAdvertiser: this.#serviceAdvertiser,
+      serviceBrowser: this.#serviceBrowser,
       runtimeRegistry: this.#remoteRuntimeRegistry,
+      remoteSessionBroker: this.#remoteSessionBroker,
     })
 
     return {
@@ -245,6 +278,8 @@ export class ClawserPod extends Pod {
       streamMultiplexer: this.#streamMultiplexer,
       fileTransfer: this.#fileTransfer,
       serviceDirectory: this.#serviceDirectory,
+      serviceAdvertiser: this.#serviceAdvertiser,
+      serviceBrowser: this.#serviceBrowser,
       syncEngine: this.#syncEngine,
       resourceRegistry: this.#resourceRegistry,
       meshMarketplace: this.#meshMarketplace,
@@ -257,6 +292,7 @@ export class ClawserPod extends Pod {
       remoteRuntimeRegistry: this.#remoteRuntimeRegistry,
       remoteSessionBroker: this.#remoteSessionBroker,
       remotePolicyAdapter: this.#remotePolicyAdapter,
+      remoteAuditRecorder: this.#remoteAuditRecorder,
       appRegistry: this.#appRegistry,
       appStore: this.#appStore,
       orchestrator: this.#orchestrator,
@@ -278,6 +314,9 @@ export class ClawserPod extends Pod {
     if (this.#relayClient) {
       try { this.#relayClient.disconnect() } catch { /* non-fatal */ }
     }
+    if (this.#remoteWshConnectors?.disconnectAll) {
+      try { await this.#remoteWshConnectors.disconnectAll() } catch { /* non-fatal */ }
+    }
     this.#peerNode = null
     this.#swarmCoordinator = null
     this.#wallet = null
@@ -288,6 +327,8 @@ export class ClawserPod extends Pod {
     this.#streamMultiplexer = null
     this.#fileTransfer = null
     this.#serviceDirectory = null
+    this.#serviceAdvertiser = null
+    this.#serviceBrowser = null
     this.#syncEngine = null
     this.#resourceRegistry = null
     this.#meshMarketplace = null
@@ -300,6 +341,7 @@ export class ClawserPod extends Pod {
     this.#remoteRuntimeRegistry = null
     this.#remoteSessionBroker = null
     this.#remotePolicyAdapter = null
+    this.#remoteAuditRecorder = null
     this.#appRegistry = null
     this.#appStore = null
     this.#orchestrator = null

@@ -417,6 +417,100 @@ describe('MeshOrchestrator', () => {
     assert.match(result.error, /skillContent is required/)
   })
 
+  it('deploySkill uses the shared broker for runtime-registry peers', async () => {
+    const calls = []
+    const registryOrch = makeOrchestrator({
+      runtimeRegistry: makeRuntimeRegistry([
+        {
+          identity: { canonicalId: 'relay-peer', fingerprint: 'relay-peer', aliases: [] },
+          username: 'relay',
+          capabilities: ['fs'],
+          reachability: [{ kind: 'reverse-relay' }],
+          metadata: {},
+        },
+      ]),
+      remoteSessionBroker: {
+        async openSession(selector, opts) {
+          calls.push({ selector, opts })
+          return { ok: true }
+        },
+      },
+    })
+
+    const result = await registryOrch.deploySkill('relay-peer', '# Demo Skill')
+
+    assert.equal(result.success, true)
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].opts.intent, 'files')
+    assert.equal(calls[0].opts.operation, 'upload')
+    assert.match(calls[0].opts.path, /^\/\.skills\/demo-skill\/SKILL\.md$/)
+  })
+
+  it('listRemoteServices merges service browser and runtime-registry records', async () => {
+    const registryOrch = makeOrchestrator({
+      runtimeRegistry: makeRuntimeRegistry([
+        {
+          identity: { canonicalId: 'relay-peer', fingerprint: 'relay-peer', aliases: [] },
+          username: 'relay',
+          capabilities: ['tools'],
+          reachability: [{ kind: 'reverse-relay' }],
+          metadata: {
+            services: ['shell-api'],
+            serviceDetails: {
+              'shell-api': { type: 'terminal', metadata: { backend: 'wsh' } },
+            },
+          },
+        },
+      ]),
+      serviceBrowser: {
+        discover() {
+          return [{ name: 'mesh-api', podId: 'mesh-peer', type: 'http-proxy' }]
+        },
+      },
+    })
+
+    const services = await registryOrch.listRemoteServices()
+
+    assert.equal(services.length, 2)
+    assert.ok(services.some((service) => service.name === 'mesh-api'))
+    assert.ok(services.some((service) => service.name === 'shell-api' && service.source === 'runtime-registry'))
+  })
+
+  it('browseRemoteFiles and automation use the shared broker for runtime peers', async () => {
+    const calls = []
+    const registryOrch = makeOrchestrator({
+      runtimeRegistry: makeRuntimeRegistry([
+        {
+          identity: { canonicalId: 'relay-peer', fingerprint: 'relay-peer', aliases: [] },
+          username: 'relay',
+          capabilities: ['fs', 'exec'],
+          reachability: [{ kind: 'reverse-relay' }],
+          metadata: {},
+        },
+      ]),
+      remoteSessionBroker: {
+        async openSession(selector, opts) {
+          calls.push({ selector, opts })
+          if (opts.intent === 'files') {
+            return { entries: [{ name: 'hello.txt', kind: 'file' }], content: 'hello world' }
+          }
+          return { output: 'automation ok', exitCode: 0 }
+        },
+      },
+    })
+
+    const files = await registryOrch.browseRemoteFiles('relay-peer', '/workspace')
+    const content = await registryOrch.readRemoteFile('relay-peer', '/workspace/hello.txt')
+    const automation = await registryOrch.runAutomationOnPod('relay-peer', 'echo ok')
+
+    assert.deepEqual(files.entries, [{ name: 'hello.txt', kind: 'file' }])
+    assert.equal(content, 'hello world')
+    assert.equal(automation.output, 'automation ok')
+    assert.equal(calls[0].opts.operation, 'list')
+    assert.equal(calls[1].opts.operation, 'read')
+    assert.equal(calls[2].opts.intent, 'automation')
+  })
+
   // -- drainPod -------------------------------------------------------------
 
   it('drainPod disconnects peer and returns success', async () => {
@@ -491,6 +585,34 @@ describe('MeshOrchestrator', () => {
     assert.ok(remote)
     assert.equal(remote.cpu, 2)
     assert.equal(remote.activeTasks, 3)
+  })
+
+  it('execOnPod uses the remote session broker for runtime registry peers', async () => {
+    let called = null
+    const registryOrch = makeOrchestrator({
+      runtimeRegistry: makeRuntimeRegistry([
+        {
+          identity: { canonicalId: 'relay-peer', fingerprint: 'relay-peer', aliases: [] },
+          username: 'relay-peer',
+          capabilities: ['exec'],
+          reachability: [{ kind: 'reverse-relay' }],
+          metadata: { status: 'online' },
+        },
+      ]),
+      remoteSessionBroker: {
+        openSession: async (selector, opts) => {
+          called = { selector, opts }
+          return { output: 'relay exec', exitCode: 0 }
+        },
+      },
+    })
+
+    const result = await registryOrch.execOnPod('relay-peer', 'printf hello')
+    assert.equal(result.output, 'relay exec')
+    assert.deepEqual(called, {
+      selector: 'relay-peer',
+      opts: { intent: 'exec', command: 'printf hello' },
+    })
   })
 
   // -- exposePod / routeService ---------------------------------------------

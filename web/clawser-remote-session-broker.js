@@ -40,17 +40,38 @@ function connectionKindForRoute(route) {
   return 'unknown'
 }
 
+export class RemoteSessionError extends Error {
+  constructor(message, {
+    code = 'remote-session-error',
+    layer = 'session-broker',
+    selector = null,
+    intent = null,
+    details = null,
+  } = {}) {
+    super(message)
+    this.name = 'RemoteSessionError'
+    this.code = code
+    this.layer = layer
+    this.selector = selector
+    this.intent = intent
+    this.details = details
+  }
+}
+
 export class RemoteSessionBroker {
   #registry
   #nameResolver
   #connectors
   #policyAdapter
+  #listeners
+  #auditRecorder
 
   constructor({
     runtimeRegistry,
     nameResolver = null,
     connectors = {},
     policyAdapter = null,
+    auditRecorder = null,
   } = {}) {
     if (!runtimeRegistry) {
       throw new Error('runtimeRegistry is required')
@@ -59,6 +80,23 @@ export class RemoteSessionBroker {
     this.#nameResolver = nameResolver
     this.#connectors = { ...connectors }
     this.#policyAdapter = policyAdapter
+    this.#listeners = new Map()
+    this.#auditRecorder = auditRecorder
+  }
+
+  on(event, callback) {
+    if (!this.#listeners.has(event)) {
+      this.#listeners.set(event, new Set())
+    }
+    this.#listeners.get(event).add(callback)
+  }
+
+  off(event, callback) {
+    this.#listeners.get(event)?.delete(callback)
+  }
+
+  listTargets(filter = {}) {
+    return this.#registry.listPeers(filter)
   }
 
   resolveTarget(selector, {
@@ -69,23 +107,51 @@ export class RemoteSessionBroker {
     const target = createSessionTarget({ selector, intent, requiredCapabilities, preferDirect })
     const descriptor = this.#resolveDescriptor(target.selector)
     if (!descriptor) {
-      throw new Error(`Unknown remote target: ${target.selector}`)
+      throw new RemoteSessionError(`Unknown remote target: ${target.selector}`, {
+        code: 'unknown-target',
+        layer: 'discovery',
+        selector: target.selector,
+        intent: target.intent,
+      })
     }
     if (!includesAllCapabilities(descriptor, target.requiredCapabilities)) {
-      throw new Error(
-        `Target ${target.selector} does not advertise required capabilities: ${target.requiredCapabilities.join(', ')}`
+      throw new RemoteSessionError(
+        `Target ${target.selector} does not advertise required capabilities: ${target.requiredCapabilities.join(', ')}`,
+        {
+          code: 'capability-mismatch',
+          layer: 'capabilities',
+          selector: target.selector,
+          intent: target.intent,
+          details: { requiredCapabilities: [...target.requiredCapabilities] },
+        }
       )
     }
     if (!intentIsSupported(descriptor, target.intent)) {
-      throw new Error(
-        `Target ${target.selector} does not support ${target.intent} sessions on ${descriptor.peerType}/${descriptor.shellBackend}`
+      throw new RemoteSessionError(
+        `Target ${target.selector} does not support ${target.intent} sessions on ${descriptor.peerType}/${descriptor.shellBackend}`,
+        {
+          code: 'unsupported-intent',
+          layer: 'session-backend',
+          selector: target.selector,
+          intent: target.intent,
+          details: {
+            peerType: descriptor.peerType,
+            shellBackend: descriptor.shellBackend,
+          },
+        }
       )
     }
 
     if (this.#policyAdapter?.checkTargetAccess) {
       const decision = this.#policyAdapter.checkTargetAccess(descriptor, target)
       if (!decision?.allowed) {
-        throw new Error(decision?.reason || 'Target denied by policy adapter')
+        throw new RemoteSessionError(decision?.reason || 'Target denied by policy adapter', {
+          code: 'policy-denied',
+          layer: decision?.layer || 'policy-adapter',
+          selector: target.selector,
+          intent: target.intent,
+          details: { decision },
+        })
       }
     }
 
@@ -99,7 +165,12 @@ export class RemoteSessionBroker {
       ranked = this.#policyAdapter.rankRoutes(descriptor, target, ranked)
     }
     if (!ranked.length) {
-      throw new Error(`No viable routes for ${target.selector}`)
+      throw new RemoteSessionError(`No viable routes for ${target.selector}`, {
+        code: 'no-routes',
+        layer: 'routing',
+        selector: target.selector,
+        intent: target.intent,
+      })
     }
     return {
       target,
@@ -123,15 +194,67 @@ export class RemoteSessionBroker {
 
   async openSession(selector, opts = {}) {
     const selection = this.explainRoute(selector, opts)
+    this.#emit('route:selected', selection)
+    await this.#auditRecorder?.record('remote_route_selected', {
+      selector: selection.target.selector,
+      intent: selection.target.intent,
+      route: selection.route,
+      descriptor: {
+        peerType: selection.descriptor.peerType,
+        shellBackend: selection.descriptor.shellBackend,
+        fingerprint: selection.descriptor.identity.fingerprint,
+      },
+    })
     const connector = this.#connectorForRoute(selection.route)
     if (!connector) {
+      this.#registry.recordRouteOutcome(selection.descriptor, selection.route, {
+        status: 'success',
+        layer: 'broker',
+      })
       return selection
     }
 
-    return connector({
-      ...selection,
-      intent: normalizeIntent(selection.target.intent),
-    })
+    try {
+      const result = await connector({
+        ...selection,
+        intent: normalizeIntent(selection.target.intent),
+        sessionOptions: { ...opts, intent: normalizeIntent(selection.target.intent) },
+      })
+      this.#registry.recordRouteOutcome(selection.descriptor, selection.route, {
+        status: 'success',
+        layer: 'connector',
+      })
+      this.#emit('session:opened', { selection, result })
+      await this.#auditRecorder?.record('remote_session_opened', {
+        selector: selection.target.selector,
+        intent: selection.target.intent,
+        route: selection.route,
+      })
+      return result
+    } catch (error) {
+      this.#registry.recordRouteOutcome(selection.descriptor, selection.route, {
+        status: 'failure',
+        layer: 'connector',
+        reason: error?.message || 'connector failure',
+      })
+      this.#emit('session:failed', { selection, error })
+      await this.#auditRecorder?.record('remote_session_failed', {
+        selector: selection.target.selector,
+        intent: selection.target.intent,
+        route: selection.route,
+        error: error?.message || String(error),
+      })
+      if (error instanceof RemoteSessionError) {
+        throw error
+      }
+      throw new RemoteSessionError(error?.message || 'Remote session open failed', {
+        code: 'connector-failed',
+        layer: 'connector',
+        selector: selection.target.selector,
+        intent: selection.target.intent,
+        details: { cause: error },
+      })
+    }
   }
 
   #resolveDescriptor(selector) {
@@ -171,6 +294,14 @@ export class RemoteSessionBroker {
         return this.#connectors.connectMeshRuntime || null
       default:
         return null
+    }
+  }
+
+  #emit(event, payload) {
+    const listeners = this.#listeners.get(event)
+    if (!listeners) return
+    for (const callback of listeners) {
+      callback(payload)
     }
   }
 }

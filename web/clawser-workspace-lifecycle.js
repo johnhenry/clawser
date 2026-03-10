@@ -94,6 +94,8 @@ import { ModelManager, ModelRegistry, ModelCache } from './clawser-models.js';
 import { ModelListTool, ModelPullTool, ModelRemoveTool, ModelStatusTool, TranscribeTool, SpeakTool, CaptionTool, OcrTool, DetectObjectsTool, ClassifyImageTool, ClassifyTextTool } from './clawser-model-tools.js';
 import { createConfiguredShell } from './clawser-shell-factory.js';
 import { VirtualTerminalManager } from './clawser-wsh-virtual-terminal-manager.js';
+import { RemoteMountManager } from './clawser-remote-mounts.js';
+import { BrowserVmConsoleRegistry, InMemoryVmConsole } from './clawser-vm-console.js';
 
 // ── Mesh agent bridge helper ─────────────────────────────────────
 /**
@@ -139,6 +141,7 @@ async function syncRoutinesToIDB() {
 export { syncRoutinesToIDB };
 
 let _reverseVirtualTerminalManager = null;
+let _browserVmConsoleRegistry = null;
 
 export function getReverseVirtualTerminalManager() {
   return _reverseVirtualTerminalManager;
@@ -149,6 +152,11 @@ async function refreshReverseVirtualTerminalManager() {
     await _reverseVirtualTerminalManager.close();
   }
 
+  if (!_browserVmConsoleRegistry) {
+    _browserVmConsoleRegistry = new BrowserVmConsoleRegistry();
+    _browserVmConsoleRegistry.register('default', new InMemoryVmConsole());
+  }
+
   _reverseVirtualTerminalManager = new VirtualTerminalManager({
     shellFactory: async () => createConfiguredShell({
       workspaceFs: state.workspaceFs,
@@ -156,6 +164,7 @@ async function refreshReverseVirtualTerminalManager() {
       getRoutineEngine: () => state.routineEngine,
       getModelManager: () => state.modelManager,
     }),
+    vmConsoleFactory: async ({ peerContext }) => _browserVmConsoleRegistry.createShell(peerContext?.vmRuntimeId || 'default'),
   });
 
   try {
@@ -252,6 +261,8 @@ async function initMeshSubsystem() {
     state.streamMultiplexer = result.streamMultiplexer;
     state.fileTransfer = result.fileTransfer;
     state.serviceDirectory = result.serviceDirectory;
+    state.serviceAdvertiser = result.serviceAdvertiser;
+    state.serviceBrowser = result.serviceBrowser;
     state.syncEngine = result.syncEngine;
     state.resourceRegistry = result.resourceRegistry;
     state.meshMarketplace = result.meshMarketplace;
@@ -264,6 +275,14 @@ async function initMeshSubsystem() {
     state.appRegistry = result.appRegistry;
     state.appStore = result.appStore;
     state.orchestrator = result.orchestrator;
+    state.remoteRuntimeRegistry = result.remoteRuntimeRegistry || state.pod.remoteRuntimeRegistry;
+    state.remoteSessionBroker = result.remoteSessionBroker || state.pod.remoteSessionBroker;
+    state.remoteMountManager = new RemoteMountManager({
+      mountableFs: state.workspaceFs,
+      runtimeRegistry: state.remoteRuntimeRegistry,
+      sessionBroker: state.remoteSessionBroker,
+      auditRecorder: state.pod.remoteAuditRecorder,
+    });
 
     // Register mesh tools if tool registry is available
     if (state.browserTools) {
@@ -291,6 +310,8 @@ async function initMeshSubsystem() {
     state.streamMultiplexer = null;
     state.fileTransfer = null;
     state.serviceDirectory = null;
+    state.serviceAdvertiser = null;
+    state.serviceBrowser = null;
     state.syncEngine = null;
     state.resourceRegistry = null;
     state.meshMarketplace = null;
@@ -303,6 +324,9 @@ async function initMeshSubsystem() {
     state.appRegistry = null;
     state.appStore = null;
     state.orchestrator = null;
+    state.remoteRuntimeRegistry = null;
+    state.remoteSessionBroker = null;
+    state.remoteMountManager = null;
   }
 }
 

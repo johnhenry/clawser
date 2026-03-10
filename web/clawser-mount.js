@@ -41,6 +41,25 @@ export class MountableFs extends WorkspaceFs {
       handle,
       readOnly: opts.readOnly || false,
       kind: handle.kind || 'directory',
+      source: 'local',
+      metadata: opts.metadata || null,
+    });
+  }
+
+  mountAdapter(mountPoint, adapter, opts = {}) {
+    const normalized = this.#normalizeMountPath(mountPoint);
+    if (!normalized.startsWith('/mnt/')) {
+      throw new Error('Mount points must be under /mnt/');
+    }
+    if (!adapter || typeof adapter !== 'object') {
+      throw new Error('adapter is required');
+    }
+    this.#mounts.set(normalized, {
+      handle: adapter,
+      readOnly: opts.readOnly || adapter.readOnly || false,
+      kind: 'remote',
+      source: 'remote',
+      metadata: adapter.metadata || opts.metadata || null,
     });
   }
 
@@ -114,6 +133,8 @@ export class MountableFs extends WorkspaceFs {
       name: entry.handle.name || path.split('/').pop(),
       kind: entry.kind,
       readOnly: entry.readOnly,
+      source: entry.source || 'local',
+      metadata: entry.metadata || null,
     }));
   }
 
@@ -176,6 +197,9 @@ export class MountableFs extends WorkspaceFs {
     const resolved = this.resolveMount(path);
     if (resolved.type !== 'mount') return null;
     const handle = resolved.handle;
+    if (resolved.kind === 'remote') {
+      return handle.readFile?.(resolved.relative) ?? null;
+    }
     if (resolved.kind === 'file' || handle.kind === 'file') {
       const file = await handle.getFile();
       return file.text();
@@ -206,6 +230,10 @@ export class MountableFs extends WorkspaceFs {
       throw new Error('Mount is read-only');
     }
     const handle = resolved.handle;
+    if (resolved.kind === 'remote') {
+      await handle.writeFile?.(resolved.relative, content);
+      return;
+    }
     const parts = resolved.relative.split('/').filter(Boolean);
     let current = handle;
     for (let i = 0; i < parts.length - 1; i++) {
@@ -227,6 +255,9 @@ export class MountableFs extends WorkspaceFs {
     const resolved = this.resolveMount(path);
     if (resolved.type !== 'mount') return null;
     const handle = resolved.handle;
+    if (resolved.kind === 'remote') {
+      return handle.listDirectory?.(resolved.relative) ?? [];
+    }
     // Navigate to subdirectory if needed
     const parts = resolved.relative.split('/').filter(Boolean);
     let dir = handle;
@@ -253,6 +284,9 @@ export class MountableFs extends WorkspaceFs {
   async buildIndex(path, opts = {}) {
     const resolved = this.resolveMount(path);
     if (resolved.type !== 'mount') return '';
+    if (resolved.kind === 'remote') {
+      return this.#buildRemoteIndex(resolved.handle, resolved.relative, opts.maxDepth ?? Infinity, 0);
+    }
     const maxDepth = opts.maxDepth ?? Infinity;
     const lines = [];
     await this.#walkTree(resolved.handle, lines, 0, maxDepth);
@@ -286,6 +320,25 @@ export class MountableFs extends WorkspaceFs {
         lines.push(`${indent}${name}`);
       }
     }
+  }
+
+  async #buildRemoteIndex(adapter, relativePath, maxDepth, depth) {
+    if (!adapter?.listDirectory || depth > maxDepth) return '';
+    const entries = await adapter.listDirectory(relativePath);
+    const lines = [];
+    for (const entry of entries || []) {
+      lines.push(`${'  '.repeat(depth)}${entry.kind === 'directory' ? '📁' : '📄'} ${entry.name}`);
+      if (entry.kind === 'directory' && depth < maxDepth) {
+        const child = await this.#buildRemoteIndex(
+          adapter,
+          [relativePath, entry.name].filter(Boolean).join('/'),
+          maxDepth,
+          depth + 1,
+        );
+        if (child) lines.push(child);
+      }
+    }
+    return lines.join('\n');
   }
 
   // ── Mount Presets ──────────────────────────────────────────────

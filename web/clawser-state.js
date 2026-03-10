@@ -175,6 +175,8 @@ export const state = {
     streamMultiplexer: null,
     fileTransfer: null,
     serviceDirectory: null,
+    serviceAdvertiser: null,
+    serviceBrowser: null,
     syncEngine: null,
     modelManager: null,
     resourceRegistry: null,
@@ -188,6 +190,8 @@ export const state = {
     appRegistry: null,
     appStore: null,
     orchestrator: null,
+    remoteRuntimeRegistry: null,
+    remoteSessionBroker: null,
   },
 
   /** Feature module singletons (set by clawser-app.js) */
@@ -205,6 +209,7 @@ export const state = {
     skillRegistryClient: null,
     terminalSessions: null,
     agentStorage: null,
+    remoteMountManager: null,
   },
 
   /** Per-conversation session state */
@@ -236,8 +241,8 @@ export const state = {
 // ── Backward-compatible flat aliases (deprecated — use state.ui.X, state.services.X, etc.) ──
 for (const [ns, fields] of [
   ['ui', ['isSending', 'currentRoute', 'switchingViaRouter', 'slashSelectedIdx', 'pendingImportBlob', 'cmdSelectedSpec']],
-  ['services', ['agent', 'providers', 'browserTools', 'mcpManager', 'vault', 'workspaceFs', 'responseCache', 'shell', 'skillRegistry', 'intentRouter', 'inputSanitizer', 'toolCallValidator', 'safetyPipeline', 'providerHealth', 'modelRouter', 'stuckDetector', 'selfRepairEngine', 'undoManager', 'heartbeatRunner', 'authProfileManager', 'metricsCollector', 'ringBufferLog', 'daemonController', 'routineEngine', 'oauthManager', 'identityManager', 'peerNode', 'swarmCoordinator', 'modelManager', 'pod', 'discoveryManager', 'transportNegotiator', 'auditChain', 'streamMultiplexer', 'fileTransfer', 'serviceDirectory', 'syncEngine', 'checkpointIDB', 'resourceRegistry', 'meshMarketplace', 'quotaManager', 'quotaEnforcer', 'paymentRouter', 'consensusManager', 'relayClient', 'nameResolver', 'appRegistry', 'appStore', 'orchestrator']],
-  ['features', ['toolBuilder', 'channelManager', 'delegateManager', 'gitBehavior', 'gitMemory', 'automationManager', 'sandboxManager', 'peripheralManager', 'pairingManager', 'goalManager', 'skillRegistryClient', 'terminalSessions', 'agentStorage']],
+  ['services', ['agent', 'providers', 'browserTools', 'mcpManager', 'vault', 'workspaceFs', 'responseCache', 'shell', 'skillRegistry', 'intentRouter', 'inputSanitizer', 'toolCallValidator', 'safetyPipeline', 'providerHealth', 'modelRouter', 'stuckDetector', 'selfRepairEngine', 'undoManager', 'heartbeatRunner', 'authProfileManager', 'metricsCollector', 'ringBufferLog', 'daemonController', 'routineEngine', 'oauthManager', 'identityManager', 'peerNode', 'swarmCoordinator', 'modelManager', 'pod', 'discoveryManager', 'transportNegotiator', 'auditChain', 'streamMultiplexer', 'fileTransfer', 'serviceDirectory', 'serviceAdvertiser', 'serviceBrowser', 'syncEngine', 'checkpointIDB', 'resourceRegistry', 'meshMarketplace', 'quotaManager', 'quotaEnforcer', 'paymentRouter', 'consensusManager', 'relayClient', 'nameResolver', 'appRegistry', 'appStore', 'orchestrator', 'remoteRuntimeRegistry', 'remoteSessionBroker']],
+  ['features', ['toolBuilder', 'channelManager', 'delegateManager', 'gitBehavior', 'gitMemory', 'automationManager', 'sandboxManager', 'peripheralManager', 'pairingManager', 'goalManager', 'skillRegistryClient', 'terminalSessions', 'agentStorage', 'remoteMountManager']],
   ['session', ['sessionCost', 'activeConversationId', 'activeConversationName', 'activeSkillPrompts', 'toolCallLog', 'eventLog', 'eventCount', 'pendingInlineTools']],
 ]) {
   for (const field of fields) {
