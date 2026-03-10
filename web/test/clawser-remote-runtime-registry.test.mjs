@@ -171,6 +171,50 @@ describe('RemoteRuntimeRegistry', () => {
     assert.equal(updated.lastOutcome, 'failure')
     assert.equal(updated.lastOutcomeReason, 'relay timeout')
   })
+
+  it('demotes repeatedly failing routes during reachability ranking', () => {
+    const registry = new RemoteRuntimeRegistry()
+    registry.ingestDescriptor(createRemotePeerDescriptor({
+      identity: createRemoteIdentity({ canonicalId: 'host:builder' }),
+      username: 'builder',
+      peerType: 'host',
+      shellBackend: 'pty',
+      capabilities: ['shell', 'exec'],
+      reachability: [
+        createReachabilityDescriptor({
+          kind: 'direct-host',
+          source: 'direct-bookmark',
+          endpoint: 'builder.local:4422',
+          capabilities: ['shell', 'exec'],
+        }),
+        createReachabilityDescriptor({
+          kind: 'reverse-relay',
+          source: 'wsh-relay',
+          relayHost: 'relay.example',
+          relayPort: 4422,
+          capabilities: ['shell', 'exec'],
+        }),
+      ],
+      sources: ['direct-bookmark', 'wsh-relay'],
+    }))
+
+    let [directRoute] = registry.computeReachability('host:builder', { intent: 'terminal' })
+    assert.equal(directRoute.kind, 'direct-host')
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      registry.recordRouteOutcome('host:builder', directRoute, {
+        status: 'failure',
+        reason: 'connection reset',
+        layer: 'connector',
+        timestamp: 100 + attempt,
+      })
+      directRoute = registry.resolvePeer('host:builder').reachability.find((route) => route.kind === 'direct-host')
+    }
+
+    const ranked = registry.computeReachability('host:builder', { intent: 'terminal' })
+    assert.equal(directRoute.health, 'offline')
+    assert.equal(ranked[0].kind, 'reverse-relay')
+  })
 })
 
 describe('RemoteSessionBroker', () => {

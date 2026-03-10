@@ -325,14 +325,19 @@ export class RemoteRuntimeRegistry {
     const nextRoutes = descriptor.reachability.map((candidate) => {
       if (routeKey(candidate) !== routeKey(route)) return candidate
       const failures = candidate.failures || 0
+      const nextFailures = status === 'success' ? 0 : failures + 1
       return {
         ...candidate,
-        health: status === 'success' ? 'healthy' : 'degraded',
+        health: status === 'success'
+          ? 'healthy'
+          : nextFailures >= 3
+            ? 'offline'
+            : 'degraded',
         lastSeen: timestamp,
         lastOutcome: status,
         lastOutcomeReason: reason,
         lastOutcomeLayer: layer,
-        failures: status === 'success' ? failures : failures + 1,
+        failures: nextFailures,
       }
     })
 
