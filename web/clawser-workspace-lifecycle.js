@@ -309,6 +309,8 @@ function renderRemoteRuntimeWorkspacePanel() {
     return;
   }
 
+  bindRemoteRuntimePanelEvents();
+
   const panelState = getRemoteRuntimePanelState();
   container.innerHTML = renderRemoteRuntimePanel(state.remoteRuntimeRegistry, panelState);
   initRemoteRuntimePanelListeners({
@@ -325,6 +327,45 @@ function renderRemoteRuntimeWorkspacePanel() {
   }
 
   updatePeerBadge(state.peerNode);
+}
+
+function bindRemoteRuntimePanelEvents() {
+  if (state.remoteSessionBroker && !state.remoteSessionBroker._remoteRuntimeUiBound) {
+    state.remoteSessionBroker._remoteRuntimeUiBound = true;
+    state.remoteSessionBroker.on('route:selected', (selection) => {
+      const panelState = getRemoteRuntimePanelState();
+      if (panelState.activeSelector === selection?.target?.selector) {
+        panelState.routeExplanation = {
+          ...selection,
+          connectionKind: selection.route?.kind || 'unknown',
+          reason: `${selection.descriptor?.peerType || 'unknown'}/${selection.descriptor?.shellBackend || 'unknown'} via ${selection.route?.kind || 'unknown'}`,
+        };
+      }
+      if (isPanelRendered('remote')) {
+        renderRemoteRuntimeWorkspacePanel();
+      }
+    });
+    state.remoteSessionBroker.on('session:failed', ({ selection, error }) => {
+      const panelState = getRemoteRuntimePanelState();
+      if (panelState.activeSelector === selection?.target?.selector) {
+        panelState.error = error?.message || String(error);
+      }
+      if (isPanelRendered('remote')) {
+        renderRemoteRuntimeWorkspacePanel();
+      }
+    });
+  }
+
+  if (state.serviceBrowser && !state.serviceBrowser._remoteRuntimeUiBound) {
+    state.serviceBrowser._remoteRuntimeUiBound = true;
+    const refresh = () => {
+      if (isPanelRendered('remote')) {
+        renderRemoteRuntimeWorkspacePanel();
+      }
+    };
+    state.serviceBrowser.on('discovered', refresh);
+    state.serviceBrowser.on('lost', refresh);
+  }
 }
 
 // ── Routine → IndexedDB sync (background execution) ─────────────
