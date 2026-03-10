@@ -13,6 +13,7 @@
 import { $, esc, state, lsKey } from './clawser-state.js'
 import { modal } from './clawser-modal.js'
 import { addMsg, addErrorMsg } from './clawser-ui-chat.js'
+import { supportHintsForRuntime } from './clawser-remote-runtime-types.js'
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -61,6 +62,16 @@ function peerDisplayId(peer) {
     || peer.identity?.canonicalId
     || peer.username
     || ''
+}
+
+function sessionSupportSummary(peer) {
+  const hints = supportHintsForRuntime(peer)
+  const flags = []
+  if (peer?.supportsAttach ?? hints.supportsAttach) flags.push('attach')
+  if (peer?.supportsReplay ?? hints.supportsReplay) flags.push(`replay:${peer?.metadata?.replayMode || hints.replayMode}`)
+  if (peer?.supportsEcho ?? hints.supportsEcho) flags.push('echo')
+  if (peer?.supportsTermSync ?? hints.supportsTermSync) flags.push('sync')
+  return flags.length ? flags.join(', ') : 'none'
 }
 
 // ── Remote Chat Panel ───────────────────────────────────────────
@@ -662,6 +673,7 @@ export function renderRemoteRuntimePanel(runtimeRegistry, {
               <span class="rc-runtime-last-seen">${esc(peerLastSeen(peer) || sources || '--')}</span>
             </div>
           </div>
+          <div class="rc-runtime-session-hints">${esc(sessionSupportSummary(peer))}</div>
           <div class="rc-runtime-capabilities">
             ${(peer.capabilities || []).map((cap) => `<span class="rc-svc-type-badge">${esc(cap)}</span>`).join('') || '<span class="rc-empty">No capabilities</span>'}
           </div>

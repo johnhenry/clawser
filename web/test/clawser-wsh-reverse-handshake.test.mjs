@@ -72,6 +72,27 @@ describe('wsh reverse handshake protocol', () => {
     assert.equal(reject.type, MSG.REVERSE_REJECT);
   });
 
+  it('supports non-virtual-shell reverse peers with reduced session hints', () => {
+    const register = reverseRegister({
+      username: 'vm',
+      capabilities: ['shell'],
+      peerType: 'vm-guest',
+      shellBackend: 'vm-console',
+      supportsAttach: true,
+      supportsReplay: true,
+      supportsEcho: false,
+      supportsTermSync: false,
+      publicKey: new Uint8Array([9, 8, 7]),
+    });
+
+    assert.equal(register.peer_type, 'vm-guest');
+    assert.equal(register.shell_backend, 'vm-console');
+    assert.equal(register.supports_attach, true);
+    assert.equal(register.supports_replay, true);
+    assert.equal(register.supports_echo, false);
+    assert.equal(register.supports_term_sync, false);
+  });
+
   it('WshClient treats virtual-session relay messages as relay-forwardable', () => {
     const client = new WshClient();
 

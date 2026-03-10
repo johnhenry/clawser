@@ -15,6 +15,7 @@ import {
   shortFingerprint,
 } from './packages-wsh.js';
 import { parseFlags } from './clawser-cli.js';
+import { supportHintsForRuntime } from './clawser-remote-runtime-types.js';
 import { getWshConnections } from './clawser-wsh-tools.js';
 
 // ── Flag Spec ─────────────────────────────────────────────────────
@@ -30,6 +31,7 @@ const FLAG_SPEC = {
   transport: 'value',
   type: 'value',
   backend: 'value',
+  'vm-runtime': 'value',
   capability: 'value',
   verbose: true,
   json: true,
@@ -76,6 +78,7 @@ Options:
   -j, --json                       Emit JSON for machine consumption
       --type <TYPE>                Filter peers by type
       --backend <BACKEND>          Filter peers by shell backend
+      --vm-runtime <ID>            VM runtime id when exposing a vm-console peer
       --capability <CAP>           Filter peers by capability
   -v, --verbose                    Verbose output
 `;
@@ -407,18 +410,32 @@ export function registerWshCli(registry, getAgent, getShell) {
         tools: hasExpose ? !!flags['expose-tools'] : true,
         fs: hasExpose ? !!flags['expose-fs'] : true,
       };
+      const peerType = flags.type || 'browser-shell';
+      const shellBackend = flags.backend || (expose.shell ? 'virtual-shell' : 'exec-only');
+      const vmRuntimeId = flags['vm-runtime'] || null;
+      const supportHints = supportHintsForRuntime({ peerType, shellBackend });
 
       const sessionId = await client.connectReverse(url, {
         username: parsed.user || 'browser',
         keyPair,
         expose,
-        peerType: flags.type || 'browser-shell',
-        shellBackend: flags.backend || (expose.shell ? 'virtual-shell' : 'exec-only'),
+        peerType,
+        shellBackend,
+        supportsAttach: supportHints.supportsAttach,
+        supportsReplay: supportHints.supportsReplay,
+        supportsEcho: supportHints.supportsEcho,
+        supportsTermSync: supportHints.supportsTermSync,
       });
       client.__clawserExposeCapabilities = { ...expose };
       client.__clawserPeerMetadata = {
-        peerType: flags.type || 'browser-shell',
-        shellBackend: flags.backend || (expose.shell ? 'virtual-shell' : 'exec-only'),
+        peerType,
+        shellBackend,
+        replayMode: supportHints.replayMode,
+        supportsAttach: supportHints.supportsAttach,
+        supportsReplay: supportHints.supportsReplay,
+        supportsEcho: supportHints.supportsEcho,
+        supportsTermSync: supportHints.supportsTermSync,
+        vmRuntimeId,
       };
 
       // Wire incoming handler, chaining with any existing handler

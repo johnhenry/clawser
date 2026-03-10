@@ -32,6 +32,38 @@ export const REMOTE_SESSION_INTENTS = Object.freeze([
   'automation',
 ])
 
+export function supportHintsForRuntime({
+  peerType = 'host',
+  shellBackend = 'pty',
+  supportsAttach = null,
+  supportsReplay = null,
+  supportsEcho = null,
+  supportsTermSync = null,
+} = {}) {
+  const normalizedBackend = normalizeShellBackend(shellBackend)
+  const normalizedPeerType = normalizePeerType(peerType)
+
+  let replayMode = 'unsupported'
+  if (normalizedBackend === 'pty') replayMode = 'lossless'
+  if (normalizedBackend === 'virtual-shell') replayMode = 'stateful'
+  if (normalizedBackend === 'vm-console') replayMode = 'partial'
+
+  const defaultAttach = normalizedBackend !== 'exec-only'
+  const defaultReplay = replayMode !== 'unsupported'
+  const defaultEcho = normalizedBackend === 'virtual-shell'
+  const defaultTermSync = normalizedBackend === 'virtual-shell'
+
+  return {
+    peerType: normalizedPeerType,
+    shellBackend: normalizedBackend,
+    supportsAttach: supportsAttach ?? defaultAttach,
+    supportsReplay: supportsReplay ?? defaultReplay,
+    supportsEcho: supportsEcho ?? defaultEcho,
+    supportsTermSync: supportsTermSync ?? defaultTermSync,
+    replayMode,
+  }
+}
+
 function hexToBytes(hex) {
   if (!HEX_FINGERPRINT.test(hex) || hex.length % 2 !== 0) return null
   const bytes = new Uint8Array(hex.length / 2)
@@ -133,10 +165,10 @@ export function createRemotePeerDescriptor({
   peerType = 'host',
   shellBackend = 'pty',
   capabilities = [],
-  supportsAttach = false,
-  supportsReplay = false,
-  supportsEcho = false,
-  supportsTermSync = false,
+  supportsAttach = null,
+  supportsReplay = null,
+  supportsEcho = null,
+  supportsTermSync = null,
   reachability = [],
   sources = [],
   conflicts = [],
@@ -149,20 +181,32 @@ export function createRemotePeerDescriptor({
     throw new Error('username is required')
   }
 
+  const supportHints = supportHintsForRuntime({
+    peerType,
+    shellBackend,
+    supportsAttach,
+    supportsReplay,
+    supportsEcho,
+    supportsTermSync,
+  })
+
   return {
     identity: createRemoteIdentity(identity),
     username,
-    peerType: normalizePeerType(peerType),
-    shellBackend: normalizeShellBackend(shellBackend),
+    peerType: supportHints.peerType,
+    shellBackend: supportHints.shellBackend,
     capabilities: [...new Set((capabilities || []).filter(Boolean))],
-    supportsAttach: !!supportsAttach,
-    supportsReplay: !!supportsReplay,
-    supportsEcho: !!supportsEcho,
-    supportsTermSync: !!supportsTermSync,
+    supportsAttach: supportHints.supportsAttach,
+    supportsReplay: supportHints.supportsReplay,
+    supportsEcho: supportHints.supportsEcho,
+    supportsTermSync: supportHints.supportsTermSync,
     reachability: [...reachability],
     sources: [...new Set((sources || []).filter(Boolean))],
     conflicts: [...new Set((conflicts || []).filter(Boolean))],
-    metadata: { ...metadata },
+    metadata: {
+      replayMode: supportHints.replayMode,
+      ...metadata,
+    },
   }
 }
 

@@ -19,6 +19,7 @@ import {
   reverseAccept,
   reverseReject,
 } from './packages-wsh.js';
+import { supportHintsForRuntime } from './clawser-remote-runtime-types.js';
 
 // ── Kernel bridge integration (optional) ────────────────────────────
 /** @type {import('./clawser-kernel-wsh-bridge.js').KernelWshBridge|null} */
@@ -58,11 +59,15 @@ function getParticipantCapabilities(client) {
 }
 
 function getParticipantMetadata(client) {
-  return client?.__clawserPeerMetadata
+  const metadata = client?.__clawserPeerMetadata
     || {
       peerType: 'browser-shell',
       shellBackend: 'virtual-shell',
     };
+  return {
+    ...metadata,
+    ...supportHintsForRuntime(metadata),
+  };
 }
 
 function capabilityList(capabilities) {
@@ -476,6 +481,7 @@ export async function handleReverseConnect(msg) {
     capabilities,
     peerType: metadata.peerType,
     shellBackend: metadata.shellBackend,
+    vmRuntimeId: metadata.vmRuntimeId || null,
     tenantId,
   });
 
@@ -487,6 +493,7 @@ export async function handleReverseConnect(msg) {
       capabilities,
       peerType: metadata.peerType,
       shellBackend: metadata.shellBackend,
+      vmRuntimeId: metadata.vmRuntimeId || null,
       tenantId,
     });
   } else {
@@ -508,10 +515,10 @@ export async function handleReverseConnect(msg) {
     capabilities: capabilityList(capabilities),
     peerType: metadata.peerType || 'browser-shell',
     shellBackend: metadata.shellBackend || 'virtual-shell',
-    supportsAttach: true,
-    supportsReplay: true,
-    supportsEcho: true,
-    supportsTermSync: true,
+    supportsAttach: metadata.supportsAttach,
+    supportsReplay: metadata.supportsReplay,
+    supportsEcho: metadata.supportsEcho,
+    supportsTermSync: metadata.supportsTermSync,
   }));
 }
 

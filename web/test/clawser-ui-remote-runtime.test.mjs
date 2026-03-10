@@ -6,6 +6,7 @@ import {
   createReachabilityDescriptor,
   createRemoteIdentity,
   createRemotePeerDescriptor,
+  supportHintsForRuntime,
 } from '../clawser-remote-runtime-types.js';
 import { RemoteRuntimeRegistry } from '../clawser-remote-runtime-registry.js';
 import {
@@ -87,6 +88,7 @@ describe('renderRemoteRuntimePanel', () => {
     assert.match(html, /data-view="terminal"/);
     assert.match(html, /data-view="files"/);
     assert.match(html, /data-view="services"/);
+    assert.match(html, /replay:lossless/);
   });
 
   it('disables files and services actions when the peer does not advertise them', () => {
@@ -95,6 +97,18 @@ describe('renderRemoteRuntimePanel', () => {
     assert.match(html, /beta/);
     assert.match(html, /data-selector="browser:beta" data-view="files" disabled/);
     assert.match(html, /data-selector="browser:beta" data-view="services" disabled/);
+  });
+});
+
+describe('supportHintsForRuntime', () => {
+  it('derives partial replay for vm-console backends', () => {
+    const hints = supportHintsForRuntime({ peerType: 'vm-guest', shellBackend: 'vm-console' });
+
+    assert.equal(hints.supportsAttach, true);
+    assert.equal(hints.supportsReplay, true);
+    assert.equal(hints.supportsEcho, false);
+    assert.equal(hints.supportsTermSync, false);
+    assert.equal(hints.replayMode, 'partial');
   });
 });
 
