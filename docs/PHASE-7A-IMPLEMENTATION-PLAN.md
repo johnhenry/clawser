@@ -248,7 +248,7 @@ Status: `[~] Partial`
 - [x] Federated compute:
   - schedule against runtime descriptors, not ad hoc peer lists
   - select peers by actual execution capability/backend
-- [~] Virtual Server/service hosting:
+- [x] Virtual Server/service hosting:
   - let runtimes advertise hosted services
   - bind service browsing/routing to the same peer/runtime model
 - [x] Apps/skills deployment:

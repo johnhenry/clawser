@@ -863,7 +863,7 @@ That asymmetry is the main roadmap driver below.
 - `[x]` Attach/replay and route robustness are now uniform across the supported Phase 7A backends, with backend-specific replay modes surfaced explicitly.
 - `[~]` BrowserMesh naming, policy, and trust integration are partially landed; template/preset mapping is still open.
 - `[~]` The remote UI and CLI now consume the shared runtime model, and the support matrix is documented, but remaining duplicate surfaces are not fully closed.
-- `[~]` Gateway/service/deploy/automation/filesystem/audit convergence is underway and partly implemented, with compute routing, broker-backed Netway gateways, and safe remote-mount detachment now landed.
+- `[~]` Gateway/service/deploy/automation/filesystem/audit convergence is underway and partly implemented, with compute routing, broker-backed Netway gateways, virtual-server service advertising, and safe remote-mount detachment now landed.
 - `[~]` VM peer support exists as a browser-side `vm-console` backend and runtime scaffold, but the MVP is not yet complete.
 - `[ ]` Final readiness verification is still open.
 

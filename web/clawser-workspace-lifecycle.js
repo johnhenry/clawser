@@ -56,6 +56,7 @@ import { HeartbeatStatusTool, HeartbeatRunTool } from './clawser-heartbeat.js';
 import { registerExtensionTools, initExtensionBadge } from './clawser-extension-tools.js';
 import { initServerManager, getServerManager } from './clawser-server.js';
 import { registerServerTools } from './clawser-server-tools.js';
+import { bindServerManagerServices } from './clawser-server-services.js';
 import { renderServerList, initServerPanel } from './clawser-ui-servers.js';
 import { ClawserPod } from './clawser-pod.js';
 import { registerMeshTools } from './clawser-mesh-tools.js';
@@ -552,6 +553,19 @@ async function initMeshSubsystem() {
       sessionBroker: state.remoteSessionBroker,
       auditRecorder: state.pod.remoteAuditRecorder,
     });
+    if (state.serverServiceSyncCleanup) {
+      try { state.serverServiceSyncCleanup() } catch {}
+      state.serverServiceSyncCleanup = null
+    }
+    try {
+      const serverManager = getServerManager()
+      state.serverServiceSyncCleanup = await bindServerManagerServices({
+        serverManager,
+        serviceAdvertiser: state.serviceAdvertiser,
+      })
+    } catch (e) {
+      console.warn('[clawser] Virtual server service sync failed (non-fatal):', e.message)
+    }
 
     // Register mesh tools if tool registry is available
     if (state.browserTools) {
@@ -581,6 +595,10 @@ async function initMeshSubsystem() {
     state.serviceDirectory = null;
     state.serviceAdvertiser = null;
     state.serviceBrowser = null;
+    if (state.serverServiceSyncCleanup) {
+      try { state.serverServiceSyncCleanup() } catch {}
+      state.serverServiceSyncCleanup = null
+    }
     state.syncEngine = null;
     state.resourceRegistry = null;
     state.meshMarketplace = null;
