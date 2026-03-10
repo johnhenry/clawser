@@ -384,6 +384,51 @@ describe('RemoteSessionBroker', () => {
     assert.match(selection.reason, /relay-healthy/)
   })
 
+  it('includes health, warnings, and fallbacks in route explanations', () => {
+    const registry = new RemoteRuntimeRegistry()
+    registry.ingestDescriptor(createRemotePeerDescriptor({
+      identity: createRemoteIdentity({ canonicalId: 'host:builder' }),
+      username: 'builder',
+      peerType: 'host',
+      shellBackend: 'pty',
+      capabilities: ['shell', 'exec'],
+      reachability: [
+        createReachabilityDescriptor({
+          kind: 'direct-host',
+          source: 'direct-bookmark',
+          endpoint: 'builder.local:4422',
+          capabilities: ['shell', 'exec'],
+        }),
+        createReachabilityDescriptor({
+          kind: 'reverse-relay',
+          source: 'wsh-relay',
+          relayHost: 'relay.example',
+          relayPort: 4422,
+          capabilities: ['shell', 'exec'],
+        }),
+      ],
+      sources: ['direct-bookmark', 'wsh-relay'],
+    }))
+
+    const directRoute = registry.resolvePeer('host:builder').reachability.find((route) => route.kind === 'direct-host')
+    registry.recordRouteOutcome('host:builder', directRoute, {
+      status: 'failure',
+      reason: 'timeout',
+      layer: 'connector',
+      timestamp: 200,
+    })
+
+    const broker = new RemoteSessionBroker({ runtimeRegistry: registry })
+    const selection = broker.explainRoute('host:builder', { intent: 'terminal' })
+
+    assert.equal(selection.health.health, 'degraded')
+    assert.equal(selection.health.lastOutcomeReason, 'timeout')
+    assert.equal(selection.resumability.replayMode, 'lossless')
+    assert.match(selection.warnings.join(' '), /route degraded/)
+    assert.match(selection.warnings.join(' '), /last failure: timeout/)
+    assert.equal(selection.alternatives[0].kind, 'reverse-relay')
+  })
+
   it('raises structured errors for missing capabilities', () => {
     const registry = new RemoteRuntimeRegistry()
     registry.ingestDescriptor(createRemotePeerDescriptor({

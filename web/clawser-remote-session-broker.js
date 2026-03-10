@@ -40,6 +40,26 @@ function connectionKindForRoute(route) {
   return 'unknown'
 }
 
+function routeHealthSummary(route) {
+  return {
+    health: route?.health || 'unknown',
+    lastOutcome: route?.lastOutcome || null,
+    lastOutcomeReason: route?.lastOutcomeReason || null,
+    lastOutcomeLayer: route?.lastOutcomeLayer || null,
+    failures: Number.isFinite(route?.failures) ? route.failures : 0,
+  }
+}
+
+function sessionSupportSummary(descriptor) {
+  return {
+    attachSupported: !!descriptor?.supportsAttach,
+    replaySupported: !!descriptor?.supportsReplay,
+    replayMode: descriptor?.metadata?.replayMode || 'unsupported',
+    echoSupported: !!descriptor?.supportsEcho,
+    termSyncSupported: !!descriptor?.supportsTermSync,
+  }
+}
+
 export class RemoteSessionError extends Error {
   constructor(message, {
     code = 'remote-session-error',
@@ -185,10 +205,30 @@ export class RemoteSessionBroker {
     const policyReasons = selected.route?.policy?.reasons?.length
       ? ` (${selected.route.policy.reasons.join(', ')})`
       : ''
+    const health = routeHealthSummary(selected.route)
+    const resumability = sessionSupportSummary(selected.descriptor)
+    const warnings = []
+    if (health.health === 'degraded' || health.health === 'offline') {
+      warnings.push(`route ${health.health}`)
+    }
+    if (health.lastOutcome === 'failure' && health.lastOutcomeReason) {
+      warnings.push(`last failure: ${health.lastOutcomeReason}`)
+    }
+    if (resumability.replayMode === 'partial' || resumability.replayMode === 'unsupported') {
+      warnings.push(`replay ${resumability.replayMode}`)
+    }
     return {
       ...selected,
       connectionKind: connectionKindForRoute(selected.route),
       reason: `${selected.descriptor.peerType}/${selected.descriptor.shellBackend} via ${selected.route.kind}${policyReasons}`,
+      health,
+      resumability,
+      warnings,
+      alternatives: selected.alternatives.map((route) => ({
+        kind: route.kind,
+        connectionKind: connectionKindForRoute(route),
+        health: route.health || 'unknown',
+      })),
     }
   }
 

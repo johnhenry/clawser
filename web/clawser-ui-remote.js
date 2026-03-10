@@ -732,7 +732,12 @@ export function renderRemoteRuntimePanel(runtimeRegistry, {
             <div class="rc-runtime-route-meta">
               <span>Intent: ${esc(routeExplanation.target?.intent || '--')}</span>
               <span>Capabilities: ${esc((routeExplanation.descriptor?.capabilities || []).join(', ') || '--')}</span>
+              <span>Health: ${esc(routeExplanation.health?.health || routeExplanation.route?.health || '--')}</span>
+              <span>Replay: ${esc(routeExplanation.resumability?.replayMode || routeExplanation.descriptor?.metadata?.replayMode || '--')}</span>
             </div>
+            ${routeExplanation.health?.lastOutcomeReason ? `<div class="rc-runtime-route-warning">Last failure: ${esc(routeExplanation.health.lastOutcomeReason)}</div>` : ''}
+            ${routeExplanation.warnings?.length ? `<div class="rc-runtime-route-warning">${esc(routeExplanation.warnings.join(' | '))}</div>` : ''}
+            ${routeExplanation.alternatives?.length ? `<div class="rc-runtime-route-meta">Fallbacks: ${esc(routeExplanation.alternatives.map((route) => `${route.kind}:${route.health}`).join(', '))}</div>` : ''}
           </div>` : ''}
         ${detailHtml}
       </div>

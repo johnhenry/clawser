@@ -297,6 +297,14 @@ function explainRemoteRuntimeRoute(selector) {
   renderRemoteRuntimeWorkspacePanel();
 }
 
+function remotePanelIntentOptions(panelState) {
+  return panelState.activeView?.kind === 'files'
+    ? { intent: 'files', requiredCapabilities: ['fs'] }
+    : panelState.activeView?.kind === 'services'
+      ? { intent: 'service' }
+      : { intent: 'exec' };
+}
+
 function renderRemoteRuntimeWorkspacePanel() {
   const container = $('remoteContainer');
   if (!container) return;
@@ -335,11 +343,18 @@ function bindRemoteRuntimePanelEvents() {
     state.remoteSessionBroker.on('route:selected', (selection) => {
       const panelState = getRemoteRuntimePanelState();
       if (panelState.activeSelector === selection?.target?.selector) {
-        panelState.routeExplanation = {
-          ...selection,
-          connectionKind: selection.route?.kind || 'unknown',
-          reason: `${selection.descriptor?.peerType || 'unknown'}/${selection.descriptor?.shellBackend || 'unknown'} via ${selection.route?.kind || 'unknown'}`,
-        };
+        try {
+          panelState.routeExplanation = state.remoteSessionBroker.explainRoute(
+            selection.target.selector,
+            remotePanelIntentOptions(panelState),
+          );
+        } catch {
+          panelState.routeExplanation = {
+            ...selection,
+            connectionKind: selection.route?.kind || 'unknown',
+            reason: `${selection.descriptor?.peerType || 'unknown'}/${selection.descriptor?.shellBackend || 'unknown'} via ${selection.route?.kind || 'unknown'}`,
+          };
+        }
       }
       if (isPanelRendered('remote')) {
         renderRemoteRuntimeWorkspacePanel();

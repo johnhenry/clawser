@@ -78,6 +78,10 @@ describe('renderRemoteRuntimePanel', () => {
         route: { kind: 'direct-host' },
         target: { intent: 'exec' },
         descriptor: { capabilities: ['shell', 'exec', 'fs'] },
+        health: { health: 'degraded', lastOutcomeReason: 'timeout' },
+        resumability: { replayMode: 'lossless' },
+        warnings: ['route degraded', 'last failure: timeout'],
+        alternatives: [{ kind: 'reverse-relay', health: 'healthy' }],
       },
     });
 
@@ -89,6 +93,9 @@ describe('renderRemoteRuntimePanel', () => {
     assert.match(html, /data-view="files"/);
     assert.match(html, /data-view="services"/);
     assert.match(html, /replay:lossless/);
+    assert.match(html, /Health: degraded/);
+    assert.match(html, /Last failure: timeout/);
+    assert.match(html, /Fallbacks: reverse-relay:healthy/);
   });
 
   it('disables files and services actions when the peer does not advertise them', () => {
