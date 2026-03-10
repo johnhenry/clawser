@@ -41,6 +41,28 @@ function fileIcon(type) {
   return type === 'directory' ? '\u{1F4C1}' : '\u{1F4C4}'
 }
 
+function runtimeLabel(peer) {
+  if (!peer) return ''
+  return `${peer.peerType || 'host'} / ${peer.shellBackend || 'pty'}`
+}
+
+function peerLastSeen(peer) {
+  const values = (peer?.reachability || [])
+    .map((route) => Number.isFinite(route?.lastSeen) ? route.lastSeen : null)
+    .filter((value) => value != null)
+  if (!values.length) return ''
+  return fmtTime(Math.max(...values))
+}
+
+function peerDisplayId(peer) {
+  if (!peer) return ''
+  return peer.identity?.fingerprint
+    || peer.identity?.podId
+    || peer.identity?.canonicalId
+    || peer.username
+    || ''
+}
+
 // ── Remote Chat Panel ───────────────────────────────────────────
 
 /**
@@ -550,6 +572,182 @@ export function renderServiceBrowser(serviceBrowser) {
         </table>
       </div>
     </div>`
+}
+
+export function renderRemoteServiceList(services = [], {
+  title = 'Peer Services',
+  countLabel = null,
+} = {}) {
+  const safeServices = Array.isArray(services) ? services : []
+  const types = new Set()
+  for (const svc of safeServices) {
+    if (svc?.type) types.add(svc.type)
+  }
+
+  let tableRows = ''
+  if (safeServices.length === 0) {
+    tableRows = '<tr><td colspan="5" class="rc-empty">No services advertised.</td></tr>'
+  } else {
+    for (const svc of safeServices) {
+      tableRows += `
+        <tr class="rc-svc-row" data-type="${esc(svc.type || '')}" data-pod="${esc(svc.podId || '')}">
+          <td class="rc-svc-name">${esc(svc.name || '--')}</td>
+          <td class="rc-svc-type"><span class="rc-svc-type-badge">${esc(svc.type || '--')}</span></td>
+          <td class="rc-svc-pod" title="${esc(svc.podId || '')}">${esc(truncId(svc.podId || ''))}</td>
+          <td class="rc-svc-version">${esc(svc.version || '--')}</td>
+          <td class="rc-svc-address" title="${esc(svc.address || '')}">${esc(truncId(svc.address || '', 16, 0))}</td>
+        </tr>`
+    }
+  }
+
+  return `
+    <div class="rc-panel rc-service-browser">
+      <div class="rc-panel-header">
+        <span class="rc-panel-title">${esc(title)}</span>
+        <span class="rc-panel-count">${esc(countLabel || `${safeServices.length} service${safeServices.length === 1 ? '' : 's'}`)}</span>
+      </div>
+      <div class="rc-svc-filters">
+        <select id="rcSvcTypeFilter" class="rc-select">
+          <option value="">All types</option>
+          ${[...types].sort().map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="rc-svc-table-wrap">
+        <table class="rc-svc-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Type</th>
+              <th>Peer</th>
+              <th>Version</th>
+              <th>Address</th>
+            </tr>
+          </thead>
+          <tbody id="rcSvcBody">${tableRows}</tbody>
+        </table>
+      </div>
+    </div>`
+}
+
+export function renderRemoteRuntimePanel(runtimeRegistry, {
+  activeSelector = null,
+  activeView = null,
+  routeExplanation = null,
+  activeServices = [],
+  error = null,
+} = {}) {
+  const peers = runtimeRegistry?.listPeers?.() || []
+  const activePeer = activeSelector ? runtimeRegistry?.resolvePeer?.(activeSelector) : null
+
+  let peerRows = ''
+  if (peers.length === 0) {
+    peerRows = '<div class="rc-empty">No remote runtimes discovered yet.</div>'
+  } else {
+    peerRows = peers.map((peer) => {
+      const selector = peer.identity?.canonicalId || ''
+      const active = selector === activeSelector
+      const hasExec = peer.capabilities?.includes('exec') || peer.capabilities?.includes('shell')
+      const hasFiles = peer.capabilities?.includes('fs')
+      const hasServices = ((peer.metadata?.serviceDetails || peer.metadata?.services || []).length > 0)
+      const sources = (peer.sources || []).join(', ')
+      return `
+        <div class="rc-runtime-row ${active ? 'rc-runtime-row-active' : ''}" data-selector="${esc(selector)}">
+          <div class="rc-runtime-summary">
+            <div class="rc-runtime-summary-main">
+              <span class="rc-runtime-name">${esc(peer.username || truncId(selector))}</span>
+              <span class="rc-runtime-backend">${esc(runtimeLabel(peer))}</span>
+            </div>
+            <div class="rc-runtime-summary-meta">
+              <span class="rc-runtime-id" title="${esc(peerDisplayId(peer))}">${esc(truncId(peerDisplayId(peer) || selector))}</span>
+              <span class="rc-runtime-last-seen">${esc(peerLastSeen(peer) || sources || '--')}</span>
+            </div>
+          </div>
+          <div class="rc-runtime-capabilities">
+            ${(peer.capabilities || []).map((cap) => `<span class="rc-svc-type-badge">${esc(cap)}</span>`).join('') || '<span class="rc-empty">No capabilities</span>'}
+          </div>
+          <div class="rc-runtime-actions">
+            <button class="btn-sm rc-runtime-open-btn" data-selector="${esc(selector)}" data-view="terminal" ${hasExec ? '' : 'disabled'}>Shell</button>
+            <button class="btn-sm rc-runtime-open-btn" data-selector="${esc(selector)}" data-view="files" ${hasFiles ? '' : 'disabled'}>Files</button>
+            <button class="btn-sm rc-runtime-open-btn" data-selector="${esc(selector)}" data-view="services" ${hasServices ? '' : 'disabled'}>Services</button>
+            <button class="btn-sm btn-surface2 rc-runtime-route-btn" data-selector="${esc(selector)}">Route</button>
+          </div>
+        </div>`
+    }).join('')
+  }
+
+  let detailHtml = `
+    <div class="rc-panel rc-runtime-detail rc-runtime-detail-empty">
+      <div class="rc-panel-header">
+        <span class="rc-panel-title">Remote Runtime</span>
+      </div>
+      <div class="rc-empty">Select a peer to inspect its route, shell, files, or services.</div>
+    </div>`
+
+  if (activePeer && activeView?.kind === 'terminal') {
+    detailHtml = renderRemoteTerminal(activeView.client, {
+      pubKey: peerDisplayId(activePeer),
+      remotePodId: activePeer.identity?.canonicalId,
+    })
+  } else if (activePeer && activeView?.kind === 'files') {
+    detailHtml = renderRemoteFiles(activeView.client, {
+      pubKey: peerDisplayId(activePeer),
+      remotePodId: activePeer.identity?.canonicalId,
+    })
+  } else if (activePeer && activeView?.kind === 'services') {
+    detailHtml = renderRemoteServiceList(activeServices, {
+      title: `${activePeer.username} Services`,
+    })
+  }
+
+  return `
+    <div class="rc-runtime-browser">
+      <div class="rc-panel rc-runtime-list">
+        <div class="rc-panel-header">
+          <span class="rc-panel-title">Remote Runtimes</span>
+          <span class="rc-panel-count">${peers.length} peer${peers.length === 1 ? '' : 's'}</span>
+        </div>
+        ${error ? `<div class="rc-error">${esc(error)}</div>` : ''}
+        <div class="rc-runtime-list-body">${peerRows}</div>
+      </div>
+      <div class="rc-runtime-detail-wrap">
+        ${routeExplanation ? `
+          <div class="rc-panel rc-runtime-route">
+            <div class="rc-panel-header">
+              <span class="rc-panel-title">Route</span>
+              <span class="rc-panel-count">${esc(routeExplanation.connectionKind || routeExplanation.route?.kind || '--')}</span>
+            </div>
+            <div class="rc-runtime-route-reason">${esc(routeExplanation.reason || '')}</div>
+            <div class="rc-runtime-route-meta">
+              <span>Intent: ${esc(routeExplanation.target?.intent || '--')}</span>
+              <span>Capabilities: ${esc((routeExplanation.descriptor?.capabilities || []).join(', ') || '--')}</span>
+            </div>
+          </div>` : ''}
+        ${detailHtml}
+      </div>
+    </div>`
+}
+
+export function initRemoteRuntimePanelListeners({
+  onOpenView = null,
+  onExplainRoute = null,
+} = {}) {
+  document.querySelector('.rc-runtime-list-body')?.addEventListener('click', (e) => {
+    const target = /** @type {HTMLElement} */ (e.target)
+    if (target.classList.contains('rc-runtime-open-btn')) {
+      const selector = target.dataset.selector
+      const view = target.dataset.view
+      if (selector && view) {
+        onOpenView?.(selector, view)
+      }
+      return
+    }
+    if (target.classList.contains('rc-runtime-route-btn')) {
+      const selector = target.dataset.selector
+      if (selector) {
+        onExplainRoute?.(selector)
+      }
+    }
+  })
 }
 
 /**

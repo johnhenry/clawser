@@ -65,7 +65,13 @@ import { renderSwarmPanel, initSwarmListeners } from './clawser-ui-swarms.js';
 import { renderTransferPanel, initTransferListeners } from './clawser-ui-transfers.js';
 import { renderMeshPanel, initMeshListeners } from './clawser-ui-mesh.js';
 import { renderIdentityWallet, initIdentityWalletListeners, renderContactBook, initContactBookListeners, renderConnectionPanel, initConnectionListeners, renderAuditLog, initAuditLogListeners } from './clawser-ui-peers.js';
-import { renderServiceBrowser, updatePeerBadge } from './clawser-ui-remote.js';
+import {
+  initRemoteFilesListeners,
+  initRemoteRuntimePanelListeners,
+  initRemoteTerminalListeners,
+  renderRemoteRuntimePanel,
+  updatePeerBadge,
+} from './clawser-ui-remote.js';
 
 // Phase 7: Remote gateway
 import { GatewayServer } from './clawser-gateway-server.js';
@@ -112,6 +118,213 @@ export function createMeshAgentHost(session) {
   }
   return bridgePeerAgent(session, state.agent, state.gateway,
     (level, msg) => console.log(`[mesh-agent] ${msg}`));
+}
+
+function getRemoteRuntimePanelState() {
+  if (!state.ui.remoteRuntimePanel) {
+    state.ui.remoteRuntimePanel = {
+      activeSelector: null,
+      activeView: null,
+      activeServices: [],
+      routeExplanation: null,
+      error: null,
+    };
+  }
+  return state.ui.remoteRuntimePanel;
+}
+
+function remoteRuntimePeerSession(peer) {
+  return {
+    pubKey: peer?.identity?.fingerprint || peer?.identity?.canonicalId || '',
+    remotePodId: peer?.identity?.podId || peer?.identity?.canonicalId || '',
+  };
+}
+
+function mergePeerServices(peer, discoveredServices = [], brokerServices = []) {
+  const services = new Map();
+  for (const service of discoveredServices || []) {
+    const key = service.address || `${service.podId || 'peer'}:${service.name || 'service'}`;
+    services.set(key, { ...service });
+  }
+  for (const service of brokerServices || []) {
+    const key = service.address || `${service.podId || 'peer'}:${service.name || 'service'}`;
+    services.set(key, { ...service });
+  }
+  for (const service of Object.values(peer?.metadata?.serviceDetails || {})) {
+    const key = service.address || `${service.podId || peer?.identity?.podId || 'peer'}:${service.name || 'service'}`;
+    services.set(key, { ...service });
+  }
+  return [...services.values()].sort((left, right) => (left.name || '').localeCompare(right.name || ''));
+}
+
+function createBrokerTerminalClient(selector) {
+  return {
+    async execute(command) {
+      const result = await state.remoteSessionBroker.openSession(selector, {
+        intent: 'exec',
+        command,
+      });
+      return {
+        output: result?.output ?? '',
+        exitCode: result?.exitCode ?? 0,
+        route: result?.route || null,
+      };
+    },
+  };
+}
+
+function normalizeBrokerFileRead(result) {
+  if (result?.data instanceof Uint8Array || typeof result?.data === 'string') {
+    return result;
+  }
+  if (typeof result?.content === 'string') {
+    return { data: result.content, size: result.content.length };
+  }
+  return { data: '', size: 0 };
+}
+
+function createBrokerFileClient(selector) {
+  return {
+    async listFiles(path) {
+      const result = await state.remoteSessionBroker.openSession(selector, {
+        intent: 'files',
+        requiredCapabilities: ['fs'],
+        operation: 'list',
+        path,
+      });
+      return result?.entries || [];
+    },
+    async readFile(path) {
+      const result = await state.remoteSessionBroker.openSession(selector, {
+        intent: 'files',
+        requiredCapabilities: ['fs'],
+        operation: 'read',
+        path,
+      });
+      return normalizeBrokerFileRead(result);
+    },
+    async writeFile(path, data) {
+      return await state.remoteSessionBroker.openSession(selector, {
+        intent: 'files',
+        requiredCapabilities: ['fs'],
+        operation: 'write',
+        path,
+        data,
+      });
+    },
+    async deleteFile(path) {
+      return await state.remoteSessionBroker.openSession(selector, {
+        intent: 'files',
+        requiredCapabilities: ['fs'],
+        operation: 'remove',
+        path,
+      });
+    },
+  };
+}
+
+async function openRemoteRuntimeView(selector, view) {
+  const panelState = getRemoteRuntimePanelState();
+  const registry = state.remoteRuntimeRegistry;
+  const broker = state.remoteSessionBroker;
+  const peer = registry?.resolvePeer?.(selector);
+  if (!registry || !broker || !peer) {
+    panelState.error = `Unknown remote runtime: ${selector}`;
+    renderRemoteRuntimeWorkspacePanel();
+    return;
+  }
+
+  try {
+    panelState.error = null;
+    panelState.activeSelector = selector;
+
+    if (view === 'terminal') {
+      panelState.routeExplanation = broker.explainRoute(selector, {
+        intent: 'exec',
+      });
+      panelState.activeView = {
+        kind: 'terminal',
+        client: createBrokerTerminalClient(selector),
+        session: remoteRuntimePeerSession(peer),
+      };
+      panelState.activeServices = [];
+    } else if (view === 'files') {
+      panelState.routeExplanation = broker.explainRoute(selector, {
+        intent: 'files',
+        requiredCapabilities: ['fs'],
+      });
+      panelState.activeView = {
+        kind: 'files',
+        client: createBrokerFileClient(selector),
+        session: remoteRuntimePeerSession(peer),
+      };
+      panelState.activeServices = [];
+    } else if (view === 'services') {
+      panelState.routeExplanation = broker.explainRoute(selector, {
+        intent: 'service',
+      });
+      const brokerResult = await broker.openSession(selector, { intent: 'service' });
+      const discovered = state.serviceBrowser?.getServicesByPod?.(peer.identity?.podId || '') || [];
+      panelState.activeServices = mergePeerServices(peer, discovered, brokerResult?.services || []);
+      panelState.activeView = {
+        kind: 'services',
+        session: remoteRuntimePeerSession(peer),
+      };
+    }
+  } catch (error) {
+    panelState.error = error?.message || String(error);
+  }
+
+  renderRemoteRuntimeWorkspacePanel();
+}
+
+function explainRemoteRuntimeRoute(selector) {
+  const panelState = getRemoteRuntimePanelState();
+  try {
+    panelState.error = null;
+    panelState.activeSelector = selector;
+    panelState.routeExplanation = state.remoteSessionBroker.explainRoute(
+      selector,
+      panelState.activeView?.kind === 'files'
+        ? { intent: 'files', requiredCapabilities: ['fs'] }
+        : panelState.activeView?.kind === 'services'
+          ? { intent: 'service' }
+          : { intent: 'exec' }
+    );
+  } catch (error) {
+    panelState.error = error?.message || String(error);
+  }
+  renderRemoteRuntimeWorkspacePanel();
+}
+
+function renderRemoteRuntimeWorkspacePanel() {
+  const container = $('remoteContainer');
+  if (!container) return;
+  if (!state.peerNode) {
+    container.innerHTML = '<div class="rc-empty" style="padding:1.5rem;opacity:0.6">Remote access requires an active peer connection. Start a mesh session first.</div>';
+    return;
+  }
+  if (!state.remoteRuntimeRegistry || !state.remoteSessionBroker) {
+    container.innerHTML = '<div class="rc-empty" style="padding:1.5rem;opacity:0.6">Remote runtime services are still initializing.</div>';
+    return;
+  }
+
+  const panelState = getRemoteRuntimePanelState();
+  container.innerHTML = renderRemoteRuntimePanel(state.remoteRuntimeRegistry, panelState);
+  initRemoteRuntimePanelListeners({
+    onOpenView: (selector, view) => {
+      void openRemoteRuntimeView(selector, view);
+    },
+    onExplainRoute: (selector) => explainRemoteRuntimeRoute(selector),
+  });
+
+  if (panelState.activeView?.kind === 'terminal') {
+    initRemoteTerminalListeners(panelState.activeView.client);
+  } else if (panelState.activeView?.kind === 'files') {
+    initRemoteFilesListeners(panelState.activeView.client);
+  }
+
+  updatePeerBadge(state.peerNode);
 }
 
 // ── Routine → IndexedDB sync (background execution) ─────────────
@@ -572,19 +785,7 @@ export async function switchWorkspace(newId, convId) {
       }
     },
     remote: () => {
-      const c = $('remoteContainer');
-      if (!c) return;
-      if (state.peerNode) {
-        const svcDir = state.serviceDirectory;
-        if (svcDir) {
-          c.innerHTML = renderServiceBrowser(svcDir);
-        } else {
-          c.innerHTML = '<div class="rc-empty" style="padding:1.5rem;opacity:0.6">Service directory not initialized. Mesh subsystem may still be starting.</div>';
-        }
-        updatePeerBadge(state.peerNode);
-      } else {
-        c.innerHTML = '<div class="rc-empty" style="padding:1.5rem;opacity:0.6">Remote access requires an active peer connection. Start a mesh session first.</div>';
-      }
+      renderRemoteRuntimeWorkspacePanel();
     },
   });
 
@@ -1280,19 +1481,7 @@ export async function initWorkspace(wsId, convId) {
         }
       },
       remote: () => {
-        const c = $('remoteContainer');
-        if (!c) return;
-        if (state.peerNode) {
-          const svcDir = state.serviceDirectory;
-          if (svcDir) {
-            c.innerHTML = renderServiceBrowser(svcDir);
-          } else {
-            c.innerHTML = '<div class="rc-empty" style="padding:1.5rem;opacity:0.6">Service directory not initialized. Mesh subsystem may still be starting.</div>';
-          }
-          updatePeerBadge(state.peerNode);
-        } else {
-          c.innerHTML = '<div class="rc-empty" style="padding:1.5rem;opacity:0.6">Remote access requires an active peer connection. Start a mesh session first.</div>';
-        }
+        renderRemoteRuntimeWorkspacePanel();
       },
     });
 
