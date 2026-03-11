@@ -914,7 +914,7 @@ This is the missing inverse of the browser work. Today, if a local machine can a
 
 Required work:
 
-- [~] Implement a real incoming session runtime for Rust reverse peers
+- [x] Implement a real incoming session runtime for Rust reverse peers
   - replace the current placeholder loop in `crates/wsh-cli/src/commands/relay.rs`
   - accept incoming `Open`
   - create a session backend
@@ -935,7 +935,7 @@ Required work:
   - browser tab
   - host agent
   - headless daemon
-- [~] Add lifecycle semantics for reverse host peers:
+- [x] Add lifecycle semantics for reverse host peers:
   - manual foreground registration
   - long-lived daemon registration
   - reconnect and reattach after network flap
@@ -970,29 +970,28 @@ Proposed peer classes:
   - backed by a headless JS/Worker runtime
   - useful for compute and tool hosting, not necessarily interactive shell
 
-Protocol additions likely needed:
+Implemented contract:
 
-- [ ] `peer_type` field in reverse registration and peer listing
-- [ ] `session_backend` or `shell_backend`
+- [x] `peer_type` field in reverse registration and peer listing
+- [x] `shell_backend`
   - `pty`
   - `virtual-shell`
   - `vm-console`
   - `exec-only`
-- [ ] capability refinements
-  - `shell`
-  - `pty`
-  - `virtual_terminal`
-  - `fs`
-  - `tools`
-  - `mcp`
-  - `gateway`
-  - `vm_console`
-  - `vm_control`
-- [ ] optional UX hints
-  - `recommended_transport`
-  - `attach_supported`
-  - `predictive_echo_supported`
-  - `term_sync_supported`
+- [x] capability refinements
+  - standardized coarse capabilities remain:
+    - `shell`
+    - `exec`
+    - `fs`
+    - `tools`
+    - `gateway`
+  - backend-specific semantics are intentionally represented by `peer_type` + `shell_backend`, not duplicated as pseudo-capabilities like `pty`, `virtual_terminal`, or `vm_console`
+- [x] UX/session hints
+  - `supports_attach`
+  - `supports_replay`
+  - `supports_echo`
+  - `supports_term_sync`
+  - route transport preference comes from reachability descriptors and broker policy/ranking rather than a separate `recommended_transport` wire field
 
 Why this matters:
 
@@ -1017,10 +1016,10 @@ Rationale:
 
 Planned boundaries:
 
-- [ ] `wsh` remains the session/control plane
-- [ ] BrowserMesh may later supply peer discovery, trust, or route selection
-- [ ] BrowserMesh should not replace the `wsh` session model itself
-- [ ] if direct peer-to-peer `wsh` is ever added, it should be a transport backend under the same session protocol, not a new product surface
+- [x] `wsh` remains the session/control plane
+- [x] BrowserMesh may later supply peer discovery, trust, or route selection
+- [x] BrowserMesh should not replace the `wsh` session model itself
+- [x] if direct peer-to-peer `wsh` is ever added, it should be a transport backend under the same session protocol, not a new product surface
 
 ### Phase 7A.5: BrowserMesh Integration Contract For `wsh`
 
