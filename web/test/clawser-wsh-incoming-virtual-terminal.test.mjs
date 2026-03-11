@@ -18,6 +18,7 @@ import {
 import {
   MSG,
 } from '../packages-wsh.js';
+import { DemoLinuxVmConsole } from '../clawser-vm-console.js';
 
 function createShell() {
   return {
@@ -182,5 +183,65 @@ describe('incoming virtual terminal router', () => {
     assert.ok(blocked.sent.some((msg) => msg.type === MSG.MCP_RESULT && /did not expose tool access/i.test(msg.result.error)));
     assert.ok(blocked.sent.some((msg) => msg.type === MSG.FILE_RESULT && msg.success === false));
     assert.ok(blocked.sent.some((msg) => msg.type === MSG.POLICY_RESULT && msg.allowed === false));
+  });
+
+  it('bridges VM guest file ops and file channels through reverse relay', async () => {
+    const vm = new DemoLinuxVmConsole();
+    const client = createClient('SHA256:vm-files', { shell: true, tools: false, fs: true });
+    client.__clawserPeerMetadata = {
+      peerType: 'vm-guest',
+      shellBackend: 'vm-console',
+      vmRuntimeId: 'demo-linux',
+    };
+    getWshConnections().set('relay-vm', client);
+    setVirtualTerminalManager(new VirtualTerminalManager({
+      shellFactory: async () => createShell(),
+      vmConsoleFactory: async () => vm,
+    }));
+
+    await handleReverseConnect({
+      username: 'vm-user',
+      target_fingerprint: 'SHA256:vm-files',
+    });
+
+    await client.onRelayMessage({ type: MSG.FILE_OP, channel_id: 12, op: 'mkdir', path: '/workspace' });
+    await client.onRelayMessage({ type: MSG.FILE_OP, channel_id: 12, op: 'write', path: '/workspace/demo.txt', data: new TextEncoder().encode('hello guest') });
+    await client.onRelayMessage({ type: MSG.FILE_OP, channel_id: 12, op: 'read', path: '/workspace/demo.txt' });
+    await client.onRelayMessage({ type: MSG.OPEN, kind: 'file', command: 'download:/workspace/demo.txt' });
+
+    const fileReplies = client.sent.filter((msg) => msg.type === MSG.FILE_RESULT && msg.success === true);
+    assert.ok(fileReplies.some((msg) => msg.metadata?.data === 'hello guest'));
+
+    const openReply = client.sent.find((msg) => msg.type === MSG.OPEN_OK && msg.channel_id);
+    assert.ok(openReply);
+
+    const pathBytes = new TextEncoder().encode('/workspace/demo.txt');
+    const header = new Uint8Array(4 + pathBytes.length);
+    new DataView(header.buffer).setUint32(0, pathBytes.length);
+    header.set(pathBytes, 4);
+    await client.onRelayMessage({ type: MSG.SESSION_DATA, channel_id: openReply.channel_id, data: header });
+
+    const sessionDataReply = client.sent.find((msg) => msg.type === MSG.SESSION_DATA && msg.channel_id === openReply.channel_id);
+    assert.ok(sessionDataReply);
+    const size = Number(new DataView(sessionDataReply.data.buffer, sessionDataReply.data.byteOffset, 8).getBigUint64(0));
+    assert.equal(size, 11);
+
+    await client.onRelayMessage({ type: MSG.OPEN, kind: 'file', command: 'upload:/workspace/upload.bin' });
+    const uploadOpen = client.sent.filter((msg) => msg.type === MSG.OPEN_OK).at(-1);
+    const uploadPathBytes = new TextEncoder().encode('/workspace/upload.bin');
+    const uploadHeader = new Uint8Array(4 + uploadPathBytes.length + 8);
+    new DataView(uploadHeader.buffer).setUint32(0, uploadPathBytes.length);
+    uploadHeader.set(uploadPathBytes, 4);
+    new DataView(uploadHeader.buffer).setBigUint64(4 + uploadPathBytes.length, BigInt(3));
+    const payload = new Uint8Array([65, 66, 67]);
+    const uploadMessage = new Uint8Array(uploadHeader.byteLength + payload.byteLength);
+    uploadMessage.set(uploadHeader, 0);
+    uploadMessage.set(payload, uploadHeader.byteLength);
+    await client.onRelayMessage({ type: MSG.SESSION_DATA, channel_id: uploadOpen.channel_id, data: uploadMessage });
+
+    const ack = client.sent.find((msg) => msg.type === MSG.SESSION_DATA && msg.channel_id === uploadOpen.channel_id);
+    assert.ok(ack);
+    const uploaded = await vm.download('/workspace/upload.bin');
+    assert.deepEqual(Array.from(uploaded), [65, 66, 67]);
   });
 });

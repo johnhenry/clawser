@@ -2,7 +2,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { BrowserVmConsoleRegistry, DemoLinuxVmConsole } from '../clawser-vm-console.js'
+import { BrowserVmConsoleRegistry, DemoLinuxVmConsole, createBuiltinVmImages } from '../clawser-vm-console.js'
 
 describe('DemoLinuxVmConsole', () => {
   it('provides a Linux-like command surface with persistent files', async () => {
@@ -64,6 +64,23 @@ describe('DemoLinuxVmConsole', () => {
     assert.equal(vm.resourceBudget.storageMb, 2048)
     assert.equal(read.exitCode, 1)
   })
+
+  it('bridges guest filesystem operations and binary-style upload/download', async () => {
+    const vm = new DemoLinuxVmConsole()
+
+    await vm.mkdir('/workspace')
+    await vm.upload(new Uint8Array([65, 66, 67]), '/workspace/blob.bin')
+    const listed = await vm.listFiles('/workspace')
+    const stat = await vm.statFile('/workspace/blob.bin')
+    const read = await vm.readFile('/workspace/blob.bin')
+    const downloaded = await vm.download('/workspace/blob.bin')
+
+    assert.deepEqual(listed, [{ name: 'blob.bin', kind: 'file', type: 'file', size: 3 }])
+    assert.equal(stat.kind, 'file')
+    assert.equal(stat.size, 3)
+    assert.equal(read.text, 'ABC')
+    assert.deepEqual(Array.from(downloaded), [65, 66, 67])
+  })
 })
 
 describe('BrowserVmConsoleRegistry', () => {
@@ -74,6 +91,29 @@ describe('BrowserVmConsoleRegistry', () => {
     assert.deepEqual(registry.list().map((entry) => entry.id), ['demo-linux'])
     assert.equal(registry.describe('demo-linux').emulator, 'demo')
     assert.equal(registry.describe('demo-linux').distro, 'clawser-vm')
+  })
+
+  it('manages image catalogs, installs runtimes, and switches defaults', async () => {
+    const registry = new BrowserVmConsoleRegistry()
+    for (const image of createBuiltinVmImages()) {
+      registry.registerImage(image)
+    }
+
+    const images = registry.listImages()
+    assert.deepEqual(images.map((entry) => entry.id), ['alpine-lab', 'debian-dev', 'demo-linux'])
+
+    const installed = registry.install('alpine-lab', { runtimeId: 'lab' })
+    assert.equal(installed.id, 'lab')
+    assert.equal(installed.imageId, 'alpine-lab')
+    assert.equal(registry.getDefaultRuntimeId(), 'lab')
+
+    registry.install('debian-dev')
+    registry.setDefault('debian-dev')
+    assert.equal(registry.getDefaultRuntimeId(), 'debian-dev')
+    assert.equal(registry.describe('default').id, 'debian-dev')
+
+    registry.uninstall('lab')
+    assert.equal(registry.describe('lab'), null)
   })
 
   it('creates shells by runtime id', async () => {

@@ -62,6 +62,10 @@ Usage:
   wsh reverse relay --expose-shell Register as reverse-connectable peer
   wsh peers relay                  List reverse-connected peers on relay
   wsh vm list                      List browser VM runtimes
+  wsh vm images                    List available browser VM images
+  wsh vm install <image> [name]    Install a browser VM image as a runtime
+  wsh vm use <runtime>             Set the default browser VM runtime
+  wsh vm remove <runtime>          Remove an installed browser VM runtime
   wsh vm start <runtime>           Start a browser VM runtime
   wsh vm stop <runtime>            Stop a browser VM runtime
   wsh vm reset <runtime>           Reset a browser VM runtime
@@ -122,7 +126,7 @@ const REVERSE_EXPOSURE_PRESETS = Object.freeze({
     shellBackend: 'exec-only',
   }),
   'vm-console': Object.freeze({
-    expose: { shell: true, tools: false, fs: false },
+    expose: { shell: true, tools: false, fs: true },
     peerType: 'vm-guest',
     shellBackend: 'vm-console',
     vmRuntimeId: 'demo-linux',
@@ -641,7 +645,7 @@ export function registerWshCli(registry, getAgent, getShell) {
     }
 
     const action = positional[0] || 'list';
-    const runtimeId = positional[1] || 'demo-linux';
+    const runtimeId = positional[1] || 'default';
 
     try {
       switch (action) {
@@ -650,14 +654,53 @@ export function registerWshCli(registry, getAgent, getShell) {
           if (flags.json) {
             return { stdout: `${JSON.stringify(runtimes, null, 2)}\n`, stderr: '', exitCode: 0 };
           }
-          const lines = ['RUNTIME        STATE       MEMORY  CPU  STORAGE  PERSISTENCE'];
+          const lines = ['RUNTIME        STATE       IMAGE         MEMORY  CPU  STORAGE  DEFAULT'];
           for (const runtime of runtimes) {
             const budget = runtime.resourceBudget || {};
             lines.push(
-              `${String(runtime.id || '').padEnd(14)}${String(runtime.running ? 'running' : 'stopped').padEnd(12)}${String((budget.memoryMb ?? '--') + 'MB').padEnd(8)}${String(budget.cpuShares ?? '--').padEnd(5)}${String((budget.storageMb ?? '--') + 'MB').padEnd(9)}${runtime.persistenceKey || '--'}`
+              `${String(runtime.id || '').padEnd(14)}${String(runtime.running ? 'running' : 'stopped').padEnd(12)}${String(runtime.imageId || '--').padEnd(14)}${String((budget.memoryMb ?? '--') + 'MB').padEnd(8)}${String(budget.cpuShares ?? '--').padEnd(5)}${String((budget.storageMb ?? '--') + 'MB').padEnd(9)}${runtime.defaultRuntime ? 'yes' : '--'}`
             );
           }
           return { stdout: `${lines.join('\n')}\n`, stderr: '', exitCode: 0 };
+        }
+        case 'images': {
+          const images = registry.listImages();
+          if (flags.json) {
+            return { stdout: `${JSON.stringify(images, null, 2)}\n`, stderr: '', exitCode: 0 };
+          }
+          const lines = ['IMAGE          DISTRO        INSTALLED  DESCRIPTION'];
+          for (const image of images) {
+            lines.push(
+              `${String(image.id || '').padEnd(14)}${String(image.distro || '--').padEnd(14)}${String(image.installedRuntimeIds?.length || 0).toString().padEnd(11)}${image.description || '--'}`
+            );
+          }
+          return { stdout: `${lines.join('\n')}\n`, stderr: '', exitCode: 0 };
+        }
+        case 'install': {
+          const imageId = positional[1];
+          const targetRuntimeId = positional[2] || null;
+          if (!imageId) {
+            return { stdout: '', stderr: 'Usage: wsh vm install <image> [runtime]\n', exitCode: 1 };
+          }
+          const runtime = registry.install(imageId, { runtimeId: targetRuntimeId || undefined });
+          await registry.get(runtime.id)?.restorePersistedState?.();
+          return { stdout: `Installed VM image ${imageId} as runtime ${runtime.id}\n`, stderr: '', exitCode: 0 };
+        }
+        case 'use': {
+          const targetRuntimeId = positional[1];
+          if (!targetRuntimeId) {
+            return { stdout: '', stderr: 'Usage: wsh vm use <runtime>\n', exitCode: 1 };
+          }
+          registry.setDefault(targetRuntimeId);
+          return { stdout: `Default VM runtime is now ${targetRuntimeId}\n`, stderr: '', exitCode: 0 };
+        }
+        case 'remove': {
+          const targetRuntimeId = positional[1];
+          if (!targetRuntimeId) {
+            return { stdout: '', stderr: 'Usage: wsh vm remove <runtime>\n', exitCode: 1 };
+          }
+          registry.uninstall(targetRuntimeId);
+          return { stdout: `Removed VM runtime ${targetRuntimeId}\n`, stderr: '', exitCode: 0 };
         }
         case 'start': {
           const runtime = await registry.start(runtimeId);
@@ -673,7 +716,7 @@ export function registerWshCli(registry, getAgent, getShell) {
         }
         case 'snapshot': {
           const subAction = positional[1];
-          const targetRuntime = positional[2] || 'demo-linux';
+          const targetRuntime = positional[2] || 'default';
           if (subAction === 'export') {
             const snapshot = await registry.exportSnapshot(targetRuntime);
             return { stdout: `${JSON.stringify(snapshot, null, 2)}\n`, stderr: '', exitCode: 0 };
@@ -707,7 +750,7 @@ export function registerWshCli(registry, getAgent, getShell) {
           };
         }
         default:
-          return { stdout: '', stderr: 'Usage: wsh vm list|start|stop|reset|snapshot|budget\n', exitCode: 1 };
+          return { stdout: '', stderr: 'Usage: wsh vm list|images|install|use|remove|start|stop|reset|snapshot|budget\n', exitCode: 1 };
       }
     } catch (err) {
       return { stdout: '', stderr: `VM command failed: ${err.message}\n`, exitCode: 1 };

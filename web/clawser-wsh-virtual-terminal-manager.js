@@ -232,6 +232,18 @@ export class VirtualTerminalManager {
     }
   }
 
+  async getRuntimeBackend(participantKey) {
+    const context = this.#requirePeerContext(participantKey);
+    if (context?.shellBackend === 'vm-console' && this.#vmConsoleFactory) {
+      return this.#vmConsoleFactory({
+        peerContext: context,
+        participantKey,
+        kind: 'backend',
+      });
+    }
+    return null;
+  }
+
   #requirePeerContext(participantKey) {
     const context = this.#contexts.get(participantKey);
     if (!context) {

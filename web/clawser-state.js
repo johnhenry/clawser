@@ -210,6 +210,7 @@ export const state = {
     terminalSessions: null,
     agentStorage: null,
     remoteMountManager: null,
+    vmConsoleRegistry: null,
   },
 
   /** Per-conversation session state */

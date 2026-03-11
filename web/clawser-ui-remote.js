@@ -478,6 +478,10 @@ export function renderRemoteRuntimePanel(runtimeRegistry, {
   filterPeerType = '',
   telemetry = null,
   auditEntries = [],
+  vmRuntimes = [],
+  vmImages = [],
+  defaultVmRuntimeId = null,
+  vmError = null,
 } = {}) {
   const query = runtimeRegistry?.query?.({
     text: filterText,
@@ -587,6 +591,75 @@ export function renderRemoteRuntimePanel(runtimeRegistry, {
       </div>`
     : '';
 
+  const vmRuntimesHtml = Array.isArray(vmRuntimes) && vmRuntimes.length
+    ? `
+      <div class="rc-panel rc-runtime-list">
+        <div class="rc-panel-header">
+          <span class="rc-panel-title">Local VM Runtimes</span>
+          <span class="rc-panel-count">${vmRuntimes.length} runtime${vmRuntimes.length === 1 ? '' : 's'}</span>
+        </div>
+        ${vmError ? `<div class="rc-error">${esc(vmError)}</div>` : ''}
+        <div class="rc-runtime-list-body">
+          ${vmRuntimes.map((runtime) => `
+            <div class="rc-runtime-row">
+              <div class="rc-runtime-summary">
+                <div class="rc-runtime-summary-main">
+                  <span class="rc-runtime-name">${esc(runtime.label || runtime.id)}</span>
+                  ${runtime.defaultRuntime ? '<span class="rc-svc-type-badge">default</span>' : ''}
+                  <span class="rc-runtime-backend">${esc(`${runtime.distro || 'vm'} / ${runtime.emulator || 'demo'}`)}</span>
+                </div>
+                <div class="rc-runtime-summary-meta">
+                  <span class="rc-runtime-id">${esc(runtime.id)}</span>
+                  <span class="rc-runtime-last-seen">${esc(runtime.running ? 'running' : 'stopped')}</span>
+                </div>
+              </div>
+              <div class="rc-runtime-session-hints">image:${esc(runtime.imageId || '--')}</div>
+              <div class="rc-runtime-capabilities">
+                ${(runtime.capabilities || []).map((cap) => `<span class="rc-svc-type-badge">${esc(cap)}</span>`).join('') || '<span class="rc-empty">No capabilities</span>'}
+              </div>
+              <div class="rc-runtime-actions">
+                <button class="btn-sm rc-vm-action-btn" data-action="${runtime.running ? 'stop-runtime' : 'start-runtime'}" data-target="${esc(runtime.id)}">${runtime.running ? 'Stop' : 'Start'}</button>
+                <button class="btn-sm btn-surface2 rc-vm-action-btn" data-action="reset-runtime" data-target="${esc(runtime.id)}">Reset</button>
+                <button class="btn-sm btn-surface2 rc-vm-action-btn" data-action="set-default" data-target="${esc(runtime.id)}" ${runtime.id === defaultVmRuntimeId ? 'disabled' : ''}>Use</button>
+                <button class="btn-sm btn-danger rc-vm-action-btn" data-action="remove-runtime" data-target="${esc(runtime.id)}" ${runtime.id === defaultVmRuntimeId && vmRuntimes.length === 1 ? 'disabled' : ''}>Remove</button>
+              </div>
+            </div>`).join('')}
+        </div>
+      </div>`
+    : '';
+
+  const vmImagesHtml = Array.isArray(vmImages) && vmImages.length
+    ? `
+      <div class="rc-panel rc-runtime-list">
+        <div class="rc-panel-header">
+          <span class="rc-panel-title">VM Images</span>
+          <span class="rc-panel-count">${vmImages.length} image${vmImages.length === 1 ? '' : 's'}</span>
+        </div>
+        <div class="rc-runtime-list-body">
+          ${vmImages.map((image) => `
+            <div class="rc-runtime-row">
+              <div class="rc-runtime-summary">
+                <div class="rc-runtime-summary-main">
+                  <span class="rc-runtime-name">${esc(image.label || image.id)}</span>
+                  <span class="rc-runtime-backend">${esc(`${image.distro || 'vm'} / ${image.emulator || 'demo'}`)}</span>
+                </div>
+                <div class="rc-runtime-summary-meta">
+                  <span class="rc-runtime-id">${esc(image.id)}</span>
+                  <span class="rc-runtime-last-seen">${esc(image.installedRuntimeIds?.length ? `installed:${image.installedRuntimeIds.length}` : 'not installed')}</span>
+                </div>
+              </div>
+              <div class="rc-runtime-session-hints">${esc(image.description || 'browser-hosted VM image')}</div>
+              <div class="rc-runtime-capabilities">
+                ${(image.capabilities || []).map((cap) => `<span class="rc-svc-type-badge">${esc(cap)}</span>`).join('') || '<span class="rc-empty">No capabilities</span>'}
+              </div>
+              <div class="rc-runtime-actions">
+                <button class="btn-sm rc-vm-action-btn" data-action="install-image" data-target="${esc(image.id)}">Install</button>
+              </div>
+            </div>`).join('')}
+        </div>
+      </div>`
+    : '';
+
   const auditHtml = Array.isArray(auditEntries) && auditEntries.length
     ? `
       <div class="rc-panel rc-runtime-audit">
@@ -616,6 +689,8 @@ export function renderRemoteRuntimePanel(runtimeRegistry, {
   return `
     <div class="rc-runtime-browser">
       <div class="rc-runtime-column">
+        ${vmRuntimesHtml}
+        ${vmImagesHtml}
         ${localExposureHtml}
         <div class="rc-panel rc-runtime-list">
           <div class="rc-panel-header">
@@ -676,8 +751,9 @@ export function initRemoteRuntimePanelListeners({
   onOpenView = null,
   onExplainRoute = null,
   onUpdateFilter = null,
+  onVmAction = null,
 } = {}) {
-  document.querySelector('.rc-runtime-list-body')?.addEventListener('click', (e) => {
+  document.querySelector('.rc-runtime-browser')?.addEventListener('click', (e) => {
     const target = /** @type {HTMLElement} */ (e.target)
     if (target.classList.contains('rc-runtime-open-btn')) {
       const selector = target.dataset.selector
@@ -691,6 +767,14 @@ export function initRemoteRuntimePanelListeners({
       const selector = target.dataset.selector
       if (selector) {
         onExplainRoute?.(selector)
+      }
+      return
+    }
+    if (target.classList.contains('rc-vm-action-btn')) {
+      const action = target.dataset.action
+      const vmTarget = target.dataset.target
+      if (action && vmTarget) {
+        onVmAction?.(action, vmTarget)
       }
     }
   })

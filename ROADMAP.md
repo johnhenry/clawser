@@ -1635,10 +1635,10 @@ Scope:
 
 Stretch goals:
 
-- [ ] guest filesystem bridge
-- [ ] upload/download into the guest
+- [x] guest filesystem bridge
+- [x] upload/download into the guest
 - [x] VM lifecycle controls (`start`, `stop`, `reset`, `snapshot`)
-- [ ] distro/image chooser
+- [x] distro/image chooser
 
 Success criteria:
 
@@ -1653,8 +1653,8 @@ Goal: decide whether browser-hosted Linux should remain a "console peer" feature
 Current status:
 
 - [~] The product has a working VM-console peer MVP, but productionization work is still intentionally pending.
-- [~] The current implementation is ephemeral, demo-oriented, and centered on a single `demo-linux` runtime.
-- [~] Image management UI remains pending, but persistence, lifecycle controls, and resource governance are implemented for the `demo-linux` VM-console runtime.
+- [~] The current implementation is still demo-oriented, but it now supports a built-in VM image catalog, installable runtimes, and a default-runtime chooser inside the canonical remote-runtime UI.
+- [~] Image management UI is now present for install/start/stop/reset/remove/default actions, but deeper productionization still remains pending.
 
 Questions to answer:
 
@@ -1666,7 +1666,7 @@ Questions to answer:
 
 Likely follow-up deliverables:
 
-- [ ] VM image management UI
+- [x] VM image management UI
 - [x] snapshot/import/export
 - [x] workspace-bound guest persistence
 - [x] resource budgeting (memory, CPU, storage) in the browser

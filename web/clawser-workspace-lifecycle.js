@@ -103,7 +103,7 @@ import { ModelListTool, ModelPullTool, ModelRemoveTool, ModelStatusTool, Transcr
 import { createConfiguredShell } from './clawser-shell-factory.js';
 import { VirtualTerminalManager } from './clawser-wsh-virtual-terminal-manager.js';
 import { RemoteMountManager } from './clawser-remote-mounts.js';
-import { BrowserVmConsoleRegistry, DemoLinuxVmConsole } from './clawser-vm-console.js';
+import { BrowserVmConsoleRegistry, createBuiltinVmImages } from './clawser-vm-console.js';
 import { listIncomingSessions } from './clawser-wsh-incoming.js';
 
 // ── Mesh agent bridge helper ─────────────────────────────────────
@@ -137,6 +137,7 @@ function getRemoteRuntimePanelState() {
       filterPeerType: '',
       telemetry: null,
       auditEntries: [],
+      vmError: null,
     };
   }
   return state.ui.remoteRuntimePanel;
@@ -439,7 +440,12 @@ function renderRemoteRuntimeWorkspacePanel() {
   panelState.localExposure = localExposureStatus();
   panelState.telemetry = state.remoteSessionBroker?.telemetrySnapshot?.() || null;
   panelState.auditEntries = currentRemoteAuditEntries();
-  container.innerHTML = renderRemoteRuntimePanel(state.remoteRuntimeRegistry, panelState);
+  container.innerHTML = renderRemoteRuntimePanel(state.remoteRuntimeRegistry, {
+    ...panelState,
+    vmRuntimes: _browserVmConsoleRegistry?.list?.() || [],
+    vmImages: _browserVmConsoleRegistry?.listImages?.() || [],
+    defaultVmRuntimeId: _browserVmConsoleRegistry?.getDefaultRuntimeId?.() || null,
+  });
   initRemoteRuntimePanelListeners({
     onOpenView: (selector, view) => {
       void openRemoteRuntimeView(selector, view);
@@ -447,6 +453,31 @@ function renderRemoteRuntimeWorkspacePanel() {
     onExplainRoute: (selector) => explainRemoteRuntimeRoute(selector),
     onUpdateFilter: (key, value) => {
       panelState[key] = value;
+      renderRemoteRuntimeWorkspacePanel();
+    },
+    onVmAction: async (action, target) => {
+      if (!_browserVmConsoleRegistry) return;
+      panelState.vmError = null;
+      try {
+        if (action === 'install-image') {
+          const installed = _browserVmConsoleRegistry.install(target, {
+            workspaceId: getActiveWorkspaceId() || 'default',
+          });
+          await _browserVmConsoleRegistry.get(installed.id)?.restorePersistedState?.();
+        } else if (action === 'set-default') {
+          _browserVmConsoleRegistry.setDefault(target);
+        } else if (action === 'start-runtime') {
+          await _browserVmConsoleRegistry.start(target);
+        } else if (action === 'stop-runtime') {
+          await _browserVmConsoleRegistry.stop(target);
+        } else if (action === 'reset-runtime') {
+          await _browserVmConsoleRegistry.reset(target);
+        } else if (action === 'remove-runtime') {
+          _browserVmConsoleRegistry.uninstall(target);
+        }
+      } catch (error) {
+        panelState.vmError = error?.message || String(error);
+      }
       renderRemoteRuntimeWorkspacePanel();
     },
   });
@@ -519,6 +550,15 @@ function bindRemoteRuntimePanelEvents() {
     state.serviceBrowser.on('discovered', refresh);
     state.serviceBrowser.on('lost', refresh);
   }
+
+  if (_browserVmConsoleRegistry && !_browserVmConsoleRegistry._remoteRuntimeUiBound) {
+    _browserVmConsoleRegistry._remoteRuntimeUiBound = true;
+    _browserVmConsoleRegistry.on('changed', () => {
+      if (isPanelRendered('remote')) {
+        renderRemoteRuntimeWorkspacePanel();
+      }
+    });
+  }
 }
 
 // ── Routine → IndexedDB sync (background execution) ─────────────
@@ -562,19 +602,15 @@ async function refreshReverseVirtualTerminalManager() {
   if (!_browserVmConsoleRegistry) {
     _browserVmConsoleRegistry = new BrowserVmConsoleRegistry();
     const workspaceId = getActiveWorkspaceId() || 'default';
-    const demoLinuxVm = new DemoLinuxVmConsole({
-      persistenceKey: `clawser_v1_vm_demo_linux_${workspaceId}`,
-    });
-    await demoLinuxVm.restorePersistedState();
-    _browserVmConsoleRegistry.register('demo-linux', demoLinuxVm);
-    _browserVmConsoleRegistry.register('default', demoLinuxVm, {
-      label: 'Default VM Console',
-      emulator: 'demo',
-      distro: 'clawser-vm',
-      capabilities: ['shell'],
-    });
+    for (const image of createBuiltinVmImages()) {
+      _browserVmConsoleRegistry.registerImage(image);
+    }
+    const demoLinuxVm = _browserVmConsoleRegistry.install('demo-linux', { workspaceId });
+    await _browserVmConsoleRegistry.get(demoLinuxVm.id)?.restorePersistedState?.();
+    _browserVmConsoleRegistry.setDefault(demoLinuxVm.id);
   }
   globalThis.__clawserVmConsoleRegistry = _browserVmConsoleRegistry;
+  state.features.vmConsoleRegistry = _browserVmConsoleRegistry;
 
   _reverseVirtualTerminalManager = new VirtualTerminalManager({
     shellFactory: async () => createConfiguredShell({

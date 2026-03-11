@@ -21,6 +21,52 @@ import {
 } from './packages-wsh.js';
 import { supportHintsForRuntime } from './clawser-remote-runtime-types.js';
 
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
+
+function concatBytes(chunks) {
+  const total = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+  const output = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return output;
+}
+
+function decodeU64(bytes, offset = 0) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return Number(view.getBigUint64(offset));
+}
+
+function encodeU64(value) {
+  const output = new Uint8Array(8);
+  const view = new DataView(output.buffer);
+  view.setBigUint64(0, BigInt(value));
+  return output;
+}
+
+function parseTransferHeader(bytes, includeSize = false) {
+  if (!(bytes instanceof Uint8Array) || bytes.byteLength < 4) {
+    throw new Error('invalid file transfer header');
+  }
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const pathLength = view.getUint32(0);
+  const baseLength = 4 + pathLength + (includeSize ? 8 : 0);
+  if (bytes.byteLength < baseLength) {
+    throw new Error('truncated file transfer header');
+  }
+  const pathBytes = bytes.slice(4, 4 + pathLength);
+  const path = textDecoder.decode(pathBytes);
+  const totalSize = includeSize ? decodeU64(bytes, 4 + pathLength) : null;
+  return {
+    path,
+    totalSize,
+    headerLength: baseLength,
+  };
+}
+
 // ── Kernel bridge integration (optional) ────────────────────────────
 /** @type {import('./clawser-kernel-wsh-bridge.js').KernelWshBridge|null} */
 let _kernelBridge = null;
@@ -287,12 +333,17 @@ class IncomingPeerContext {
   }
 
   async #handleOpen(msg) {
-    if (msg.kind !== 'pty' && msg.kind !== 'exec') {
+    if (msg.kind !== 'pty' && msg.kind !== 'exec' && msg.kind !== 'file') {
       await this.#sendReply(openFail({ reason: `unsupported reverse channel kind: ${msg.kind}` }));
       return;
     }
 
-    if (!this.capabilities.shell) {
+    if (msg.kind === 'file' && !this.capabilities.fs) {
+      await this.#sendReply(openFail({ reason: 'reverse peer did not expose filesystem access' }));
+      return;
+    }
+
+    if ((msg.kind === 'pty' || msg.kind === 'exec') && !this.capabilities.shell) {
       await this.#sendReply(openFail({ reason: 'reverse peer did not expose shell access' }));
       return;
     }
@@ -306,6 +357,26 @@ class IncomingPeerContext {
     const manager = getVirtualTerminalManager();
     if (!manager) {
       await this.#sendReply(openFail({ reason: 'virtual terminal manager is not ready' }));
+      return;
+    }
+
+    if (msg.kind === 'file') {
+      const channelId = Number.isInteger(msg.channel_id) ? msg.channel_id : this._nextChannelId++;
+      this._channels.set(channelId, {
+        kind: 'file',
+        command: msg.command || '',
+        transfer: {
+          mode: String(msg.command || '').split(':', 1)[0] || null,
+          header: null,
+          received: [],
+        },
+      });
+      await this.#sendReply(openOk({
+        channelId,
+        dataMode: 'virtual',
+        capabilities: [],
+      }));
+      emitIncomingStatusChanged({ participantKey: this.participantKey, state: this.state });
       return;
     }
 
@@ -359,6 +430,11 @@ class IncomingPeerContext {
 
   async #handleSessionData(msg) {
     const manager = getVirtualTerminalManager();
+    const channel = this._channels.get(msg.channel_id);
+    if (channel?.kind === 'file') {
+      await this.#handleFileChannelData(channel, msg);
+      return;
+    }
     if (!manager) return;
     await manager.writeToChannel(this.participantKey, msg.channel_id, msg.data);
   }
@@ -425,6 +501,18 @@ class IncomingPeerContext {
     }
 
     try {
+      const manager = getVirtualTerminalManager();
+      const backend = manager ? await manager.getRuntimeBackend(this.participantKey) : null;
+      if (backend?.metadata?.capabilities?.includes?.('fs') && typeof this.#handleVmFileOp === 'function') {
+        const vmResult = await this.#handleVmFileOp(msg, backend);
+        await this.#sendReply(fileResult({
+          channelId: msg.channel_id,
+          success: true,
+          metadata: vmResult,
+        }));
+        return;
+      }
+
       const result = await this.handleToolCall(`fs_${msg.op}`, {
         path: msg.path,
         offset: msg.offset,
@@ -445,6 +533,79 @@ class IncomingPeerContext {
         errorMessage: err.message,
       }));
     }
+  }
+
+  async #handleVmFileOp(msg, backend) {
+    switch (msg.op) {
+      case 'stat':
+        return await backend.statFile(msg.path);
+      case 'list':
+        return { entries: await backend.listFiles(msg.path) };
+      case 'read': {
+        const result = await backend.readFile(msg.path, {
+          offset: msg.offset,
+          length: msg.length,
+        });
+        return { data: result.text, size: result.size };
+      }
+      case 'write': {
+        const bytes = msg.data instanceof Uint8Array ? msg.data : textEncoder.encode(String(msg.data || ''));
+        return await backend.writeFile(msg.path, bytes, { offset: msg.offset });
+      }
+      case 'mkdir':
+        return await backend.mkdir(msg.path);
+      case 'remove':
+        return await backend.remove(msg.path);
+      default:
+        throw new Error(`unsupported VM file op: ${msg.op}`);
+    }
+  }
+
+  async #handleFileChannelData(channel, msg) {
+    const manager = getVirtualTerminalManager();
+    const backend = manager ? await manager.getRuntimeBackend(this.participantKey) : null;
+    if (!backend || !backend.metadata?.capabilities?.includes?.('fs')) {
+      throw new Error('file channels are only supported for VM-console peers');
+    }
+
+    const transfer = channel.transfer || { mode: null, header: null, received: [] };
+    transfer.received = transfer.received || [];
+    const chunk = msg.data instanceof Uint8Array ? msg.data : new Uint8Array(msg.data || []);
+    transfer.received.push(chunk);
+
+    if (transfer.mode === 'download' && !transfer.header) {
+      const buffer = concatBytes(transfer.received);
+      const header = parseTransferHeader(buffer, false);
+      transfer.header = header;
+      transfer.received = [];
+      const data = await backend.download(header.path);
+      await this.#sendReply({
+        type: MSG.SESSION_DATA,
+        channel_id: msg.channel_id,
+        data: concatBytes([encodeU64(data.byteLength), data]),
+      });
+      return;
+    }
+
+    if (transfer.mode === 'upload') {
+      const buffer = concatBytes(transfer.received);
+      if (!transfer.header) {
+        transfer.header = parseTransferHeader(buffer, true);
+        transfer.received = [buffer.slice(transfer.header.headerLength)];
+      }
+      const payload = concatBytes(transfer.received);
+      if (payload.byteLength >= transfer.header.totalSize) {
+        await backend.upload(payload.slice(0, transfer.header.totalSize), transfer.header.path);
+        await this.#sendReply({
+          type: MSG.SESSION_DATA,
+          channel_id: msg.channel_id,
+          data: textEncoder.encode('ok'),
+        });
+        transfer.received = [];
+      }
+    }
+
+    channel.transfer = transfer;
   }
 
   async #handlePolicyEval(msg) {

@@ -184,6 +184,43 @@ describe('renderRemoteRuntimePanel', () => {
     assert.match(html, /incoming:2/);
   });
 
+  it('renders local VM runtimes and installable VM images in the canonical panel', () => {
+    const html = renderRemoteRuntimePanel(makeRegistry(), {
+      vmError: 'vm is busy',
+      defaultVmRuntimeId: 'demo-linux',
+      vmRuntimes: [{
+        id: 'demo-linux',
+        label: 'Demo Linux VM',
+        imageId: 'demo-linux',
+        distro: 'clawser-vm',
+        emulator: 'demo',
+        defaultRuntime: true,
+        running: true,
+        capabilities: ['shell', 'fs'],
+      }],
+      vmImages: [{
+        id: 'alpine-lab',
+        label: 'Alpine Lab',
+        distro: 'alpine',
+        emulator: 'demo',
+        description: 'Lightweight browser VM image.',
+        capabilities: ['shell', 'fs'],
+        installedRuntimeIds: [],
+      }],
+    });
+
+    assert.match(html, /Local VM Runtimes/);
+    assert.match(html, /VM Images/);
+    assert.match(html, /Demo Linux VM/);
+    assert.match(html, /default/);
+    assert.match(html, /image:demo-linux/);
+    assert.match(html, /vm is busy/);
+    assert.match(html, /Alpine Lab/);
+    assert.match(html, /Lightweight browser VM image/);
+    assert.match(html, /data-action="install-image"/);
+    assert.match(html, /data-action="set-default"/);
+  });
+
   it('renders canonical search filters and telemetry summaries', () => {
     const html = renderRemoteRuntimePanel(makeRegistry(), {
       filterText: 'alpha',
