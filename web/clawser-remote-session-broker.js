@@ -294,11 +294,16 @@ export class RemoteSessionBroker {
       })
       const connector = this.#connectorForRoute(selection.route)
       if (!connector) {
-        this.#registry.recordRouteOutcome(selection.descriptor, selection.route, {
-          status: 'success',
-          layer: 'broker',
-        })
-        return selection
+        throw new RemoteSessionError(
+          `No session connector is available for route kind ${selection.route.kind}`,
+          {
+            code: 'unsupported-route',
+            layer: 'routing',
+            selector: selection.target.selector,
+            intent: selection.target.intent,
+            details: { routeKind: selection.route.kind },
+          },
+        )
       }
 
       const result = await connector({

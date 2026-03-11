@@ -262,6 +262,23 @@ export class RemoteRuntimeRegistry {
 
   linkIdentity({ canonicalId, alias }) {
     if (!canonicalId || !alias) return
+    const existingCanonicalId = this.#aliases.get(alias)
+    if (existingCanonicalId && existingCanonicalId !== canonicalId) {
+      this.#recordConflict(existingCanonicalId, `identityAlias:${alias}->${canonicalId}`)
+      this.#recordConflict(canonicalId, `identityAlias:${alias}->${existingCanonicalId}`)
+      return
+    }
+    const conflictingDescriptor = [...this.#descriptors.values()].find((descriptor) => {
+      if (descriptor.identity.canonicalId === canonicalId) return false
+      return descriptor.identity.canonicalId === alias
+        || descriptor.identity.fingerprint === alias
+        || descriptor.identity.podId === alias
+    })
+    if (conflictingDescriptor) {
+      this.#recordConflict(conflictingDescriptor.identity.canonicalId, `identityAlias:${alias}->${canonicalId}`)
+      this.#recordConflict(canonicalId, `identityAlias:${alias}->${conflictingDescriptor.identity.canonicalId}`)
+      return
+    }
     this.#aliases.set(alias, canonicalId)
   }
 
@@ -378,11 +395,13 @@ export class RemoteRuntimeRegistry {
 
     this.#descriptors.set(descriptor.identity.canonicalId, nextDescriptor)
     this.#indexAliases(nextDescriptor)
-    void this.#auditRecorder?.record?.('remote_service_advertised', {
+    void this.#auditRecorder?.record?.('remote_route_outcome', {
       canonicalId: nextDescriptor.identity.canonicalId,
-      service: service.name,
-      type: service.type || null,
-      address: service.address || null,
+      route: routeKey(route),
+      status,
+      reason,
+      layer,
+      timestamp,
     })
     return nextDescriptor
   }
@@ -425,6 +444,17 @@ export class RemoteRuntimeRegistry {
     if (descriptor.identity.podId) {
       this.#aliases.set(descriptor.identity.podId, descriptor.identity.canonicalId)
     }
+  }
+
+  #recordConflict(canonicalId, conflict) {
+    const descriptor = this.#descriptors.get(canonicalId)
+    if (!descriptor) return
+    const nextDescriptor = createRemotePeerDescriptor({
+      ...descriptor,
+      conflicts: unique([...(descriptor.conflicts || []), conflict]),
+    })
+    this.#descriptors.set(canonicalId, nextDescriptor)
+    this.#indexAliases(nextDescriptor)
   }
 
   #scoreRoute(descriptor, route, intent) {

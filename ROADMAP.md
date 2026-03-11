@@ -1132,14 +1132,11 @@ Required properties:
   - `exec-only`
 - capabilities
   - `shell`
-  - `pty`
-  - `virtual_terminal`
+  - `exec`
   - `fs`
   - `tools`
-  - `mcp`
   - `gateway`
-  - `vm_console`
-  - `vm_control`
+  - backend-specific terminal semantics come from `peer_type` + `shell_backend`, not duplicated as pseudo-capabilities
 - trust and policy summary
 - last-seen / liveness
 - source provenance
@@ -1159,7 +1156,7 @@ Represents how a peer can be reached right now.
 
 Required properties:
 
-- `direct_wsh` endpoint(s), if any
+- direct-host endpoint(s), if any
 - reverse peer registration state, if any
 - shared relay coordinates, if any
 - mesh route hints, if any
@@ -1213,27 +1210,25 @@ The clean composition point is `ClawserPod`.
 
 That makes it the correct place to host the new integration surfaces.
 
-Proposed new modules:
+Implemented integration modules:
 
-- [ ] `web/clawser-remote-runtime-registry.js`
+- [x] `web/clawser-remote-runtime-registry.js`
   - merges mesh-discovered peers, `wsh` reverse peers, and direct host bookmarks into canonical `RemotePeerDescriptor` records
-- [ ] `web/clawser-wsh-session-broker.js`
+- [x] `web/clawser-remote-session-broker.js`
   - resolves a `SessionTarget` and opens the appropriate `wsh` session path
-- [ ] `web/clawser-mesh-wsh-policy-adapter.js`
+- [x] `web/clawser-remote-runtime-policy.js`
   - maps mesh ACL/trust state to `wsh` exposure and session-policy decisions
-- [ ] `web/clawser-mesh-wsh-reachability.js`
-  - computes `ReachabilityDescriptor` objects from discovery + relay + direct config inputs
-- [ ] `web/clawser-mesh-wsh-peer-sync.js`
-  - consumes `wsh` relay registrations and feeds them into the runtime registry
+- [x] reachability computation is implemented inside the shared runtime registry + broker path
+- [x] peer/discovery sync is implemented through `ClawserPod` wiring, discovery handlers, relay announce handlers, and `clawser-mesh-wsh-bridge.js`
 
-CLI-side or shared protocol work likely needed:
+CLI-side or shared protocol work:
 
-- [ ] extend `web/packages/wsh/spec/wsh-v1.yaml`
+- [x] extend `web/packages/wsh/spec/wsh-v1.yaml`
   - peer type metadata
   - backend metadata
   - capability refinements
-- [ ] add Rust-side peer descriptor support in `wsh-client` / `wsh-cli`
-- [ ] add JSON output format for machine-readable peer descriptors
+- [x] add Rust-side peer descriptor support in `wsh-client` / `wsh-cli`
+- [x] add JSON output format for machine-readable peer descriptors
 
 #### Discovery Unification Plan
 
@@ -1266,10 +1261,10 @@ The future `RemoteRuntimeRegistry` should ingest:
 
 ##### Verification Requirements
 
-- [ ] test merging mesh and `wsh` identities via `MeshWshBridge`
-- [ ] test duplicate suppression
-- [ ] test conflicting peer metadata from different sources
-- [ ] test partial peer descriptors that gradually become fully resolved
+- [x] test merging mesh and `wsh` identities via `MeshWshBridge`
+- [x] test duplicate suppression
+- [x] test conflicting peer metadata from different sources
+- [x] test partial peer descriptors that gradually become fully resolved
 
 #### Policy And Trust Handoff
 
@@ -1339,10 +1334,10 @@ Examples:
 
 ##### Planned Deliverables
 
-- [ ] map mesh scope templates to `wsh` exposure presets
-- [ ] define a canonical policy translation table
-- [ ] document the precedence order when mesh and `wsh` policies disagree
-- [ ] add audit logging when one layer blocks something another layer would have allowed
+- [x] map mesh scope templates to `wsh` exposure presets
+- [x] define a canonical policy translation table
+- [x] document the precedence order when mesh and `wsh` policies disagree
+- [x] add audit logging when one layer blocks something another layer would have allowed
 
 #### Transport And Routing Strategy
 
@@ -1506,46 +1501,46 @@ This should be treated as mandatory roadmap scope, not optional polish.
 
 ##### Identity And Descriptor Verification
 
-- [ ] one mesh identity and one `wsh` identity map to one canonical remote identity
-- [ ] mesh and `wsh` peer records merge deterministically
-- [ ] conflicting metadata is surfaced, not silently flattened
-- [ ] peer records survive reload / reconnect / relay re-registration
+- [x] one mesh identity and one `wsh` identity map to one canonical remote identity
+- [x] mesh and `wsh` peer records merge deterministically
+- [x] conflicting metadata is surfaced, not silently flattened
+- [x] peer records survive reload / reconnect / relay re-registration
 
 ##### Policy Verification
 
-- [ ] mesh ACL denial prevents peer selection
-- [ ] relay policy denial blocks route selection with an explainable error
-- [ ] `wsh` auth denial still blocks session open even if mesh trust is high
-- [ ] capability mismatch blocks the right session kinds
+- [x] mesh ACL denial prevents peer selection
+- [x] relay policy denial blocks route selection with an explainable error
+- [x] `wsh` auth denial still blocks session open even if mesh trust is high
+- [x] capability mismatch blocks the right session kinds
 
 ##### Routing Verification
 
-- [ ] direct host chosen when available and appropriate
-- [ ] reverse relay path chosen when direct host is unavailable
-- [ ] browser peer chosen only for workloads it can actually serve
-- [ ] future VM peer chosen only when the requested capability/backend fits
+- [x] direct host chosen when available and appropriate
+- [x] reverse relay path chosen when direct host is unavailable
+- [x] browser peer chosen only for workloads it can actually serve
+- [x] future VM peer chosen only when the requested capability/backend fits
 
 ##### Session Verification
 
-- [ ] open/resize/signal/close work through each supported path
+- [x] open/resize/signal/close work through each supported path
 - [x] attach/replay/reattach work through each supported path
 - [x] peer metadata shown to operator matches actual backend behavior
 
 ##### Failure-Mode Verification
 
-- [ ] stale discovery record does not create phantom reachability
+- [x] stale discovery record does not create phantom reachability
 - [x] relay drop triggers resumable or explainable failure behavior
-- [ ] conflicting relays do not corrupt the peer descriptor
-- [ ] identity-link mismatch does not merge unrelated peers
+- [x] conflicting relays do not corrupt the peer descriptor
+- [x] identity-link mismatch does not merge unrelated peers
 
 #### Deliverables Required Before Calling The Integration Complete
 
-- [ ] shared peer descriptor schema
-- [ ] remote runtime registry
-- [ ] session broker
-- [ ] policy adapter between mesh and `wsh`
-- [ ] deterministic routing algorithm
-- [ ] full integration test matrix across discovery, policy, transport, and session layers
+- [x] shared peer descriptor schema
+- [x] remote runtime registry
+- [x] session broker
+- [x] policy adapter between mesh and `wsh`
+- [x] deterministic routing algorithm
+- [x] full integration test matrix across discovery, policy, transport, and session layers
 
 ### Phase 7A.6: Browser-Hosted Linux Guest As A `wsh` Peer
 

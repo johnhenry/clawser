@@ -216,6 +216,140 @@ describe('RemoteRuntimeRegistry', () => {
     assert.equal(directRoute.health, 'offline')
     assert.equal(ranked[0].kind, 'reverse-relay')
   })
+
+  it('keeps conflicting reverse relays as separate reachability options', () => {
+    const registry = new RemoteRuntimeRegistry()
+    const fingerprint = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+
+    registry.ingestWshRelayPeer({
+      fingerprint,
+      fingerprint_short: fingerprint.slice(0, 8),
+      username: 'builder',
+      capabilities: ['shell'],
+      peer_type: 'host',
+      shell_backend: 'pty',
+      source: 'wsh-relay',
+      supports_attach: true,
+      supports_replay: true,
+      supports_echo: false,
+      supports_term_sync: false,
+      last_seen: 10,
+    }, {
+      relayHost: 'relay-a.example',
+      relayPort: 4422,
+    })
+
+    registry.ingestWshRelayPeer({
+      fingerprint,
+      fingerprint_short: fingerprint.slice(0, 8),
+      username: 'builder',
+      capabilities: ['shell'],
+      peer_type: 'host',
+      shell_backend: 'pty',
+      source: 'wsh-relay',
+      supports_attach: true,
+      supports_replay: true,
+      supports_echo: false,
+      supports_term_sync: false,
+      last_seen: 11,
+    }, {
+      relayHost: 'relay-b.example',
+      relayPort: 4422,
+    })
+
+    const peer = registry.listPeers()[0]
+    const relays = peer.reachability
+      .filter((route) => route.kind === 'reverse-relay')
+      .map((route) => route.relayHost)
+      .sort()
+
+    assert.deepEqual(relays, ['relay-a.example', 'relay-b.example'])
+  })
+
+  it('does not let an identity-link mismatch merge unrelated peers', () => {
+    const registry = new RemoteRuntimeRegistry()
+    registry.ingestDescriptor(createRemotePeerDescriptor({
+      identity: createRemoteIdentity({
+        canonicalId: 'mesh:alice',
+        podId: 'mesh:alice',
+      }),
+      username: 'alice',
+      peerType: 'browser-shell',
+      shellBackend: 'virtual-shell',
+      capabilities: ['shell'],
+      sources: ['mesh-discovery'],
+    }))
+    registry.ingestDescriptor(createRemotePeerDescriptor({
+      identity: createRemoteIdentity({
+        canonicalId: 'host:bob',
+        fingerprint: 'host:bob',
+      }),
+      username: 'bob',
+      peerType: 'host',
+      shellBackend: 'pty',
+      capabilities: ['shell'],
+      sources: ['wsh-relay'],
+    }))
+
+    registry.linkIdentity({
+      canonicalId: 'mesh:alice',
+      alias: 'host:bob',
+    })
+
+    assert.equal(registry.resolvePeer('host:bob').username, 'bob')
+    const alice = registry.resolvePeer('mesh:alice')
+    const bob = registry.resolvePeer('host:bob')
+    assert.ok(alice.conflicts.some((entry) => entry.includes('identityAlias:host:bob')))
+    assert.ok(bob.conflicts.some((entry) => entry.includes('identityAlias:host:bob')))
+  })
+
+  it('keeps a canonical peer record stable across relay re-registration', () => {
+    const registry = new RemoteRuntimeRegistry()
+    const fingerprint = 'cccccccccccccccccccccccccccccccc'
+
+    registry.ingestWshRelayPeer({
+      fingerprint,
+      fingerprint_short: fingerprint.slice(0, 8),
+      username: 'builder',
+      capabilities: ['shell'],
+      peer_type: 'host',
+      shell_backend: 'pty',
+      source: 'wsh-relay',
+      supports_attach: true,
+      supports_replay: true,
+      supports_echo: false,
+      supports_term_sync: false,
+      last_seen: 10,
+    }, {
+      relayHost: 'relay.example',
+      relayPort: 4422,
+    })
+
+    registry.ingestWshRelayPeer({
+      fingerprint,
+      fingerprint_short: fingerprint.slice(0, 8),
+      username: 'builder',
+      capabilities: ['shell', 'fs'],
+      peer_type: 'host',
+      shell_backend: 'pty',
+      source: 'wsh-relay',
+      supports_attach: true,
+      supports_replay: true,
+      supports_echo: false,
+      supports_term_sync: false,
+      last_seen: 20,
+    }, {
+      relayHost: 'relay.example',
+      relayPort: 4422,
+    })
+
+    const peers = registry.listPeers()
+    assert.equal(peers.length, 1)
+    assert.equal(peers[0].identity.fingerprint, fingerprint)
+    assert.ok(peers[0].capabilities.includes('fs'))
+    assert.equal(peers[0].reachability.length, 1)
+    assert.equal(peers[0].reachability[0].lastSeen, 20)
+  })
 })
 
 describe('RemoteSessionBroker', () => {
@@ -252,6 +386,49 @@ describe('RemoteSessionBroker', () => {
     assert.equal(selection.route.kind, 'direct-host')
   })
 
+  it('chooses reverse relay when direct host is unavailable', () => {
+    const registry = new RemoteRuntimeRegistry()
+    registry.ingestDescriptor(createRemotePeerDescriptor({
+      identity: createRemoteIdentity({ canonicalId: 'host:builder' }),
+      username: 'builder',
+      peerType: 'host',
+      shellBackend: 'pty',
+      capabilities: ['shell', 'exec'],
+      reachability: [
+        createReachabilityDescriptor({
+          kind: 'direct-host',
+          source: 'direct-bookmark',
+          endpoint: 'builder.local:4422',
+          capabilities: ['shell', 'exec'],
+        }),
+        createReachabilityDescriptor({
+          kind: 'reverse-relay',
+          source: 'wsh-relay',
+          relayHost: 'relay.example',
+          relayPort: 4422,
+          capabilities: ['shell', 'exec'],
+        }),
+      ],
+      sources: ['direct-bookmark', 'wsh-relay'],
+    }))
+
+    let directRoute = registry.resolvePeer('host:builder').reachability.find((route) => route.kind === 'direct-host')
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      registry.recordRouteOutcome('host:builder', directRoute, {
+        status: 'failure',
+        reason: 'connection reset',
+        layer: 'connector',
+        timestamp: 100 + attempt,
+      })
+      directRoute = registry.resolvePeer('host:builder').reachability.find((route) => route.kind === 'direct-host')
+    }
+
+    const broker = new RemoteSessionBroker({ runtimeRegistry: registry })
+    const selection = broker.explainRoute('host:builder', { intent: 'terminal' })
+
+    assert.equal(selection.route.kind, 'reverse-relay')
+  })
+
   it('rejects unsupported workloads before route selection', () => {
     const registry = new RemoteRuntimeRegistry()
     registry.ingestDescriptor(createRemotePeerDescriptor({
@@ -275,6 +452,35 @@ describe('RemoteSessionBroker', () => {
     const broker = new RemoteSessionBroker({ runtimeRegistry: registry })
     assert.throws(
       () => broker.resolveTarget('browser:alice', { intent: 'files', requiredCapabilities: ['fs'] }),
+      /required capabilities/i,
+    )
+  })
+
+  it('chooses VM peers only for workloads they actually support', () => {
+    const registry = new RemoteRuntimeRegistry()
+    registry.ingestDescriptor(createRemotePeerDescriptor({
+      identity: createRemoteIdentity({ canonicalId: 'vm:demo' }),
+      username: 'vm',
+      peerType: 'vm-guest',
+      shellBackend: 'vm-console',
+      capabilities: ['shell'],
+      reachability: [
+        createReachabilityDescriptor({
+          kind: 'reverse-relay',
+          source: 'wsh-relay',
+          relayHost: 'relay.example',
+          relayPort: 4422,
+          capabilities: ['shell'],
+        }),
+      ],
+      sources: ['wsh-relay'],
+    }))
+
+    const broker = new RemoteSessionBroker({ runtimeRegistry: registry })
+    const terminal = broker.resolveTarget('vm:demo', { intent: 'terminal' })
+    assert.equal(terminal.descriptor.shellBackend, 'vm-console')
+    assert.throws(
+      () => broker.resolveTarget('vm:demo', { intent: 'files', requiredCapabilities: ['fs'] }),
       /required capabilities/i,
     )
   })
@@ -555,6 +761,72 @@ describe('RemoteSessionBroker', () => {
     )
   })
 
+  it('does not open sessions on discovery-only routes without a wsh connector', async () => {
+    const registry = new RemoteRuntimeRegistry()
+    registry.ingestMeshDiscovery({
+      podId: 'mesh:ghost',
+      label: 'ghost',
+      capabilities: ['shell'],
+      metadata: {
+        username: 'ghost',
+        peerType: 'worker',
+        shellBackend: 'exec-only',
+      },
+      discoveredAt: Date.now(),
+      source: 'mesh-discovery',
+    })
+
+    const broker = new RemoteSessionBroker({ runtimeRegistry: registry })
+    await assert.rejects(
+      broker.openSession('mesh:ghost', { intent: 'terminal' }),
+      (error) => error instanceof RemoteSessionError
+        && error.code === 'unsupported-route'
+        && error.layer === 'routing'
+    )
+  })
+
+  it('keeps wsh auth denial authoritative even when trust is high', async () => {
+    const registry = new RemoteRuntimeRegistry()
+    registry.ingestDescriptor(createRemotePeerDescriptor({
+      identity: createRemoteIdentity({ canonicalId: 'host:trusted' }),
+      username: 'trusted',
+      peerType: 'host',
+      shellBackend: 'pty',
+      capabilities: ['shell'],
+      reachability: [
+        createReachabilityDescriptor({
+          kind: 'direct-host',
+          source: 'direct-bookmark',
+          endpoint: 'trusted.local:4422',
+          capabilities: ['shell'],
+        }),
+      ],
+      sources: ['direct-bookmark'],
+      metadata: {
+        trustLevel: 0.95,
+      },
+    }))
+
+    const broker = new RemoteSessionBroker({
+      runtimeRegistry: registry,
+      connectors: {
+        connectDirectHost: async () => {
+          throw new RemoteSessionError('host key not authorized', {
+            code: 'auth-denied',
+            layer: 'wsh-auth',
+          })
+        },
+      },
+    })
+
+    await assert.rejects(
+      broker.openSession('host:trusted', { intent: 'terminal' }),
+      (error) => error instanceof RemoteSessionError
+        && error.code === 'auth-denied'
+        && error.layer === 'wsh-auth'
+    )
+  })
+
   it('emits broker events and audit records when a connector succeeds', async () => {
     const registry = new RemoteRuntimeRegistry()
     registry.ingestDirectHostBookmark({
@@ -632,5 +904,46 @@ describe('RemoteSessionBroker', () => {
     assert.equal(records[0].operation, 'remote_session_denied')
     assert.equal(records[0].data.layer, 'mesh-acl')
     assert.equal(records[0].data.code, 'policy-denied')
+  })
+
+  it('surfaces relay policy denials as explainable routing failures', async () => {
+    const registry = new RemoteRuntimeRegistry()
+    registry.ingestDescriptor(createRemotePeerDescriptor({
+      identity: createRemoteIdentity({ canonicalId: 'host:relay-blocked' }),
+      username: 'blocked',
+      peerType: 'host',
+      shellBackend: 'pty',
+      capabilities: ['shell'],
+      reachability: [
+        createReachabilityDescriptor({
+          kind: 'reverse-relay',
+          source: 'wsh-relay',
+          relayHost: 'relay.example',
+          relayPort: 4422,
+          capabilities: ['shell'],
+        }),
+      ],
+      sources: ['wsh-relay'],
+    }))
+
+    const broker = new RemoteSessionBroker({
+      runtimeRegistry: registry,
+      policyAdapter: {
+        checkTargetAccess() {
+          return {
+            allowed: false,
+            layer: 'relay-policy',
+            reason: 'relay policy denied this route',
+          }
+        },
+      },
+    })
+
+    await assert.rejects(
+      broker.openSession('host:relay-blocked', { intent: 'terminal' }),
+      (error) => error instanceof RemoteSessionError
+        && error.code === 'policy-denied'
+        && error.layer === 'relay-policy'
+    )
   })
 })
