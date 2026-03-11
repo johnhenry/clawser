@@ -30,6 +30,7 @@ export const REMOTE_SESSION_INTENTS = Object.freeze([
   'gateway',
   'service',
   'automation',
+  'deployment',
 ])
 
 export function supportHintsForRuntime({
@@ -83,6 +84,31 @@ export function deploymentHintsForRuntime({
     packageInstall,
     vmImageLoad,
   }
+}
+
+export function runtimeClassesForRuntime({
+  peerType = 'host',
+  shellBackend = 'pty',
+  capabilities = [],
+  metadata = {},
+} = {}) {
+  const classes = [
+    normalizePeerType(peerType),
+    normalizeShellBackend(shellBackend),
+  ]
+  const deploymentSupport = metadata?.deploymentSupport || deploymentHintsForRuntime({
+    peerType,
+    shellBackend,
+    capabilities,
+    metadata,
+  })
+  if ((capabilities || []).includes('gateway')) classes.push('gateway')
+  if ((capabilities || []).includes('tools')) classes.push('tool-runtime')
+  if ((capabilities || []).includes('fs')) classes.push('filesystem')
+  if ((capabilities || []).includes('shell') || (capabilities || []).includes('exec')) classes.push('compute')
+  if (deploymentSupport.canDeploy) classes.push('deployer')
+  if (metadata?.serviceDetails || metadata?.services?.length) classes.push('service-host')
+  return [...new Set(classes.filter(Boolean))]
 }
 
 function hexToBytes(hex) {
@@ -232,6 +258,15 @@ export function createRemotePeerDescriptor({
     capabilities,
     metadata,
   })
+  const runtimeClasses = runtimeClassesForRuntime({
+    peerType,
+    shellBackend,
+    capabilities,
+    metadata: {
+      ...metadata,
+      deploymentSupport: deploymentHints,
+    },
+  })
 
   return {
     identity: createRemoteIdentity(identity),
@@ -249,6 +284,7 @@ export function createRemotePeerDescriptor({
     metadata: {
       replayMode: supportHints.replayMode,
       deploymentSupport: deploymentHints,
+      runtimeClasses,
       ...metadata,
     },
   }

@@ -191,6 +191,41 @@ describe('RemoteRuntimePolicyAdapter', () => {
     )
   })
 
+  it('requires deployment support and higher trust for deployment intents', () => {
+    const registry = new RemoteRuntimeRegistry()
+    registry.ingestDescriptor(createRemotePeerDescriptor({
+      identity: createRemoteIdentity({ canonicalId: 'deploy-peer', fingerprint: 'deploy-peer' }),
+      username: 'deploy',
+      peerType: 'browser-shell',
+      shellBackend: 'virtual-shell',
+      capabilities: ['fs', 'tools'],
+      reachability: [
+        createReachabilityDescriptor({
+          kind: 'reverse-relay',
+          source: 'wsh-relay',
+          relayHost: 'relay.example',
+          relayPort: 4422,
+          capabilities: ['fs', 'tools'],
+        }),
+      ],
+      sources: ['wsh-relay'],
+      metadata: {
+        trustLevel: 0.3,
+        deploymentSupport: { canDeploy: false },
+      },
+    }))
+
+    const broker = new RemoteSessionBroker({
+      runtimeRegistry: registry,
+      policyAdapter: new RemoteRuntimePolicyAdapter(),
+    })
+
+    assert.throws(
+      () => broker.resolveTarget('deploy-peer', { intent: 'deployment' }),
+      /deployment support|requires trust >= 0.45/i,
+    )
+  })
+
   it('uses route success rate as a ranking signal', () => {
     const adapter = new RemoteRuntimePolicyAdapter()
     const descriptor = createRemotePeerDescriptor({

@@ -481,6 +481,16 @@ export class MeshOrchestrator {
 
     const runtime = this.#resolveRuntime(podId)
     if (runtime && this.#remoteSessionBroker) {
+      if (runtime.metadata?.deploymentSupport?.canDeploy !== true) {
+        await this.#recordAudit('remote_deploy_denied', {
+          actor: 'operator',
+          podId,
+          reason: 'target does not advertise deployment support',
+          layer: 'capability',
+          deploymentType: 'skill',
+        })
+        return { success: false, error: `Pod "${podId}" does not advertise deployment support` }
+      }
       const skillName = deriveSkillName(skillContent)
       const path = `/.skills/${skillName}/SKILL.md`
       await this.#recordAudit('remote_deploy_started', {
@@ -490,10 +500,12 @@ export class MeshOrchestrator {
         deploymentType: 'skill',
       })
       await this.#remoteSessionBroker.openSession(podId, {
-        intent: 'files',
+        intent: 'deployment',
         operation: 'upload',
         path,
         data: skillContent,
+        requiredCapabilities: ['fs'],
+        actor: 'operator',
       })
       await this.#recordAudit('remote_deploy_completed', {
         actor: 'operator',
@@ -1024,7 +1036,9 @@ function runtimePeerToComputeDescriptor(peer) {
   if (!podId) return null
   const capabilities = dedupeStrings([
     ...(peer.capabilities || []),
+    ...((peer.metadata?.runtimeClasses || []).map((runtimeClass) => `runtime:${runtimeClass}`)),
     ...(peer.peerType ? [`runtime:${peer.peerType}`] : []),
+    ...(peer.shellBackend ? [`runtime:${peer.shellBackend}`] : []),
     ...(peer.shellBackend === 'vm-console' ? ['vm_console'] : []),
     ...(peer.shellBackend === 'pty' ? ['host_pty'] : []),
     ...((peer.capabilities || []).some((cap) => cap === 'shell' || cap === 'exec' || cap === 'tools')

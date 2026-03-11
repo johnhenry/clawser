@@ -428,7 +428,9 @@ describe('MeshOrchestrator', () => {
           username: 'relay',
           capabilities: ['fs'],
           reachability: [{ kind: 'reverse-relay' }],
-          metadata: {},
+          metadata: {
+            deploymentSupport: { canDeploy: true, skillSync: true },
+          },
         },
       ]),
       remoteSessionBroker: {
@@ -448,11 +450,48 @@ describe('MeshOrchestrator', () => {
 
     assert.equal(result.success, true)
     assert.equal(calls.length, 1)
-    assert.equal(calls[0].opts.intent, 'files')
+    assert.equal(calls[0].opts.intent, 'deployment')
     assert.equal(calls[0].opts.operation, 'upload')
+    assert.deepEqual(calls[0].opts.requiredCapabilities, ['fs'])
     assert.match(calls[0].opts.path, /^\/\.skills\/demo-skill\/SKILL\.md$/)
     assert.equal(records[0].operation, 'remote_deploy_started')
     assert.equal(records[1].operation, 'remote_deploy_completed')
+  })
+
+  it('deploySkill denies runtime-registry peers that do not advertise deployment support', async () => {
+    const calls = []
+    const records = []
+    const registryOrch = makeOrchestrator({
+      runtimeRegistry: makeRuntimeRegistry([
+        {
+          identity: { canonicalId: 'relay-peer', fingerprint: 'relay-peer', aliases: [] },
+          username: 'relay',
+          capabilities: ['fs'],
+          reachability: [{ kind: 'reverse-relay' }],
+          metadata: {
+            deploymentSupport: { canDeploy: false },
+          },
+        },
+      ]),
+      remoteSessionBroker: {
+        async openSession(selector, opts) {
+          calls.push({ selector, opts })
+          return { ok: true }
+        },
+      },
+      auditRecorder: {
+        async record(operation, data) {
+          records.push({ operation, data })
+        },
+      },
+    })
+
+    const result = await registryOrch.deploySkill('relay-peer', '# Demo Skill')
+
+    assert.equal(result.success, false)
+    assert.match(result.error, /does not advertise deployment support/i)
+    assert.equal(calls.length, 0)
+    assert.equal(records[0].operation, 'remote_deploy_denied')
   })
 
   it('listRemoteServices merges service browser and runtime-registry records', async () => {
@@ -659,6 +698,52 @@ describe('MeshOrchestrator', () => {
     })
 
     assert.equal(selection.podId, 'vm-peer')
+  })
+
+  it('uses canonical runtime classes for compute target preference', () => {
+    const registryOrch = makeOrchestrator({
+      peerNode: makePeerNode({
+        exec: undefined,
+        capabilities: ['wasm'],
+      }),
+      runtimeRegistry: makeRuntimeRegistry([
+        {
+          identity: { canonicalId: 'host-peer', fingerprint: 'host-peer', aliases: [] },
+          username: 'host-peer',
+          peerType: 'host',
+          shellBackend: 'pty',
+          capabilities: ['exec'],
+          reachability: [{ kind: 'reverse-relay', health: 'online' }],
+          metadata: {
+            resources: { cpu: 8, memory: 8192, storage: 16384 },
+            runtimeClasses: ['host', 'pty', 'compute'],
+            deploymentSupport: { canDeploy: false },
+          },
+        },
+        {
+          identity: { canonicalId: 'deploy-peer', fingerprint: 'deploy-peer', aliases: [] },
+          username: 'deploy-peer',
+          peerType: 'browser-shell',
+          shellBackend: 'virtual-shell',
+          capabilities: ['exec', 'fs', 'tools'],
+          reachability: [{ kind: 'reverse-relay', health: 'online' }],
+          metadata: {
+            resources: { cpu: 4, memory: 4096, storage: 8192 },
+            runtimeClasses: ['browser-shell', 'virtual-shell', 'compute', 'deployer'],
+            deploymentSupport: { canDeploy: true, skillSync: true, toolInjection: true },
+          },
+        },
+      ]),
+    })
+
+    const selection = registryOrch.selectComputeTarget({
+      constraints: {
+        capabilities: ['compute'],
+        preferRuntimeClass: 'deployer',
+      },
+    })
+
+    assert.equal(selection.podId, 'deploy-peer')
   })
 
   // -- drainPod -------------------------------------------------------------

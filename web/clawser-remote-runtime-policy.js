@@ -57,12 +57,14 @@ const INTENT_TO_EXPOSURE = Object.freeze({
   gateway: 'gateway',
   service: 'tools',
   automation: 'exec',
+  deployment: 'fs',
 })
 
 const DEFAULT_MIN_TRUST_BY_INTENT = Object.freeze({
   gateway: 0.5,
   files: 0.35,
   automation: 0.4,
+  deployment: 0.45,
 })
 
 export function meshTemplateToWshExposure(templateName) {
@@ -146,6 +148,14 @@ export class RemoteRuntimePolicyAdapter {
         allowed: false,
         layer: 'mesh-acl',
         reason: `mesh ACL template "${templateName}" denies ${target.intent}`,
+      }
+    }
+
+    if (target.intent === 'deployment' && descriptor?.metadata?.deploymentSupport?.canDeploy !== true) {
+      return {
+        allowed: false,
+        layer: 'capability',
+        reason: 'target does not advertise deployment support',
       }
     }
 
@@ -250,6 +260,16 @@ export class RemoteRuntimePolicyAdapter {
     if (target.intent === 'gateway' && trustLevel != null && trustLevel < 0.5) {
       scoreAdjustment -= 10
       reasons.push('gateway-requires-higher-trust')
+    }
+
+    if (target.intent === 'deployment') {
+      if (descriptor?.metadata?.deploymentSupport?.canDeploy) {
+        scoreAdjustment += 12
+        reasons.push('deployment-supported')
+      } else {
+        scoreAdjustment -= 20
+        reasons.push('deployment-unsupported')
+      }
     }
 
     const successRate = Number.isFinite(route?.successRate) ? route.successRate : null

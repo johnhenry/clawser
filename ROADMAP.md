@@ -2333,7 +2333,7 @@ Required convergence:
   - skill sync
   - package install
   - VM image/app loading
-- [ ] reflect deployment capability in policy, trust, and audit systems
+- [x] reflect deployment capability in policy, trust, and audit systems
 
 Verification criteria:
 
