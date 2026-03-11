@@ -219,6 +219,7 @@ export class ClawserPod extends Pod {
     })
     configureRemoteRuntimeGateway({
       remoteSessionBroker: this.#remoteSessionBroker,
+      auditRecorder: this.#remoteAuditRecorder,
     })
 
     this.#discoveryManager.onPeerDiscovered((record) => {

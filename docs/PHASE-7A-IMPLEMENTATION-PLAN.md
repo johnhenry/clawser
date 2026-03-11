@@ -230,7 +230,7 @@ Status: `[~] Partial`
   - richer peer table
   - backend-aware banners
   - selectors for only/last/filter-by-capability/filter-by-type
-- [ ] Update docs:
+- [x] Update docs:
   - topology diagram
   - support matrix
   - PTY vs virtual terminal vs VM console
@@ -241,7 +241,7 @@ Exit gate: existing advanced subsystems target the canonical runtime model inste
 
 Status: `[~] Partial`
 
-- [~] Netway/gateway:
+- [x] Netway/gateway:
   - expose gateway-capable peers in the runtime registry
   - policy-scope gateway separately from shell/tools
   - record gateway use in audit/telemetry

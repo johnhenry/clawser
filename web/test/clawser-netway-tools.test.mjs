@@ -69,13 +69,23 @@ describe('configureRemoteRuntimeGateway', () => {
   it('connects through the shared broker when opening tcp sockets', async () => {
     const brokerCalls = []
     const client = makeGatewayClient()
+    const records = []
     configureRemoteRuntimeGateway({
       remoteSessionBroker: {
         listTargets: () => [makeGatewayPeer()],
         explainRoute: () => ({ route: { kind: 'reverse-relay', health: 'online' }, health: { failures: 0 } }),
         async openSession(selector, opts) {
           brokerCalls.push({ selector, opts })
-          return { client, close: async () => { client.state = 'disconnected' } }
+          return {
+            client,
+            route: { kind: 'reverse-relay', relayHost: 'relay.example' },
+            close: async () => { client.state = 'disconnected' },
+          }
+        },
+      },
+      auditRecorder: {
+        async record(operation, data) {
+          records.push({ operation, data })
         },
       },
     })
@@ -92,5 +102,43 @@ describe('configureRemoteRuntimeGateway', () => {
     assert.equal(client.sent[0].port, 443)
 
     await socket.close()
+    await resetNetwayToolsForTests()
+    assert.equal(records[0].operation, 'remote_gateway_bound')
+    assert.equal(records[0].data.selector, 'gateway-peer')
+    assert.equal(records[1].operation, 'remote_gateway_closed')
+  })
+
+  it('prefers the gateway peer with the stronger route-policy score', async () => {
+    const brokerCalls = []
+    configureRemoteRuntimeGateway({
+      remoteSessionBroker: {
+        listTargets: () => [
+          makeGatewayPeer({ identity: { canonicalId: 'gateway-low', fingerprint: 'gateway-low', aliases: [] } }),
+          makeGatewayPeer({ identity: { canonicalId: 'gateway-high', fingerprint: 'gateway-high', aliases: [] } }),
+        ],
+        explainRoute(selector) {
+          return {
+            route: {
+              kind: 'reverse-relay',
+              health: 'online',
+              policy: {
+                scoreAdjustment: selector === 'gateway-high' ? 25 : -10,
+              },
+            },
+            health: { failures: 0 },
+          }
+        },
+        async openSession(selector, opts) {
+          brokerCalls.push({ selector, opts })
+          return { client: makeGatewayClient(), close: async () => {} }
+        },
+      },
+    })
+
+    const socket = await getVirtualNetwork().connect('tcp://example.com:443')
+    await socket.close()
+
+    assert.equal(brokerCalls.length, 1)
+    assert.equal(brokerCalls[0].selector, 'gateway-high')
   })
 })

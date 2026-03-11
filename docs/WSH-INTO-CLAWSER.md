@@ -15,7 +15,7 @@ If your goal is specifically to reach a live Clawser tab, use the reverse-connec
 |------|--------|--------|----------------|---------------|--------|
 | Direct host | Rust `wsh` CLI or browser `wsh` client | `wsh-server` on a host | Direct `https://host:port` | Real PTY | Complete |
 | Reverse browser peer | Rust `wsh` CLI | Live Clawser tab | Relay-mediated reverse connect | Virtual terminal | Complete for interactive shell workloads |
-| Reverse host peer | Rust `wsh` CLI | Relay-registered host agent | Relay-mediated reverse connect | Real PTY | Partial |
+| Reverse host peer | Rust `wsh` CLI | Relay-registered host agent | Relay-mediated reverse connect | Real PTY | Complete |
 | VM guest peer | Rust `wsh` CLI | Browser-hosted VM console | Relay-mediated reverse connect | VM console | Partial / MVP |
 
 Use this rule of thumb:
@@ -33,7 +33,7 @@ Use this rule of thumb:
 | Real PTY semantics | Yes | No | Yes | No |
 | File transfer | Yes | Yes | Yes | Partial |
 | Tool / MCP access | Yes | Yes | Yes | Partial |
-| Attach / replay | Yes | Yes | Partial | Partial |
+| Attach / replay | Yes | Yes | Yes | Partial |
 | Echo / term sync hints | Host-driven | Yes | Partial | No |
 
 Terminology used in this guide:
@@ -168,6 +168,62 @@ When the Rust CLI connects to a relay or host for the first time, it stores that
 If you are doing everything locally on one machine, the relay address for the rest of this guide is:
 
 - `Clawser terminal`: `localhost:4422`
+
+## 3A. Relay Self-Check
+
+Before you start registering peers, verify the local bootstrap path end to end.
+
+`Repo shell`
+
+```bash
+npm start
+```
+
+Expected:
+
+- Clawser serves from `https://localhost:8080`
+
+`Relay shell`
+
+```bash
+cargo run -p wsh-server -- --enable-relay --port 4422 --cert ~/.wsh/localhost.pem --key ~/.wsh/localhost-key.pem
+```
+
+Expected:
+
+- `wsh-server ready`
+- relay enabled on `:4422`
+
+`Operator shell`
+
+```bash
+curl -I https://localhost:4422/
+```
+
+Expected:
+
+- a TLS response, not `connection refused`
+- if the cert is not trusted, fix that before continuing
+
+`Operator shell`
+
+```bash
+wsh keys
+wsh peers localhost
+```
+
+Expected:
+
+- your operator identity exists
+- the relay command returns immediately, even if no peers are online yet
+
+If you want a reverse host peer to survive login/session churn, install `wsh-agent` as a user startup unit:
+
+```bash
+wsh -i operator agent install localhost --capability shell --capability fs
+```
+
+That writes a user-level startup unit and prints the exact `launchctl` or `systemctl --user` command needed to enable it on the local machine.
 - `Operator shell`: `localhost` with the default port `4422`
 
 ## 4. Generate a Key for the Target Clawser Tab

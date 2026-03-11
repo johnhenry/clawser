@@ -58,6 +58,9 @@ function gatewayCandidateScore(peer, broker) {
   if (peer.shellBackend === 'vm-console') score += 10;
   try {
     const explanation = broker?.explainRoute?.(peer.identity?.canonicalId || peer.identity?.fingerprint, { intent: 'gateway' });
+    if (Number.isFinite(explanation?.route?.policy?.scoreAdjustment)) {
+      score += explanation.route.policy.scoreAdjustment;
+    }
     if (explanation?.route?.kind === 'direct-host') score += 30;
     if (explanation?.route?.kind === 'reverse-relay') score += 20;
     if (explanation?.route?.health === 'online') score += 10;
@@ -84,20 +87,23 @@ class BrokerGatewayClient {
   #broker;
   #selector;
   #onLog;
+  #auditRecorder;
   #connection = null;
   #connecting = null;
 
-  constructor({ remoteSessionBroker, selector = null, onLog = null } = {}) {
+  constructor({ remoteSessionBroker, selector = null, onLog = null, auditRecorder = null } = {}) {
     this.#broker = remoteSessionBroker ?? null;
     this.#selector = selector;
     this.#onLog = onLog;
+    this.#auditRecorder = auditRecorder ?? null;
     this.onGatewayMessage = null;
   }
 
-  configure({ remoteSessionBroker, selector = null, onLog = null } = {}) {
+  configure({ remoteSessionBroker, selector = null, onLog = null, auditRecorder = null } = {}) {
     this.#broker = remoteSessionBroker ?? this.#broker;
     this.#selector = selector ?? this.#selector;
     if (onLog !== null) this.#onLog = onLog;
+    if (auditRecorder !== null) this.#auditRecorder = auditRecorder;
   }
 
   get state() {
@@ -116,6 +122,11 @@ class BrokerGatewayClient {
     const current = this.#connection;
     this.#connection = null;
     this.#connecting = null;
+    if (current) {
+      await this.#auditRecorder?.record?.('remote_gateway_closed', {
+        selector: current.selector,
+      });
+    }
     if (current?.close) {
       await current.close().catch(() => {});
     }
@@ -147,24 +158,36 @@ class BrokerGatewayClient {
       throw new Error('No gateway-capable runtime is available');
     }
     this.#onLog?.(2, `Binding netway gateway to remote runtime ${selector}`);
-    const result = await this.#broker.openSession(selector, {
-      intent: 'gateway',
-      requiredCapabilities: ['gateway'],
-    });
-    const client = result?.client;
-    if (!client || typeof client.sendControl !== 'function') {
-      throw new Error(`Remote gateway target "${selector}" did not provide a WSH client`);
+    try {
+      const result = await this.#broker.openSession(selector, {
+        intent: 'gateway',
+        requiredCapabilities: ['gateway'],
+      });
+      const client = result?.client;
+      if (!client || typeof client.sendControl !== 'function') {
+        throw new Error(`Remote gateway target "${selector}" did not provide a WSH client`);
+      }
+      client.onGatewayMessage = (message) => {
+        this.onGatewayMessage?.(message);
+      };
+      await this.#auditRecorder?.record?.('remote_gateway_bound', {
+        selector,
+        route: result?.route || null,
+      });
+      return {
+        selector,
+        client,
+        close: async () => {
+          await result?.close?.().catch(() => {});
+        },
+      };
+    } catch (error) {
+      await this.#auditRecorder?.record?.('remote_gateway_failed', {
+        selector,
+        error: error?.message || String(error),
+      });
+      throw error;
     }
-    client.onGatewayMessage = (message) => {
-      this.onGatewayMessage?.(message);
-    };
-    return {
-      selector,
-      client,
-      close: async () => {
-        await result?.close?.().catch(() => {});
-      },
-    };
   }
 }
 
@@ -586,18 +609,21 @@ export function configureRemoteRuntimeGateway({
   remoteSessionBroker,
   selector = null,
   onLog = null,
+  auditRecorder = null,
 } = {}) {
   if (!remoteRuntimeGatewayClient) {
     remoteRuntimeGatewayClient = new BrokerGatewayClient({
       remoteSessionBroker,
       selector,
       onLog,
+      auditRecorder,
     });
   } else {
     remoteRuntimeGatewayClient.configure({
       remoteSessionBroker,
       selector,
       onLog,
+      auditRecorder,
     });
   }
 

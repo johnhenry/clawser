@@ -862,8 +862,8 @@ The remaining roadmap work is now about convergence and breadth, not basic rever
 - `[x]` Reverse-host runtime exists with `wsh-agent`, relay registration, PTY/exec/file/tool/gateway exposure, shared peer metadata, and user-level startup/install support.
 - `[x]` Attach/replay and route robustness are now uniform across the supported Phase 7A backends, with backend-specific replay modes surfaced explicitly.
 - `[~]` BrowserMesh naming, policy, and trust integration are partially landed; template/preset mapping, scope translation, and denial provenance in the broker/UI/audit path are now implemented, while richer trust inputs are still open.
-- `[~]` The remote UI and CLI now consume the shared runtime model, and the support matrix is documented, but remaining duplicate surfaces are not fully closed.
-- `[~]` Gateway/service/deploy/automation/filesystem/audit convergence is underway and partly implemented, with compute routing, broker-backed Netway gateways, virtual-server service advertising, and safe remote-mount detachment now landed.
+- `[~]` The remote UI and CLI now consume the shared runtime model, and the topology/support/self-check docs are in place, but remaining duplicate surfaces are not fully closed.
+- `[~]` Gateway/service/deploy/automation/filesystem/audit convergence is underway and partly implemented, with compute routing, broker-backed Netway gateways plus gateway audit telemetry, virtual-server service advertising, and safe remote-mount detachment now landed.
 - `[~]` VM peer support exists as a browser-side `vm-console` backend and runtime scaffold, but the MVP is not yet complete.
 - `[ ]` Final readiness verification is still open.
 
@@ -2219,15 +2219,15 @@ Why this matters:
 
 Required convergence:
 
-- [ ] allow gateway-capable peers to appear as remote runtime descriptors with explicit network capabilities
+- [x] allow gateway-capable peers to appear as remote runtime descriptors with explicit network capabilities
 - [ ] map mesh trust/quota/policy signals into gateway path selection
 - [ ] expose route provenance:
   - local
   - direct host gateway
   - reverse host gateway
   - browser-proxied gateway
-- [ ] ensure gateway exposure is policy-scoped independently from shell/tool access
-- [ ] integrate gateway session events into the same audit trail as shell/file sessions
+- [x] ensure gateway exposure is policy-scoped independently from shell/tool access
+- [x] integrate gateway session events into the same audit trail as shell/file sessions
 
 Verification criteria:
 
