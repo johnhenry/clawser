@@ -60,6 +60,25 @@ function sessionSupportSummary(descriptor) {
   }
 }
 
+function normalizeRemoteSessionError(error, fallback = {}) {
+  if (error instanceof RemoteSessionError) {
+    return error
+  }
+  return new RemoteSessionError(error?.message || 'Remote session open failed', {
+    code: fallback.code || 'connector-failed',
+    layer: fallback.layer || 'connector',
+    selector: fallback.selector || null,
+    intent: fallback.intent || null,
+    details: { cause: error },
+  })
+}
+
+function auditOperationForError(error) {
+  return error.code === 'policy-denied' || error.layer === 'mesh-acl'
+    ? 'remote_session_denied'
+    : 'remote_session_failed'
+}
+
 export class RemoteSessionError extends Error {
   constructor(message, {
     code = 'remote-session-error',
@@ -233,28 +252,29 @@ export class RemoteSessionBroker {
   }
 
   async openSession(selector, opts = {}) {
-    const selection = this.explainRoute(selector, opts)
-    this.#emit('route:selected', selection)
-    await this.#auditRecorder?.record('remote_route_selected', {
-      selector: selection.target.selector,
-      intent: selection.target.intent,
-      route: selection.route,
-      descriptor: {
-        peerType: selection.descriptor.peerType,
-        shellBackend: selection.descriptor.shellBackend,
-        fingerprint: selection.descriptor.identity.fingerprint,
-      },
-    })
-    const connector = this.#connectorForRoute(selection.route)
-    if (!connector) {
-      this.#registry.recordRouteOutcome(selection.descriptor, selection.route, {
-        status: 'success',
-        layer: 'broker',
-      })
-      return selection
-    }
-
+    let selection = null
     try {
+      selection = this.explainRoute(selector, opts)
+      this.#emit('route:selected', selection)
+      await this.#auditRecorder?.record('remote_route_selected', {
+        selector: selection.target.selector,
+        intent: selection.target.intent,
+        route: selection.route,
+        descriptor: {
+          peerType: selection.descriptor.peerType,
+          shellBackend: selection.descriptor.shellBackend,
+          fingerprint: selection.descriptor.identity.fingerprint,
+        },
+      })
+      const connector = this.#connectorForRoute(selection.route)
+      if (!connector) {
+        this.#registry.recordRouteOutcome(selection.descriptor, selection.route, {
+          status: 'success',
+          layer: 'broker',
+        })
+        return selection
+      }
+
       const result = await connector({
         ...selection,
         intent: normalizeIntent(selection.target.intent),
@@ -272,28 +292,28 @@ export class RemoteSessionBroker {
       })
       return result
     } catch (error) {
-      this.#registry.recordRouteOutcome(selection.descriptor, selection.route, {
-        status: 'failure',
-        layer: 'connector',
-        reason: error?.message || 'connector failure',
+      const wrapped = normalizeRemoteSessionError(error, {
+        selector,
+        intent: normalizeIntent(opts.intent || 'terminal'),
       })
-      this.#emit('session:failed', { selection, error })
-      await this.#auditRecorder?.record('remote_session_failed', {
-        selector: selection.target.selector,
-        intent: selection.target.intent,
-        route: selection.route,
-        error: error?.message || String(error),
-      })
-      if (error instanceof RemoteSessionError) {
-        throw error
+      if (selection?.descriptor && selection?.route) {
+        this.#registry.recordRouteOutcome(selection.descriptor, selection.route, {
+          status: 'failure',
+          layer: wrapped.layer || 'connector',
+          reason: wrapped.message || 'connector failure',
+        })
       }
-      throw new RemoteSessionError(error?.message || 'Remote session open failed', {
-        code: 'connector-failed',
-        layer: 'connector',
-        selector: selection.target.selector,
-        intent: selection.target.intent,
-        details: { cause: error },
+      this.#emit('session:failed', { selection, error: wrapped })
+      await this.#auditRecorder?.record(auditOperationForError(wrapped), {
+        selector: selection?.target?.selector || wrapped.selector || selector,
+        intent: selection?.target?.intent || wrapped.intent || normalizeIntent(opts.intent || 'terminal'),
+        route: selection?.route || null,
+        layer: wrapped.layer,
+        code: wrapped.code,
+        error: wrapped.message,
+        details: wrapped.details || null,
       })
+      throw wrapped
     }
   }
 

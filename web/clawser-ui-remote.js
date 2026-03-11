@@ -742,6 +742,8 @@ export function renderRemoteRuntimePanel(runtimeRegistry, {
               <span>Health: ${esc(routeExplanation.health?.health || routeExplanation.route?.health || '--')}</span>
               <span>Replay: ${esc(routeExplanation.resumability?.replayMode || routeExplanation.descriptor?.metadata?.replayMode || '--')}</span>
             </div>
+            ${routeExplanation.failure ? `<div class="rc-runtime-route-warning">Failure: ${esc(routeExplanation.failure.layer || '--')} / ${esc(routeExplanation.failure.code || '--')}</div>` : ''}
+            ${routeExplanation.health?.lastOutcomeLayer ? `<div class="rc-runtime-route-warning">Layer: ${esc(routeExplanation.health.lastOutcomeLayer)}</div>` : ''}
             ${routeExplanation.health?.lastOutcomeReason ? `<div class="rc-runtime-route-warning">Last failure: ${esc(routeExplanation.health.lastOutcomeReason)}</div>` : ''}
             ${routeExplanation.warnings?.length ? `<div class="rc-runtime-route-warning">${esc(routeExplanation.warnings.join(' | '))}</div>` : ''}
             ${routeExplanation.alternatives?.length ? `<div class="rc-runtime-route-meta">Fallbacks: ${esc(routeExplanation.alternatives.map((route) => `${route.kind}:${route.health}`).join(', '))}</div>` : ''}

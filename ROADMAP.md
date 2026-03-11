@@ -847,21 +847,21 @@ The browser reverse path is now "operator-usable":
 - good for shell commands, normal line-oriented workflows, and capability-gated remote access to a live tab
 - not intended as a replacement for a real Unix PTY
 
-The Rust reverse-peer path still needs parity work:
+The Rust reverse-peer path now has first-class parity:
 
-- registration and reverse-connect signaling exist
-- peer discovery exists
-- the incoming session runtime on the non-browser side is not yet symmetric with the browser reverse peer
+- `wsh-agent` provides long-lived reverse-host presence
+- reverse peers expose PTY/exec/file/tool/gateway capability metadata through the shared runtime model
+- attach/replay semantics and route failure reporting are aligned with the browser reverse-peer path
 
-That asymmetry is the main roadmap driver below.
+The remaining roadmap work is now about convergence and breadth, not basic reverse-host viability.
 
 ### Phase 7A Status Dashboard (March 10, 2026)
 
 - `[x]` Canonical runtime contracts, peer metadata, and protocol bindings are in place.
 - `[x]` Browser reverse peers are interactive and capability-gated through the shared runtime model.
-- `[x]` Reverse-host runtime exists with `wsh-agent`, relay registration, PTY/exec/file/tool/gateway exposure, and shared peer metadata.
+- `[x]` Reverse-host runtime exists with `wsh-agent`, relay registration, PTY/exec/file/tool/gateway exposure, shared peer metadata, and user-level startup/install support.
 - `[x]` Attach/replay and route robustness are now uniform across the supported Phase 7A backends, with backend-specific replay modes surfaced explicitly.
-- `[~]` BrowserMesh naming, policy, and trust integration are partially landed; template/preset mapping and scope translation are now implemented, while richer denial surfacing and trust inputs are still open.
+- `[~]` BrowserMesh naming, policy, and trust integration are partially landed; template/preset mapping, scope translation, and denial provenance in the broker/UI/audit path are now implemented, while richer trust inputs are still open.
 - `[~]` The remote UI and CLI now consume the shared runtime model, and the support matrix is documented, but remaining duplicate surfaces are not fully closed.
 - `[~]` Gateway/service/deploy/automation/filesystem/audit convergence is underway and partly implemented, with compute routing, broker-backed Netway gateways, virtual-server service advertising, and safe remote-mount detachment now landed.
 - `[~]` VM peer support exists as a browser-side `vm-console` backend and runtime scaffold, but the MVP is not yet complete.
@@ -1772,11 +1772,11 @@ Why it matters:
 
 Required deliverables:
 
-- [ ] define a `wsh-agent` / `wsh-peer` daemon mode
-- [ ] support background registration and automatic reconnect
-- [ ] support startup-on-login / startup-on-boot integration where practical
-- [ ] add policy configuration for what the agent exposes by default
-- [ ] add status inspection commands
+- [x] define a `wsh-agent` / `wsh-peer` daemon mode
+- [x] support background registration and automatic reconnect
+- [x] support startup-on-login / startup-on-boot integration where practical
+- [x] add policy configuration for what the agent exposes by default
+- [x] add status inspection commands
   - connected/disconnected
   - relay target
   - active sessions

@@ -98,6 +98,32 @@ describe('renderRemoteRuntimePanel', () => {
     assert.match(html, /Fallbacks: reverse-relay:healthy/);
   });
 
+  it('renders failure provenance for denied routes', () => {
+    const html = renderRemoteRuntimePanel(makeRegistry(), {
+      activeSelector: 'host:alpha',
+      routeExplanation: {
+        connectionKind: 'failed',
+        reason: 'mesh ACL denied exec',
+        target: { intent: 'exec' },
+        descriptor: { capabilities: [] },
+        health: {
+          health: 'failed',
+          lastOutcomeReason: 'mesh ACL denied exec',
+          lastOutcomeLayer: 'mesh-acl',
+        },
+        resumability: { replayMode: 'unsupported' },
+        warnings: ['layer:mesh-acl', 'code:policy-denied'],
+        alternatives: [],
+        failure: { layer: 'mesh-acl', code: 'policy-denied' },
+      },
+    });
+
+    assert.match(html, /Failure: mesh-acl \/ policy-denied/);
+    assert.match(html, /Layer: mesh-acl/);
+    assert.match(html, /Last failure: mesh ACL denied exec/);
+    assert.match(html, /layer:mesh-acl \| code:policy-denied/);
+  });
+
   it('disables files and services actions when the peer does not advertise them', () => {
     const html = renderRemoteRuntimePanel(makeRegistry(), {});
 

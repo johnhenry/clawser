@@ -1,5 +1,6 @@
 //! `wsh agent` — long-lived reverse-host registration and status.
 
+use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -17,6 +18,22 @@ use crate::commands::common::{connect_client, resolve_target};
 use crate::commands::reverse_host::{
     self, ReverseHostOptions, ReverseHostRunOutcome, ReverseHostStatusEvent,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StartupPlatform {
+    Launchd,
+    SystemdUser,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StartupUnitSpec {
+    platform: StartupPlatform,
+    label: String,
+    path: PathBuf,
+    contents: String,
+    enable_hint: String,
+    disable_hint: String,
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -308,6 +325,81 @@ pub async fn run(
     }
 }
 
+pub async fn run_install(
+    relay_host: &str,
+    relay_port: u16,
+    identity: &str,
+    transport: Option<&str>,
+    reconnect_delay_secs: u64,
+    capabilities: &[String],
+    print: bool,
+    force: bool,
+) -> Result<()> {
+    let spec = build_startup_unit_spec(
+        identity,
+        relay_host,
+        relay_port,
+        transport,
+        reconnect_delay_secs,
+        capabilities,
+        None,
+        None,
+        None,
+    )?;
+
+    if print {
+        println!("{}", spec.contents);
+        return Ok(());
+    }
+
+    if let Some(parent) = spec.path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    if spec.path.exists() && !force {
+        anyhow::bail!(
+            "startup unit already exists at {}; rerun with --force to overwrite",
+            spec.path.display()
+        );
+    }
+    std::fs::write(&spec.path, spec.contents.as_bytes())
+        .with_context(|| format!("failed to write {}", spec.path.display()))?;
+
+    println!("Installed wsh-agent startup unit:");
+    println!("  {}", spec.path.display());
+    println!("Enable/start:");
+    println!("  {}", spec.enable_hint);
+    println!("Disable/remove later:");
+    println!("  {}", spec.disable_hint);
+    Ok(())
+}
+
+pub async fn run_uninstall(
+    relay_host: &str,
+    relay_port: u16,
+    identity: &str,
+    _transport: Option<&str>,
+) -> Result<()> {
+    let platform = detect_startup_platform()?;
+    let home = dirs::home_dir().context("cannot determine home directory")?;
+    let label = startup_unit_label(identity, relay_host, relay_port);
+    let path = startup_unit_path(platform, &home, &label);
+    if !path.exists() {
+        println!("No startup unit installed for {identity} on {relay_host}:{relay_port}.");
+        return Ok(());
+    }
+
+    std::fs::remove_file(&path).with_context(|| format!("failed to remove {}", path.display()))?;
+    println!("Removed wsh-agent startup unit:");
+    println!("  {}", path.display());
+    println!("If the agent is currently loaded, disable it with:");
+    println!(
+        "  {}",
+        startup_disable_hint(platform, &label, path.as_os_str())
+    );
+    Ok(())
+}
+
 pub async fn run_status(
     relay_host: Option<&str>,
     relay_port: u16,
@@ -385,6 +477,72 @@ fn reverse_host_options(capabilities: &[String]) -> Result<ReverseHostOptions> {
     })
 }
 
+fn build_startup_unit_spec(
+    identity: &str,
+    relay_host: &str,
+    relay_port: u16,
+    transport: Option<&str>,
+    reconnect_delay_secs: u64,
+    capabilities: &[String],
+    platform_override: Option<StartupPlatform>,
+    home_override: Option<&std::path::Path>,
+    exe_override: Option<&std::path::Path>,
+) -> Result<StartupUnitSpec> {
+    let options = reverse_host_options(capabilities)?;
+    let platform = match platform_override {
+        Some(platform) => platform,
+        None => detect_startup_platform()?,
+    };
+    let home = match home_override {
+        Some(home) => home.to_path_buf(),
+        None => dirs::home_dir().context("cannot determine home directory")?,
+    };
+    let exe = match exe_override {
+        Some(path) => path.to_path_buf(),
+        None => std::env::current_exe().context("failed to determine current executable")?,
+    };
+    let label = startup_unit_label(identity, relay_host, relay_port);
+    let path = startup_unit_path(platform, &home, &label);
+    let args = startup_command_arguments(
+        &exe,
+        identity,
+        relay_host,
+        relay_port,
+        transport,
+        reconnect_delay_secs,
+        &options.capabilities,
+    );
+
+    let contents = match platform {
+        StartupPlatform::Launchd => render_launchd_plist(&label, &home, &args),
+        StartupPlatform::SystemdUser => render_systemd_unit(&label, &home, &args),
+    };
+
+    Ok(StartupUnitSpec {
+        platform,
+        label: label.clone(),
+        path: path.clone(),
+        contents,
+        enable_hint: startup_enable_hint(platform, &label, path.as_os_str()),
+        disable_hint: startup_disable_hint(platform, &label, path.as_os_str()),
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn detect_startup_platform() -> Result<StartupPlatform> {
+    Ok(StartupPlatform::Launchd)
+}
+
+#[cfg(target_os = "linux")]
+fn detect_startup_platform() -> Result<StartupPlatform> {
+    Ok(StartupPlatform::SystemdUser)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn detect_startup_platform() -> Result<StartupPlatform> {
+    anyhow::bail!("wsh agent install is currently supported on macOS and Linux only")
+}
+
 fn normalize_capabilities(capabilities: &[String]) -> Vec<String> {
     let requested = if capabilities.is_empty() {
         vec!["shell".to_string(), "exec".to_string()]
@@ -443,6 +601,169 @@ fn sanitize_component(value: &str) -> String {
             }
         })
         .collect()
+}
+
+fn startup_unit_label(identity: &str, relay_host: &str, relay_port: u16) -> String {
+    format!(
+        "io.clawser.wsh-agent.{}.{}.{}",
+        sanitize_component(identity),
+        sanitize_component(relay_host),
+        relay_port
+    )
+}
+
+fn startup_unit_path(platform: StartupPlatform, home: &std::path::Path, label: &str) -> PathBuf {
+    match platform {
+        StartupPlatform::Launchd => home
+            .join("Library")
+            .join("LaunchAgents")
+            .join(format!("{label}.plist")),
+        StartupPlatform::SystemdUser => home
+            .join(".config")
+            .join("systemd")
+            .join("user")
+            .join(format!("{label}.service")),
+    }
+}
+
+fn startup_command_arguments(
+    exe: &std::path::Path,
+    identity: &str,
+    relay_host: &str,
+    relay_port: u16,
+    transport: Option<&str>,
+    reconnect_delay_secs: u64,
+    capabilities: &[String],
+) -> Vec<String> {
+    let mut args = vec![
+        exe.display().to_string(),
+        "-i".to_string(),
+        identity.to_string(),
+        "-p".to_string(),
+        relay_port.to_string(),
+    ];
+    if let Some(transport) = transport {
+        args.push("-t".to_string());
+        args.push(transport.to_string());
+    }
+    args.push("agent".to_string());
+    args.push("run".to_string());
+    args.push(relay_host.to_string());
+    args.push("--reconnect-delay-secs".to_string());
+    args.push(reconnect_delay_secs.to_string());
+    for capability in capabilities {
+        args.push("--capability".to_string());
+        args.push(capability.clone());
+    }
+    args
+}
+
+fn render_launchd_plist(
+    label: &str,
+    home: &std::path::Path,
+    args: &[String],
+) -> String {
+    let program_arguments = args
+        .iter()
+        .map(|arg| format!("    <string>{}</string>", xml_escape(arg)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>{label}</string>
+  <key>ProgramArguments</key>
+  <array>
+{program_arguments}
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>WorkingDirectory</key>
+  <string>{working_directory}</string>
+</dict>
+</plist>
+"#,
+        label = xml_escape(label),
+        program_arguments = program_arguments,
+        working_directory = xml_escape(&home.display().to_string()),
+    )
+}
+
+fn render_systemd_unit(
+    label: &str,
+    home: &std::path::Path,
+    args: &[String],
+) -> String {
+    let exec_start = args
+        .iter()
+        .map(|arg| systemd_quote(arg))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!(
+        r#"[Unit]
+Description=wsh-agent reverse host ({label})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory={working_directory}
+ExecStart={exec_start}
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+"#,
+        label = label,
+        working_directory = systemd_quote(&home.display().to_string()),
+        exec_start = exec_start,
+    )
+}
+
+fn startup_enable_hint(platform: StartupPlatform, label: &str, path: &OsStr) -> String {
+    match platform {
+        StartupPlatform::Launchd => format!(
+            "launchctl bootstrap gui/$(id -u) {} && launchctl kickstart -k gui/$(id -u)/{}",
+            path.to_string_lossy(),
+            label
+        ),
+        StartupPlatform::SystemdUser => {
+            format!("systemctl --user daemon-reload && systemctl --user enable --now {label}.service")
+        }
+    }
+}
+
+fn startup_disable_hint(platform: StartupPlatform, label: &str, path: &OsStr) -> String {
+    match platform {
+        StartupPlatform::Launchd => format!(
+            "launchctl bootout gui/$(id -u)/{} || launchctl bootout gui/$(id -u) {}",
+            label,
+            path.to_string_lossy()
+        ),
+        StartupPlatform::SystemdUser => format!(
+            "systemctl --user disable --now {label}.service && systemctl --user daemon-reload"
+        ),
+    }
+}
+
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+fn systemd_quote(value: &str) -> String {
+    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{escaped}\"")
 }
 
 fn load_agent_snapshots(
@@ -533,9 +854,12 @@ fn now_ms() -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::{
-        agent_state_file_name, normalize_capabilities, reverse_host_options,
-        sanitize_component, AgentLifecycleStatus,
+        agent_state_file_name, build_startup_unit_spec, normalize_capabilities,
+        reverse_host_options, sanitize_component, startup_unit_label, startup_unit_path,
+        systemd_quote, AgentLifecycleStatus, StartupPlatform,
     };
 
     #[test]
@@ -604,5 +928,84 @@ mod tests {
     #[test]
     fn sanitize_component_replaces_path_unsafe_characters() {
         assert_eq!(sanitize_component("relay.local:4422/foo"), "relay_local_4422_foo");
+    }
+
+    #[test]
+    fn startup_unit_label_includes_identity_and_relay() {
+        assert_eq!(
+            startup_unit_label("ops", "relay.local", 4422),
+            "io.clawser.wsh-agent.ops.relay_local.4422"
+        );
+    }
+
+    #[test]
+    fn launchd_startup_spec_contains_agent_run_arguments() {
+        let spec = build_startup_unit_spec(
+            "ops",
+            "relay.local",
+            4422,
+            Some("wt"),
+            5,
+            &["shell".to_string(), "gateway".to_string()],
+            Some(StartupPlatform::Launchd),
+            Some(Path::new("/tmp/home")),
+            Some(Path::new("/tmp/bin/wsh")),
+        )
+        .unwrap();
+
+        assert_eq!(
+            spec.path,
+            startup_unit_path(
+                StartupPlatform::Launchd,
+                Path::new("/tmp/home"),
+                "io.clawser.wsh-agent.ops.relay_local.4422"
+            )
+        );
+        assert!(spec.contents.contains("<key>ProgramArguments</key>"));
+        assert!(spec.contents.contains("<string>/tmp/bin/wsh</string>"));
+        assert!(spec.contents.contains("<string>agent</string>"));
+        assert!(spec.contents.contains("<string>run</string>"));
+        assert!(spec.contents.contains("<string>relay.local</string>"));
+        assert!(spec.contents.contains("<string>--capability</string>"));
+        assert!(spec.contents.contains("<string>gateway</string>"));
+        assert!(spec.enable_hint.contains("launchctl bootstrap"));
+    }
+
+    #[test]
+    fn systemd_startup_spec_renders_user_service_unit() {
+        let spec = build_startup_unit_spec(
+            "ops",
+            "relay.local",
+            4422,
+            None,
+            3,
+            &[],
+            Some(StartupPlatform::SystemdUser),
+            Some(Path::new("/tmp/home")),
+            Some(Path::new("/tmp/bin/wsh")),
+        )
+        .unwrap();
+
+        assert_eq!(
+            spec.path,
+            startup_unit_path(
+                StartupPlatform::SystemdUser,
+                Path::new("/tmp/home"),
+                "io.clawser.wsh-agent.ops.relay_local.4422"
+            )
+        );
+        assert!(spec.contents.contains("[Install]"));
+        assert!(spec.contents.contains("WantedBy=default.target"));
+        assert!(spec.contents.contains("ExecStart=\"/tmp/bin/wsh\" \"-i\" \"ops\""));
+        assert!(spec.enable_hint.contains("systemctl --user enable --now"));
+        assert!(spec.disable_hint.contains("systemctl --user disable --now"));
+    }
+
+    #[test]
+    fn systemd_quote_escapes_backslashes_and_quotes() {
+        assert_eq!(
+            systemd_quote(r#"/tmp/with "quotes"\and spaces"#),
+            "\"/tmp/with \\\"quotes\\\"\\\\and spaces\""
+        );
     }
 }

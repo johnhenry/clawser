@@ -95,7 +95,7 @@ Use the browser `wsh` when the command should run inside the live Clawser tab. U
 | Real PTY | Yes | No | Yes | No |
 | File transfer | Yes | Yes | Yes | Partial |
 | Tools / MCP | Yes | Yes | Yes | Partial |
-| Attach / replay hints | Yes | Yes | Partial | Partial |
+| Attach / replay hints | Yes | Yes | Yes | Partial |
 
 ### Common Rust CLI Commands
 
@@ -110,7 +110,26 @@ Use the browser `wsh` when the command should run inside the live Clawser tab. U
 | `wsh peers relay.example.com --json` | Emit canonical peer/runtime metadata as JSON |
 | `wsh reverse relay.example.com` | Run a foreground reverse-host registration |
 | `wsh agent run relay.example.com` | Run the long-lived reverse-host agent |
+| `wsh agent install relay.example.com` | Install a user-level startup unit for the reverse-host agent |
+| `wsh agent uninstall relay.example.com` | Remove a previously installed user-level startup unit |
 | `wsh reverse-connect <fingerprint> relay.example.com` | Connect to a relay-registered peer |
+
+### Reverse Host Agent Startup
+
+`wsh agent install` writes a user-level startup unit for the current identity and relay target:
+
+- macOS: `~/Library/LaunchAgents/io.clawser.wsh-agent.<identity>.<relay>.<port>.plist`
+- Linux: `~/.config/systemd/user/io.clawser.wsh-agent.<identity>.<relay>.<port>.service`
+
+Examples:
+
+```bash
+wsh -i operator agent install relay.example.com --capability shell --capability fs
+wsh -i operator agent install relay.example.com --print
+wsh -i operator agent uninstall relay.example.com
+```
+
+Install output includes the exact `launchctl` or `systemctl --user` command needed to enable or disable the unit on that machine.
 
 ### Backend Labels
 

@@ -273,7 +273,9 @@ async function openRemoteRuntimeView(selector, view) {
       };
     }
   } catch (error) {
-    panelState.error = error?.message || String(error);
+    const intent = view === 'files' ? 'files' : view === 'services' ? 'service' : 'exec';
+    panelState.error = describeRemoteRuntimeError(error);
+    panelState.routeExplanation = routeExplanationFromError(selector, intent, error);
   }
 
   renderRemoteRuntimeWorkspacePanel();
@@ -281,19 +283,17 @@ async function openRemoteRuntimeView(selector, view) {
 
 function explainRemoteRuntimeRoute(selector) {
   const panelState = getRemoteRuntimePanelState();
+  const intentOptions = remotePanelIntentOptions(panelState);
   try {
     panelState.error = null;
     panelState.activeSelector = selector;
     panelState.routeExplanation = state.remoteSessionBroker.explainRoute(
       selector,
-      panelState.activeView?.kind === 'files'
-        ? { intent: 'files', requiredCapabilities: ['fs'] }
-        : panelState.activeView?.kind === 'services'
-          ? { intent: 'service' }
-          : { intent: 'exec' }
+      intentOptions
     );
   } catch (error) {
-    panelState.error = error?.message || String(error);
+    panelState.error = describeRemoteRuntimeError(error);
+    panelState.routeExplanation = routeExplanationFromError(selector, intentOptions.intent, error);
   }
   renderRemoteRuntimeWorkspacePanel();
 }
@@ -304,6 +304,36 @@ function remotePanelIntentOptions(panelState) {
     : panelState.activeView?.kind === 'services'
       ? { intent: 'service' }
       : { intent: 'exec' };
+}
+
+function describeRemoteRuntimeError(error) {
+  if (!error) return 'Unknown remote runtime error';
+  const layer = error.layer ? `[${error.layer}] ` : '';
+  return `${layer}${error.message || String(error)}`;
+}
+
+function routeExplanationFromError(selector, intent, error) {
+  return {
+    connectionKind: 'failed',
+    reason: error?.message || String(error),
+    target: { selector, intent },
+    descriptor: { capabilities: [] },
+    health: {
+      health: error?.layer === 'routing' ? 'degraded' : 'failed',
+      lastOutcomeReason: error?.message || String(error),
+      lastOutcomeLayer: error?.layer || 'unknown',
+    },
+    resumability: { replayMode: 'unsupported' },
+    warnings: [
+      error?.layer ? `layer:${error.layer}` : null,
+      error?.code ? `code:${error.code}` : null,
+    ].filter(Boolean),
+    alternatives: [],
+    failure: {
+      layer: error?.layer || 'unknown',
+      code: error?.code || 'remote-session-error',
+    },
+  };
 }
 
 function renderRemoteRuntimeWorkspacePanel() {
@@ -363,8 +393,14 @@ function bindRemoteRuntimePanelEvents() {
     });
     state.remoteSessionBroker.on('session:failed', ({ selection, error }) => {
       const panelState = getRemoteRuntimePanelState();
-      if (panelState.activeSelector === selection?.target?.selector) {
-        panelState.error = error?.message || String(error);
+      const selector = selection?.target?.selector || panelState.activeSelector;
+      if (panelState.activeSelector === selector) {
+        panelState.error = describeRemoteRuntimeError(error);
+        panelState.routeExplanation = routeExplanationFromError(
+          selector,
+          selection?.target?.intent || remotePanelIntentOptions(panelState).intent,
+          error,
+        );
       }
       if (isPanelRendered('remote')) {
         renderRemoteRuntimeWorkspacePanel();

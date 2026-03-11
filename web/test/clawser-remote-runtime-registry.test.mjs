@@ -527,4 +527,49 @@ describe('RemoteSessionBroker', () => {
     assert.equal(records[1].operation, 'remote_session_opened')
     assert.equal(registry.resolvePeer('host:builder').reachability[0].health, 'healthy')
   })
+
+  it('audits policy denials with structured layer metadata', async () => {
+    const registry = new RemoteRuntimeRegistry()
+    registry.ingestDirectHostBookmark({
+      id: 'host:blocked',
+      host: 'blocked.local',
+      port: 4422,
+      username: 'blocked',
+    })
+
+    const records = []
+    const events = []
+    const broker = new RemoteSessionBroker({
+      runtimeRegistry: registry,
+      policyAdapter: {
+        checkTargetAccess() {
+          return {
+            allowed: false,
+            layer: 'mesh-acl',
+            reason: 'mesh ACL denied exec',
+          }
+        },
+      },
+      auditRecorder: {
+        async record(operation, data) {
+          records.push({ operation, data })
+        },
+      },
+    })
+    broker.on('session:failed', ({ error }) => events.push(error))
+
+    await assert.rejects(
+      broker.openSession('host:blocked', { intent: 'exec', command: 'uname -a' }),
+      (error) => error instanceof RemoteSessionError
+        && error.code === 'policy-denied'
+        && error.layer === 'mesh-acl'
+    )
+
+    assert.equal(events.length, 1)
+    assert.equal(events[0].layer, 'mesh-acl')
+    assert.equal(records.length, 1)
+    assert.equal(records[0].operation, 'remote_session_denied')
+    assert.equal(records[0].data.layer, 'mesh-acl')
+    assert.equal(records[0].data.code, 'policy-denied')
+  })
 })

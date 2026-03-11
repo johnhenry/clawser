@@ -171,6 +171,34 @@ enum AgentCommand {
         capabilities: Vec<String>,
     },
 
+    /// Install a user-level startup unit for the reverse-host agent
+    Install {
+        /// Relay host
+        relay_host: String,
+
+        /// Delay before reconnect attempts
+        #[arg(long, default_value_t = 3)]
+        reconnect_delay_secs: u64,
+
+        /// Capabilities to expose (`shell`, `exec`, `fs`, `tools`, `gateway`)
+        #[arg(long = "capability")]
+        capabilities: Vec<String>,
+
+        /// Print the generated unit instead of writing it
+        #[arg(long)]
+        print: bool,
+
+        /// Overwrite any existing startup unit for this identity+relay
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Remove a previously installed user-level startup unit
+    Uninstall {
+        /// Relay host
+        relay_host: String,
+    },
+
     /// Show the most recent agent state snapshot
     Status {
         /// Emit JSON instead of human-readable output
@@ -264,6 +292,34 @@ async fn main() {
                     transport.as_deref(),
                     reconnect_delay_secs,
                     &capabilities,
+                )
+                .await
+            }
+            AgentCommand::Install {
+                relay_host,
+                reconnect_delay_secs,
+                capabilities,
+                print,
+                force,
+            } => {
+                commands::agent::run_install(
+                    &relay_host,
+                    port,
+                    &identity,
+                    transport.as_deref(),
+                    reconnect_delay_secs,
+                    &capabilities,
+                    print,
+                    force,
+                )
+                .await
+            }
+            AgentCommand::Uninstall { relay_host } => {
+                commands::agent::run_uninstall(
+                    &relay_host,
+                    port,
+                    &identity,
+                    transport.as_deref(),
                 )
                 .await
             }

@@ -25,7 +25,7 @@ As of **March 10, 2026**, implementation is in progress with the following phase
 - `[x]` Phase 0. Contract Freeze And Harness
 - `[x]` Phase 1. Protocol And Descriptor Foundation
 - `[x]` Phase 2. Remote Runtime Registry And Session Broker
-- `[~]` Phase 3. Reverse Host Parity With `wsh-agent`
+- `[x]` Phase 3. Reverse Host Parity With `wsh-agent`
 - `[x]` Phase 4. Attach, Replay, And Route Robustness
 - `[~]` Phase 5. BrowserMesh Policy, Naming, And Trust Convergence
 - `[~]` Phase 6. UI And CLI Convergence
@@ -154,7 +154,7 @@ Status: `[x] Complete`
 ### 3. Reverse Host Parity With `wsh-agent`
 Exit gate: a local machine can expose a real PTY through a relay as a first-class peer.
 
-Status: `[~] Partial`
+Status: `[x] Complete`
 
 - [x] Implement `wsh-agent` as the primary reverse-host runtime:
   - background registration
@@ -173,8 +173,8 @@ Status: `[~] Partial`
   - file
   - tools/MCP
   - gateway
-- [~] Add host lifecycle semantics:
-  - [ ] startup-on-login/boot support where practical
+- [x] Add host lifecycle semantics:
+  - [x] startup-on-login/boot support where practical
   - [x] reconnect behavior
   - [x] active-session tracking
 - [x] Ensure reverse-host interactive quality matches direct `wsh connect` closely enough to be the same product surface.
@@ -206,7 +206,7 @@ Status: `[~] Partial`
 
 - [x] Map mesh ACL templates to `wsh` exposure presets.
 - [x] Implement a canonical policy translation table and precedence order.
-- [~] Surface which layer denied a request in UX and telemetry.
+- [x] Surface which layer denied a request in UX and telemetry.
 - [x] Integrate mesh naming into runtime resolution:
   - named peer lookup
   - qualified relay names
