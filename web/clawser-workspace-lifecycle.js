@@ -196,6 +196,14 @@ function configureServerRuntimeResolver() {
       return service;
     }
 
+    if (kind === 'managed-server') {
+      const server = registry.resolveManagedServer(selector, serviceName);
+      if (!server) {
+        throw new Error(`Unknown managed runtime server: ${selector}/${serviceName}`);
+      }
+      return server;
+    }
+
     if (kind === 'endpoint') {
       const endpoint = registry.resolveEndpoint(serviceName);
       if (!endpoint) {
@@ -357,9 +365,27 @@ async function openRemoteRuntimeView(selector, view) {
         kind: 'services',
         session: remoteRuntimePeerSession(peer),
       };
+    } else if (view === 'servers') {
+      panelState.routeExplanation = broker.explainRoute(selector, {
+        intent: 'server-management',
+      });
+      panelState.activeServices = registry.listManagedServers({
+        peerFilter: { selector },
+        podId: peer.identity?.podId || peer.identity?.fingerprint || peer.identity?.canonicalId || null,
+      });
+      panelState.activeView = {
+        kind: 'servers',
+        session: remoteRuntimePeerSession(peer),
+      };
     }
   } catch (error) {
-    const intent = view === 'files' ? 'files' : view === 'services' ? 'service' : 'exec';
+    const intent = view === 'files'
+      ? 'files'
+      : view === 'services'
+        ? 'service'
+        : view === 'servers'
+          ? 'server-management'
+          : 'exec';
     panelState.error = describeRemoteRuntimeError(error);
     panelState.routeExplanation = routeExplanationFromError(selector, intent, error);
   }
@@ -389,6 +415,8 @@ function remotePanelIntentOptions(panelState) {
     ? { intent: 'files', requiredCapabilities: ['fs'] }
     : panelState.activeView?.kind === 'services'
       ? { intent: 'service' }
+      : panelState.activeView?.kind === 'servers'
+        ? { intent: 'server-management' }
       : { intent: 'exec' };
 }
 

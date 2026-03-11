@@ -221,6 +221,36 @@ describe('renderRemoteRuntimePanel', () => {
     assert.match(html, /data-action="set-default"/);
   });
 
+  it('renders managed servers separately from peer services', () => {
+    const registry = new RemoteRuntimeRegistry();
+    registry.ingestDescriptor(createRemotePeerDescriptor({
+      identity: createRemoteIdentity({
+        canonicalId: 'host:alpha',
+        fingerprint: 'df46c9c7abcdef0123456789abcdef01',
+      }),
+      username: 'alpha',
+      peerType: 'host',
+      shellBackend: 'pty',
+      capabilities: ['shell', 'fs'],
+      reachability: [
+        createReachabilityDescriptor({
+          kind: 'direct-host',
+          source: 'direct-bookmark',
+          endpoint: 'alpha.local:4422',
+        }),
+      ],
+      metadata: {
+        managedServers: ['dashboard'],
+        serverDetails: {
+          dashboard: { type: 'virtual-server', address: 'https://alpha.example.test/dashboard' },
+        },
+      },
+    }));
+
+    const html = renderRemoteRuntimePanel(registry, {});
+    assert.match(html, /data-view="servers"/);
+  });
+
   it('renders canonical search filters and telemetry summaries', () => {
     const html = renderRemoteRuntimePanel(makeRegistry(), {
       filterText: 'alpha',

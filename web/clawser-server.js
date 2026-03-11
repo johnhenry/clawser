@@ -113,6 +113,29 @@ async function resolveRuntimeProxyTarget(proxyTarget, targetPath, resolver = _ru
     return appendProxyPath(resolved.address, targetPath);
   }
 
+  if (proxyTarget.startsWith('server://')) {
+    if (typeof resolver !== 'function') {
+      throw new Error('No runtime service resolver is configured');
+    }
+    const spec = proxyTarget.slice('server://'.length).trim();
+    const slashIndex = spec.indexOf('/');
+    const selector = slashIndex === -1 ? spec : spec.slice(0, slashIndex);
+    const serviceName = slashIndex === -1 ? '' : spec.slice(slashIndex + 1);
+    if (!selector || !serviceName) {
+      throw new Error('Server proxy target must be server://<selector>/<server>');
+    }
+    const resolved = await resolver({
+      kind: 'managed-server',
+      selector,
+      serviceName,
+      proxyTarget,
+    });
+    if (!resolved?.address || !/^https?:\/\//i.test(resolved.address)) {
+      throw new Error(`Managed server "${selector}/${serviceName}" is not bound to an HTTP endpoint`);
+    }
+    return appendProxyPath(resolved.address, targetPath);
+  }
+
   if (proxyTarget.startsWith('endpoint://')) {
     if (typeof resolver !== 'function') {
       throw new Error('No runtime service resolver is configured');

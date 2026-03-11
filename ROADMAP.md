@@ -2301,7 +2301,7 @@ Required convergence:
 
 - [x] allow remote runtime descriptors to advertise hosted services
 - [x] let the Virtual Server subsystem bind services to a peer/runtime target
-- [ ] distinguish between:
+- [x] distinguish between:
   - peer shell access
   - peer service browsing
   - peer service routing

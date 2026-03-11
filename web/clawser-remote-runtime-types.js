@@ -31,6 +31,7 @@ export const REMOTE_SESSION_INTENTS = Object.freeze([
   'service',
   'automation',
   'deployment',
+  'server-management',
 ])
 
 export function supportHintsForRuntime({

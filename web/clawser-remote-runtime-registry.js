@@ -218,6 +218,7 @@ export class RemoteRuntimeRegistry {
   #descriptors = new Map()
   #aliases = new Map()
   #serviceAliases = new Map()
+  #serverAliases = new Map()
   #endpointAliases = new Map()
   #auditRecorder
 
@@ -359,6 +360,22 @@ export class RemoteRuntimeRegistry {
     })
   }
 
+  listManagedServers(filter = {}) {
+    const servers = []
+    for (const descriptor of this.queryPeers(filter.peerFilter || {})) {
+      for (const server of descriptorManagedServers(descriptor)) {
+        if (filter.name && server.name !== filter.name) continue
+        if (filter.podId && server.podId !== filter.podId) continue
+        servers.push(server)
+      }
+    }
+    return servers.sort((left, right) => {
+      const podCompare = (left.podId || '').localeCompare(right.podId || '')
+      if (podCompare !== 0) return podCompare
+      return (left.name || '').localeCompare(right.name || '')
+    })
+  }
+
   query(filter = {}) {
     const normalizedFilter = normalizeRemoteRuntimeQuery(filter)
     return {
@@ -457,6 +474,13 @@ export class RemoteRuntimeRegistry {
     const descriptor = this.resolvePeer(selector)
     if (!descriptor) return null
     return descriptorServices(descriptor).find((service) => service.name === serviceName) || null
+  }
+
+  resolveManagedServer(selector, serverName) {
+    if (!selector || !serverName) return null
+    const descriptor = this.resolvePeer(selector)
+    if (!descriptor) return null
+    return descriptorManagedServers(descriptor).find((server) => server.name === serverName) || null
   }
 
   recordRouteOutcome(selector, route, {
@@ -609,6 +633,7 @@ export class RemoteRuntimeRegistry {
     }
     this.#indexEndpoints(descriptor)
     this.#indexServices(descriptor)
+    this.#indexServers(descriptor)
   }
 
   #indexServices(descriptor) {
@@ -627,6 +652,28 @@ export class RemoteRuntimeRegistry {
           refs.push({
             canonicalId: descriptor.identity.canonicalId,
             serviceName: service.name,
+          })
+        }
+      }
+    }
+  }
+
+  #indexServers(descriptor) {
+    for (const server of descriptorManagedServers(descriptor)) {
+      const keys = [
+        `${descriptor.identity.canonicalId}/${server.name}`,
+        `server://${descriptor.identity.canonicalId}/${server.name}`,
+        server.name,
+      ].filter(Boolean)
+      for (const key of keys) {
+        if (!this.#serverAliases.has(key)) {
+          this.#serverAliases.set(key, [])
+        }
+        const refs = this.#serverAliases.get(key)
+        if (!refs.some((ref) => ref.canonicalId === descriptor.identity.canonicalId && ref.serverName === server.name)) {
+          refs.push({
+            canonicalId: descriptor.identity.canonicalId,
+            serverName: server.name,
           })
         }
       }
@@ -733,6 +780,23 @@ function descriptorServices(descriptor) {
   }))
 }
 
+function descriptorManagedServers(descriptor) {
+  const podId = descriptor?.identity?.podId
+    || descriptor?.identity?.fingerprint
+    || descriptor?.identity?.canonicalId
+    || null
+  const details = descriptor?.metadata?.serverDetails || {}
+  const names = unique([
+    ...(descriptor?.metadata?.managedServers || []),
+    ...Object.keys(details),
+  ])
+  return names.map((name) => ({
+    ...(details[name] || {}),
+    name,
+    podId,
+  }))
+}
+
 function peerRuntimeStatus(peer) {
   const routes = peer?.reachability || []
   if (!routes.length) return 'unknown'
@@ -758,6 +822,9 @@ function peerSupportsIntent(peer, intent) {
     case 'tools':
     case 'service':
       return (peer.capabilities || []).includes('tools') || descriptorServices(peer).length > 0
+    case 'server-management':
+      return descriptorManagedServers(peer).length > 0
+        || peer?.metadata?.deploymentSupport?.canDeploy === true
     case 'gateway':
       return (peer.capabilities || []).includes('gateway')
     default:
@@ -776,6 +843,7 @@ function peerSearchText(peer) {
     peer.shellBackend,
     ...(peer.capabilities || []),
     ...descriptorServices(peer).flatMap((service) => [service.name, service.type, service.address]),
+    ...descriptorManagedServers(peer).flatMap((server) => [server.name, server.address, server.type]),
   ]
     .filter(Boolean)
     .join(' ')

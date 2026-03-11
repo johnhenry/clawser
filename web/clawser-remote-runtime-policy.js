@@ -58,6 +58,7 @@ const INTENT_TO_EXPOSURE = Object.freeze({
   service: 'tools',
   automation: 'exec',
   deployment: 'fs',
+  'server-management': 'fs',
 })
 
 const DEFAULT_MIN_TRUST_BY_INTENT = Object.freeze({
@@ -65,6 +66,7 @@ const DEFAULT_MIN_TRUST_BY_INTENT = Object.freeze({
   files: 0.35,
   automation: 0.4,
   deployment: 0.45,
+  'server-management': 0.45,
 })
 
 export function meshTemplateToWshExposure(templateName) {

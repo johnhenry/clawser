@@ -213,6 +213,43 @@ describe('RemoteRuntimeRegistry', () => {
     assert.equal(registry.resolveService('shell-api')?.address, 'mesh://alpha/shell-api')
   })
 
+  it('separates managed-server lookup from peer and service lookup', () => {
+    const registry = new RemoteRuntimeRegistry()
+    registry.ingestDescriptor(createRemotePeerDescriptor({
+      identity: createRemoteIdentity({
+        canonicalId: 'host:alpha',
+        fingerprint: 'alpha-fingerprint',
+        aliases: ['@alpha'],
+      }),
+      username: 'alpha',
+      peerType: 'host',
+      shellBackend: 'pty',
+      capabilities: ['shell', 'fs'],
+      reachability: [
+        createReachabilityDescriptor({
+          kind: 'direct-host',
+          source: 'direct-bookmark',
+          endpoint: 'alpha.local:4422',
+        }),
+      ],
+      metadata: {
+        managedServers: ['dashboard'],
+        serverDetails: {
+          dashboard: {
+            type: 'virtual-server',
+            address: 'https://alpha.example.test/dashboard',
+          },
+        },
+      },
+    }))
+
+    const servers = registry.listManagedServers()
+    assert.equal(servers.length, 1)
+    assert.equal(servers[0].name, 'dashboard')
+    assert.equal(registry.resolveManagedServer('host:alpha', 'dashboard')?.address, 'https://alpha.example.test/dashboard')
+    assert.equal(registry.resolveService('dashboard'), null)
+  })
+
   it('resolves endpoint aliases independently from peer and service names', () => {
     const registry = new RemoteRuntimeRegistry()
     registry.ingestDescriptor(createRemotePeerDescriptor({

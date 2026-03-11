@@ -501,6 +501,7 @@ export function renderRemoteRuntimePanel(runtimeRegistry, {
       const hasExec = peer.capabilities?.includes('exec') || peer.capabilities?.includes('shell')
       const hasFiles = peer.capabilities?.includes('fs')
       const hasServices = ((peer.metadata?.serviceDetails || peer.metadata?.services || []).length > 0)
+      const hasServers = ((peer.metadata?.serverDetails || peer.metadata?.managedServers || []).length > 0)
       const sources = (peer.sources || []).join(', ')
       return `
         <div class="rc-runtime-row ${active ? 'rc-runtime-row-active' : ''}" data-selector="${esc(selector)}">
@@ -524,6 +525,7 @@ export function renderRemoteRuntimePanel(runtimeRegistry, {
             <button class="btn-sm rc-runtime-open-btn" data-selector="${esc(selector)}" data-view="terminal" ${hasExec ? '' : 'disabled'}>Shell</button>
             <button class="btn-sm rc-runtime-open-btn" data-selector="${esc(selector)}" data-view="files" ${hasFiles ? '' : 'disabled'}>Files</button>
             <button class="btn-sm rc-runtime-open-btn" data-selector="${esc(selector)}" data-view="services" ${hasServices ? '' : 'disabled'}>Services</button>
+            <button class="btn-sm rc-runtime-open-btn" data-selector="${esc(selector)}" data-view="servers" ${hasServers ? '' : 'disabled'}>Servers</button>
             <button class="btn-sm btn-surface2 rc-runtime-route-btn" data-selector="${esc(selector)}">Route</button>
           </div>
         </div>`
@@ -556,6 +558,11 @@ export function renderRemoteRuntimePanel(runtimeRegistry, {
   } else if (activePeer && activeView?.kind === 'services') {
     detailHtml = renderRemoteServiceList(activeServices, {
       title: `${activePeer.username} Services`,
+    })
+  } else if (activePeer && activeView?.kind === 'servers') {
+    detailHtml = renderRemoteServiceList(activeServices, {
+      title: `${activePeer.username} Managed Servers`,
+      countLabel: `${activeServices.length} server${activeServices.length === 1 ? '' : 's'}`,
     })
   }
 

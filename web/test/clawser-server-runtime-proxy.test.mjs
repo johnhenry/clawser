@@ -47,4 +47,15 @@ describe('resolveRuntimeProxyTarget', () => {
 
     assert.equal(url, 'https://alpha.example.test:4422/base/healthz')
   })
+
+  it('resolves managed runtime servers separately from runtime services', async () => {
+    const url = await resolveRuntimeProxyTarget('server://host:alpha/dashboard', '/admin', async ({ kind, selector, serviceName }) => {
+      assert.equal(kind, 'managed-server')
+      assert.equal(selector, 'host:alpha')
+      assert.equal(serviceName, 'dashboard')
+      return { address: 'https://alpha.example.test/dashboard' }
+    })
+
+    assert.equal(url, 'https://alpha.example.test/dashboard/admin')
+  })
 })
