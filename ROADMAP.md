@@ -1608,6 +1608,12 @@ Recommended sequence:
 
 Goal: prove that a browser-hosted Linux guest can be reached through `wsh` without re-architecting the whole system.
 
+Current status:
+
+- [x] The MVP is implemented as the browser-side `demo-linux` runtime behind the `vm-guest` / `vm-console` peer contract.
+- [x] Operator-facing labeling, route selection, and reverse-connect behavior are integrated with the shared runtime registry and session broker.
+- [x] This remains a console-peer MVP, not a full guest OS management surface.
+
 Scope:
 
 - [x] Introduce a new browser-side terminal backend, e.g. `VmTerminalSession`
@@ -1629,13 +1635,19 @@ Stretch goals:
 
 Success criteria:
 
-- a browser-hosted Linux guest appears in `wsh peers`
-- `wsh reverse-connect` opens an interactive guest console
-- normal line-oriented Linux workflows are usable through the relay
+- [x] a browser-hosted Linux guest appears in `wsh peers`
+- [x] `wsh reverse-connect` opens an interactive guest console
+- [x] normal line-oriented Linux workflows are usable through the relay
 
 ### Phase 7A.8: VM Peer Productionization
 
 Goal: decide whether browser-hosted Linux should remain a "console peer" feature or graduate into a real operator/runtime substrate.
+
+Current status:
+
+- [~] The product has a working VM-console peer MVP, but productionization work is still intentionally pending.
+- [~] The current implementation is ephemeral, demo-oriented, and centered on a single `demo-linux` runtime.
+- [ ] Image management, persistence, lifecycle controls, and resource governance are not implemented yet.
 
 Questions to answer:
 
