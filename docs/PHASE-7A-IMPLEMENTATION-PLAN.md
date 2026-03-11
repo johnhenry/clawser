@@ -57,7 +57,8 @@ Public and semi-public additions to implement:
 - New CLI/runtime surfaces:
   - `wsh peers --json`
   - clearer session banners and backend labels
-  - name-based targeting after naming integration
+  - relay-backed name-based targeting for `wsh reverse-connect`
+  - `wsh check relay ...` self-check diagnostics
   - `wsh-agent` daemon mode for reverse host presence
 - New internal integration surfaces:
   - remote runtime registry
@@ -229,7 +230,8 @@ Status: `[x] Complete`
   - `wsh peers --json`
   - richer peer table
   - backend-aware banners
-  - selectors for only/last/filter-by-capability/filter-by-type
+  - filter-by-capability/filter-by-type selectors
+  - `only`/`last` convenience selectors remain pending
 - [x] Update docs:
   - topology diagram
   - support matrix

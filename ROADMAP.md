@@ -1928,7 +1928,7 @@ Required deliverables:
 - [x] improve key generation/copy/authorization guidance
 - [x] offer scripts or commands for local relay bootstrap
 - [x] make relay startup diagnostics more explicit
-- [ ] add self-check commands for common failures
+- [x] add self-check commands for common failures
 
 Examples:
 
@@ -2078,7 +2078,7 @@ Why this matters:
 Required convergence:
 
 - [x] let mesh names resolve to canonical remote peer descriptors
-- [ ] allow future `wsh` session targeting by name:
+- [x] allow relay-backed `wsh reverse-connect` targeting by name:
   - `@alice`
   - `@builder`
   - `@guestbox@relay.example.com`
@@ -2086,16 +2086,16 @@ Required convergence:
   - naming a peer identity
   - naming a specific endpoint
   - naming a service hosted on a peer
-- [ ] define resolution precedence:
-  - explicit direct host target
+- [x] define reverse-peer resolution precedence:
   - explicit fingerprint
-  - qualified mesh name
-  - local alias/bookmark
-- [ ] ensure name resolution never silently binds to the wrong peer when identities are ambiguous
+  - exact short fingerprint
+  - qualified relay-backed peer name
+  - unique fingerprint prefix
+- [x] ensure reverse-peer name resolution never silently binds to the wrong peer when identities are ambiguous
 
 Verification criteria:
 
-- a named peer can be resolved from both UI and CLI
+- a named peer can be resolved from both UI and relay-backed CLI flows
 - ambiguous names produce an explainable conflict, not silent misrouting
 - names survive relay changes because they bind to identity, not ephemeral transport coordinates
 

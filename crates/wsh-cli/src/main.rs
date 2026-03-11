@@ -142,10 +142,16 @@ enum Command {
 
     /// Reverse connect to a browser peer via relay
     ReverseConnect {
-        /// Target peer fingerprint (hex prefix)
-        fingerprint: String,
-        /// Relay host to connect through
-        relay_host: String,
+        /// Target peer selector (fingerprint, short fingerprint, or @name)
+        target: String,
+        /// Relay host to connect through (optional if target is qualified as @name@relay.example.com)
+        relay_host: Option<String>,
+    },
+
+    /// Run self-checks for common relay/bootstrap failures
+    Check {
+        #[command(subcommand)]
+        command: CheckCommand,
     },
 
     /// List MCP tools available on a remote host
@@ -207,6 +213,19 @@ enum AgentCommand {
 
         /// Relay host for an exact agent status lookup
         relay_host: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum CheckCommand {
+    /// Check local key, known_hosts, relay connectivity, and relay auth
+    Relay {
+        /// Relay host (or use @name@relay.example.com in reverse-connect)
+        relay_host: String,
+
+        /// Emit JSON instead of human-readable output
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -349,19 +368,22 @@ async fn main() {
             )
             .await
         }
-        Some(Command::ReverseConnect {
-            fingerprint,
-            relay_host,
-        }) => {
+        Some(Command::ReverseConnect { target, relay_host }) => {
             commands::relay::run_connect(
-                &fingerprint,
-                &relay_host,
+                &target,
+                relay_host.as_deref(),
                 port,
                 &identity,
                 transport.as_deref(),
             )
             .await
         }
+        Some(Command::Check { command }) => match command {
+            CheckCommand::Relay { relay_host, json } => {
+                commands::check::run_relay(&relay_host, port, &identity, transport.as_deref(), json)
+                    .await
+            }
+        },
         Some(Command::Tools { host }) => {
             commands::tools::run(host.as_deref(), port, &identity, transport.as_deref()).await
         }

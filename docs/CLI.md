@@ -83,8 +83,8 @@ Use the browser `wsh` when the command should run inside the live Clawser tab. U
 | Mode | Typical Command | Result |
 |------|------------------|--------|
 | Direct host | `wsh alice@host.example.com` | Opens a direct `wsh-server` session backed by a real PTY |
-| Reverse browser peer | `wsh -i operator reverse-connect <fingerprint> relay.example.com` | Opens a relay-mediated session into a live Clawser tab |
-| Reverse host peer | `wsh -i operator reverse-connect <fingerprint> relay.example.com` | Opens a relay-mediated session into a host agent |
+| Reverse browser peer | `wsh -i operator reverse-connect @browser relay.example.com` | Opens a relay-mediated session into a live Clawser tab |
+| Reverse host peer | `wsh -i operator reverse-connect @builder relay.example.com` | Opens a relay-mediated session into a host agent |
 | Peer discovery | `wsh -i operator peers relay.example.com --json` | Lists relay-registered peers with backend/session hints |
 
 ### WSH Support Matrix
@@ -112,7 +112,10 @@ Use the browser `wsh` when the command should run inside the live Clawser tab. U
 | `wsh agent run relay.example.com` | Run the long-lived reverse-host agent |
 | `wsh agent install relay.example.com` | Install a user-level startup unit for the reverse-host agent |
 | `wsh agent uninstall relay.example.com` | Remove a previously installed user-level startup unit |
-| `wsh reverse-connect <fingerprint> relay.example.com` | Connect to a relay-registered peer |
+| `wsh reverse-connect @name relay.example.com` | Connect to a relay-registered peer by name |
+| `wsh reverse-connect @name@relay.example.com` | Connect to a relay-registered peer using a qualified selector |
+| `wsh reverse-connect <fingerprint> relay.example.com` | Connect to a relay-registered peer by fingerprint |
+| `wsh check relay relay.example.com` | Diagnose key, known-host, transport, and auth issues against a relay |
 
 ### Reverse Host Agent Startup
 

@@ -116,6 +116,79 @@ fn parse_reverse_connect_response(payload: Payload) -> Result<ReverseAcceptPaylo
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReverseConnectTarget<'a> {
+    selector: &'a str,
+    relay_host: Option<&'a str>,
+}
+
+fn parse_reverse_connect_target(input: &str) -> ReverseConnectTarget<'_> {
+    if let Some(stripped) = input.strip_prefix('@') {
+        if let Some((name, relay_host)) = stripped.rsplit_once('@') {
+            if !name.is_empty() && !relay_host.is_empty() {
+                return ReverseConnectTarget {
+                    selector: &input[..input.len() - relay_host.len() - 1],
+                    relay_host: Some(relay_host),
+                };
+            }
+        }
+    }
+
+    ReverseConnectTarget {
+        selector: input,
+        relay_host: None,
+    }
+}
+
+fn peer_matches_name(peer: &PeerInfo, selector: &str) -> bool {
+    let name = selector.trim_start_matches('@');
+    peer.username == name || peer.fingerprint_short == name
+}
+
+fn resolve_peer_selector<'a>(peers: &'a [PeerInfo], selector: &str) -> Result<&'a PeerInfo> {
+    if let Some(peer) = peers.iter().find(|peer| peer.fingerprint == selector) {
+        return Ok(peer);
+    }
+
+    if let Some(peer) = peers.iter().find(|peer| peer.fingerprint_short == selector) {
+        return Ok(peer);
+    }
+
+    if selector.starts_with('@') {
+        let matches = peers
+            .iter()
+            .filter(|peer| peer_matches_name(peer, selector))
+            .collect::<Vec<_>>();
+        return match matches.as_slice() {
+            [peer] => Ok(*peer),
+            [] => anyhow::bail!("no relay peer matched selector `{selector}`"),
+            many => anyhow::bail!(
+                "selector `{selector}` matched multiple peers: {}",
+                many.iter()
+                    .map(|peer| format!("{} ({})", peer.username, peer.fingerprint_short))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        };
+    }
+
+    let prefix_matches = peers
+        .iter()
+        .filter(|peer| peer.fingerprint.starts_with(selector))
+        .collect::<Vec<_>>();
+    match prefix_matches.as_slice() {
+        [peer] => Ok(*peer),
+        [] => anyhow::bail!("no relay peer matched selector `{selector}`"),
+        many => anyhow::bail!(
+            "selector `{selector}` matched multiple peers: {}",
+            many.iter()
+                .map(|peer| format!("{} ({})", peer.username, peer.fingerprint_short))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+}
+
 /// Register as a reverse-connectable peer on a relay host.
 ///
 /// The client connects to the relay, sends a `ReverseRegister` message with
@@ -241,19 +314,9 @@ pub async fn run_peers(
         .await
         .context("failed to connect to relay")?;
 
-    // Send ReverseList and wait for ReversePeers
-    let list_msg = Envelope {
-        msg_type: MsgType::ReverseList,
-        payload: Payload::ReverseList(ReverseListPayload {}),
-    };
+    let peers = fetch_peers(&client).await?;
 
-    let response = client
-        .send_and_wait_public(list_msg, MsgType::ReversePeers)
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))
-        .context("failed to list peers")?;
-
-    if let Payload::ReversePeers(peers) = response.payload {
+    {
         let peers = filter_peers(peers.peers, options);
 
         if options.json {
@@ -313,8 +376,6 @@ pub async fn run_peers(
 
             println!("\n{} peer(s).", peers.len());
         }
-    } else {
-        println!("(unexpected response)");
     }
 
     client
@@ -331,15 +392,29 @@ pub async fn run_peers(
 /// fingerprint. The relay forwards this to the target browser, which
 /// can then accept and bridge the connection.
 pub async fn run_connect(
-    target_fingerprint: &str,
-    relay_host: &str,
+    target_selector: &str,
+    relay_host: Option<&str>,
     port: u16,
     identity: &str,
     transport: Option<&str>,
 ) -> Result<()> {
-    info!(relay = %relay_host, target = %target_fingerprint, "reverse connecting to peer");
+    let parsed_target = parse_reverse_connect_target(target_selector);
+    let effective_relay = match (relay_host, parsed_target.relay_host) {
+        (Some(explicit), Some(qualified)) if explicit != qualified => {
+            anyhow::bail!(
+                "reverse-connect target `{target_selector}` embeds relay `{qualified}`, which conflicts with explicit relay `{explicit}`"
+            );
+        }
+        (Some(explicit), _) => explicit,
+        (None, Some(qualified)) => qualified,
+        (None, None) => anyhow::bail!(
+            "reverse-connect requires a relay host unless the target is qualified like `@name@relay.example.com`"
+        ),
+    };
 
-    let resolved = resolve_target(relay_host, port, transport)?;
+    info!(relay = %effective_relay, target = %target_selector, "reverse connecting to peer");
+
+    let resolved = resolve_target(effective_relay, port, transport)?;
     debug!(url = %resolved.url, fallback_urls = ?resolved.fallback_urls, "relay URL");
 
     // Connect and authenticate
@@ -347,6 +422,9 @@ pub async fn run_connect(
     let client = connect_client(&resolved, identity)
         .await
         .context("failed to connect to relay")?;
+    let peers = fetch_peers(&client).await?;
+    let target_peer = resolve_peer_selector(&peers.peers, parsed_target.selector)?;
+    let target_fingerprint = &target_peer.fingerprint;
 
     let connect_msg = Envelope {
         msg_type: MsgType::ReverseConnect,
@@ -356,7 +434,10 @@ pub async fn run_connect(
         }),
     };
 
-    println!("Connecting to peer {target_fingerprint} via {relay_host}:{port}...");
+    println!(
+        "Connecting to peer {} ({}) via {}:{}...",
+        target_peer.username, target_peer.fingerprint_short, effective_relay, port
+    );
 
     let response = client
         .send_and_wait_public(connect_msg, MsgType::ReverseAccept)
@@ -399,11 +480,30 @@ pub async fn run_connect(
     Ok(())
 }
 
+pub async fn fetch_peers(client: &wsh_client::WshClient) -> Result<ReversePeersPayload> {
+    let list_msg = Envelope {
+        msg_type: MsgType::ReverseList,
+        payload: Payload::ReverseList(ReverseListPayload {}),
+    };
+
+    let response = client
+        .send_and_wait_public(list_msg, MsgType::ReversePeers)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))
+        .context("failed to list peers")?;
+
+    match response.payload {
+        Payload::ReversePeers(peers) => Ok(peers),
+        other => anyhow::bail!("unexpected response to peer listing: {:?}", other),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        filter_peers, parse_reverse_connect_response, peer_session_features, reverse_accept_summary,
-        reverse_options, PeerQueryOptions,
+        filter_peers, parse_reverse_connect_response, parse_reverse_connect_target,
+        peer_session_features, resolve_peer_selector, reverse_accept_summary, reverse_options,
+        PeerQueryOptions,
     };
     use wsh_core::messages::{Payload, PeerInfo, ReverseAcceptPayload, ReverseRejectPayload};
 
@@ -512,5 +612,88 @@ mod tests {
         let options = reverse_options(&["shell".into(), "fs".into()]).unwrap();
         assert!(options.supports_attach);
         assert!(options.supports_replay);
+    }
+
+    #[test]
+    fn parse_reverse_connect_target_supports_qualified_names() {
+        let parsed = parse_reverse_connect_target("@builder@relay.example.com");
+        assert_eq!(parsed.selector, "@builder");
+        assert_eq!(parsed.relay_host, Some("relay.example.com"));
+    }
+
+    #[test]
+    fn resolve_peer_selector_prefers_named_peer_matches() {
+        let peers = vec![
+            PeerInfo {
+                fingerprint: "abcdef123456".into(),
+                fingerprint_short: "abcdef12".into(),
+                username: "builder".into(),
+                capabilities: vec!["shell".into()],
+                peer_type: "host".into(),
+                shell_backend: "pty".into(),
+                source: "wsh-relay".into(),
+                supports_attach: true,
+                supports_replay: true,
+                supports_echo: false,
+                supports_term_sync: false,
+                last_seen: Some(1),
+            },
+            PeerInfo {
+                fingerprint: "999999123456".into(),
+                fingerprint_short: "99999912".into(),
+                username: "browser".into(),
+                capabilities: vec!["shell".into()],
+                peer_type: "browser-shell".into(),
+                shell_backend: "virtual-shell".into(),
+                source: "wsh-relay".into(),
+                supports_attach: true,
+                supports_replay: true,
+                supports_echo: true,
+                supports_term_sync: true,
+                last_seen: Some(2),
+            },
+        ];
+
+        let peer = resolve_peer_selector(&peers, "@builder").unwrap();
+        assert_eq!(peer.username, "builder");
+        let by_prefix = resolve_peer_selector(&peers, "abcdef").unwrap();
+        assert_eq!(by_prefix.username, "builder");
+    }
+
+    #[test]
+    fn resolve_peer_selector_rejects_ambiguous_names() {
+        let peers = vec![
+            PeerInfo {
+                fingerprint: "abcdef123456".into(),
+                fingerprint_short: "abcdef12".into(),
+                username: "builder".into(),
+                capabilities: vec!["shell".into()],
+                peer_type: "host".into(),
+                shell_backend: "pty".into(),
+                source: "wsh-relay".into(),
+                supports_attach: true,
+                supports_replay: true,
+                supports_echo: false,
+                supports_term_sync: false,
+                last_seen: Some(1),
+            },
+            PeerInfo {
+                fingerprint: "abcdef654321".into(),
+                fingerprint_short: "abcdef65".into(),
+                username: "builder".into(),
+                capabilities: vec!["shell".into()],
+                peer_type: "browser-shell".into(),
+                shell_backend: "virtual-shell".into(),
+                source: "wsh-relay".into(),
+                supports_attach: true,
+                supports_replay: true,
+                supports_echo: true,
+                supports_term_sync: true,
+                last_seen: Some(2),
+            },
+        ];
+
+        let err = resolve_peer_selector(&peers, "@builder").unwrap_err();
+        assert!(err.to_string().contains("matched multiple peers"));
     }
 }

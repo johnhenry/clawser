@@ -385,34 +385,45 @@ You should see a peer list with:
 - a username
 - exposed capabilities
 
-Take note of the fingerprint for the target Clawser tab.
+Take note of either:
+
+- the fingerprint, or
+- the peer name shown in the `USERNAME` column
+
+The Rust CLI accepts both when reverse-connecting through a relay.
 
 ## 9. Send the Reverse-Connect Request
 
 Run this in the `Operator shell`.
 
-For local development:
+For local development by peer name:
 
 ```bash
-wsh -i operator reverse-connect <fingerprint> localhost
+wsh -i operator reverse-connect @browser localhost
 ```
 
 If `wsh` is not installed locally:
 
 ```bash
-cargo run -p wsh-cli -- -i operator reverse-connect <fingerprint> localhost
+cargo run -p wsh-cli -- -i operator reverse-connect @browser localhost
 ```
 
-For a remote relay on the default port:
+For a remote relay on the default port by fingerprint:
 
 ```bash
 wsh -i operator reverse-connect <fingerprint> relay.example.com
 ```
 
+For a qualified selector with the relay embedded in the target:
+
+```bash
+wsh -i operator reverse-connect @browser@relay.example.com
+```
+
 For a non-default port:
 
 ```bash
-wsh -p 5544 -i operator reverse-connect <fingerprint> relay.example.com
+wsh -p 5544 -i operator reverse-connect @browser relay.example.com
 ```
 
 At this point:
@@ -423,6 +434,20 @@ At this point:
 - the CLI enters the interactive terminal loop
 
 For a successful connection, you should see an interactive shell prompt instead of stopping at the handshake.
+
+If this fails, run a relay self-check in the `Operator shell`:
+
+```bash
+wsh -i operator check relay localhost
+```
+
+That command reports:
+
+- whether the local identity key exists
+- whether the relay host is already present in `~/.wsh/known_hosts`
+- whether the relay is reachable
+- whether your key is authorized
+- a likely fix for stale known-host entries, missing `authorized_keys`, certificate trust problems, or a relay that is not listening
 
 ## 10. Current Limits of the Browser Path
 

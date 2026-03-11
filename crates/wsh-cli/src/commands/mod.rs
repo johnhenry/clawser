@@ -1,6 +1,7 @@
 //! CLI subcommand implementations.
 
 pub mod agent;
+pub mod check;
 pub mod common;
 pub mod connect;
 pub mod copy_id;
