@@ -65,6 +65,7 @@ export class RemoteWshRuntimeConnector {
   #keyName
   #username
   #onLog
+  #auditRecorder
   #directClients = new Map()
   #keyStorePromise = null
 
@@ -74,12 +75,14 @@ export class RemoteWshRuntimeConnector {
     clientFactory = () => new WshClient(),
     keyStoreFactory = () => new WshKeyStore(),
     onLog = null,
+    auditRecorder = null,
   } = {}) {
     this.#keyName = keyName
     this.#username = username
     this.#clientFactory = clientFactory
     this.#keyStoreFactory = keyStoreFactory
     this.#onLog = onLog
+    this.#auditRecorder = auditRecorder
   }
 
   async openSelection(selection, sessionOptions = null) {
@@ -118,15 +121,20 @@ export class RemoteWshRuntimeConnector {
     if (intent === 'tools') {
       if (effectiveOptions.toolName) {
         const toolName = effectiveOptions.toolName
-        const result = await client.callTool(
+        const result = await this.#recordOperation('remote_tool_invocation', selection, {
+          toolName,
+          toolArgs: effectiveOptions.toolArgs || {},
+        }, () => client.callTool(
           toolName,
           effectiveOptions.toolArgs || {},
           effectiveOptions.timeout || 30_000,
-        )
+        ))
         await disconnectIfEphemeral(selection, client)
         return { ...selection, client, result }
       }
-      const tools = await client.discoverTools(effectiveOptions.timeout || 10_000)
+      const tools = await this.#recordOperation('remote_tool_discovery', selection, {}, () => (
+        client.discoverTools(effectiveOptions.timeout || 10_000)
+      ))
       await disconnectIfEphemeral(selection, client)
       return { ...selection, client, tools }
     }
@@ -134,7 +142,10 @@ export class RemoteWshRuntimeConnector {
     if (intent === 'files') {
       const operation = effectiveOptions.operation || 'list'
       if (operation === 'list') {
-        const result = await client.fileList(effectiveOptions.path, effectiveOptions.timeout || 10_000)
+        const result = await this.#recordOperation('remote_file_operation', selection, {
+          operation,
+          path: effectiveOptions.path,
+        }, () => client.fileList(effectiveOptions.path, effectiveOptions.timeout || 10_000))
         await disconnectIfEphemeral(selection, client)
         return {
           ...selection,
@@ -145,17 +156,23 @@ export class RemoteWshRuntimeConnector {
         }
       }
       if (operation === 'stat') {
-        const result = await client.fileStat(effectiveOptions.path, effectiveOptions.timeout || 10_000)
+        const result = await this.#recordOperation('remote_file_operation', selection, {
+          operation,
+          path: effectiveOptions.path,
+        }, () => client.fileStat(effectiveOptions.path, effectiveOptions.timeout || 10_000))
         await disconnectIfEphemeral(selection, client)
         return { ...selection, client, metadata: result?.metadata || null, result }
       }
       if (operation === 'read') {
-        const result = await client.fileRead(
+        const result = await this.#recordOperation('remote_file_operation', selection, {
+          operation,
+          path: effectiveOptions.path,
+        }, () => client.fileRead(
           effectiveOptions.path,
           effectiveOptions.offset,
           effectiveOptions.length,
           effectiveOptions.timeout || 10_000,
-        )
+        ))
         const text = typeof result?.metadata?.data === 'string' ? result.metadata.data : ''
         await disconnectIfEphemeral(selection, client)
         return {
@@ -168,35 +185,50 @@ export class RemoteWshRuntimeConnector {
         }
       }
       if (operation === 'write') {
-        const result = await client.upload(
+        const result = await this.#recordOperation('remote_file_operation', selection, {
+          operation,
+          path: effectiveOptions.path,
+        }, () => client.upload(
           toUint8Array(effectiveOptions.data),
           effectiveOptions.path,
           { onProgress: effectiveOptions.onProgress },
-        )
+        ))
         await disconnectIfEphemeral(selection, client)
         return { ...selection, client, result }
       }
       if (operation === 'mkdir') {
-        const result = await client.fileMkdir(effectiveOptions.path, effectiveOptions.timeout || 10_000)
+        const result = await this.#recordOperation('remote_file_operation', selection, {
+          operation,
+          path: effectiveOptions.path,
+        }, () => client.fileMkdir(effectiveOptions.path, effectiveOptions.timeout || 10_000))
         await disconnectIfEphemeral(selection, client)
         return { ...selection, client, result }
       }
       if (operation === 'remove') {
-        const result = await client.fileRemove(effectiveOptions.path, effectiveOptions.timeout || 10_000)
+        const result = await this.#recordOperation('remote_file_operation', selection, {
+          operation,
+          path: effectiveOptions.path,
+        }, () => client.fileRemove(effectiveOptions.path, effectiveOptions.timeout || 10_000))
         await disconnectIfEphemeral(selection, client)
         return { ...selection, client, result }
       }
       if (operation === 'download') {
-        const data = await client.download(effectiveOptions.path, {
+        const data = await this.#recordOperation('remote_file_operation', selection, {
+          operation,
+          path: effectiveOptions.path,
+        }, () => client.download(effectiveOptions.path, {
           onProgress: effectiveOptions.onProgress,
-        })
+        }))
         await disconnectIfEphemeral(selection, client)
         return { ...selection, client, data }
       }
       if (operation === 'upload') {
-        const result = await client.upload(toUint8Array(effectiveOptions.data), effectiveOptions.path, {
+        const result = await this.#recordOperation('remote_file_operation', selection, {
+          operation,
+          path: effectiveOptions.path,
+        }, () => client.upload(toUint8Array(effectiveOptions.data), effectiveOptions.path, {
           onProgress: effectiveOptions.onProgress,
-        })
+        }))
         await disconnectIfEphemeral(selection, client)
         return { ...selection, client, result }
       }
@@ -213,9 +245,13 @@ export class RemoteWshRuntimeConnector {
 
     if (intent === 'service') {
       const serviceName = effectiveOptions.serviceName || null
-      const services = selection.descriptor.metadata?.serviceDetails
-        || selection.descriptor.metadata?.services
-        || []
+      const services = await this.#recordOperation('remote_service_query', selection, {
+        serviceName,
+      }, async () => (
+        selection.descriptor.metadata?.serviceDetails
+          || selection.descriptor.metadata?.services
+          || []
+      ))
       await disconnectIfEphemeral(selection, client)
       return { ...selection, client, serviceName, services }
     }
@@ -226,7 +262,9 @@ export class RemoteWshRuntimeConnector {
         throw new Error('command is required for automation intent')
       }
       const session = await client.openSession({ type: 'exec', command })
-      const result = await collectExecResult(session)
+      const result = await this.#recordOperation('remote_automation_run', selection, {
+        command,
+      }, () => collectExecResult(session))
       await session.close().catch(() => {})
       await disconnectIfEphemeral(selection, client)
       return { ...selection, client, ...result }
@@ -290,6 +328,30 @@ export class RemoteWshRuntimeConnector {
       })()
     }
     return this.#keyStorePromise
+  }
+
+  async #recordOperation(operation, selection, details, execute) {
+    try {
+      const result = await execute()
+      await this.#auditRecorder?.record?.(operation, {
+        selector: selection?.descriptor?.identity?.canonicalId || selection?.target?.selector || null,
+        intent: selection?.target?.intent || null,
+        route: selection?.route || null,
+        outcome: 'success',
+        ...details,
+      })
+      return result
+    } catch (error) {
+      await this.#auditRecorder?.record?.(operation, {
+        selector: selection?.descriptor?.identity?.canonicalId || selection?.target?.selector || null,
+        intent: selection?.target?.intent || null,
+        route: selection?.route || null,
+        outcome: 'failure',
+        error: error?.message || String(error),
+        ...details,
+      })
+      throw error
+    }
   }
 }
 

@@ -102,7 +102,7 @@ import { ModelListTool, ModelPullTool, ModelRemoveTool, ModelStatusTool, Transcr
 import { createConfiguredShell } from './clawser-shell-factory.js';
 import { VirtualTerminalManager } from './clawser-wsh-virtual-terminal-manager.js';
 import { RemoteMountManager } from './clawser-remote-mounts.js';
-import { BrowserVmConsoleRegistry, InMemoryVmConsole } from './clawser-vm-console.js';
+import { BrowserVmConsoleRegistry, DemoLinuxVmConsole } from './clawser-vm-console.js';
 
 // ── Mesh agent bridge helper ─────────────────────────────────────
 /**
@@ -460,7 +460,14 @@ async function refreshReverseVirtualTerminalManager() {
 
   if (!_browserVmConsoleRegistry) {
     _browserVmConsoleRegistry = new BrowserVmConsoleRegistry();
-    _browserVmConsoleRegistry.register('default', new InMemoryVmConsole());
+    const demoLinuxVm = new DemoLinuxVmConsole();
+    _browserVmConsoleRegistry.register('demo-linux', demoLinuxVm);
+    _browserVmConsoleRegistry.register('default', demoLinuxVm, {
+      label: 'Default VM Console',
+      emulator: 'demo',
+      distro: 'clawser-vm',
+      capabilities: ['shell'],
+    });
   }
 
   _reverseVirtualTerminalManager = new VirtualTerminalManager({

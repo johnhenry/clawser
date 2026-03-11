@@ -2,6 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { MeshNameResolver } from '../clawser-mesh-naming.js'
+import { RemoteRuntimePolicyAdapter } from '../clawser-remote-runtime-policy.js'
 import { RemoteRuntimeRegistry } from '../clawser-remote-runtime-registry.js'
 import { RemoteSessionBroker, RemoteSessionError } from '../clawser-remote-session-broker.js'
 import {
@@ -338,6 +339,66 @@ describe('RemoteSessionBroker', () => {
     const resolved = broker.resolveTarget('@builder', { intent: 'terminal' })
 
     assert.equal(resolved.descriptor.identity.canonicalId, 'builder-peer')
+  })
+
+  it('uses trust-aware route ranking to choose among ambiguous aliases', () => {
+    const registry = new RemoteRuntimeRegistry()
+    registry.ingestDescriptor(createRemotePeerDescriptor({
+      identity: createRemoteIdentity({
+        canonicalId: 'host:low-trust',
+        aliases: ['ops'],
+      }),
+      username: 'ops-low',
+      peerType: 'host',
+      shellBackend: 'pty',
+      capabilities: ['shell'],
+      reachability: [
+        createReachabilityDescriptor({
+          kind: 'reverse-relay',
+          source: 'wsh-relay',
+          relayHost: 'relay-low.example',
+          relayPort: 4422,
+          health: 'degraded',
+          capabilities: ['shell'],
+        }),
+      ],
+      sources: ['wsh-relay'],
+      metadata: {
+        trustLevel: 0.1,
+      },
+    }))
+    registry.ingestDescriptor(createRemotePeerDescriptor({
+      identity: createRemoteIdentity({
+        canonicalId: 'host:high-trust',
+        aliases: ['ops'],
+      }),
+      username: 'ops-high',
+      peerType: 'host',
+      shellBackend: 'pty',
+      capabilities: ['shell'],
+      reachability: [
+        createReachabilityDescriptor({
+          kind: 'reverse-relay',
+          source: 'wsh-relay',
+          relayHost: 'relay-high.example',
+          relayPort: 4422,
+          health: 'healthy',
+          capabilities: ['shell'],
+        }),
+      ],
+      sources: ['wsh-relay'],
+      metadata: {
+        trustLevel: 0.9,
+      },
+    }))
+
+    const broker = new RemoteSessionBroker({
+      runtimeRegistry: registry,
+      policyAdapter: new RemoteRuntimePolicyAdapter(),
+    })
+    const resolved = broker.resolveTarget('@ops', { intent: 'terminal' })
+
+    assert.equal(resolved.descriptor.identity.canonicalId, 'host:high-trust')
   })
 
   it('includes route-policy reasons in route explanations', () => {

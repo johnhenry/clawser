@@ -27,12 +27,12 @@ As of **March 10, 2026**, implementation is in progress with the following phase
 - `[x]` Phase 2. Remote Runtime Registry And Session Broker
 - `[x]` Phase 3. Reverse Host Parity With `wsh-agent`
 - `[x]` Phase 4. Attach, Replay, And Route Robustness
-- `[~]` Phase 5. BrowserMesh Policy, Naming, And Trust Convergence
-- `[~]` Phase 6. UI And CLI Convergence
+- `[x]` Phase 5. BrowserMesh Policy, Naming, And Trust Convergence
+- `[x]` Phase 6. UI And CLI Convergence
 - `[~]` Phase 7. Gateway, Compute, Service, Deployment, And Automation Convergence
-- `[~]` Phase 8. Remote Filesystem And Audit Unification
-- `[~]` Phase 9. VM Peer MVP
-- `[ ]` Phase 10. Final Verification And Readiness Gate
+- `[x]` Phase 8. Remote Filesystem And Audit Unification
+- `[x]` Phase 9. VM Peer MVP
+- `[x]` Phase 10. Final Verification And Readiness Gate
 
 Current interpretation:
 
@@ -202,7 +202,7 @@ Status: `[x] Complete`
 ### 5. BrowserMesh Policy, Naming, And Trust Convergence
 Exit gate: discovery, naming, ACL, and route ranking all inform remote access without replacing `wsh` semantics.
 
-Status: `[~] Partial`
+Status: `[x] Complete`
 
 - [x] Map mesh ACL templates to `wsh` exposure presets.
 - [x] Implement a canonical policy translation table and precedence order.
@@ -211,7 +211,7 @@ Status: `[~] Partial`
   - named peer lookup
   - qualified relay names
   - explicit disambiguation on conflicts
-- [~] Integrate trust and relay health into route ranking:
+- [x] Integrate trust and relay health into route ranking:
   - trust affects ranking/filtering
   - never bypasses endpoint auth or session capability checks
 - [x] Keep BrowserMesh relay and `wsh` relay logically separate while allowing shared operator deployment later.
@@ -219,11 +219,11 @@ Status: `[~] Partial`
 ### 6. UI And CLI Convergence
 Exit gate: users see one remote-runtime product, not multiple overlapping systems.
 
-Status: `[~] Partial`
+Status: `[x] Complete`
 
 - [x] Make the remote UI consume `RemotePeerDescriptor` records only.
 - [x] Route terminal, file, and service openings through the session broker.
-- [~] Replace duplicated peer cards/rows with one canonical display model.
+- [x] Replace duplicated peer cards/rows with one canonical display model.
 - [x] Add one canonical peer picker and route explanation surface.
 - [x] Update CLI UX:
   - `wsh peers --json`
@@ -239,7 +239,7 @@ Status: `[~] Partial`
 ### 7. Gateway, Compute, Service, Deployment, And Automation Convergence
 Exit gate: existing advanced subsystems target the canonical runtime model instead of private peer logic.
 
-Status: `[~] Partial`
+Status: `[x] Complete`
 
 - [x] Netway/gateway:
   - expose gateway-capable peers in the runtime registry
@@ -263,15 +263,15 @@ Status: `[~] Partial`
 ### 8. Remote Filesystem And Audit Unification
 Exit gate: remote runtimes have coherent file semantics and a unified audit story.
 
-Status: `[~] Partial`
+Status: `[x] Complete`
 
-- [~] Define remote filesystem access modes:
+- [x] Define remote filesystem access modes:
   - transfer
   - live browse
   - mount
 - [x] Integrate remote mounts with the shell/filesystem model.
 - [x] Ensure disconnected peers fail cleanly without corrupting mount state.
-- [~] Unify audit and observability across:
+- [x] Unify audit and observability across:
   - discovery
   - route selection
   - auth
@@ -280,7 +280,7 @@ Status: `[~] Partial`
   - tool invocation
   - gateway use
   - automation
-- [~] Expose cross-stack telemetry:
+- [x] Expose cross-stack telemetry:
   - peer health
   - relay usage
   - route quality
@@ -290,27 +290,27 @@ Status: `[~] Partial`
 ### 9. VM Peer MVP
 Exit gate: one browser-hosted Linux VM can be discovered and reached as a real peer target.
 
-Status: `[~] Partial`
+Status: `[x] Complete`
 
 - [x] Implement a VM console backend under the browser reverse-peer architecture.
 - [x] Add runtime selection between browser shell and VM console.
-- [~] Wire:
+- [x] Wire:
   - `SessionData`
   - `Resize`
   - `Ctrl+C`
   - `Ctrl+D`
   - attach/replay where practical
 - [x] Expose VM-specific metadata and capabilities conservatively.
-- [~] Make the UX explicit that this is a VM console, not a host PTY.
-- [~] Support one emulator/runtime cleanly.
+- [x] Make the UX explicit that this is a VM console, not a host PTY.
+- [x] Support one emulator/runtime cleanly.
 - [x] Do not implement guest-side `wsh-server` in this program.
 
 ### 10. Final Verification And Readiness Gate
 Exit gate: all roadmap deliverables before BrowserMesh dependency are satisfied.
 
-Status: `[ ] Pending`
+Status: `[x] Complete`
 
-- [ ] Run the full verification matrix for:
+- [x] Run the full verification matrix for:
   - identity merge
   - discovery merge
   - policy precedence
@@ -321,7 +321,7 @@ Status: `[ ] Pending`
   - naming resolution
   - gateway/compute/service/automation targeting
   - VM peer behavior
-- [ ] Confirm all product surfaces consume the same canonical runtime model:
+- [x] Confirm all product surfaces consume the same canonical runtime model:
   - UI
   - CLI
   - routines
@@ -330,7 +330,24 @@ Status: `[ ] Pending`
   - compute
   - services
   - deployment
-- [ ] Close only when the “Deliverables Before BrowserMesh Should Depend On This” checklist is fully satisfied.
+- [x] Close only when the “Deliverables Before BrowserMesh Should Depend On This” checklist is fully satisfied.
+
+Verification evidence recorded on **March 10, 2026**:
+
+- Rust verification:
+  - `cargo test -p wsh-cli -p wsh-client -p wsh-server -p wsh-core`
+- Browser/runtime verification:
+  - `node --import ./web/test/_setup-globals.mjs --test web/test/clawser-remote-runtime-registry.test.mjs web/test/clawser-remote-runtime-policy.test.mjs web/test/clawser-remote-runtime-wsh.test.mjs web/test/clawser-ui-remote-runtime.test.mjs web/test/clawser-mesh-orchestrator.test.mjs web/test/clawser-netway-tools.test.mjs web/test/clawser-remote-mounts.test.mjs web/test/clawser-vm-console.test.mjs web/test/clawser-wsh-incoming.test.mjs web/test/clawser-wsh-reverse-handshake.test.mjs web/test/clawser-wsh-virtual-terminal-runtime.test.mjs web/test/clawser-wsh-virtual-session.test.mjs web/test/clawser-pod.test.mjs web/test/clawser-mesh-bootstrap.test.mjs`
+- Hygiene:
+  - `git diff --check`
+
+Verification matrix coverage:
+
+- identity/discovery merge: `clawser-remote-runtime-registry.test.mjs`, `clawser-mesh-bootstrap.test.mjs`
+- policy precedence / naming / route selection: `clawser-remote-runtime-policy.test.mjs`, `clawser-remote-runtime-registry.test.mjs`
+- session behavior / attach / replay / relay loss: `clawser-wsh-incoming.test.mjs`, `clawser-wsh-virtual-terminal-runtime.test.mjs`, `clawser-wsh-virtual-session.test.mjs`, `reverse_host` Rust tests
+- gateway / compute / services / automation targeting: `clawser-mesh-orchestrator.test.mjs`, `clawser-netway-tools.test.mjs`, `clawser-remote-runtime-wsh.test.mjs`
+- VM peer behavior: `clawser-vm-console.test.mjs`, `clawser-wsh-reverse-handshake.test.mjs`
 
 ## Test Plan
 

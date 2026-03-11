@@ -199,16 +199,19 @@ export class ClawserPod extends Pod {
     this.#nameResolver = new MeshNameResolver()
 
     // 20. RemoteRuntimeRegistry + RemoteSessionBroker — canonical remote runtime model
-    this.#remoteRuntimeRegistry = new RemoteRuntimeRegistry()
+    this.#remoteAuditRecorder = new RemoteRuntimeAuditRecorder({
+      auditChain: this.#auditChain,
+      authorId: podId,
+    })
+    this.#remoteRuntimeRegistry = new RemoteRuntimeRegistry({
+      auditRecorder: this.#remoteAuditRecorder,
+    })
     this.#remotePolicyAdapter = new RemoteRuntimePolicyAdapter({
       peerRegistry: this.#registry,
     })
     this.#remoteWshConnectors = createRemoteWshConnectors({
       username: podId,
-    })
-    this.#remoteAuditRecorder = new RemoteRuntimeAuditRecorder({
-      auditChain: this.#auditChain,
-      authorId: podId,
+      auditRecorder: this.#remoteAuditRecorder,
     })
     this.#remoteSessionBroker = new RemoteSessionBroker({
       runtimeRegistry: this.#remoteRuntimeRegistry,

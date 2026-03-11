@@ -7,7 +7,7 @@ The first thing to know is that Clawser itself is a browser app. There is no alw
 1. `wsh` into a `wsh-server` running on a host. This is the fully implemented path today.
 2. `wsh` into a live Clawser browser tab through a relay. This is the closest match to "wsh into Clawser", and it now works for normal interactive shell workloads through a browser-backed virtual terminal.
 
-If your goal is specifically to reach a live Clawser tab, use the reverse-connect flow below. If your goal is a real host PTY with full Unix terminal semantics, use the direct `wsh-server` path in the last section.
+If your goal is specifically to reach a live Clawser tab, use the reverse-connect flow below. If your goal is a real host PTY with full Unix terminal semantics, use the direct `wsh-server` path in the last section. If you want the browser-hosted guest-console path, expose a VM peer with `--type vm-guest --backend vm-console --vm-runtime demo-linux`.
 
 ## Topology At A Glance
 
@@ -16,7 +16,16 @@ If your goal is specifically to reach a live Clawser tab, use the reverse-connec
 | Direct host | Rust `wsh` CLI or browser `wsh` client | `wsh-server` on a host | Direct `https://host:port` | Real PTY | Complete |
 | Reverse browser peer | Rust `wsh` CLI | Live Clawser tab | Relay-mediated reverse connect | Virtual terminal | Complete for interactive shell workloads |
 | Reverse host peer | Rust `wsh` CLI | Relay-registered host agent | Relay-mediated reverse connect | Real PTY | Complete |
-| VM guest peer | Rust `wsh` CLI | Browser-hosted VM console | Relay-mediated reverse connect | VM console | Partial / MVP |
+| VM guest peer | Rust `wsh` CLI | Browser-hosted VM console | Relay-mediated reverse connect | VM console | Complete for the `demo-linux` MVP runtime |
+
+```mermaid
+flowchart LR
+  A["Rust wsh CLI"] -->|direct https://host:port| B["wsh-server on host"]
+  A -->|reverse-connect via relay| C["wsh relay"]
+  C --> D["Clawser browser peer"]
+  C --> E["wsh-agent host peer"]
+  C --> F["VM guest peer (demo-linux)"]
+```
 
 Use this rule of thumb:
 
@@ -35,6 +44,16 @@ Use this rule of thumb:
 | Tool / MCP access | Yes | Yes | Yes | Partial |
 | Attach / replay | Yes | Yes | Yes | Partial |
 | Echo / term sync hints | Host-driven | Yes | Partial | No |
+
+## Remote Filesystem Modes
+
+Phase 7A now supports three distinct remote file access modes:
+
+- `transfer`: explicit upload/download or structured file read/write over `wsh`
+- `live browse`: remote listing/stat/read/write flows used by the shared remote runtime UI and broker-backed orchestration paths
+- `mount`: remote peers exposed through the remote mount manager so shell/filesystem surfaces can consume them as mounted runtimes
+
+Use `transfer` for bulk movement, `live browse` for remote inspection/edit flows, and `mount` when you want the remote runtime to behave like an attached filesystem surface in Clawser.
 
 Terminology used in this guide:
 

@@ -218,6 +218,41 @@ test('RemoteWshRuntimeConnector supports control-plane file list/read/write oper
   assert.ok(log.some(([kind]) => kind === 'upload'))
 })
 
+test('RemoteWshRuntimeConnector audits file and tool operations', async () => {
+  const log = []
+  const records = []
+  const connector = new RemoteWshRuntimeConnector({
+    clientFactory: () => makeClient(log),
+    keyStoreFactory: () => ({
+      open: async () => {},
+      getKeyPair: async () => ({ publicKey: {}, privateKey: {} }),
+    }),
+    auditRecorder: {
+      async record(operation, data) {
+        records.push({ operation, data })
+      },
+    },
+  })
+
+  await connector.openSelection({
+    ...makeSelection({
+      target: { intent: 'tools' },
+      sessionOptions: { intent: 'tools', toolName: 'shell.exec', toolArgs: { command: 'pwd' } },
+    }),
+  })
+  await connector.openSelection({
+    ...makeSelection({
+      target: { intent: 'files' },
+      sessionOptions: { intent: 'files', operation: 'read', path: '/workspace/demo.txt' },
+    }),
+  })
+
+  assert.equal(records[0].operation, 'remote_tool_invocation')
+  assert.equal(records[0].data.outcome, 'success')
+  assert.equal(records[1].operation, 'remote_file_operation')
+  assert.equal(records[1].data.path, '/workspace/demo.txt')
+})
+
 test('RemoteSessionBroker forwards session options into route connectors', async () => {
   const registry = new RemoteRuntimeRegistry()
   registry.ingestDirectHostBookmark({

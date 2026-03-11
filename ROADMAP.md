@@ -861,11 +861,11 @@ The remaining roadmap work is now about convergence and breadth, not basic rever
 - `[x]` Browser reverse peers are interactive and capability-gated through the shared runtime model.
 - `[x]` Reverse-host runtime exists with `wsh-agent`, relay registration, PTY/exec/file/tool/gateway exposure, shared peer metadata, and user-level startup/install support.
 - `[x]` Attach/replay and route robustness are now uniform across the supported Phase 7A backends, with backend-specific replay modes surfaced explicitly.
-- `[~]` BrowserMesh naming, policy, and trust integration are partially landed; template/preset mapping, scope translation, and denial provenance in the broker/UI/audit path are now implemented, while richer trust inputs are still open.
-- `[~]` The remote UI and CLI now consume the shared runtime model, and the topology/support/self-check docs are in place, but remaining duplicate surfaces are not fully closed.
-- `[~]` Gateway/service/deploy/automation/filesystem/audit convergence is underway and partly implemented, with compute routing, broker-backed Netway gateways plus gateway audit telemetry, virtual-server service advertising, and safe remote-mount detachment now landed.
-- `[~]` VM peer support exists as a browser-side `vm-console` backend and runtime scaffold, but the MVP is not yet complete.
-- `[ ]` Final readiness verification is still open.
+- `[x]` BrowserMesh naming, policy, and trust integration are landed; template/preset mapping, scope translation, denial provenance, and trust-aware ambiguous target selection now flow through the shared broker/runtime model.
+- `[x]` The remote UI and CLI now consume the shared runtime model, the topology/support/self-check docs are in place, and the remaining legacy duplicate runtime views have been removed.
+- `[x]` Gateway/service/deploy/automation/filesystem/audit convergence is landed through the shared runtime model, including compute routing, broker-backed Netway gateways, remote file modes, virtual-server service advertising, deployment/automation routing, and unified audit telemetry for discovery, routing, file/tool/gateway, and automation flows.
+- `[x]` VM peer support exists as a browser-side `vm-console` backend with a selectable `demo-linux` guest runtime, and the MVP is now complete at the Phase 7A level.
+- `[x]` Final readiness verification is complete, and the Phase 7A pre-BrowserMesh dependency gates are now satisfied.
 
 Committed Phase 7A work already includes:
 
@@ -882,7 +882,7 @@ Committed Phase 7A work already includes:
 
 Goal: make the topology legible to contributors and users so the system stops looking more complete or more uniform than it really is.
 
-- [ ] Add a single canonical `wsh` topology diagram to docs: direct host, relay browser peer, relay host peer, future VM peer
+- [x] Add a single canonical `wsh` topology diagram to docs: direct host, relay browser peer, relay host peer, future VM peer
 - [x] Split protocol terms clearly:
   - `direct host session`
   - `reverse peer`
@@ -2499,15 +2499,15 @@ Correct relationship:
 
 ### Deliverables Before BrowserMesh Should Depend On This
 
-- [ ] Rust reverse host peer parity with the browser path
-- [ ] BrowserMesh ↔ `wsh` integration contract implemented as shared peer descriptors, runtime registry, and session broker
-- [ ] remote UI, naming, registry, ACL, gateway, compute, audit, and automation integrations all consume the same canonical peer/runtime model
-- [ ] clear precedence rules between mesh ACL/trust and `wsh` auth/capability policy
-- [ ] peer type and backend metadata in protocol + CLI output
-- [ ] docs that clearly distinguish PTY vs virtual terminal vs VM console
-- [ ] verification matrix covering discovery, merge, policy, routing, and session behavior across both stacks
-- [ ] one stable VM-console proof of concept
-- [ ] explicit product guidance on when to use direct host, reverse host, browser peer, and VM peer modes
+- [x] Rust reverse host peer parity with the browser path
+- [x] BrowserMesh ↔ `wsh` integration contract implemented as shared peer descriptors, runtime registry, and session broker
+- [x] remote UI, naming, registry, ACL, gateway, compute, audit, and automation integrations all consume the same canonical peer/runtime model
+- [x] clear precedence rules between mesh ACL/trust and `wsh` auth/capability policy
+- [x] peer type and backend metadata in protocol + CLI output
+- [x] docs that clearly distinguish PTY vs virtual terminal vs VM console
+- [x] verification matrix covering discovery, merge, policy, routing, and session behavior across both stacks
+- [x] one stable VM-console proof of concept
+- [x] explicit product guidance on when to use direct host, reverse host, browser peer, and VM peer modes
 
 ---
 

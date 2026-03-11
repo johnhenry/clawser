@@ -213,6 +213,11 @@ function descriptorFromDirectHostBookmark(bookmark) {
 export class RemoteRuntimeRegistry {
   #descriptors = new Map()
   #aliases = new Map()
+  #auditRecorder
+
+  constructor({ auditRecorder = null } = {}) {
+    this.#auditRecorder = auditRecorder
+  }
 
   ingestDescriptor(descriptor) {
     const normalized = createRemotePeerDescriptor(descriptor)
@@ -221,6 +226,17 @@ export class RemoteRuntimeRegistry {
     const merged = existing ? mergeDescriptors(existing, normalized) : normalized
     this.#descriptors.set(key, merged)
     this.#indexAliases(merged)
+    void this.#auditRecorder?.record?.(
+      existing ? 'remote_peer_updated' : 'remote_peer_discovered',
+      {
+        canonicalId: merged.identity.canonicalId,
+        fingerprint: merged.identity.fingerprint,
+        peerType: merged.peerType,
+        shellBackend: merged.shellBackend,
+        capabilities: merged.capabilities,
+        sources: merged.sources,
+      },
+    )
     return merged
   }
 
@@ -276,26 +292,31 @@ export class RemoteRuntimeRegistry {
     return this.#descriptors.get(canonicalId) || null
   }
 
-  resolvePeer(selector) {
+  matchPeers(selector) {
     if (!selector || typeof selector !== 'string') return null
 
     const aliasTarget = this.#aliases.get(selector)
     if (aliasTarget && this.#descriptors.has(aliasTarget)) {
-      return this.#descriptors.get(aliasTarget)
+      return [this.#descriptors.get(aliasTarget)]
     }
 
     if (this.#descriptors.has(selector)) {
-      return this.#descriptors.get(selector)
+      return [this.#descriptors.get(selector)]
     }
 
     const matches = [...this.#descriptors.values()].filter((descriptor) => {
       if (descriptor.identity.fingerprint?.startsWith(selector)) return true
       return descriptor.identity.aliases.includes(selector)
     })
+    return matches
+  }
+
+  resolvePeer(selector) {
+    const matches = this.matchPeers(selector)
+    if (!matches?.length) return null
     if (matches.length === 1) {
       return matches[0]
     }
-
     return null
   }
 
@@ -357,6 +378,12 @@ export class RemoteRuntimeRegistry {
 
     this.#descriptors.set(descriptor.identity.canonicalId, nextDescriptor)
     this.#indexAliases(nextDescriptor)
+    void this.#auditRecorder?.record?.('remote_service_advertised', {
+      canonicalId: nextDescriptor.identity.canonicalId,
+      service: service.name,
+      type: service.type || null,
+      address: service.address || null,
+    })
     return nextDescriptor
   }
 

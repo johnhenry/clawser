@@ -412,7 +412,8 @@ export function registerWshCli(registry, getAgent, getShell) {
       };
       const peerType = flags.type || 'browser-shell';
       const shellBackend = flags.backend || (expose.shell ? 'virtual-shell' : 'exec-only');
-      const vmRuntimeId = flags['vm-runtime'] || null;
+      const vmRuntimeId = flags['vm-runtime']
+        || (peerType === 'vm-guest' || shellBackend === 'vm-console' ? 'demo-linux' : null);
       const supportHints = supportHintsForRuntime({ peerType, shellBackend });
 
       const sessionId = await client.connectReverse(url, {

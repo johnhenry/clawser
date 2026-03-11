@@ -60,6 +60,32 @@ function sessionSupportSummary(descriptor) {
   }
 }
 
+function routePreferenceScore(descriptor, route, intent) {
+  let score = 0
+  const policyScore = Number.isFinite(route?.policy?.scoreAdjustment)
+    ? route.policy.scoreAdjustment
+    : 0
+  score += policyScore
+
+  if (route?.kind === 'direct-host') score += 30
+  if (route?.kind === 'reverse-relay') score += 20
+  if (route?.kind === 'mesh-direct') score += 15
+  if (route?.kind === 'mesh-relay') score += 10
+
+  if (route?.health === 'healthy' || route?.health === 'online') score += 12
+  if (route?.health === 'degraded') score -= 8
+  if (route?.health === 'offline') score -= 25
+
+  if ((intent === 'terminal' || intent === 'exec') && descriptor?.shellBackend === 'pty') {
+    score += 6
+  }
+  if (intent === 'terminal' && descriptor?.shellBackend === 'vm-console') {
+    score += 2
+  }
+
+  return score
+}
+
 function normalizeRemoteSessionError(error, fallback = {}) {
   if (error instanceof RemoteSessionError) {
     return error
@@ -144,7 +170,7 @@ export class RemoteSessionBroker {
     preferDirect = true,
   } = {}) {
     const target = createSessionTarget({ selector, intent, requiredCapabilities, preferDirect })
-    const descriptor = this.#resolveDescriptor(target.selector)
+    const descriptor = this.#resolveDescriptor(target)
     if (!descriptor) {
       throw new RemoteSessionError(`Unknown remote target: ${target.selector}`, {
         code: 'unknown-target',
@@ -317,13 +343,15 @@ export class RemoteSessionBroker {
     }
   }
 
-  #resolveDescriptor(selector) {
-    const named = this.#resolveNamedTarget(selector)
+  #resolveDescriptor(target) {
+    const selector = typeof target === 'string' ? target : target?.selector
+    const named = this.#resolveNamedTarget(target)
     if (named) return named
     return this.#registry.resolvePeer(selector)
   }
 
-  #resolveNamedTarget(selector) {
+  #resolveNamedTarget(target) {
+    const selector = typeof target === 'string' ? target : target?.selector
     if (typeof selector !== 'string') return null
     if (!selector.startsWith('@') && !selector.startsWith('mesh://')) {
       return null
@@ -340,7 +368,45 @@ export class RemoteSessionBroker {
 
     const alias = namedAlias(selector)
     if (!alias) return null
-    return this.#registry.resolvePeer(alias) || this.#registry.resolvePeer(`@${alias}`) || null
+    const matches = [
+      ...(this.#registry.matchPeers?.(alias) || []),
+      ...(this.#registry.matchPeers?.(`@${alias}`) || []),
+    ]
+    if (!matches.length) return null
+    if (matches.length === 1) return matches[0]
+    return this.#pickBestDescriptor(matches, typeof target === 'string' ? createSessionTarget({ selector, intent: 'terminal' }) : target)
+  }
+
+  #pickBestDescriptor(candidates, target) {
+    const ranked = candidates
+      .map((descriptor, index) => {
+        if (!includesAllCapabilities(descriptor, target.requiredCapabilities || [])) {
+          return { descriptor, index, score: Number.NEGATIVE_INFINITY }
+        }
+        if (!intentIsSupported(descriptor, target.intent)) {
+          return { descriptor, index, score: Number.NEGATIVE_INFINITY }
+        }
+        const decision = this.#policyAdapter?.checkTargetAccess?.(descriptor, target)
+        if (decision && decision.allowed === false) {
+          return { descriptor, index, score: Number.NEGATIVE_INFINITY }
+        }
+        let routes = this.#registry.computeReachability(descriptor, { intent: target.intent })
+        if (this.#policyAdapter?.rankRoutes) {
+          routes = this.#policyAdapter.rankRoutes(descriptor, target, routes)
+        }
+        const route = routes[0] || null
+        return {
+          descriptor,
+          index,
+          score: routePreferenceScore(descriptor, route, target.intent),
+        }
+      })
+      .sort((left, right) => {
+        if (right.score !== left.score) return right.score - left.score
+        return left.index - right.index
+      })
+
+    return ranked[0]?.descriptor || null
   }
 
   #connectorForRoute(route) {
