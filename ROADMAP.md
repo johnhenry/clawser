@@ -2137,7 +2137,7 @@ Required convergence:
   - peer picker UI
   - route explanation / telemetry views
   - agent/routine targeting
-- [ ] align CLI peer listings and future marketplace/resource schedulers onto that same query abstraction
+- [x] align CLI peer listings and future marketplace/resource schedulers onto that same query abstraction
 
 Verification criteria:
 

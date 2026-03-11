@@ -746,6 +746,7 @@ async function initMeshSubsystem() {
     state.orchestrator = result.orchestrator;
     state.remoteRuntimeRegistry = result.remoteRuntimeRegistry || state.pod.remoteRuntimeRegistry;
     state.remoteSessionBroker = result.remoteSessionBroker || state.pod.remoteSessionBroker;
+    globalThis.__clawserRemoteRuntimeRegistry = state.remoteRuntimeRegistry;
     configureServerRuntimeResolver();
     state.remoteMountManager = new RemoteMountManager({
       mountableFs: state.workspaceFs,

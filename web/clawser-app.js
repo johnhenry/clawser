@@ -206,6 +206,7 @@ state.routineEngine = new RoutineEngine({
       triggerEvent: _triggerEvent,
       orchestrator: state.orchestrator,
       remoteSessionBroker: state.remoteSessionBroker,
+      remoteRuntimeRegistry: state.remoteRuntimeRegistry,
       gateway: state.gateway,
       agent: state.agent,
     });

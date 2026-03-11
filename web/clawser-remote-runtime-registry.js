@@ -13,6 +13,10 @@ import {
   wshPeerInfoToRemotePeerDescriptor,
   meshDiscoveryRecordToRemotePeerDescriptor,
 } from './clawser-remote-runtime-types.js'
+import {
+  normalizeRemoteRuntimeQuery,
+  registryFilterFromRuntimeQuery,
+} from './clawser-remote-runtime-query.js'
 
 function unique(values) {
   return [...new Set((values || []).filter(Boolean))]
@@ -293,40 +297,41 @@ export class RemoteRuntimeRegistry {
   }
 
   queryPeers(filter = {}) {
+    const normalizedFilter = registryFilterFromRuntimeQuery(normalizeRemoteRuntimeQuery(filter))
     let peers = [...this.#descriptors.values()]
 
-    if (filter.peerType) {
-      peers = peers.filter((peer) => peer.peerType === filter.peerType)
+    if (normalizedFilter.peerType) {
+      peers = peers.filter((peer) => peer.peerType === normalizedFilter.peerType)
     }
-    if (filter.shellBackend) {
-      peers = peers.filter((peer) => peer.shellBackend === filter.shellBackend)
+    if (normalizedFilter.shellBackend) {
+      peers = peers.filter((peer) => peer.shellBackend === normalizedFilter.shellBackend)
     }
-    if (filter.capability) {
-      peers = peers.filter((peer) => peer.capabilities.includes(filter.capability))
+    if (normalizedFilter.capability) {
+      peers = peers.filter((peer) => peer.capabilities.includes(normalizedFilter.capability))
     }
-    if (filter.intent) {
-      peers = peers.filter((peer) => peerSupportsIntent(peer, filter.intent))
+    if (normalizedFilter.intent) {
+      peers = peers.filter((peer) => peerSupportsIntent(peer, normalizedFilter.intent))
     }
-    if (filter.source) {
-      peers = peers.filter((peer) => (peer.sources || []).includes(filter.source))
+    if (normalizedFilter.source) {
+      peers = peers.filter((peer) => (peer.sources || []).includes(normalizedFilter.source))
     }
-    if (filter.status) {
-      peers = peers.filter((peer) => peerRuntimeStatus(peer) === filter.status)
+    if (normalizedFilter.status) {
+      peers = peers.filter((peer) => peerRuntimeStatus(peer) === normalizedFilter.status)
     }
-    if (filter.serviceType || filter.serviceName) {
+    if (normalizedFilter.serviceType || normalizedFilter.serviceName) {
       peers = peers.filter((peer) => {
         const services = descriptorServices(peer)
-        if (filter.serviceType && !services.some((service) => service.type === filter.serviceType)) {
+        if (normalizedFilter.serviceType && !services.some((service) => service.type === normalizedFilter.serviceType)) {
           return false
         }
-        if (filter.serviceName && !services.some((service) => service.name === filter.serviceName)) {
+        if (normalizedFilter.serviceName && !services.some((service) => service.name === normalizedFilter.serviceName)) {
           return false
         }
         return true
       })
     }
-    if (filter.text) {
-      const query = String(filter.text).trim().toLowerCase()
+    if (normalizedFilter.text) {
+      const query = String(normalizedFilter.text).trim().toLowerCase()
       peers = peers.filter((peer) => peerSearchText(peer).includes(query))
     }
 
@@ -355,15 +360,16 @@ export class RemoteRuntimeRegistry {
   }
 
   query(filter = {}) {
+    const normalizedFilter = normalizeRemoteRuntimeQuery(filter)
     return {
-      peers: this.queryPeers(filter),
+      peers: this.queryPeers(normalizedFilter),
       services: this.listServices({
-        type: filter.serviceType,
-        name: filter.serviceName,
-        podId: filter.podId,
-        peerFilter: filter,
+        type: normalizedFilter.serviceType,
+        name: normalizedFilter.serviceName,
+        podId: normalizedFilter.podId,
+        peerFilter: normalizedFilter,
       }),
-      telemetry: this.telemetrySnapshot(filter),
+      telemetry: this.telemetrySnapshot(normalizedFilter),
     }
   }
 

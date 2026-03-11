@@ -4,6 +4,7 @@
  * Keeps background/automation flows on the same canonical target-resolution
  * path as interactive remote-runtime sessions.
  */
+import { normalizeRemoteRuntimeQuery, resolveRuntimeQuerySelector } from './clawser-remote-runtime-query.js'
 
 function routinePrompt(routine) {
   return routine?.action?.command
@@ -23,6 +24,7 @@ function normalizeRoutineTarget(action = {}) {
   if (typeof action.target === 'object') {
     return {
       selector: action.target.selector || action.target.podId || null,
+      query: action.target.query ? normalizeRemoteRuntimeQuery(action.target.query) : null,
       intent: action.target.intent || action.intent || 'automation',
       operation: action.target.operation || action.operation || null,
       path: action.target.path || action.path || null,
@@ -39,20 +41,24 @@ export async function executeRoutineAction({
   triggerEvent = null,
   orchestrator = null,
   remoteSessionBroker = null,
+  remoteRuntimeRegistry = null,
   gateway = null,
   agent = null,
 } = {}) {
   const target = normalizeRoutineTarget(routine?.action || {})
   const prompt = routinePrompt(routine)
   const timeoutMs = routine?.guardrails?.timeoutMs || undefined
+  const selector = target?.query
+    ? resolveRuntimeQuerySelector(remoteRuntimeRegistry, target.query)
+    : target?.selector
 
-  if (target?.selector) {
+  if (selector) {
     if (
       orchestrator?.runComputeTask
       && (target.intent === 'automation' || target.intent === 'exec' || target.intent === 'terminal')
     ) {
       return orchestrator.runComputeTask({
-        selector: target.selector,
+        selector,
         command: prompt,
         constraints: target.constraints || {},
         timeoutMs,
@@ -60,7 +66,7 @@ export async function executeRoutineAction({
     }
 
     if (remoteSessionBroker?.openSession) {
-      return remoteSessionBroker.openSession(target.selector, {
+      return remoteSessionBroker.openSession(selector, {
         intent: target.intent || 'automation',
         command: prompt,
         operation: target.operation || undefined,

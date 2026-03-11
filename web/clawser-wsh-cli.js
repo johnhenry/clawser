@@ -16,6 +16,8 @@ import {
 } from './packages-wsh.js';
 import { parseFlags } from './clawser-cli.js';
 import { supportHintsForRuntime } from './clawser-remote-runtime-types.js';
+import { parseRuntimeQueryFlags } from './clawser-remote-runtime-query.js';
+import { state } from './clawser-state.js';
 import { getWshConnections } from './clawser-wsh-tools.js';
 
 // ── Flag Spec ─────────────────────────────────────────────────────
@@ -38,6 +40,11 @@ const FLAG_SPEC = {
   'cpu-shares': 'value',
   'storage-mb': 'value',
   capability: 'value',
+  source: 'value',
+  status: 'value',
+  intent: 'value',
+  'service-type': 'value',
+  'service-name': 'value',
   verbose: true,
   json: true,
 };
@@ -61,6 +68,7 @@ Usage:
   wsh tools [host]                 List MCP tools on connected host
   wsh reverse relay --expose-shell Register as reverse-connectable peer
   wsh peers relay                  List reverse-connected peers on relay
+  wsh runtimes [query]             Query canonical remote runtimes in this workspace
   wsh vm list                      List browser VM runtimes
   wsh vm images                    List available browser VM images
   wsh vm install <image> [name]    Install a browser VM image as a runtime
@@ -101,6 +109,11 @@ Options:
       --cpu-shares <N>             VM CPU shares (for wsh vm budget)
       --storage-mb <MB>            VM storage budget in MB (for wsh vm budget)
       --capability <CAP>           Filter peers by capability
+      --source <SOURCE>            Filter canonical runtimes by discovery source
+      --status <STATUS>            Filter canonical runtimes by health/status
+      --intent <INTENT>            Filter canonical runtimes by intent support
+      --service-type <TYPE>        Filter canonical runtimes by advertised service type
+      --service-name <NAME>        Filter canonical runtimes by advertised service name
   -v, --verbose                    Verbose output
 `;
 
@@ -757,6 +770,51 @@ export function registerWshCli(registry, getAgent, getShell) {
     }
   }
 
+  function getRuntimeRegistry() {
+    return state.remoteRuntimeRegistry || globalThis.__clawserRemoteRuntimeRegistry || null;
+  }
+
+  async function cmdRuntimes(positional, flags) {
+    const registry = getRuntimeRegistry();
+    if (!registry) {
+      return { stdout: '', stderr: 'Remote runtime registry is not ready.\n', exitCode: 1 };
+    }
+
+    const query = parseRuntimeQueryFlags(flags, positional);
+    const result = registry.query(query);
+    if (flags.json) {
+      return {
+        stdout: `${JSON.stringify({
+          query,
+          peers: result.peers,
+          services: result.services,
+          telemetry: result.telemetry,
+        }, null, 2)}\n`,
+        stderr: '',
+        exitCode: 0,
+      };
+    }
+
+    const lines = ['SELECTOR       USERNAME         TYPE           BACKEND         CAPABILITIES         SOURCES'];
+    if (!result.peers.length) {
+      lines.push('(no runtimes matched)');
+    } else {
+      for (const peer of result.peers) {
+        const selector = peer.identity?.canonicalId || '--';
+        lines.push(
+          `${String(selector).padEnd(15)}` +
+          `${String(peer.username || '').padEnd(17)}` +
+          `${String(peer.peerType || 'host').padEnd(15)}` +
+          `${String(peer.shellBackend || 'pty').padEnd(16)}` +
+          `${String((peer.capabilities || []).join(', ')).padEnd(21)}` +
+          `${String((peer.sources || []).join(', ') || '--')}`
+        );
+      }
+    }
+    lines.push(`\n${result.peers.length} runtime(s), ${result.services.length} service(s).`);
+    return { stdout: `${lines.join('\n')}\n`, stderr: '', exitCode: 0 };
+  }
+
   // ── Subcommand: peers ───────────────────────────────────────────
 
   async function cmdPeers(positional, flags) {
@@ -1272,6 +1330,9 @@ export function registerWshCli(registry, getAgent, getShell) {
         return cmdReverse(positional.slice(1), flags);
       case 'peers':
         return cmdPeers(positional.slice(1), flags);
+      case 'runtimes':
+      case 'runtime':
+        return cmdRuntimes(positional.slice(1), flags);
       case 'vm':
         return cmdVm(positional.slice(1), flags);
       case 'suspend':
