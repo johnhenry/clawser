@@ -1548,6 +1548,12 @@ Goal: support an entire Linux environment running inside the browser and expose 
 
 This is feasible in principle now.
 
+Current status:
+
+- [x] Model A is the implemented path for Phase 7A: the browser remains the relay-registered peer and routes terminal traffic into a VM-console backend.
+- [x] The current shipped runtime is the `demo-linux` browser-side guest console used by the `vm-guest` / `vm-console` peer contract.
+- [ ] Model B is still deferred; there is no guest-side `wsh-server` inside a browser-hosted Linux distro.
+
 Relevant prior art:
 
 - JSLinux / TinyEMU can boot real Linux userlands in-browser
@@ -1601,7 +1607,7 @@ Limitations:
 
 Recommended sequence:
 
-- [ ] **First** build Model A as a new browser peer backend
+- [x] **First** build Model A as a new browser peer backend
 - [ ] **Later** evaluate Model B if there is a need for true Unix fidelity inside the guest
 
 ### Phase 7A.7: VM Peer MVP
@@ -1667,12 +1673,12 @@ Likely follow-up deliverables:
 
 ### Phase 7A.9: Recommended Product Positioning
 
-If all of the above lands, the clean story should be:
+The current clean story is:
 
 - **Use direct `wsh-server`** when the target is a real machine and you need real PTY semantics.
 - **Use reverse browser `wsh`** when the target is a live Clawser tab or browser runtime that cannot or should not accept inbound access.
 - **Use reverse host peers** when the machine can dial out but is not directly reachable.
-- **Use VM peers** when you want a portable, browser-hosted Linux environment accessible through the same relay/session/auth model.
+- **Use VM peers** when you want a portable, browser-hosted Linux environment accessible through the same relay/session/auth model, with the current scope limited to the `demo-linux` VM-console MVP.
 
 That gives Clawser four legitimate remote-runtime modes without pretending they are interchangeable.
 
@@ -1701,21 +1707,21 @@ Why it matters:
 
 Required deliverables:
 
-- [ ] implement incoming session handling for Rust reverse peers
-- [ ] create a local session backend that can:
+- [x] implement incoming session handling for Rust reverse peers
+- [x] create a local session backend that can:
   - spawn a PTY
   - open an exec session
   - relay file operations where supported
   - later bridge MCP/tool calls
-- [ ] bridge reverse peer control messages end to end:
+- [x] bridge reverse peer control messages end to end:
   - `Open`
   - `SessionData`
   - `Resize`
   - `Signal`
   - `Exit`
   - `Close`
-- [ ] ensure reverse peer sessions use the same interactive loop quality bar as direct sessions
-- [ ] add reconnect handling when the relay transport drops
+- [x] ensure reverse peer sessions use the same interactive loop quality bar as direct sessions
+- [x] add reconnect handling when the relay transport drops
 
 Success definition:
 
@@ -1739,16 +1745,16 @@ Why it matters:
 
 Required deliverables:
 
-- [ ] extend reverse registration payloads to include backend identity
-- [ ] extend reverse peer listings to expose:
+- [x] extend reverse registration payloads to include backend identity
+- [x] extend reverse peer listings to expose:
   - `peer_type`
   - `shell_backend`
   - `capabilities`
   - `attach_supported`
   - `term_sync_supported`
   - `predictive_echo_supported`
-- [ ] show this in the CLI table and JSON output
-- [ ] teach the CLI to label sessions clearly on connect/open
+- [x] show this in the CLI table and JSON output
+- [x] teach the CLI to label sessions clearly on connect/open
 
 Recommended peer type vocabulary:
 
@@ -1842,11 +1848,11 @@ Why it matters:
 
 Required deliverables:
 
-- [ ] make upload/download first-class against reverse peers
-- [ ] support capability-aware file commands from the CLI
-- [ ] improve reverse MCP/tool invocation UX
-- [ ] allow peer policies to expose tools without necessarily exposing shell
-- [ ] make peer error messages explain capability denials clearly
+- [x] make upload/download first-class against reverse peers
+- [x] support capability-aware file commands from the CLI
+- [x] improve reverse MCP/tool invocation UX
+- [x] allow peer policies to expose tools without necessarily exposing shell
+- [x] make peer error messages explain capability denials clearly
 
 Examples of valuable workflows:
 
@@ -1892,19 +1898,19 @@ Why it matters:
 
 Required deliverables:
 
-- [ ] `wsh peers --json`
-- [ ] richer table output with peer type and backend
+- [x] `wsh peers --json`
+- [x] richer table output with peer type and backend
 - [ ] convenience selectors:
   - connect to only peer
   - connect to last peer
   - filter by capability
   - filter by peer type
-- [ ] stronger error messages for:
+- [x] stronger error messages for:
   - transport mismatch
   - cert trust problems
   - capability denials
   - attach/replay unavailability
-- [ ] better session banners so operators know what they are entering
+- [x] better session banners so operators know what they are entering
 
 ##### 8. Local Setup And Bootstrap Quality
 
@@ -1918,10 +1924,10 @@ Why it matters:
 
 Required deliverables:
 
-- [ ] make trusted local relay setup easier
-- [ ] improve key generation/copy/authorization guidance
-- [ ] offer scripts or commands for local relay bootstrap
-- [ ] make relay startup diagnostics more explicit
+- [x] make trusted local relay setup easier
+- [x] improve key generation/copy/authorization guidance
+- [x] offer scripts or commands for local relay bootstrap
+- [x] make relay startup diagnostics more explicit
 - [ ] add self-check commands for common failures
 
 Examples:
@@ -1948,10 +1954,10 @@ Why it matters:
 
 Required deliverables:
 
-- [ ] implement a VM console backend under the existing reverse-browser peer architecture
-- [ ] support at least one emulator/runtime integration cleanly
-- [ ] expose peer metadata that makes the VM nature explicit
-- [ ] ensure the UX does not misrepresent a VM console as a real host PTY
+- [x] implement a VM console backend under the existing reverse-browser peer architecture
+- [x] support at least one emulator/runtime integration cleanly
+- [x] expose peer metadata that makes the VM nature explicit
+- [x] ensure the UX does not misrepresent a VM console as a real host PTY
 
 ##### 10. VM Lifecycle, Persistence, And Resource Controls
 
@@ -1989,9 +1995,9 @@ Why it matters:
 
 Required deliverables:
 
-- [ ] keep `wsh` session/auth semantics independent
-- [ ] allow BrowserMesh to supply discovery and route hints later
-- [ ] avoid duplicating session semantics across mesh and `wsh`
+- [x] keep `wsh` session/auth semantics independent
+- [x] allow BrowserMesh to supply discovery and route hints later
+- [x] avoid duplicating session semantics across mesh and `wsh`
 
 Target outcome:
 
@@ -2040,16 +2046,16 @@ Why this matters:
 
 Required convergence:
 
-- [ ] make the remote UI consume canonical `RemotePeerDescriptor` records instead of ad hoc peer/session objects
-- [ ] route all terminal/file/service openings through the session broker
+- [x] make the remote UI consume canonical `RemotePeerDescriptor` records instead of ad hoc peer/session objects
+- [x] route all terminal/file/service openings through the session broker
 - [ ] distinguish clearly in the UI whether the target is:
   - chat-only peer
   - service peer
   - browser shell peer
   - host PTY peer
   - VM guest peer
-- [ ] replace duplicated peer display logic with one reusable peer-card / peer-row model
-- [ ] ensure remote UI panels reflect actual backend capabilities rather than showing controls that will immediately fail
+- [x] replace duplicated peer display logic with one reusable peer-card / peer-row model
+- [x] ensure remote UI panels reflect actual backend capabilities rather than showing controls that will immediately fail
 
 Verification criteria:
 
@@ -2071,7 +2077,7 @@ Why this matters:
 
 Required convergence:
 
-- [ ] let mesh names resolve to canonical remote peer descriptors
+- [x] let mesh names resolve to canonical remote peer descriptors
 - [ ] allow future `wsh` session targeting by name:
   - `@alice`
   - `@builder`
@@ -2108,15 +2114,15 @@ Why this matters:
 
 Required convergence:
 
-- [ ] build one canonical remote runtime registry that ingests:
+- [x] build one canonical remote runtime registry that ingests:
   - mesh discovery records
   - mesh live peer state
   - mesh relay announcements
   - `wsh` reverse-peer listings
   - direct host bookmarks
   - future VM peer advertisements
-- [ ] preserve source provenance for every merged field
-- [ ] define deterministic merge rules for:
+- [x] preserve source provenance for every merged field
+- [x] define deterministic merge rules for:
   - identity match
   - linked identity match
   - conflicting capability reports
@@ -2147,8 +2153,8 @@ Why this matters:
 
 Required convergence:
 
-- [ ] map mesh scope templates to `wsh` exposure presets
-- [ ] define a translation table between mesh scopes and `wsh` capabilities
+- [x] map mesh scope templates to `wsh` exposure presets
+- [x] define a translation table between mesh scopes and `wsh` capabilities
 - [ ] support per-peer/per-identity presets that determine:
   - shell access
   - exec-only access
@@ -2156,12 +2162,12 @@ Required convergence:
   - MCP/tool access
   - gateway/network access
   - VM control access
-- [ ] document precedence between:
+- [x] document precedence between:
   - mesh ACL deny
   - relay policy deny
   - `wsh` local exposure deny
   - host key/capability deny
-- [ ] add UX so the operator can see which layer denied a request
+- [x] add UX so the operator can see which layer denied a request
 
 Example translation direction:
 
@@ -2187,8 +2193,8 @@ Why this matters:
 
 Required convergence:
 
-- [ ] incorporate mesh trust scores into route ranking, not session admission bypass
-- [ ] incorporate relay health and latency into `wsh` path selection
+- [x] incorporate mesh trust scores into route ranking, not session admission bypass
+- [x] incorporate relay health and latency into `wsh` path selection
 - [ ] allow policy to require a minimum trust score for:
   - relay use
   - compute delegation
@@ -2255,7 +2261,7 @@ Why this matters:
 
 Required convergence:
 
-- [ ] let compute schedulers query the remote runtime registry rather than ad hoc peer lists
+- [x] let compute schedulers query the remote runtime registry rather than ad hoc peer lists
 - [ ] add capability classes relevant to compute:
   - `exec`
   - `shell`
@@ -2287,14 +2293,14 @@ Why this matters:
 
 Required convergence:
 
-- [ ] allow remote runtime descriptors to advertise hosted services
+- [x] allow remote runtime descriptors to advertise hosted services
 - [ ] let the Virtual Server subsystem bind services to a peer/runtime target
 - [ ] distinguish between:
   - peer shell access
   - peer service browsing
   - peer service routing
   - peer-hosted server management
-- [ ] make service discovery consume the same canonical peer/runtime model
+- [x] make service discovery consume the same canonical peer/runtime model
 
 Verification criteria:
 
@@ -2315,7 +2321,7 @@ Why this matters:
 Required convergence:
 
 - [ ] define which peer types can accept deploy/install actions
-- [ ] allow app/skill deployment targeting through the remote runtime registry
+- [x] allow app/skill deployment targeting through the remote runtime registry
 - [ ] surface whether a peer supports:
   - tool injection
   - skill sync
@@ -2379,9 +2385,9 @@ Why this matters:
 
 Required convergence:
 
-- [ ] define remote filesystem mount semantics
-- [ ] integrate remote peers with the shell/filesystem model
-- [ ] distinguish:
+- [x] define remote filesystem mount semantics
+- [x] integrate remote peers with the shell/filesystem model
+- [x] distinguish:
   - ad hoc file transfer
   - live remote browsing
   - mounted remote namespace
