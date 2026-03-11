@@ -1903,8 +1903,8 @@ Required deliverables:
 - [ ] convenience selectors:
   - connect to only peer
   - connect to last peer
-  - filter by capability
-  - filter by peer type
+  - [x] filter by capability
+  - [x] filter by peer type
 - [x] stronger error messages for:
   - transport mismatch
   - cert trust problems
@@ -2348,16 +2348,17 @@ Why this matters:
 
 Required convergence:
 
-- [ ] log all remote session lifecycle events into a common audit/telemetry surface:
+- [x] log shared remote-runtime events into a common audit/telemetry surface for:
   - discovery
   - route selection
   - relay use
   - auth success/failure
-  - exposure changes
-  - session open/close
+  - session open/failure
   - file transfer
   - tool invocation
   - gateway use
+  - automation execution
+- [ ] add explicit exposure-change audit coverage
 - [ ] distinguish operator actions from automated routing/runtime actions
 - [ ] expose cross-stack telemetry views:
   - peer health
@@ -2391,7 +2392,7 @@ Required convergence:
   - ad hoc file transfer
   - live remote browsing
   - mounted remote namespace
-- [ ] gate remote mounts by peer capability and trust/policy
+- [x] gate remote mounts by peer capability and trust/policy through the shared broker and policy path
 
 Possible user-facing models:
 
@@ -2420,7 +2421,12 @@ Required convergence:
 - [ ] allow routines to target canonical remote runtime descriptors
 - [ ] support scheduled health checks, syncs, backups, and maintenance against peers
 - [ ] ensure daemon/background execution can reuse the same session broker as interactive flows
-- [ ] apply policy and audit consistently to automated sessions
+- [x] apply policy and audit consistently to broker-routed automated sessions
+
+Current status note:
+
+- [x] broker-routed automation already uses the same runtime selection, policy checks, and audit path via `runAutomationOnPod`
+- [ ] the generic routines engine is not yet targeting canonical remote runtime descriptors directly
 
 Verification criteria:
 

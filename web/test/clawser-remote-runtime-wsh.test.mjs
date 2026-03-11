@@ -253,6 +253,38 @@ test('RemoteWshRuntimeConnector audits file and tool operations', async () => {
   assert.equal(records[1].data.path, '/workspace/demo.txt')
 })
 
+test('RemoteWshRuntimeConnector audits automation runs separately from interactive sessions', async () => {
+  const log = []
+  const records = []
+  const client = makeClient(log)
+  scheduleExecResult(client, 'automation ok')
+
+  const connector = new RemoteWshRuntimeConnector({
+    clientFactory: () => client,
+    keyStoreFactory: () => ({
+      open: async () => {},
+      getKeyPair: async () => ({ publicKey: {}, privateKey: {} }),
+    }),
+    auditRecorder: {
+      async record(operation, data) {
+        records.push({ operation, data })
+      },
+    },
+  })
+
+  const result = await connector.openSelection({
+    ...makeSelection({
+      target: { intent: 'automation' },
+      sessionOptions: { intent: 'automation', command: 'echo ok' },
+    }),
+  })
+
+  assert.equal(result.output, 'automation ok')
+  assert.equal(records.length, 1)
+  assert.equal(records[0].operation, 'remote_automation_run')
+  assert.equal(records[0].data.outcome, 'success')
+})
+
 test('RemoteSessionBroker forwards session options into route connectors', async () => {
   const registry = new RemoteRuntimeRegistry()
   registry.ingestDirectHostBookmark({

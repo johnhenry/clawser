@@ -93,4 +93,37 @@ describe('RemoteMountManager', () => {
     )
     assert.equal(records[1].payload.outcome, 'failure')
   })
+
+  it('enforces capability or policy gating through the shared broker for mounted paths', async () => {
+    const fs = new MountableFs()
+    const manager = new RemoteMountManager({
+      mountableFs: fs,
+      runtimeRegistry: {
+        resolvePeer(selector) {
+          if (selector !== 'peer-1') return null
+          return { identity: { canonicalId: 'peer-1' } }
+        },
+      },
+      sessionBroker: {
+        async openSession() {
+          const error = new Error('Target denied by policy adapter')
+          error.layer = 'mesh-acl'
+          error.code = 'policy-denied'
+          throw error
+        },
+      },
+    })
+
+    await manager.mountPeer('peer-1', {
+      mountPoint: '/mnt/peers/demo',
+      remotePath: '/workspace',
+    })
+
+    await assert.rejects(
+      () => fs.listMounted('/mnt/peers/demo'),
+      /policy adapter/i,
+    )
+
+    assert.equal(fs.isMounted('/mnt/peers/demo'), false)
+  })
 })
