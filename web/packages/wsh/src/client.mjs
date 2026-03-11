@@ -668,7 +668,7 @@ export class WshClient {
    * @param {string} opts.username
    * @param {CryptoKeyPair} [opts.keyPair]
    * @param {string} [opts.password]
-   * @param {object} [opts.expose] - Capabilities to expose { shell, fs, tools }
+   * @param {object} [opts.expose] - Capabilities to expose { shell, exec, fs, tools }
    * @param {string} [opts.peerType]
    * @param {string} [opts.shellBackend]
    * @param {boolean} [opts.supportsAttach]
@@ -695,6 +695,7 @@ export class WshClient {
     // Build capabilities list from expose options.
     const capabilities = [];
     if (expose.shell) capabilities.push('shell');
+    if (expose.exec) capabilities.push('exec');
     if (expose.fs) capabilities.push('fs');
     if (expose.tools) capabilities.push('tools');
 

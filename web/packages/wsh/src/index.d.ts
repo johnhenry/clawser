@@ -906,6 +906,7 @@ export interface WshConnectReverseOptions {
   password?: string;
   expose?: {
     shell?: boolean;
+    exec?: boolean;
     fs?: boolean;
     tools?: boolean;
   };

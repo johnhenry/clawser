@@ -36,6 +36,10 @@ const FLAG_SPEC = {
   'vm-runtime': 'value',
   preset: 'value',
   'require-approval': true,
+  'expose-shell': true,
+  'expose-exec': true,
+  'expose-tools': true,
+  'expose-fs': true,
   'memory-mb': 'value',
   'cpu-shares': 'value',
   'storage-mb': 'value',
@@ -66,7 +70,7 @@ Usage:
   wsh scp local remote             Upload file
   wsh scp remote local             Download file
   wsh tools [host]                 List MCP tools on connected host
-  wsh reverse relay --expose-shell Register as reverse-connectable peer
+  wsh reverse relay --expose-shell --expose-exec Register as reverse-connectable peer
   wsh peers relay                  List reverse-connected peers on relay
   wsh runtimes [query]             Query canonical remote runtimes in this workspace
   wsh vm list                      List browser VM runtimes
@@ -105,6 +109,10 @@ Options:
       --vm-runtime <ID>            VM runtime id when exposing a vm-console peer
       --preset <NAME>              Reverse exposure preset (full, shell-only, tools-only, files-only, vm-console)
       --require-approval           Require approval for each incoming reverse session
+      --expose-shell               Expose terminal sessions to reverse peers
+      --expose-exec                Expose non-interactive command execution to reverse peers
+      --expose-tools               Expose browser tools to reverse peers
+      --expose-fs                  Expose filesystem access to reverse peers
       --memory-mb <MB>             VM budget memory in MB (for wsh vm budget)
       --cpu-shares <N>             VM CPU shares (for wsh vm budget)
       --storage-mb <MB>            VM storage budget in MB (for wsh vm budget)
@@ -119,27 +127,27 @@ Options:
 
 const REVERSE_EXPOSURE_PRESETS = Object.freeze({
   full: Object.freeze({
-    expose: { shell: true, tools: true, fs: true },
+    expose: { shell: true, exec: true, tools: true, fs: true },
     peerType: 'browser-shell',
     shellBackend: 'virtual-shell',
   }),
   'shell-only': Object.freeze({
-    expose: { shell: true, tools: false, fs: false },
+    expose: { shell: true, exec: true, tools: false, fs: false },
     peerType: 'browser-shell',
     shellBackend: 'virtual-shell',
   }),
   'tools-only': Object.freeze({
-    expose: { shell: false, tools: true, fs: false },
+    expose: { shell: false, exec: false, tools: true, fs: false },
     peerType: 'worker',
     shellBackend: 'exec-only',
   }),
   'files-only': Object.freeze({
-    expose: { shell: false, tools: false, fs: true },
+    expose: { shell: false, exec: false, tools: false, fs: true },
     peerType: 'worker',
     shellBackend: 'exec-only',
   }),
   'vm-console': Object.freeze({
-    expose: { shell: true, tools: false, fs: true },
+    expose: { shell: true, exec: true, tools: false, fs: true },
     peerType: 'vm-guest',
     shellBackend: 'vm-console',
     vmRuntimeId: 'demo-linux',
@@ -241,15 +249,19 @@ export function registerWshCli(registry, getAgent, getShell) {
       || flags['vm-runtime']
       || flags['require-approval']
       || flags['expose-shell']
+      || flags['expose-exec']
       || flags['expose-tools']
       || flags['expose-fs']
     );
     const effectiveSavedPreset = !hasExplicitPreset ? savedPreset : null;
-    const hasExposeFlags = flags['expose-shell'] || flags['expose-tools'] || flags['expose-fs'];
+    const hasExposeFlags = flags['expose-shell'] || flags['expose-exec'] || flags['expose-tools'] || flags['expose-fs'];
     const expose = {
       shell: hasExposeFlags
         ? !!flags['expose-shell']
         : preset?.expose?.shell ?? effectiveSavedPreset?.expose?.shell ?? true,
+      exec: hasExposeFlags
+        ? !!flags['expose-exec']
+        : preset?.expose?.exec ?? effectiveSavedPreset?.expose?.exec ?? true,
       tools: hasExposeFlags
         ? !!flags['expose-tools']
         : preset?.expose?.tools ?? effectiveSavedPreset?.expose?.tools ?? true,
@@ -534,7 +546,7 @@ export function registerWshCli(registry, getAgent, getShell) {
   async function cmdReverse(positional, flags) {
     const relay = positional[0];
     if (!relay) {
-      return { stdout: '', stderr: 'Usage: wsh reverse <relay> [--expose-shell]\n', exitCode: 1 };
+      return { stdout: '', stderr: 'Usage: wsh reverse <relay> [--expose-shell] [--expose-exec]\n', exitCode: 1 };
     }
 
     const parsed = parseUserHost(relay, parseInt(flags.port) || 4422);

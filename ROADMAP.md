@@ -2273,7 +2273,8 @@ Required convergence:
   - `wasm`
   - `gpu`
   - `vm_console`
-- [ ] define future guest-side execution APIs as additional compute/runtime classes
+- [x] define guest-side execution APIs as additional compute/runtime classes
+  - current Phase 8 shipping class: `guest-exec` for browser-hosted `vm-console` peers
 - [x] allow schedulers to prefer:
   - real host peers for heavy compute
   - browser peers for light tool execution

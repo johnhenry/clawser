@@ -107,7 +107,7 @@ function getVirtualTerminalManager() {
 function getParticipantCapabilities(client) {
   return client?.__clawserExposeCapabilities
     || client?.exposedCapabilities
-    || { shell: true, tools: true, fs: true };
+    || { shell: true, exec: true, tools: true, fs: true };
 }
 
 function getParticipantMetadata(client) {
@@ -343,8 +343,13 @@ class IncomingPeerContext {
       return;
     }
 
-    if ((msg.kind === 'pty' || msg.kind === 'exec') && !this.capabilities.shell) {
+    if (msg.kind === 'pty' && !this.capabilities.shell) {
       await this.#sendReply(openFail({ reason: 'reverse peer did not expose shell access' }));
+      return;
+    }
+
+    if (msg.kind === 'exec' && !(this.capabilities.exec || this.capabilities.shell)) {
+      await this.#sendReply(openFail({ reason: 'reverse peer did not expose exec access' }));
       return;
     }
 

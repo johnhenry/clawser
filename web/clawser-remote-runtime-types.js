@@ -34,6 +34,37 @@ export const REMOTE_SESSION_INTENTS = Object.freeze([
   'server-management',
 ])
 
+export function executionApisForRuntime({
+  peerType = 'host',
+  shellBackend = 'pty',
+  capabilities = [],
+  metadata = {},
+} = {}) {
+  const advertised = Array.isArray(metadata?.executionApis)
+    ? metadata.executionApis.filter((value) => typeof value === 'string' && value.trim())
+    : []
+  if (advertised.length > 0) {
+    return [...new Set(advertised.map((value) => value.trim()))]
+  }
+
+  const normalizedBackend = normalizeShellBackend(shellBackend)
+  const normalizedPeerType = normalizePeerType(peerType)
+  const caps = new Set(capabilities || [])
+  const apis = []
+
+  if (normalizedBackend === 'vm-console' && (caps.has('exec') || caps.has('shell'))) {
+    apis.push('guest-exec')
+  } else if (normalizedBackend === 'pty' && (caps.has('exec') || caps.has('shell'))) {
+    apis.push('host-exec')
+  } else if (normalizedBackend === 'virtual-shell' && (caps.has('exec') || caps.has('shell'))) {
+    apis.push(normalizedPeerType === 'browser-shell' ? 'browser-exec' : 'virtual-exec')
+  } else if (normalizedBackend === 'exec-only' && caps.has('exec')) {
+    apis.push('exec-api')
+  }
+
+  return apis
+}
+
 export function supportHintsForRuntime({
   peerType = 'host',
   shellBackend = 'pty',
@@ -103,10 +134,17 @@ export function runtimeClassesForRuntime({
     capabilities,
     metadata,
   })
+  const executionApis = executionApisForRuntime({
+    peerType,
+    shellBackend,
+    capabilities,
+    metadata,
+  })
   if ((capabilities || []).includes('gateway')) classes.push('gateway')
   if ((capabilities || []).includes('tools')) classes.push('tool-runtime')
   if ((capabilities || []).includes('fs')) classes.push('filesystem')
   if ((capabilities || []).includes('shell') || (capabilities || []).includes('exec')) classes.push('compute')
+  classes.push(...executionApis)
   if (deploymentSupport.canDeploy) classes.push('deployer')
   if (metadata?.serviceDetails || metadata?.services?.length) classes.push('service-host')
   return [...new Set(classes.filter(Boolean))]
@@ -259,6 +297,12 @@ export function createRemotePeerDescriptor({
     capabilities,
     metadata,
   })
+  const executionApis = executionApisForRuntime({
+    peerType,
+    shellBackend,
+    capabilities,
+    metadata,
+  })
   const runtimeClasses = runtimeClassesForRuntime({
     peerType,
     shellBackend,
@@ -266,6 +310,7 @@ export function createRemotePeerDescriptor({
     metadata: {
       ...metadata,
       deploymentSupport: deploymentHints,
+      executionApis,
     },
   })
 
@@ -285,6 +330,7 @@ export function createRemotePeerDescriptor({
     metadata: {
       replayMode: supportHints.replayMode,
       deploymentSupport: deploymentHints,
+      executionApis,
       runtimeClasses,
       ...metadata,
     },

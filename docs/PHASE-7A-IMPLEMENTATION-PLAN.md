@@ -306,6 +306,7 @@ Status: `[x] Complete`
   - `Ctrl+D`
   - attach/replay where practical
 - [x] Expose VM-specific metadata and capabilities conservatively.
+- [x] Expose guest execution as a first-class runtime class (`guest-exec`) for compute-aware scheduling.
 - [x] Make the UX explicit that this is a VM console, not a host PTY.
 - [x] Support one emulator/runtime cleanly.
 - [x] Do not implement guest-side `wsh-server` in this program.

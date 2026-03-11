@@ -746,6 +746,51 @@ describe('MeshOrchestrator', () => {
     assert.equal(selection.podId, 'deploy-peer')
   })
 
+  it('supports guest-exec as a first-class compute runtime preference', () => {
+    const registryOrch = makeOrchestrator({
+      peerNode: makePeerNode({
+        exec: undefined,
+        capabilities: ['wasm'],
+      }),
+      runtimeRegistry: makeRuntimeRegistry([
+        {
+          identity: { canonicalId: 'host-peer', fingerprint: 'host-peer', aliases: [] },
+          username: 'host-peer',
+          peerType: 'host',
+          shellBackend: 'pty',
+          capabilities: ['exec'],
+          reachability: [{ kind: 'reverse-relay', health: 'online' }],
+          metadata: {
+            resources: { cpu: 8, memory: 8192, storage: 16384 },
+            runtimeClasses: ['host', 'pty', 'compute', 'host-exec'],
+          },
+        },
+        {
+          identity: { canonicalId: 'vm-peer', fingerprint: 'vm-peer', aliases: [] },
+          username: 'vm-peer',
+          peerType: 'vm-guest',
+          shellBackend: 'vm-console',
+          capabilities: ['shell', 'exec', 'fs'],
+          reachability: [{ kind: 'reverse-relay', health: 'online' }],
+          metadata: {
+            resources: { cpu: 4, memory: 4096, storage: 8192 },
+            runtimeClasses: ['vm-guest', 'vm-console', 'compute', 'guest-exec'],
+            executionApis: ['guest-exec'],
+          },
+        },
+      ]),
+    })
+
+    const selection = registryOrch.selectComputeTarget({
+      constraints: {
+        capabilities: ['compute'],
+        preferRuntimeClass: 'guest-exec',
+      },
+    })
+
+    assert.equal(selection.podId, 'vm-peer')
+  })
+
   // -- drainPod -------------------------------------------------------------
 
   it('drainPod disconnects peer and returns success', async () => {

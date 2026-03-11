@@ -75,7 +75,7 @@ describe('wsh reverse handshake protocol', () => {
   it('supports non-virtual-shell reverse peers with reduced session hints', () => {
     const register = reverseRegister({
       username: 'vm',
-      capabilities: ['shell'],
+      capabilities: ['shell', 'exec', 'fs'],
       peerType: 'vm-guest',
       shellBackend: 'vm-console',
       supportsAttach: true,

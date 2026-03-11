@@ -81,6 +81,13 @@ describe('DemoLinuxVmConsole', () => {
     assert.equal(read.text, 'ABC')
     assert.deepEqual(Array.from(downloaded), [65, 66, 67])
   })
+
+  it('advertises guest exec as an explicit execution API', () => {
+    const vm = new DemoLinuxVmConsole()
+
+    assert.deepEqual(vm.metadata.capabilities, ['shell', 'exec', 'fs'])
+    assert.deepEqual(vm.metadata.executionApis, ['guest-exec'])
+  })
 })
 
 describe('BrowserVmConsoleRegistry', () => {
@@ -101,6 +108,7 @@ describe('BrowserVmConsoleRegistry', () => {
 
     const images = registry.listImages()
     assert.deepEqual(images.map((entry) => entry.id), ['alpine-lab', 'debian-dev', 'demo-linux'])
+    assert.ok(images.every((entry) => entry.capabilities.includes('exec')))
 
     const installed = registry.install('alpine-lab', { runtimeId: 'lab' })
     assert.equal(installed.id, 'lab')

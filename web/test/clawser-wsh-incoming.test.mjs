@@ -42,7 +42,7 @@ function createFakeShell() {
   };
 }
 
-function createFakeClient(capabilities = { shell: true, tools: true, fs: true }) {
+function createFakeClient(capabilities = { shell: true, exec: true, tools: true, fs: true }) {
   return {
     state: 'authenticated',
     fingerprint: 'SHA256:target',
@@ -107,7 +107,7 @@ describe('clawser-wsh-incoming', () => {
     assert.equal(listIncomingSessions().length, 1);
     assert.ok(getIncomingSession(participantKey));
     assert.equal(client.sent[0].type, MSG.REVERSE_ACCEPT);
-    assert.deepEqual(client.sent[0].capabilities, ['shell', 'tools', 'fs']);
+    assert.deepEqual(client.sent[0].capabilities, ['shell', 'exec', 'tools', 'fs']);
     assert.equal(client.sent[0].peer_type, 'browser-shell');
     assert.equal(client.sent[0].shell_backend, 'virtual-shell');
 
@@ -135,7 +135,7 @@ describe('clawser-wsh-incoming', () => {
   });
 
   it('rejects PTY opens when shell access was not exposed', async () => {
-    const client = createFakeClient({ shell: false, tools: true, fs: false });
+    const client = createFakeClient({ shell: false, exec: false, tools: true, fs: false });
     getWshConnections().set('relay.example', client);
 
     await handleReverseConnect({
@@ -153,6 +153,26 @@ describe('clawser-wsh-incoming', () => {
     const failure = client.sent.find((msg) => msg.type === MSG.OPEN_FAIL);
     assert.ok(failure);
     assert.match(failure.reason, /did not expose shell access/i);
+  });
+
+  it('allows exec opens for exec-only reverse peers', async () => {
+    const client = createFakeClient({ shell: false, exec: true, tools: false, fs: false });
+    getWshConnections().set('relay.example', client);
+
+    await handleReverseConnect({
+      username: 'dana',
+      target_fingerprint: 'SHA256:target',
+    });
+
+    await client.onRelayMessage({
+      type: MSG.OPEN,
+      kind: 'exec',
+      command: 'pwd',
+    });
+
+    const openReply = client.sent.find((msg) => msg.type === MSG.OPEN_OK);
+    assert.ok(openReply);
+    assert.equal(openReply.data_mode, 'virtual');
   });
 
   it('requires approval when the reverse peer policy says so', async () => {

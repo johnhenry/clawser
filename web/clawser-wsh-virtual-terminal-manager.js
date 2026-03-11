@@ -4,20 +4,24 @@ function normalizeCapabilities(capabilities) {
   if (Array.isArray(capabilities)) {
     return {
       shell: capabilities.includes('shell'),
+      exec: capabilities.includes('exec') || capabilities.includes('shell'),
       tools: capabilities.includes('tools'),
       fs: capabilities.includes('fs'),
     };
   }
 
   if (capabilities && typeof capabilities === 'object') {
+    const hasExec = Object.prototype.hasOwnProperty.call(capabilities, 'exec')
+    const hasShell = Object.prototype.hasOwnProperty.call(capabilities, 'shell')
     return {
-      shell: capabilities.shell !== false,
+      shell: hasShell ? capabilities.shell !== false : true,
+      exec: hasExec ? capabilities.exec !== false : (hasShell ? capabilities.shell !== false : true),
       tools: capabilities.tools !== false,
       fs: capabilities.fs !== false,
     };
   }
 
-  return { shell: true, tools: true, fs: true };
+  return { shell: true, exec: true, tools: true, fs: true };
 }
 
 export function buildReverseParticipantKey({ username = '', targetFingerprint = '' } = {}) {

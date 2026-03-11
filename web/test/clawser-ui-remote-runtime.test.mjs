@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  executionApisForRuntime,
   createReachabilityDescriptor,
   createRemoteIdentity,
   createRemotePeerDescriptor,
@@ -309,6 +310,16 @@ describe('supportHintsForRuntime', () => {
     assert.equal(hints.supportsTermSync, false);
     assert.equal(hints.replayMode, 'partial');
   });
+
+  it('derives guest-exec as the canonical execution API for vm-console runtimes', () => {
+    const apis = executionApisForRuntime({
+      peerType: 'vm-guest',
+      shellBackend: 'vm-console',
+      capabilities: ['shell', 'exec', 'fs'],
+    })
+
+    assert.deepEqual(apis, ['guest-exec'])
+  })
 });
 
 describe('renderRemoteServiceList', () => {
