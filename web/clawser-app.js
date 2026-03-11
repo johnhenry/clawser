@@ -52,6 +52,7 @@ import { PeripheralManager } from './clawser-hardware.js';
 import { PairingManager } from './clawser-remote.js';
 import { GoalManager } from './clawser-goals.js';
 import { addEvent } from './clawser-ui-chat.js';
+import { executeRoutineAction } from './clawser-routine-runtime.js';
 
 // Extracted modules
 import { createShellSession } from './clawser-workspace-lifecycle.js';
@@ -200,31 +201,14 @@ state.daemonController = new DaemonController({
 // direct agent.run() if the gateway is unavailable or ingest throws.
 state.routineEngine = new RoutineEngine({
   executeFn: async (routine, _triggerEvent) => {
-    const prompt = routine.action?.prompt || routine.name || 'routine';
-    const routineId = routine.id || `unnamed_${Date.now()}`;
-    const routineName = routine.name || routineId;
-    if (state.gateway) {
-      try {
-        // InboundMessage shape expected by ChannelGateway.ingest()
-        return await state.gateway.ingest({
-          id: `routine_${routineId}_${Date.now()}`,
-          channel: 'scheduler',           // maps to CHANNEL_COLORS.scheduler
-          channelId: routineId,
-          sender: { id: 'scheduler', name: routineName, username: null },
-          content: prompt,
-          attachments: [],
-          replyTo: null,
-          timestamp: Date.now(),
-        }, `scheduler:${routineId}`);       // virtual channel key for queue serialization
-      } catch (err) {
-        console.warn('[clawser] routine gateway ingest failed, falling back to direct run:', err.message);
-      }
-    }
-    // Fallback: direct agent run if gateway unavailable or ingest failed
-    if (state.agent) {
-      state.agent.sendMessage(prompt);
-      return state.agent.run();
-    }
+    return executeRoutineAction({
+      routine,
+      triggerEvent: _triggerEvent,
+      orchestrator: state.orchestrator,
+      remoteSessionBroker: state.remoteSessionBroker,
+      gateway: state.gateway,
+      agent: state.agent,
+    });
   },
   onNotify: (routine, message) => addEvent('routine', message),
   onChange: () => {

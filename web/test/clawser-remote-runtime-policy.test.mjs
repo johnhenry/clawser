@@ -156,4 +156,140 @@ describe('RemoteRuntimePolicyAdapter', () => {
     const tools = broker.resolveTarget('scoped-peer', { intent: 'tools' })
     assert.equal(tools.descriptor.username, 'scoped')
   })
+
+  it('enforces minimum trust levels for sensitive intents', () => {
+    const registry = new RemoteRuntimeRegistry()
+    registry.ingestDescriptor(createRemotePeerDescriptor({
+      identity: createRemoteIdentity({ canonicalId: 'gateway-peer', fingerprint: 'gateway-peer' }),
+      username: 'gateway',
+      peerType: 'host',
+      shellBackend: 'pty',
+      capabilities: ['shell', 'gateway'],
+      reachability: [
+        createReachabilityDescriptor({
+          kind: 'reverse-relay',
+          source: 'wsh-relay',
+          relayHost: 'relay.example',
+          relayPort: 4422,
+          capabilities: ['shell', 'gateway'],
+        }),
+      ],
+      sources: ['wsh-relay'],
+      metadata: {
+        trustLevel: 0.2,
+      },
+    }))
+
+    const broker = new RemoteSessionBroker({
+      runtimeRegistry: registry,
+      policyAdapter: new RemoteRuntimePolicyAdapter(),
+    })
+
+    assert.throws(
+      () => broker.resolveTarget('gateway-peer', { intent: 'gateway' }),
+      /requires trust >= 0.50/i,
+    )
+  })
+
+  it('uses route success rate as a ranking signal', () => {
+    const adapter = new RemoteRuntimePolicyAdapter()
+    const descriptor = createRemotePeerDescriptor({
+      identity: createRemoteIdentity({ canonicalId: 'peer-2', fingerprint: 'peer-2' }),
+      username: 'builder',
+      peerType: 'host',
+      shellBackend: 'pty',
+      capabilities: ['shell'],
+      reachability: [],
+      sources: ['wsh-relay'],
+    })
+
+    const ranked = adapter.rankRoutes(
+      descriptor,
+      { intent: 'terminal' },
+      [
+        createReachabilityDescriptor({
+          kind: 'reverse-relay',
+          source: 'wsh-relay',
+          relayHost: 'steady.example',
+          relayPort: 4422,
+          successRate: 0.95,
+        }),
+        createReachabilityDescriptor({
+          kind: 'reverse-relay',
+          source: 'wsh-relay',
+          relayHost: 'flaky.example',
+          relayPort: 4422,
+          successRate: 0.4,
+        }),
+      ],
+    )
+
+    assert.equal(ranked[0].relayHost, 'steady.example')
+    assert.match(ranked[0].policy.reasons.join(','), /high-success-rate/)
+    assert.match(ranked[1].policy.reasons.join(','), /low-success-rate/)
+  })
+
+  it('folds observed runtime quality into later route ranking', () => {
+    const adapter = new RemoteRuntimePolicyAdapter()
+    const descriptor = createRemotePeerDescriptor({
+      identity: createRemoteIdentity({ canonicalId: 'peer-3', fingerprint: 'peer-3' }),
+      username: 'runtime',
+      peerType: 'host',
+      shellBackend: 'pty',
+      capabilities: ['shell'],
+      reachability: [],
+      sources: ['wsh-relay'],
+    })
+    adapter.observeOutcome(descriptor, null, { status: 'success' })
+    adapter.observeOutcome(descriptor, null, { status: 'success' })
+
+    const ranked = adapter.rankRoutes(
+      descriptor,
+      { intent: 'terminal' },
+      [
+        createReachabilityDescriptor({
+          kind: 'reverse-relay',
+          source: 'wsh-relay',
+          relayHost: 'relay.example',
+          relayPort: 4422,
+        }),
+      ],
+    )
+
+    assert.match(ranked[0].policy.reasons.join(','), /runtime-quality:/)
+  })
+
+  it('uses quota signals when ranking gateway routes', () => {
+    const adapter = new RemoteRuntimePolicyAdapter({
+      quotaEnforcer: {
+        checkQuota() {
+          return { allowed: false, resource: 'jobsPerHour' }
+        },
+      },
+    })
+    const descriptor = createRemotePeerDescriptor({
+      identity: createRemoteIdentity({ canonicalId: 'peer-4', fingerprint: 'peer-4' }),
+      username: 'gateway',
+      peerType: 'host',
+      shellBackend: 'pty',
+      capabilities: ['gateway'],
+      reachability: [],
+      sources: ['wsh-relay'],
+    })
+
+    const ranked = adapter.rankRoutes(
+      descriptor,
+      { intent: 'gateway' },
+      [
+        createReachabilityDescriptor({
+          kind: 'reverse-relay',
+          source: 'wsh-relay',
+          relayHost: 'relay.example',
+          relayPort: 4422,
+        }),
+      ],
+    )
+
+    assert.match(ranked[0].policy.reasons.join(','), /quota-blocked:jobsPerHour/)
+  })
 })

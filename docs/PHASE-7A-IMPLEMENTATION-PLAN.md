@@ -20,7 +20,7 @@ This program is complete only when:
 
 ## Status Snapshot
 
-As of **March 10, 2026**, implementation is in progress with the following phase status:
+As of **March 11, 2026**, implementation is in progress with the following phase status:
 
 - `[x]` Phase 0. Contract Freeze And Harness
 - `[x]` Phase 1. Protocol And Descriptor Foundation
@@ -29,7 +29,7 @@ As of **March 10, 2026**, implementation is in progress with the following phase
 - `[x]` Phase 4. Attach, Replay, And Route Robustness
 - `[x]` Phase 5. BrowserMesh Policy, Naming, And Trust Convergence
 - `[x]` Phase 6. UI And CLI Convergence
-- `[~]` Phase 7. Gateway, Compute, Service, Deployment, And Automation Convergence
+- `[x]` Phase 7. Gateway, Compute, Service, Deployment, And Automation Convergence
 - `[x]` Phase 8. Remote Filesystem And Audit Unification
 - `[x]` Phase 9. VM Peer MVP
 - `[x]` Phase 10. Final Verification And Readiness Gate
@@ -58,8 +58,11 @@ Public and semi-public additions to implement:
   - `wsh peers --json`
   - clearer session banners and backend labels
   - relay-backed name-based targeting for `wsh reverse-connect`
+  - `only` / `last` reverse-peer convenience selectors
   - `wsh check relay ...` self-check diagnostics
   - `wsh-agent` daemon mode for reverse host presence
+  - browser-side reverse exposure presets and per-session approval policy
+  - `wsh vm ...` lifecycle/budget/snapshot controls for browser VM peers
 - New internal integration surfaces:
   - remote runtime registry
   - session broker
@@ -231,7 +234,7 @@ Status: `[x] Complete`
   - richer peer table
   - backend-aware banners
   - filter-by-capability/filter-by-type selectors
-  - `only`/`last` convenience selectors remain pending
+  - `only`/`last` convenience selectors
 - [x] Update docs:
   - topology diagram
   - support matrix
@@ -254,7 +257,7 @@ Status: `[x] Complete`
   - let runtimes advertise hosted services
   - bind service browsing/routing to the same peer/runtime model
 - [x] Apps/skills deployment:
-  - define deployable peer classes
+  - define current deployable peer/runtime classes
   - expose deployment capability as peer metadata
   - route deployment actions through the runtime registry
 - [x] Routines/daemon automation:
@@ -334,12 +337,12 @@ Status: `[x] Complete`
   - deployment
 - [x] Close only when the “Deliverables Before BrowserMesh Should Depend On This” checklist is fully satisfied.
 
-Verification evidence recorded on **March 10, 2026**:
+Verification evidence recorded on **March 11, 2026**:
 
 - Rust verification:
   - `cargo test -p wsh-cli -p wsh-client -p wsh-server -p wsh-core`
 - Browser/runtime verification:
-  - `node --import ./web/test/_setup-globals.mjs --test web/test/clawser-remote-runtime-registry.test.mjs web/test/clawser-remote-runtime-policy.test.mjs web/test/clawser-remote-runtime-wsh.test.mjs web/test/clawser-ui-remote-runtime.test.mjs web/test/clawser-mesh-orchestrator.test.mjs web/test/clawser-netway-tools.test.mjs web/test/clawser-remote-mounts.test.mjs web/test/clawser-vm-console.test.mjs web/test/clawser-wsh-incoming.test.mjs web/test/clawser-wsh-reverse-handshake.test.mjs web/test/clawser-wsh-virtual-terminal-runtime.test.mjs web/test/clawser-wsh-virtual-session.test.mjs web/test/clawser-pod.test.mjs web/test/clawser-mesh-bootstrap.test.mjs`
+  - `node --import ./web/test/_setup-globals.mjs --test web/test/clawser-remote-runtime-registry.test.mjs web/test/clawser-remote-runtime-policy.test.mjs web/test/clawser-remote-runtime-wsh.test.mjs web/test/clawser-ui-remote-runtime.test.mjs web/test/clawser-mesh-orchestrator.test.mjs web/test/clawser-netway-tools.test.mjs web/test/clawser-remote-mounts.test.mjs web/test/clawser-vm-console.test.mjs web/test/clawser-wsh-incoming.test.mjs web/test/clawser-wsh-reverse-handshake.test.mjs web/test/clawser-wsh-virtual-terminal-runtime.test.mjs web/test/clawser-wsh-virtual-session.test.mjs web/test/clawser-pod.test.mjs web/test/clawser-mesh-bootstrap.test.mjs web/test/clawser-routine-runtime.test.mjs`
 - Hygiene:
   - `git diff --check`
 
@@ -349,6 +352,7 @@ Verification matrix coverage:
 - policy precedence / naming / route selection: `clawser-remote-runtime-policy.test.mjs`, `clawser-remote-runtime-registry.test.mjs`
 - session behavior / attach / replay / relay loss: `clawser-wsh-incoming.test.mjs`, `clawser-wsh-virtual-terminal-runtime.test.mjs`, `clawser-wsh-virtual-session.test.mjs`, `reverse_host` Rust tests
 - gateway / compute / services / automation targeting: `clawser-mesh-orchestrator.test.mjs`, `clawser-netway-tools.test.mjs`, `clawser-remote-runtime-wsh.test.mjs`
+- canonical query / telemetry views: `clawser-remote-runtime-registry.test.mjs`, `clawser-ui-remote-runtime.test.mjs`
 - VM peer behavior: `clawser-vm-console.test.mjs`, `clawser-wsh-reverse-handshake.test.mjs`
 
 ## Test Plan

@@ -31,6 +31,39 @@ describe('DemoLinuxVmConsole', () => {
     assert.equal(pwd.stdout, '/workspace\n')
     assert.match(ls.stdout, /app\.js/)
   })
+
+  it('supports lifecycle transitions and snapshots', async () => {
+    localStorage.removeItem('test-vm-console')
+    const vm = new DemoLinuxVmConsole({ persistenceKey: 'test-vm-console' })
+
+    await vm.execute('echo "hello" > /tmp/hello.txt')
+    const snapshot = vm.exportSnapshot()
+    await vm.stop()
+
+    const stopped = await vm.execute('pwd')
+    assert.equal(stopped.exitCode, 1)
+    assert.match(stopped.stderr, /vm is stopped/)
+
+    await vm.importSnapshot(snapshot)
+    const restored = await vm.execute('cat /tmp/hello.txt')
+    assert.equal(restored.stdout, 'hello\n')
+    assert.equal(vm.resourceBudget.memoryMb, 256)
+    localStorage.removeItem('test-vm-console')
+  })
+
+  it('updates resource budgets and resets state', async () => {
+    const vm = new DemoLinuxVmConsole()
+
+    await vm.updateResourceBudget({ memoryMb: 768, cpuShares: 4, storageMb: 2048 })
+    await vm.execute('echo "temp" > /tmp/temp.txt')
+    await vm.reset()
+    const read = await vm.execute('cat /tmp/temp.txt')
+
+    assert.equal(vm.resourceBudget.memoryMb, 768)
+    assert.equal(vm.resourceBudget.cpuShares, 4)
+    assert.equal(vm.resourceBudget.storageMb, 2048)
+    assert.equal(read.exitCode, 1)
+  })
 })
 
 describe('BrowserVmConsoleRegistry', () => {
@@ -51,5 +84,25 @@ describe('BrowserVmConsoleRegistry', () => {
     const shell = await registry.createShell('demo-linux')
 
     assert.equal(shell, vm)
+  })
+
+  it('manages runtime lifecycle and snapshots through the registry', async () => {
+    const registry = new BrowserVmConsoleRegistry()
+    const vm = new DemoLinuxVmConsole()
+    registry.register('demo-linux', vm)
+
+    await registry.stop('demo-linux')
+    assert.equal(registry.describe('demo-linux').running, false)
+
+    await registry.start('demo-linux')
+    assert.equal(registry.describe('demo-linux').running, true)
+
+    await vm.execute('echo "persisted" > /tmp/persisted.txt')
+    const snapshot = await registry.exportSnapshot('demo-linux')
+    await registry.reset('demo-linux')
+    await registry.importSnapshot('demo-linux', snapshot)
+    const restored = await vm.execute('cat /tmp/persisted.txt')
+
+    assert.equal(restored.stdout, 'persisted\n')
   })
 })

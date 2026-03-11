@@ -237,6 +237,8 @@ export class MeshOrchestrator {
   #remoteSessionBroker
   /** @type {object|null} */
   #resourceRegistry
+  /** @type {object|null} */
+  #auditRecorder
   /** @type {Map<string, object>} podId -> peer info */
   #knownPeers = new Map()
   /** @type {Map<string, object>} name -> { podId, port } */
@@ -259,9 +261,10 @@ export class MeshOrchestrator {
    * @param {object} [opts.runtimeRegistry]   - RemoteRuntimeRegistry or null
    * @param {object} [opts.remoteSessionBroker] - RemoteSessionBroker or null
    * @param {object} [opts.resourceRegistry] - ResourceRegistry or null
+   * @param {object} [opts.auditRecorder]     - RemoteRuntimeAuditRecorder or null
    * @param {Function} [opts.onLog]           - Logging callback
    */
-  constructor({ peerNode, serviceAdvertiser, serviceBrowser, router, runtimeRegistry, remoteSessionBroker, resourceRegistry, onLog }) {
+  constructor({ peerNode, serviceAdvertiser, serviceBrowser, router, runtimeRegistry, remoteSessionBroker, resourceRegistry, auditRecorder, onLog }) {
     if (!peerNode) {
       throw new Error('peerNode is required')
     }
@@ -272,6 +275,7 @@ export class MeshOrchestrator {
     this.#runtimeRegistry = runtimeRegistry ?? null
     this.#remoteSessionBroker = remoteSessionBroker ?? null
     this.#resourceRegistry = resourceRegistry ?? null
+    this.#auditRecorder = auditRecorder ?? null
     this.#onLog = onLog ?? null
   }
 
@@ -289,6 +293,10 @@ export class MeshOrchestrator {
 
   #log(msg) {
     if (this.#onLog) this.#onLog(msg)
+  }
+
+  async #recordAudit(operation, data = {}) {
+    await this.#auditRecorder?.record?.(operation, data)
   }
 
   // -- Pod queries ----------------------------------------------------------
@@ -465,11 +473,23 @@ export class MeshOrchestrator {
     if (runtime && this.#remoteSessionBroker) {
       const skillName = deriveSkillName(skillContent)
       const path = `/.skills/${skillName}/SKILL.md`
+      await this.#recordAudit('remote_deploy_started', {
+        actor: 'operator',
+        podId,
+        path,
+        deploymentType: 'skill',
+      })
       await this.#remoteSessionBroker.openSession(podId, {
         intent: 'files',
         operation: 'upload',
         path,
         data: skillContent,
+      })
+      await this.#recordAudit('remote_deploy_completed', {
+        actor: 'operator',
+        podId,
+        path,
+        deploymentType: 'skill',
       })
       return { success: true, path }
     }
@@ -625,12 +645,24 @@ export class MeshOrchestrator {
 
     const selection = this.selectComputeTarget({ selector, constraints })
     const podId = selection.podId
+    await this.#recordAudit('remote_compute_dispatched', {
+      actor: 'automation',
+      podId,
+      source: selection.source,
+      preferRuntimeClass: constraints?.preferRuntimeClass || null,
+    })
     const runtime = this.#resolveRuntime(podId)
     if (runtime && this.#remoteSessionBroker) {
       const result = await this.#remoteSessionBroker.openSession(podId, {
         intent: 'automation',
         command,
         timeout: timeoutMs || selection.request?.constraints?.timeoutMs || 30_000,
+      })
+      await this.#recordAudit('remote_compute_completed', {
+        actor: 'automation',
+        podId,
+        source: selection.source,
+        exitCode: result.exitCode ?? 0,
       })
       return {
         podId,
@@ -642,16 +674,34 @@ export class MeshOrchestrator {
 
     if (podId === this.localPodId && this.#peerNode.exec) {
       const result = await this.#peerNode.exec(command)
+      await this.#recordAudit('remote_compute_completed', {
+        actor: 'automation',
+        podId,
+        source: 'local',
+        exitCode: result.exitCode ?? 0,
+      })
       return { podId, output: result.output || '', exitCode: result.exitCode ?? 0, source: 'local' }
     }
 
     const info = this.#knownPeers.get(podId)
     if (info?.exec) {
       const result = await info.exec(command)
+      await this.#recordAudit('remote_compute_completed', {
+        actor: 'automation',
+        podId,
+        source: 'known-peer',
+        exitCode: result.exitCode ?? 0,
+      })
       return { podId, output: result.output || '', exitCode: result.exitCode ?? 0, source: 'known-peer' }
     }
     if (info?.send) {
       info.send({ type: 'compute', command, constraints })
+      await this.#recordAudit('remote_compute_completed', {
+        actor: 'automation',
+        podId,
+        source: 'known-peer',
+        exitCode: 0,
+      })
       return { podId, output: `Compute task sent to ${podId}`, exitCode: 0, source: 'known-peer' }
     }
 
@@ -958,6 +1008,9 @@ function runtimePeerToComputeDescriptor(peer) {
   if (!podId) return null
   const capabilities = dedupeStrings([
     ...(peer.capabilities || []),
+    ...(peer.peerType ? [`runtime:${peer.peerType}`] : []),
+    ...(peer.shellBackend === 'vm-console' ? ['vm_console'] : []),
+    ...(peer.shellBackend === 'pty' ? ['host_pty'] : []),
     ...((peer.capabilities || []).some((cap) => cap === 'shell' || cap === 'exec' || cap === 'tools')
       ? ['compute']
       : []),

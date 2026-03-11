@@ -16,6 +16,10 @@ const connections = new Map();
 /** @type {WshKeyStore|null} */
 let keyStore = null;
 
+function emitExposureStatusChanged(detail = {}) {
+  globalThis.dispatchEvent?.(new CustomEvent('clawser:wsh-exposure-changed', { detail }));
+}
+
 async function getKeyStore() {
   if (!keyStore) {
     keyStore = new WshKeyStore();
@@ -1186,4 +1190,20 @@ export function registerWshTools(registry) {
  */
 export function getWshConnections() {
   return connections;
+}
+
+export function listReverseExposureRegistrations() {
+  return [...connections.entries()]
+    .filter(([, client]) => client?.__clawserReverseRegistration || client?.__clawserExposeCapabilities)
+    .map(([host, client]) => ({
+      host,
+      state: client?.state || 'unknown',
+      sessionId: client?.__clawserReverseRegistration?.sessionId || null,
+      startedAt: client?.__clawserReverseRegistration?.startedAt || null,
+      preset: client?.__clawserReverseRegistration?.preset || null,
+      approvalMode: client?.__clawserApprovalPolicy?.requireApproval ? 'per-session' : 'auto',
+      expose: { ...(client?.__clawserExposeCapabilities || {}) },
+      metadata: { ...(client?.__clawserPeerMetadata || {}) },
+    }))
+    .sort((left, right) => left.host.localeCompare(right.host));
 }

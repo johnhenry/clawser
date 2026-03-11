@@ -64,6 +64,27 @@ export function supportHintsForRuntime({
   }
 }
 
+export function deploymentHintsForRuntime({
+  peerType = 'host',
+  shellBackend = 'pty',
+  capabilities = [],
+  metadata = {},
+} = {}) {
+  const caps = new Set(capabilities || [])
+  const vmAdmin = !!metadata?.vmControl
+  const skillSync = caps.has('fs')
+  const toolInjection = caps.has('tools')
+  const packageInstall = peerType === 'host' && (caps.has('shell') || caps.has('exec')) && shellBackend === 'pty'
+  const vmImageLoad = (peerType === 'vm-guest' || shellBackend === 'vm-console') && vmAdmin
+  return {
+    canDeploy: skillSync || toolInjection || packageInstall || vmImageLoad,
+    skillSync,
+    toolInjection,
+    packageInstall,
+    vmImageLoad,
+  }
+}
+
 function hexToBytes(hex) {
   if (!HEX_FINGERPRINT.test(hex) || hex.length % 2 !== 0) return null
   const bytes = new Uint8Array(hex.length / 2)
@@ -139,6 +160,14 @@ export function createReachabilityDescriptor({
   transport = null,
   lastSeen = null,
   capabilities = [],
+  health = null,
+  lastOutcome = null,
+  lastOutcomeReason = null,
+  lastOutcomeLayer = null,
+  failures = 0,
+  successCount = 0,
+  failureCount = 0,
+  successRate = null,
 } = {}) {
   if (!kind || typeof kind !== 'string') {
     throw new Error('kind is required')
@@ -155,6 +184,14 @@ export function createReachabilityDescriptor({
     relayPort,
     transport,
     lastSeen,
+    health,
+    lastOutcome,
+    lastOutcomeReason,
+    lastOutcomeLayer,
+    failures,
+    successCount,
+    failureCount,
+    successRate,
     capabilities: [...new Set((capabilities || []).filter(Boolean))],
   }
 }
@@ -189,6 +226,12 @@ export function createRemotePeerDescriptor({
     supportsEcho,
     supportsTermSync,
   })
+  const deploymentHints = deploymentHintsForRuntime({
+    peerType,
+    shellBackend,
+    capabilities,
+    metadata,
+  })
 
   return {
     identity: createRemoteIdentity(identity),
@@ -205,6 +248,7 @@ export function createRemotePeerDescriptor({
     conflicts: [...new Set((conflicts || []).filter(Boolean))],
     metadata: {
       replayMode: supportHints.replayMode,
+      deploymentSupport: deploymentHints,
       ...metadata,
     },
   }

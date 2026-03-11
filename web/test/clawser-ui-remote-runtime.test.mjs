@@ -87,12 +87,14 @@ describe('renderRemoteRuntimePanel', () => {
 
     assert.match(html, /Remote Runtimes/);
     assert.match(html, /alpha/);
+    assert.match(html, /Host PTY Peer/);
     assert.match(html, /browser-shell \/ virtual-shell/);
     assert.match(html, /host\/pty via direct-host/);
     assert.match(html, /data-view="terminal"/);
     assert.match(html, /data-view="files"/);
     assert.match(html, /data-view="services"/);
     assert.match(html, /replay:lossless/);
+    assert.match(html, /deploy:skillSync, toolInjection, packageInstall/);
     assert.match(html, /Health: degraded/);
     assert.match(html, /Last failure: timeout/);
     assert.match(html, /Fallbacks: reverse-relay:healthy/);
@@ -160,7 +162,47 @@ describe('renderRemoteRuntimePanel', () => {
     });
 
     assert.match(html, /VM Guest Console/);
+    assert.match(html, /VM Guest Peer/);
     assert.match(html, /browser-hosted VM console/);
+  });
+
+  it('renders local reverse exposure registrations separately from remote runtimes', () => {
+    const html = renderRemoteRuntimePanel(makeRegistry(), {
+      localExposure: [{
+        host: 'localhost',
+        preset: 'full',
+        approvalMode: 'per-session',
+        activeIncomingSessions: 2,
+        expose: { shell: true, tools: true, fs: false },
+        metadata: { peerType: 'browser-shell', shellBackend: 'virtual-shell' },
+      }],
+    });
+
+    assert.match(html, /Local Exposure/);
+    assert.match(html, /localhost/);
+    assert.match(html, /per-session/);
+    assert.match(html, /incoming:2/);
+  });
+
+  it('renders canonical search filters and telemetry summaries', () => {
+    const html = renderRemoteRuntimePanel(makeRegistry(), {
+      filterText: 'alpha',
+      filterCapability: 'shell',
+      filterPeerType: 'host',
+      telemetry: {
+        registry: {
+          health: { healthy: 1, degraded: 0, offline: 0 },
+          relayUsage: { relayRoutes: 1 },
+        },
+        denialsByLayer: { 'mesh-acl': 2 },
+      },
+    });
+
+    assert.match(html, /Search peers, aliases, services/);
+    assert.match(html, /Healthy: 1/);
+    assert.match(html, /Relay routes: 1/);
+    assert.match(html, /Denials: 2/);
+    assert.match(html, /All peer types/);
   });
 });
 

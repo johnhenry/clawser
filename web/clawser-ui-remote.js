@@ -46,6 +46,17 @@ function runtimeLabel(peer) {
   return `${peer.peerType || 'host'} / ${peer.shellBackend || 'pty'}`
 }
 
+function peerKindLabel(peer) {
+  if (!peer) return 'Remote Peer'
+  if (peer.peerType === 'vm-guest' || peer.shellBackend === 'vm-console') return 'VM Guest Peer'
+  if (peer.peerType === 'host' && peer.shellBackend === 'pty') return 'Host PTY Peer'
+  if (peer.peerType === 'browser-shell') return 'Browser Shell Peer'
+  if (!(peer.capabilities || []).includes('shell') && (peer.metadata?.serviceDetails || peer.metadata?.services)) {
+    return 'Service Peer'
+  }
+  return 'Runtime Peer'
+}
+
 function peerLastSeen(peer) {
   const values = (peer?.reachability || [])
     .map((route) => Number.isFinite(route?.lastSeen) ? route.lastSeen : null)
@@ -71,6 +82,15 @@ function sessionSupportSummary(peer) {
   if (peer?.supportsEcho ?? hints.supportsEcho) flags.push('echo')
   if (peer?.supportsTermSync ?? hints.supportsTermSync) flags.push('sync')
   return flags.length ? flags.join(', ') : 'none'
+}
+
+function deploymentSupportSummary(peer) {
+  const support = peer?.metadata?.deploymentSupport
+  if (!support?.canDeploy) return 'none'
+  return Object.entries(support)
+    .filter(([key, enabled]) => key !== 'canDeploy' && enabled)
+    .map(([key]) => key)
+    .join(', ') || 'none'
 }
 
 // ── Remote Terminal Panel ───────────────────────────────────────
@@ -441,8 +461,18 @@ export function renderRemoteRuntimePanel(runtimeRegistry, {
   routeExplanation = null,
   activeServices = [],
   error = null,
+  localExposure = [],
+  filterText = '',
+  filterCapability = '',
+  filterPeerType = '',
+  telemetry = null,
 } = {}) {
-  const peers = runtimeRegistry?.listPeers?.() || []
+  const query = runtimeRegistry?.query?.({
+    text: filterText,
+    capability: filterCapability || null,
+    peerType: filterPeerType || null,
+  }) || null
+  const peers = query?.peers || runtimeRegistry?.listPeers?.() || []
   const activePeer = activeSelector ? runtimeRegistry?.resolvePeer?.(activeSelector) : null
 
   let peerRows = ''
@@ -461,6 +491,7 @@ export function renderRemoteRuntimePanel(runtimeRegistry, {
           <div class="rc-runtime-summary">
             <div class="rc-runtime-summary-main">
               <span class="rc-runtime-name">${esc(peer.username || truncId(selector))}</span>
+              <span class="rc-svc-type-badge">${esc(peerKindLabel(peer))}</span>
               <span class="rc-runtime-backend">${esc(runtimeLabel(peer))}</span>
             </div>
             <div class="rc-runtime-summary-meta">
@@ -469,6 +500,7 @@ export function renderRemoteRuntimePanel(runtimeRegistry, {
             </div>
           </div>
           <div class="rc-runtime-session-hints">${esc(sessionSupportSummary(peer))}</div>
+          <div class="rc-runtime-session-hints">deploy:${esc(deploymentSupportSummary(peer))}</div>
           <div class="rc-runtime-capabilities">
             ${(peer.capabilities || []).map((cap) => `<span class="rc-svc-type-badge">${esc(cap)}</span>`).join('') || '<span class="rc-empty">No capabilities</span>'}
           </div>
@@ -511,15 +543,69 @@ export function renderRemoteRuntimePanel(runtimeRegistry, {
     })
   }
 
-  return `
-    <div class="rc-runtime-browser">
+  const localExposureHtml = Array.isArray(localExposure) && localExposure.length
+    ? `
       <div class="rc-panel rc-runtime-list">
         <div class="rc-panel-header">
-          <span class="rc-panel-title">Remote Runtimes</span>
-          <span class="rc-panel-count">${peers.length} peer${peers.length === 1 ? '' : 's'}</span>
+          <span class="rc-panel-title">Local Exposure</span>
+          <span class="rc-panel-count">${localExposure.length} registration${localExposure.length === 1 ? '' : 's'}</span>
         </div>
-        ${error ? `<div class="rc-error">${esc(error)}</div>` : ''}
-        <div class="rc-runtime-list-body">${peerRows}</div>
+        <div class="rc-runtime-list-body">
+          ${localExposure.map((entry) => `
+            <div class="rc-runtime-row">
+              <div class="rc-runtime-summary">
+                <div class="rc-runtime-summary-main">
+                  <span class="rc-runtime-name">${esc(entry.host || 'relay')}</span>
+                  <span class="rc-runtime-backend">${esc(`${entry.metadata?.peerType || 'browser-shell'} / ${entry.metadata?.shellBackend || 'virtual-shell'}`)}</span>
+                </div>
+                <div class="rc-runtime-summary-meta">
+                  <span class="rc-runtime-id">${esc(entry.preset || 'custom')}</span>
+                  <span class="rc-runtime-last-seen">${esc(entry.approvalMode || 'auto')}</span>
+                </div>
+              </div>
+              <div class="rc-runtime-session-hints">incoming:${entry.activeIncomingSessions || 0}</div>
+              <div class="rc-runtime-capabilities">
+                ${Object.entries(entry.expose || {})
+                  .filter(([, enabled]) => !!enabled)
+                  .map(([capability]) => `<span class="rc-svc-type-badge">${esc(capability)}</span>`)
+                  .join('') || '<span class="rc-empty">No exposed capabilities</span>'}
+              </div>
+            </div>`).join('')}
+        </div>
+      </div>`
+    : '';
+
+  return `
+    <div class="rc-runtime-browser">
+      <div class="rc-runtime-column">
+        ${localExposureHtml}
+        <div class="rc-panel rc-runtime-list">
+          <div class="rc-panel-header">
+            <span class="rc-panel-title">Remote Runtimes</span>
+            <span class="rc-panel-count">${peers.length} peer${peers.length === 1 ? '' : 's'}</span>
+          </div>
+          <div class="rc-svc-filters">
+            <input id="rcRuntimeSearch" class="rc-input" type="search" placeholder="Search peers, aliases, services..." value="${esc(filterText)}" />
+            <select id="rcRuntimeCapabilityFilter" class="rc-select">
+              <option value="">All capabilities</option>
+              ${['shell', 'exec', 'fs', 'tools', 'gateway'].map((cap) => `<option value="${cap}" ${filterCapability === cap ? 'selected' : ''}>${cap}</option>`).join('')}
+            </select>
+            <select id="rcRuntimePeerTypeFilter" class="rc-select">
+              <option value="">All peer types</option>
+              ${['host', 'browser-shell', 'vm-guest', 'worker'].map((type) => `<option value="${type}" ${filterPeerType === type ? 'selected' : ''}>${type}</option>`).join('')}
+            </select>
+          </div>
+          ${error ? `<div class="rc-error">${esc(error)}</div>` : ''}
+          ${telemetry ? `
+            <div class="rc-runtime-route-meta">
+              <span>Healthy: ${esc(String(telemetry.registry?.health?.healthy ?? query?.telemetry?.health?.healthy ?? 0))}</span>
+              <span>Degraded: ${esc(String(telemetry.registry?.health?.degraded ?? query?.telemetry?.health?.degraded ?? 0))}</span>
+              <span>Offline: ${esc(String(telemetry.registry?.health?.offline ?? query?.telemetry?.health?.offline ?? 0))}</span>
+              <span>Relay routes: ${esc(String(telemetry.registry?.relayUsage?.relayRoutes ?? query?.telemetry?.relayUsage?.relayRoutes ?? 0))}</span>
+              <span>Denials: ${esc(String(Object.values(telemetry.denialsByLayer || {}).reduce((sum, count) => sum + count, 0)))}</span>
+            </div>` : ''}
+          <div class="rc-runtime-list-body">${peerRows}</div>
+        </div>
       </div>
       <div class="rc-runtime-detail-wrap">
         ${routeExplanation ? `
@@ -533,6 +619,7 @@ export function renderRemoteRuntimePanel(runtimeRegistry, {
               <span>Intent: ${esc(routeExplanation.target?.intent || '--')}</span>
               <span>Capabilities: ${esc((routeExplanation.descriptor?.capabilities || []).join(', ') || '--')}</span>
               <span>Health: ${esc(routeExplanation.health?.health || routeExplanation.route?.health || '--')}</span>
+              <span>Success: ${esc(Number.isFinite(routeExplanation.route?.successRate) ? `${Math.round(routeExplanation.route.successRate * 100)}%` : '--')}</span>
               <span>Replay: ${esc(routeExplanation.resumability?.replayMode || routeExplanation.descriptor?.metadata?.replayMode || '--')}</span>
             </div>
             ${routeExplanation.failure ? `<div class="rc-runtime-route-warning">Failure: ${esc(routeExplanation.failure.layer || '--')} / ${esc(routeExplanation.failure.code || '--')}</div>` : ''}
@@ -549,6 +636,7 @@ export function renderRemoteRuntimePanel(runtimeRegistry, {
 export function initRemoteRuntimePanelListeners({
   onOpenView = null,
   onExplainRoute = null,
+  onUpdateFilter = null,
 } = {}) {
   document.querySelector('.rc-runtime-list-body')?.addEventListener('click', (e) => {
     const target = /** @type {HTMLElement} */ (e.target)
@@ -566,6 +654,15 @@ export function initRemoteRuntimePanelListeners({
         onExplainRoute?.(selector)
       }
     }
+  })
+  $('rcRuntimeSearch')?.addEventListener('input', (e) => {
+    onUpdateFilter?.('filterText', e.target.value || '')
+  })
+  $('rcRuntimeCapabilityFilter')?.addEventListener('change', (e) => {
+    onUpdateFilter?.('filterCapability', e.target.value || '')
+  })
+  $('rcRuntimePeerTypeFilter')?.addEventListener('change', (e) => {
+    onUpdateFilter?.('filterPeerType', e.target.value || '')
   })
 }
 

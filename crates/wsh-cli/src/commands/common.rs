@@ -28,6 +28,16 @@ pub struct LastSession {
     pub transport: Option<String>,
 }
 
+/// Persisted "last reverse peer" metadata used by relay-oriented commands.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LastReversePeer {
+    pub relay_host: String,
+    pub port: u16,
+    pub identity: String,
+    pub fingerprint: String,
+    pub username: String,
+}
+
 /// Resolve `[user@]host` + transport into a concrete connection URL.
 pub fn resolve_target(target: &str, port: u16, transport: Option<&str>) -> Result<ResolvedTarget> {
     let (user, host) = parse_target(target)?;
@@ -152,6 +162,32 @@ pub fn clear_active_attachment() -> Result<()> {
     Ok(())
 }
 
+/// Save the most recent successful reverse-peer connection target.
+pub fn save_last_reverse_peer(entry: &LastReversePeer) -> Result<()> {
+    let path = last_reverse_peer_path()?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    let json = serde_json::to_vec_pretty(entry)
+        .context("failed to serialize last reverse peer")?;
+    std::fs::write(&path, json).with_context(|| format!("failed to write {}", path.display()))?;
+    Ok(())
+}
+
+/// Load the most recent reverse-peer connection metadata, if available.
+pub fn load_last_reverse_peer() -> Result<Option<LastReversePeer>> {
+    let path = last_reverse_peer_path()?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content =
+        std::fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
+    let parsed: LastReversePeer = serde_json::from_slice(&content)
+        .with_context(|| format!("failed to parse {}", path.display()))?;
+    Ok(Some(parsed))
+}
+
 fn last_session_path() -> Result<PathBuf> {
     let home = dirs::home_dir().context("cannot determine home directory")?;
     Ok(home.join(".wsh").join("last_session.json"))
@@ -160,6 +196,11 @@ fn last_session_path() -> Result<PathBuf> {
 fn active_attachment_path() -> Result<PathBuf> {
     let home = dirs::home_dir().context("cannot determine home directory")?;
     Ok(home.join(".wsh").join("active_attachment"))
+}
+
+fn last_reverse_peer_path() -> Result<PathBuf> {
+    let home = dirs::home_dir().context("cannot determine home directory")?;
+    Ok(home.join(".wsh").join("last_reverse_peer.json"))
 }
 
 fn connection_urls(host: &str, port: u16, transport: Option<&str>) -> Result<Vec<String>> {

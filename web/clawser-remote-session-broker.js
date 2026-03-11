@@ -130,6 +130,7 @@ export class RemoteSessionBroker {
   #policyAdapter
   #listeners
   #auditRecorder
+  #telemetry
 
   constructor({
     runtimeRegistry,
@@ -147,6 +148,13 @@ export class RemoteSessionBroker {
     this.#policyAdapter = policyAdapter
     this.#listeners = new Map()
     this.#auditRecorder = auditRecorder
+    this.#telemetry = {
+      selectedByRoute: new Map(),
+      openedByIntent: new Map(),
+      failuresByLayer: new Map(),
+      failuresByCode: new Map(),
+      denialsByLayer: new Map(),
+    }
   }
 
   on(event, callback) {
@@ -161,7 +169,41 @@ export class RemoteSessionBroker {
   }
 
   listTargets(filter = {}) {
-    return this.#registry.listPeers(filter)
+    return this.#registry.queryPeers?.(filter) || this.#registry.listPeers(filter)
+  }
+
+  queryTargets(filter = {}, routeOptions = {}) {
+    const peers = this.listTargets(filter)
+    return peers.map((peer) => {
+      try {
+        return {
+          peer,
+          route: this.explainRoute(peer.identity?.canonicalId, {
+            intent: routeOptions.intent || filter.intent || 'terminal',
+            requiredCapabilities: routeOptions.requiredCapabilities || [],
+          }),
+        }
+      } catch (error) {
+        return {
+          peer,
+          error: normalizeRemoteSessionError(error, {
+            selector: peer.identity?.canonicalId,
+            intent: routeOptions.intent || filter.intent || 'terminal',
+          }),
+        }
+      }
+    })
+  }
+
+  telemetrySnapshot() {
+    return {
+      registry: this.#registry.telemetrySnapshot?.() || null,
+      selectedByRoute: Object.fromEntries(this.#telemetry.selectedByRoute),
+      openedByIntent: Object.fromEntries(this.#telemetry.openedByIntent),
+      failuresByLayer: Object.fromEntries(this.#telemetry.failuresByLayer),
+      failuresByCode: Object.fromEntries(this.#telemetry.failuresByCode),
+      denialsByLayer: Object.fromEntries(this.#telemetry.denialsByLayer),
+    }
   }
 
   resolveTarget(selector, {
@@ -281,8 +323,10 @@ export class RemoteSessionBroker {
     let selection = null
     try {
       selection = this.explainRoute(selector, opts)
+      this.#incrementMetric(this.#telemetry.selectedByRoute, selection.route?.kind || 'unknown')
       this.#emit('route:selected', selection)
       await this.#auditRecorder?.record('remote_route_selected', {
+        actor: opts.actor || 'operator',
         selector: selection.target.selector,
         intent: selection.target.intent,
         route: selection.route,
@@ -316,12 +360,24 @@ export class RemoteSessionBroker {
         layer: 'connector',
       })
       this.#emit('session:opened', { selection, result })
+      this.#policyAdapter?.observeOutcome?.(selection.descriptor, selection.route, {
+        status: 'success',
+        intent: selection.target.intent,
+        actor: opts.actor || 'operator',
+      })
+      this.#incrementMetric(this.#telemetry.openedByIntent, selection.target.intent)
       await this.#auditRecorder?.record('remote_session_opened', {
+        actor: opts.actor || 'operator',
         selector: selection.target.selector,
         intent: selection.target.intent,
         route: selection.route,
       })
-      return result
+      return {
+        ...(result || {}),
+        route: result?.route || selection.route,
+        descriptor: result?.descriptor || selection.descriptor,
+        routeProvenance: routeProvenance(selection),
+      }
     } catch (error) {
       const wrapped = normalizeRemoteSessionError(error, {
         selector,
@@ -333,9 +389,23 @@ export class RemoteSessionBroker {
           layer: wrapped.layer || 'connector',
           reason: wrapped.message || 'connector failure',
         })
+        this.#policyAdapter?.observeOutcome?.(selection.descriptor, selection.route, {
+          status: 'failure',
+          intent: selection.target.intent,
+          actor: opts.actor || 'operator',
+          layer: wrapped.layer,
+          code: wrapped.code,
+          reason: wrapped.message,
+        })
+      }
+      this.#incrementMetric(this.#telemetry.failuresByLayer, wrapped.layer || 'unknown')
+      this.#incrementMetric(this.#telemetry.failuresByCode, wrapped.code || 'remote-session-error')
+      if (wrapped.code === 'policy-denied') {
+        this.#incrementMetric(this.#telemetry.denialsByLayer, wrapped.layer || 'policy-adapter')
       }
       this.#emit('session:failed', { selection, error: wrapped })
       await this.#auditRecorder?.record(auditOperationForError(wrapped), {
+        actor: opts.actor || 'operator',
         selector: selection?.target?.selector || wrapped.selector || selector,
         intent: selection?.target?.intent || wrapped.intent || normalizeIntent(opts.intent || 'terminal'),
         route: selection?.route || null,
@@ -435,6 +505,10 @@ export class RemoteSessionBroker {
       callback(payload)
     }
   }
+
+  #incrementMetric(map, key) {
+    map.set(key, (map.get(key) || 0) + 1)
+  }
 }
 
 function namedAlias(selector) {
@@ -448,4 +522,16 @@ function namedAlias(selector) {
     return remainder.split('/')[0] || null
   }
   return null
+}
+
+function routeProvenance(selection) {
+  return {
+    connectionKind: connectionKindForRoute(selection?.route),
+    routeKind: selection?.route?.kind || 'unknown',
+    relayHost: selection?.route?.relayHost || null,
+    relayPort: selection?.route?.relayPort || null,
+    endpoint: selection?.route?.endpoint || null,
+    peerType: selection?.descriptor?.peerType || null,
+    shellBackend: selection?.descriptor?.shellBackend || null,
+  }
 }

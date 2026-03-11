@@ -4,6 +4,23 @@
 
 import { ShellState } from './clawser-shell.js'
 
+function cloneFileMap(files) {
+  return new Map(files ? [...files.entries()] : [])
+}
+
+function cloneDirectorySet(directories) {
+  return new Set(directories ? [...directories.values()] : [])
+}
+
+function sanitizeBudget(budget = {}) {
+  const safeBudget = budget || {}
+  return {
+    memoryMb: Number.isFinite(Number(safeBudget.memoryMb)) ? Number(safeBudget.memoryMb) : 256,
+    cpuShares: Number.isFinite(Number(safeBudget.cpuShares)) ? Number(safeBudget.cpuShares) : 1,
+    storageMb: Number.isFinite(Number(safeBudget.storageMb)) ? Number(safeBudget.storageMb) : 512,
+  }
+}
+
 function normalizePath(cwd, input = '.') {
   const raw = String(input || '.').trim() || '.'
   const absolute = raw.startsWith('/')
@@ -59,20 +76,33 @@ export class DemoLinuxVmConsole {
   #username
   #files
   #directories
+  #defaultFiles
+  #defaultDirectories
+  #running
+  #persistenceKey
+  #resourceBudget
 
   constructor({
     hostname = 'clawser-vm',
     username = 'clawser',
     files = null,
     directories = null,
+    running = true,
+    persistenceKey = null,
+    resourceBudget = null,
   } = {}) {
     this.#hostname = hostname
     this.#username = username
-    this.#files = files ? new Map(files) : defaultDemoFiles()
-    this.#directories = directories ? new Set(directories) : defaultDemoDirectories()
+    this.#defaultFiles = files ? new Map(files) : defaultDemoFiles()
+    this.#defaultDirectories = directories ? new Set(directories) : defaultDemoDirectories()
+    this.#files = cloneFileMap(this.#defaultFiles)
+    this.#directories = cloneDirectorySet(this.#defaultDirectories)
     for (const path of this.#files.keys()) {
       this.#directories.add(parentDirectory(path))
     }
+    this.#running = running !== false
+    this.#persistenceKey = persistenceKey || null
+    this.#resourceBudget = sanitizeBudget(resourceBudget)
   }
 
   get metadata() {
@@ -82,6 +112,10 @@ export class DemoLinuxVmConsole {
       emulator: 'demo',
       distro: 'clawser-vm',
       capabilities: ['shell'],
+      running: this.#running,
+      persistenceKey: this.#persistenceKey,
+      resourceBudget: { ...this.#resourceBudget },
+      vmControl: ['start', 'stop', 'reset', 'snapshot:export', 'snapshot:import'],
     }
   }
 
@@ -92,7 +126,101 @@ export class DemoLinuxVmConsole {
     return state
   }
 
+  get running() {
+    return this.#running
+  }
+
+  get resourceBudget() {
+    return { ...this.#resourceBudget }
+  }
+
+  get persistenceKey() {
+    return this.#persistenceKey
+  }
+
+  async start() {
+    this.#running = true
+    await this.#persist()
+    return this.metadata
+  }
+
+  async stop() {
+    this.#running = false
+    await this.#persist()
+    return this.metadata
+  }
+
+  async reset() {
+    this.#cwd = '/home/clawser'
+    this.#history = []
+    this.#files = cloneFileMap(this.#defaultFiles)
+    this.#directories = cloneDirectorySet(this.#defaultDirectories)
+    for (const path of this.#files.keys()) {
+      this.#directories.add(parentDirectory(path))
+    }
+    this.#running = true
+    await this.#persist()
+    return this.metadata
+  }
+
+  async updateResourceBudget(updates = {}) {
+    this.#resourceBudget = sanitizeBudget({
+      ...this.#resourceBudget,
+      ...updates,
+    })
+    await this.#persist()
+    return this.resourceBudget
+  }
+
+  exportSnapshot() {
+    return {
+      version: 1,
+      cwd: this.#cwd,
+      history: [...this.#history],
+      running: this.#running,
+      files: [...this.#files.entries()],
+      directories: [...this.#directories.values()],
+      resourceBudget: { ...this.#resourceBudget },
+    }
+  }
+
+  async importSnapshot(snapshot = {}) {
+    if (!snapshot || snapshot.version !== 1) {
+      throw new Error('unsupported VM snapshot format')
+    }
+    this.#cwd = normalizePath('/', snapshot.cwd || '/home/clawser')
+    this.#history = Array.isArray(snapshot.history) ? [...snapshot.history] : []
+    this.#running = snapshot.running !== false
+    this.#files = new Map(Array.isArray(snapshot.files) ? snapshot.files : [])
+    this.#directories = new Set(Array.isArray(snapshot.directories) ? snapshot.directories : [])
+    for (const path of this.#files.keys()) {
+      this.#directories.add(parentDirectory(path))
+    }
+    this.#directories.add('/')
+    this.#resourceBudget = sanitizeBudget(snapshot.resourceBudget || this.#resourceBudget)
+    await this.#persist()
+    return this.metadata
+  }
+
+  async restorePersistedState() {
+    if (!this.#persistenceKey || typeof localStorage === 'undefined') {
+      return this.metadata
+    }
+    const raw = localStorage.getItem(this.#persistenceKey)
+    if (!raw) return this.metadata
+    try {
+      const snapshot = JSON.parse(raw)
+      await this.importSnapshot(snapshot)
+    } catch {
+      await this.reset()
+    }
+    return this.metadata
+  }
+
   async execute(command) {
+    if (!this.#running) {
+      return { stdout: '', stderr: 'vm is stopped\n', exitCode: 1 }
+    }
     const input = String(command || '').trim()
     this.#history.push(input)
     if (!input) return { stdout: '', stderr: '', exitCode: 0 }
@@ -132,12 +260,14 @@ export class DemoLinuxVmConsole {
     if (input.startsWith('mkdir -p ')) {
       const target = normalizePath(this.#cwd, input.slice('mkdir -p '.length))
       this.#directories.add(target)
+      await this.#persist()
       return { stdout: '', stderr: '', exitCode: 0 }
     }
     if (input.startsWith('touch ')) {
       const target = normalizePath(this.#cwd, input.slice(6))
       this.#directories.add(parentDirectory(target))
       this.#files.set(target, this.#files.get(target) || '')
+      await this.#persist()
       return { stdout: '', stderr: '', exitCode: 0 }
     }
     const echoMatch = input.match(/^echo\s+["']?(.+?)["']?\s*>\s*(.+)$/)
@@ -146,6 +276,7 @@ export class DemoLinuxVmConsole {
       const target = normalizePath(this.#cwd, rawPath)
       this.#directories.add(parentDirectory(target))
       this.#files.set(target, `${value}\n`)
+      await this.#persist()
       return { stdout: '', stderr: '', exitCode: 0 }
     }
 
@@ -170,6 +301,11 @@ export class DemoLinuxVmConsole {
     }
     return [...entries].sort().join('\n') + ([...entries].length ? '\n' : '')
   }
+
+  async #persist() {
+    if (!this.#persistenceKey || typeof localStorage === 'undefined') return
+    localStorage.setItem(this.#persistenceKey, JSON.stringify(this.exportSnapshot()))
+  }
 }
 
 export class InMemoryVmConsole extends DemoLinuxVmConsole {}
@@ -182,6 +318,10 @@ function describeRuntime(id, runtime, metadata = null) {
     emulator: runtimeMetadata.emulator || 'custom',
     distro: runtimeMetadata.distro || null,
     capabilities: [...(runtimeMetadata.capabilities || ['shell'])],
+    running: runtimeMetadata.running !== false,
+    persistenceKey: runtimeMetadata.persistenceKey || null,
+    resourceBudget: runtimeMetadata.resourceBudget || null,
+    vmControl: [...(runtimeMetadata.vmControl || [])],
   }
 }
 
@@ -213,6 +353,57 @@ export class BrowserVmConsoleRegistry {
     if (!runtime || typeof runtime.execute !== 'function') {
       throw new Error(`Unknown VM runtime: ${id}`)
     }
+    await runtime.start?.()
     return runtime
+  }
+
+  async start(id = 'default') {
+    const runtime = this.get(id)
+    if (!runtime?.start) throw new Error(`Unknown VM runtime: ${id}`)
+    await runtime.start()
+    return this.#refreshDescriptor(id)
+  }
+
+  async stop(id = 'default') {
+    const runtime = this.get(id)
+    if (!runtime?.stop) throw new Error(`Unknown VM runtime: ${id}`)
+    await runtime.stop()
+    return this.#refreshDescriptor(id)
+  }
+
+  async reset(id = 'default') {
+    const runtime = this.get(id)
+    if (!runtime?.reset) throw new Error(`Unknown VM runtime: ${id}`)
+    await runtime.reset()
+    return this.#refreshDescriptor(id)
+  }
+
+  async exportSnapshot(id = 'default') {
+    const runtime = this.get(id)
+    if (!runtime?.exportSnapshot) throw new Error(`Unknown VM runtime: ${id}`)
+    return runtime.exportSnapshot()
+  }
+
+  async importSnapshot(id = 'default', snapshot = {}) {
+    const runtime = this.get(id)
+    if (!runtime?.importSnapshot) throw new Error(`Unknown VM runtime: ${id}`)
+    await runtime.importSnapshot(snapshot)
+    return this.#refreshDescriptor(id)
+  }
+
+  async updateBudget(id = 'default', updates = {}) {
+    const runtime = this.get(id)
+    if (!runtime?.updateResourceBudget) throw new Error(`Unknown VM runtime: ${id}`)
+    await runtime.updateResourceBudget(updates)
+    return this.#refreshDescriptor(id).resourceBudget
+  }
+
+  #refreshDescriptor(id) {
+    const entry = this.#runtimes.get(id)
+    if (!entry) {
+      throw new Error(`Unknown VM runtime: ${id}`)
+    }
+    entry.descriptor = describeRuntime(id, entry.runtime)
+    return { ...entry.descriptor }
   }
 }

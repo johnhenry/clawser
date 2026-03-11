@@ -420,6 +420,7 @@ describe('MeshOrchestrator', () => {
 
   it('deploySkill uses the shared broker for runtime-registry peers', async () => {
     const calls = []
+    const records = []
     const registryOrch = makeOrchestrator({
       runtimeRegistry: makeRuntimeRegistry([
         {
@@ -436,6 +437,11 @@ describe('MeshOrchestrator', () => {
           return { ok: true }
         },
       },
+      auditRecorder: {
+        async record(operation, data) {
+          records.push({ operation, data })
+        },
+      },
     })
 
     const result = await registryOrch.deploySkill('relay-peer', '# Demo Skill')
@@ -445,6 +451,8 @@ describe('MeshOrchestrator', () => {
     assert.equal(calls[0].opts.intent, 'files')
     assert.equal(calls[0].opts.operation, 'upload')
     assert.match(calls[0].opts.path, /^\/\.skills\/demo-skill\/SKILL\.md$/)
+    assert.equal(records[0].operation, 'remote_deploy_started')
+    assert.equal(records[1].operation, 'remote_deploy_completed')
   })
 
   it('listRemoteServices merges service browser and runtime-registry records', async () => {
@@ -567,6 +575,7 @@ describe('MeshOrchestrator', () => {
 
   it('runComputeTask auto-selects broker-backed runtime peers', async () => {
     const calls = []
+    const records = []
     const registryOrch = makeOrchestrator({
       peerNode: makePeerNode({
         exec: undefined,
@@ -589,6 +598,11 @@ describe('MeshOrchestrator', () => {
           return { output: 'compute ok', exitCode: 0 }
         },
       },
+      auditRecorder: {
+        async record(operation, data) {
+          records.push({ operation, data })
+        },
+      },
     })
 
     const result = await registryOrch.runComputeTask({ command: 'node job.mjs' })
@@ -598,6 +612,46 @@ describe('MeshOrchestrator', () => {
     assert.equal(calls.length, 1)
     assert.equal(calls[0].selector, 'relay-peer')
     assert.equal(calls[0].opts.intent, 'automation')
+    assert.equal(records[0].operation, 'remote_compute_dispatched')
+    assert.equal(records[1].operation, 'remote_compute_completed')
+  })
+
+  it('selectComputeTarget can prefer VM runtimes when requested', () => {
+    const registryOrch = makeOrchestrator({
+      peerNode: makePeerNode({
+        exec: undefined,
+        capabilities: ['wasm'],
+      }),
+      runtimeRegistry: makeRuntimeRegistry([
+        {
+          identity: { canonicalId: 'host-peer', fingerprint: 'host-peer', aliases: [] },
+          username: 'host-peer',
+          peerType: 'host',
+          shellBackend: 'pty',
+          capabilities: ['exec'],
+          reachability: [{ kind: 'reverse-relay', health: 'online' }],
+          metadata: { resources: { cpu: 8, memory: 8192, storage: 16384 } },
+        },
+        {
+          identity: { canonicalId: 'vm-peer', fingerprint: 'vm-peer', aliases: [] },
+          username: 'vm-peer',
+          peerType: 'vm-guest',
+          shellBackend: 'vm-console',
+          capabilities: ['exec'],
+          reachability: [{ kind: 'reverse-relay', health: 'online' }],
+          metadata: { resources: { cpu: 4, memory: 4096, storage: 8192 } },
+        },
+      ]),
+    })
+
+    const selection = registryOrch.selectComputeTarget({
+      constraints: {
+        capabilities: ['compute'],
+        preferRuntimeClass: 'vm-guest',
+      },
+    })
+
+    assert.equal(selection.podId, 'vm-peer')
   })
 
   // -- drainPod -------------------------------------------------------------

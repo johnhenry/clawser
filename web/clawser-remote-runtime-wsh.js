@@ -334,6 +334,7 @@ export class RemoteWshRuntimeConnector {
     try {
       const result = await execute()
       await this.#auditRecorder?.record?.(operation, {
+        actor: selection?.sessionOptions?.actor || 'operator',
         selector: selection?.descriptor?.identity?.canonicalId || selection?.target?.selector || null,
         intent: selection?.target?.intent || null,
         route: selection?.route || null,
@@ -343,6 +344,7 @@ export class RemoteWshRuntimeConnector {
       return result
     } catch (error) {
       await this.#auditRecorder?.record?.(operation, {
+        actor: selection?.sessionOptions?.actor || 'operator',
         selector: selection?.descriptor?.identity?.canonicalId || selection?.target?.selector || null,
         intent: selection?.target?.intent || null,
         route: selection?.route || null,

@@ -59,6 +59,12 @@ const INTENT_TO_EXPOSURE = Object.freeze({
   automation: 'exec',
 })
 
+const DEFAULT_MIN_TRUST_BY_INTENT = Object.freeze({
+  gateway: 0.5,
+  files: 0.35,
+  automation: 0.4,
+})
+
 export function meshTemplateToWshExposure(templateName) {
   return WSH_EXPOSURE_PRESETS[templateName] || null
 }
@@ -94,11 +100,15 @@ export class RemoteRuntimePolicyAdapter {
   #peerRegistry
   #relayHealthProvider
   #meshAcl
+  #quotaEnforcer
+  #runtimeQuality
 
-  constructor({ peerRegistry = null, relayHealthProvider = null, meshAcl = null } = {}) {
+  constructor({ peerRegistry = null, relayHealthProvider = null, meshAcl = null, quotaEnforcer = null } = {}) {
     this.#peerRegistry = peerRegistry
     this.#relayHealthProvider = relayHealthProvider
     this.#meshAcl = meshAcl
+    this.#quotaEnforcer = quotaEnforcer
+    this.#runtimeQuality = new Map()
   }
 
   translateTemplate(templateName, descriptor = null) {
@@ -151,6 +161,16 @@ export class RemoteRuntimePolicyAdapter {
           layer: 'mesh-acl',
           reason: access.reason || `mesh ACL denied ${target.intent}`,
         }
+      }
+    }
+
+    const requiredTrust = this.#requiredTrustFor(descriptor, target)
+    const trustLevel = this.#trustLevelFor(descriptor)
+    if (requiredTrust != null && (trustLevel == null || trustLevel < requiredTrust)) {
+      return {
+        allowed: false,
+        layer: 'route-policy',
+        reason: `target ${target.intent} requires trust >= ${requiredTrust.toFixed(2)} (current: ${trustLevel == null ? 'unknown' : trustLevel.toFixed(2)})`,
       }
     }
 
@@ -232,12 +252,72 @@ export class RemoteRuntimePolicyAdapter {
       reasons.push('gateway-requires-higher-trust')
     }
 
+    const successRate = Number.isFinite(route?.successRate) ? route.successRate : null
+    if (successRate != null) {
+      if (successRate >= 0.95) {
+        scoreAdjustment += 6
+        reasons.push(`high-success-rate:${successRate.toFixed(2)}`)
+      } else if (successRate >= 0.75) {
+        scoreAdjustment += 2
+        reasons.push(`steady-success-rate:${successRate.toFixed(2)}`)
+      } else {
+        scoreAdjustment -= 8
+        reasons.push(`low-success-rate:${successRate.toFixed(2)}`)
+      }
+    }
+
+    const runtimeQuality = this.#runtimeQuality.get(descriptor?.identity?.canonicalId || '')
+    if (runtimeQuality && Number.isFinite(runtimeQuality.successRate)) {
+      if (runtimeQuality.successRate >= 0.9) {
+        scoreAdjustment += 4
+        reasons.push(`runtime-quality:${runtimeQuality.successRate.toFixed(2)}`)
+      } else if (runtimeQuality.successRate < 0.5) {
+        scoreAdjustment -= 6
+        reasons.push(`runtime-quality-low:${runtimeQuality.successRate.toFixed(2)}`)
+      }
+    }
+
+    const quotaSignal = this.#quotaSignalFor(descriptor, target)
+    if (quotaSignal?.allowed === false) {
+      scoreAdjustment -= 20
+      reasons.push(`quota-blocked:${quotaSignal.resource}`)
+    } else if (quotaSignal?.remaining != null && quotaSignal.remaining <= 1) {
+      scoreAdjustment -= 8
+      reasons.push(`quota-low:${quotaSignal.resource}`)
+    }
+
     return {
       allowed: true,
       layer: 'route-policy',
       scoreAdjustment,
       reasons,
     }
+  }
+
+  observeOutcome(descriptor, _route, {
+    status,
+    layer = null,
+  } = {}) {
+    const canonicalId = descriptor?.identity?.canonicalId
+    if (!canonicalId) return
+    const current = this.#runtimeQuality.get(canonicalId) || {
+      successCount: 0,
+      failureCount: 0,
+      denials: {},
+    }
+    const successCount = current.successCount + (status === 'success' ? 1 : 0)
+    const failureCount = current.failureCount + (status === 'failure' ? 1 : 0)
+    const total = successCount + failureCount
+    const denials = { ...(current.denials || {}) }
+    if (status === 'failure' && layer) {
+      denials[layer] = (denials[layer] || 0) + 1
+    }
+    this.#runtimeQuality.set(canonicalId, {
+      successCount,
+      failureCount,
+      successRate: total > 0 ? successCount / total : null,
+      denials,
+    })
   }
 
   #trustLevelFor(descriptor) {
@@ -251,6 +331,15 @@ export class RemoteRuntimePolicyAdapter {
     return null
   }
 
+  #quotaSignalFor(descriptor, target) {
+    if (!this.#quotaEnforcer || target.intent !== 'gateway') return null
+    const podId = descriptor?.identity?.podId
+      || descriptor?.identity?.fingerprint
+      || descriptor?.identity?.canonicalId
+    if (!podId) return null
+    return this.#quotaEnforcer.checkQuota?.(podId, 'jobsPerHour', 1) || null
+  }
+
   #relayHealthFor(route) {
     if (!route?.relayHost) return null
     if (!this.#relayHealthProvider) return route.health || null
@@ -261,5 +350,13 @@ export class RemoteRuntimePolicyAdapter {
       return this.#relayHealthProvider.getHealth(route.relayHost, route) || null
     }
     return route.health || null
+  }
+
+  #requiredTrustFor(descriptor, target) {
+    const explicit = target?.minTrust ?? descriptor?.metadata?.minTrustByIntent?.[target.intent]
+    if (Number.isFinite(explicit)) {
+      return Number(explicit)
+    }
+    return DEFAULT_MIN_TRUST_BY_INTENT[target.intent] ?? null
   }
 }

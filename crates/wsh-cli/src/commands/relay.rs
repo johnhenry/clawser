@@ -10,7 +10,10 @@ use wsh_client::SessionOpts;
 use wsh_core::messages::*;
 use wsh_core::RemotePeerDescriptor;
 
-use crate::commands::common::{connect_client, resolve_target};
+use crate::commands::common::{
+    connect_client, load_last_reverse_peer, resolve_target, save_last_reverse_peer,
+    LastReversePeer,
+};
 use crate::commands::interactive;
 use crate::commands::reverse_host::{self, ReverseHostOptions};
 use crate::terminal as term;
@@ -146,6 +149,17 @@ fn peer_matches_name(peer: &PeerInfo, selector: &str) -> bool {
 }
 
 fn resolve_peer_selector<'a>(peers: &'a [PeerInfo], selector: &str) -> Result<&'a PeerInfo> {
+    if selector.eq_ignore_ascii_case("only") {
+        return match peers {
+            [peer] => Ok(peer),
+            [] => anyhow::bail!("selector `only` requires exactly one online relay peer, but none are available"),
+            _ => anyhow::bail!(
+                "selector `only` requires exactly one online relay peer, but {} peers are available",
+                peers.len()
+            ),
+        };
+    }
+
     if let Some(peer) = peers.iter().find(|peer| peer.fingerprint == selector) {
         return Ok(peer);
     }
@@ -187,6 +201,40 @@ fn resolve_peer_selector<'a>(peers: &'a [PeerInfo], selector: &str) -> Result<&'
                 .join(", ")
         ),
     }
+}
+
+fn resolve_last_peer_selector<'a>(
+    peers: &'a [PeerInfo],
+    relay_host: &str,
+    port: u16,
+    identity: &str,
+) -> Result<&'a PeerInfo> {
+    let Some(last) = load_last_reverse_peer()? else {
+        anyhow::bail!(
+            "selector `last` has no saved peer for this identity yet; connect once by name or fingerprint first"
+        );
+    };
+    if last.relay_host != relay_host || last.port != port || last.identity != identity {
+        anyhow::bail!(
+            "selector `last` does not match the current relay/identity context; expected {}:{} with identity `{}`",
+            last.relay_host,
+            last.port,
+            last.identity
+        );
+    }
+    resolve_saved_last_peer(peers, &last)
+}
+
+fn resolve_saved_last_peer<'a>(
+    peers: &'a [PeerInfo],
+    last: &LastReversePeer,
+) -> Result<&'a PeerInfo> {
+    peers.iter()
+        .find(|peer| peer.fingerprint == last.fingerprint)
+        .ok_or_else(|| anyhow::anyhow!(
+            "selector `last` refers to peer {} ({}), which is not currently online",
+            last.username, last.fingerprint
+        ))
 }
 
 /// Register as a reverse-connectable peer on a relay host.
@@ -423,7 +471,11 @@ pub async fn run_connect(
         .await
         .context("failed to connect to relay")?;
     let peers = fetch_peers(&client).await?;
-    let target_peer = resolve_peer_selector(&peers.peers, parsed_target.selector)?;
+    let target_peer = if parsed_target.selector.eq_ignore_ascii_case("last") {
+        resolve_last_peer_selector(&peers.peers, effective_relay, port, identity)?
+    } else {
+        resolve_peer_selector(&peers.peers, parsed_target.selector)?
+    };
     let target_fingerprint = &target_peer.fingerprint;
 
     let connect_msg = Envelope {
@@ -472,6 +524,13 @@ pub async fn run_connect(
         ),
     )
     .await?;
+    save_last_reverse_peer(&LastReversePeer {
+        relay_host: effective_relay.to_string(),
+        port,
+        identity: identity.to_string(),
+        fingerprint: target_peer.fingerprint.clone(),
+        username: target_peer.username.clone(),
+    })?;
     client
         .disconnect()
         .await
@@ -502,8 +561,8 @@ pub async fn fetch_peers(client: &wsh_client::WshClient) -> Result<ReversePeersP
 mod tests {
     use super::{
         filter_peers, parse_reverse_connect_response, parse_reverse_connect_target,
-        peer_session_features, resolve_peer_selector, reverse_accept_summary, reverse_options,
-        PeerQueryOptions,
+        peer_session_features, resolve_peer_selector, resolve_saved_last_peer,
+        reverse_accept_summary, reverse_options, LastReversePeer, PeerQueryOptions,
     };
     use wsh_core::messages::{Payload, PeerInfo, ReverseAcceptPayload, ReverseRejectPayload};
 
@@ -695,5 +754,123 @@ mod tests {
 
         let err = resolve_peer_selector(&peers, "@builder").unwrap_err();
         assert!(err.to_string().contains("matched multiple peers"));
+    }
+
+    #[test]
+    fn resolve_peer_selector_supports_only_when_one_peer_is_online() {
+        let peers = vec![PeerInfo {
+            fingerprint: "abcdef123456".into(),
+            fingerprint_short: "abcdef12".into(),
+            username: "builder".into(),
+            capabilities: vec!["shell".into()],
+            peer_type: "host".into(),
+            shell_backend: "pty".into(),
+            source: "wsh-relay".into(),
+            supports_attach: true,
+            supports_replay: true,
+            supports_echo: false,
+            supports_term_sync: false,
+            last_seen: Some(1),
+        }];
+
+        let peer = resolve_peer_selector(&peers, "only").unwrap();
+        assert_eq!(peer.username, "builder");
+    }
+
+    #[test]
+    fn resolve_peer_selector_rejects_only_when_multiple_peers_are_online() {
+        let peers = vec![
+            PeerInfo {
+                fingerprint: "abcdef123456".into(),
+                fingerprint_short: "abcdef12".into(),
+                username: "builder".into(),
+                capabilities: vec!["shell".into()],
+                peer_type: "host".into(),
+                shell_backend: "pty".into(),
+                source: "wsh-relay".into(),
+                supports_attach: true,
+                supports_replay: true,
+                supports_echo: false,
+                supports_term_sync: false,
+                last_seen: Some(1),
+            },
+            PeerInfo {
+                fingerprint: "999999123456".into(),
+                fingerprint_short: "99999912".into(),
+                username: "browser".into(),
+                capabilities: vec!["shell".into()],
+                peer_type: "browser-shell".into(),
+                shell_backend: "virtual-shell".into(),
+                source: "wsh-relay".into(),
+                supports_attach: true,
+                supports_replay: true,
+                supports_echo: true,
+                supports_term_sync: true,
+                last_seen: Some(2),
+            },
+        ];
+
+        let err = resolve_peer_selector(&peers, "only").unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("requires exactly one online relay peer"));
+    }
+
+    #[test]
+    fn resolve_saved_last_peer_returns_matching_online_peer() {
+        let peers = vec![PeerInfo {
+            fingerprint: "abcdef123456".into(),
+            fingerprint_short: "abcdef12".into(),
+            username: "builder".into(),
+            capabilities: vec!["shell".into()],
+            peer_type: "host".into(),
+            shell_backend: "pty".into(),
+            source: "wsh-relay".into(),
+            supports_attach: true,
+            supports_replay: true,
+            supports_echo: false,
+            supports_term_sync: false,
+            last_seen: Some(1),
+        }];
+
+        let last = LastReversePeer {
+            relay_host: "localhost".into(),
+            port: 4422,
+            identity: "operator".into(),
+            fingerprint: "abcdef123456".into(),
+            username: "builder".into(),
+        };
+
+        let peer = resolve_saved_last_peer(&peers, &last).unwrap();
+        assert_eq!(peer.username, "builder");
+    }
+
+    #[test]
+    fn resolve_saved_last_peer_rejects_offline_peer() {
+        let peers = vec![PeerInfo {
+            fingerprint: "999999123456".into(),
+            fingerprint_short: "99999912".into(),
+            username: "browser".into(),
+            capabilities: vec!["shell".into()],
+            peer_type: "browser-shell".into(),
+            shell_backend: "virtual-shell".into(),
+            source: "wsh-relay".into(),
+            supports_attach: true,
+            supports_replay: true,
+            supports_echo: true,
+            supports_term_sync: true,
+            last_seen: Some(2),
+        }];
+
+        let last = LastReversePeer {
+            relay_host: "localhost".into(),
+            port: 4422,
+            identity: "operator".into(),
+            fingerprint: "abcdef123456".into(),
+            username: "builder".into(),
+        };
+
+        let err = resolve_saved_last_peer(&peers, &last).unwrap_err();
+        assert!(err.to_string().contains("is not currently online"));
     }
 }

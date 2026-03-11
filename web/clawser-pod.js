@@ -208,6 +208,7 @@ export class ClawserPod extends Pod {
     })
     this.#remotePolicyAdapter = new RemoteRuntimePolicyAdapter({
       peerRegistry: this.#registry,
+      quotaEnforcer: this.#quotaEnforcer,
     })
     this.#remoteWshConnectors = createRemoteWshConnectors({
       username: podId,
@@ -223,6 +224,7 @@ export class ClawserPod extends Pod {
     configureRemoteRuntimeGateway({
       remoteSessionBroker: this.#remoteSessionBroker,
       auditRecorder: this.#remoteAuditRecorder,
+      quotaEnforcer: this.#quotaEnforcer,
     })
 
     this.#discoveryManager.onPeerDiscovered((record) => {
@@ -276,6 +278,7 @@ export class ClawserPod extends Pod {
       runtimeRegistry: this.#remoteRuntimeRegistry,
       remoteSessionBroker: this.#remoteSessionBroker,
       resourceRegistry: this.#resourceRegistry,
+      auditRecorder: this.#remoteAuditRecorder,
     })
 
     return {

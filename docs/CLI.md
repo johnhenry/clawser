@@ -115,7 +115,13 @@ Use the browser `wsh` when the command should run inside the live Clawser tab. U
 | `wsh reverse-connect @name relay.example.com` | Connect to a relay-registered peer by name |
 | `wsh reverse-connect @name@relay.example.com` | Connect to a relay-registered peer using a qualified selector |
 | `wsh reverse-connect <fingerprint> relay.example.com` | Connect to a relay-registered peer by fingerprint |
+| `wsh reverse-connect only relay.example.com` | Connect when exactly one relay peer is online |
+| `wsh reverse-connect last relay.example.com` | Reconnect to the last successful relay peer for this identity/relay |
 | `wsh check relay relay.example.com` | Diagnose key, known-host, transport, and auth issues against a relay |
+| `wsh vm list` | List browser-hosted VM runtimes and their budgets |
+| `wsh vm start demo-linux` | Start the demo browser VM runtime |
+| `wsh vm stop demo-linux` | Stop the demo browser VM runtime |
+| `wsh vm budget demo-linux --memory-mb 512` | Update browser VM resource budgets |
 
 ### Reverse Host Agent Startup
 

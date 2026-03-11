@@ -171,6 +171,82 @@ describe('RemoteRuntimeRegistry', () => {
     assert.equal(updated.health, 'degraded')
     assert.equal(updated.lastOutcome, 'failure')
     assert.equal(updated.lastOutcomeReason, 'relay timeout')
+    assert.equal(updated.failureCount, 1)
+    assert.equal(updated.successRate, 0)
+  })
+
+  it('supports canonical peer queries and separates service lookup from peer lookup', () => {
+    const registry = new RemoteRuntimeRegistry()
+    registry.ingestDescriptor(createRemotePeerDescriptor({
+      identity: createRemoteIdentity({
+        canonicalId: 'host:alpha',
+        aliases: ['alpha'],
+      }),
+      username: 'alpha',
+      peerType: 'host',
+      shellBackend: 'pty',
+      capabilities: ['shell', 'exec', 'tools'],
+      reachability: [
+        createReachabilityDescriptor({
+          kind: 'direct-host',
+          source: 'direct-bookmark',
+          endpoint: 'alpha.local:4422',
+        }),
+      ],
+      metadata: {
+        services: ['shell-api'],
+        serviceDetails: {
+          'shell-api': {
+            type: 'terminal',
+            address: 'mesh://alpha/shell-api',
+          },
+        },
+      },
+    }))
+
+    const query = registry.query({ text: 'shell-api', serviceName: 'shell-api' })
+
+    assert.equal(query.peers.length, 1)
+    assert.equal(query.services.length, 1)
+    assert.equal(query.services[0].name, 'shell-api')
+    assert.equal(registry.resolvePeer('shell-api'), null)
+    assert.equal(registry.resolveService('shell-api')?.address, 'mesh://alpha/shell-api')
+  })
+
+  it('provides aggregate telemetry snapshots for peer health and relay usage', () => {
+    const registry = new RemoteRuntimeRegistry()
+    registry.ingestDescriptor(createRemotePeerDescriptor({
+      identity: createRemoteIdentity({ canonicalId: 'host:alpha' }),
+      username: 'alpha',
+      peerType: 'host',
+      shellBackend: 'pty',
+      capabilities: ['shell'],
+      reachability: [
+        createReachabilityDescriptor({
+          kind: 'direct-host',
+          source: 'direct-bookmark',
+          endpoint: 'alpha.local:4422',
+          health: 'healthy',
+        }),
+        createReachabilityDescriptor({
+          kind: 'reverse-relay',
+          source: 'wsh-relay',
+          relayHost: 'relay.example',
+          relayPort: 4422,
+          health: 'degraded',
+        }),
+      ],
+      metadata: {
+        replayMode: 'lossless',
+      },
+    }))
+
+    const telemetry = registry.telemetrySnapshot()
+    assert.equal(telemetry.peerCount, 1)
+    assert.equal(telemetry.health.healthy, 1)
+    assert.equal(telemetry.relayUsage.relayRoutes, 1)
+    assert.equal(telemetry.relayUsage.directRoutes, 1)
+    assert.equal(telemetry.replayModes.lossless, 1)
   })
 
   it('demotes repeatedly failing routes during reachability ranking', () => {

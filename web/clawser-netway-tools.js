@@ -88,22 +88,25 @@ class BrokerGatewayClient {
   #selector;
   #onLog;
   #auditRecorder;
+  #quotaEnforcer;
   #connection = null;
   #connecting = null;
 
-  constructor({ remoteSessionBroker, selector = null, onLog = null, auditRecorder = null } = {}) {
+  constructor({ remoteSessionBroker, selector = null, onLog = null, auditRecorder = null, quotaEnforcer = null } = {}) {
     this.#broker = remoteSessionBroker ?? null;
     this.#selector = selector;
     this.#onLog = onLog;
     this.#auditRecorder = auditRecorder ?? null;
+    this.#quotaEnforcer = quotaEnforcer ?? null;
     this.onGatewayMessage = null;
   }
 
-  configure({ remoteSessionBroker, selector = null, onLog = null, auditRecorder = null } = {}) {
+  configure({ remoteSessionBroker, selector = null, onLog = null, auditRecorder = null, quotaEnforcer = null } = {}) {
     this.#broker = remoteSessionBroker ?? this.#broker;
     this.#selector = selector ?? this.#selector;
     if (onLog !== null) this.#onLog = onLog;
     if (auditRecorder !== null) this.#auditRecorder = auditRecorder;
+    if (quotaEnforcer !== null) this.#quotaEnforcer = quotaEnforcer;
   }
 
   get state() {
@@ -125,6 +128,7 @@ class BrokerGatewayClient {
     if (current) {
       await this.#auditRecorder?.record?.('remote_gateway_closed', {
         selector: current.selector,
+        routeProvenance: current.routeProvenance || null,
       });
     }
     if (current?.close) {
@@ -170,13 +174,20 @@ class BrokerGatewayClient {
       client.onGatewayMessage = (message) => {
         this.onGatewayMessage?.(message);
       };
+      const podId = result?.descriptor?.identity?.podId
+        || result?.descriptor?.identity?.fingerprint
+        || result?.descriptor?.identity?.canonicalId
+        || selector;
+      this.#quotaEnforcer?.recordUsage?.(podId, 'jobsPerHour', 1);
       await this.#auditRecorder?.record?.('remote_gateway_bound', {
         selector,
         route: result?.route || null,
+        routeProvenance: result?.routeProvenance || deriveGatewayProvenance(result) || null,
       });
       return {
         selector,
         client,
+        routeProvenance: result?.routeProvenance || deriveGatewayProvenance(result) || null,
         close: async () => {
           await result?.close?.().catch(() => {});
         },
@@ -185,6 +196,7 @@ class BrokerGatewayClient {
       await this.#auditRecorder?.record?.('remote_gateway_failed', {
         selector,
         error: error?.message || String(error),
+        routeProvenance: error?.details?.routeProvenance || null,
       });
       throw error;
     }
@@ -610,6 +622,7 @@ export function configureRemoteRuntimeGateway({
   selector = null,
   onLog = null,
   auditRecorder = null,
+  quotaEnforcer = null,
 } = {}) {
   if (!remoteRuntimeGatewayClient) {
     remoteRuntimeGatewayClient = new BrokerGatewayClient({
@@ -617,6 +630,7 @@ export function configureRemoteRuntimeGateway({
       selector,
       onLog,
       auditRecorder,
+      quotaEnforcer,
     });
   } else {
     remoteRuntimeGatewayClient.configure({
@@ -624,6 +638,7 @@ export function configureRemoteRuntimeGateway({
       selector,
       onLog,
       auditRecorder,
+      quotaEnforcer,
     });
   }
 
@@ -635,6 +650,18 @@ export function configureRemoteRuntimeGateway({
   }
 
   return remoteRuntimeGatewayBackend;
+}
+
+function deriveGatewayProvenance(result) {
+  const route = result?.route || null;
+  if (!route) return null;
+  return {
+    connectionKind: route.kind || 'unknown',
+    routeKind: route.kind || 'unknown',
+    relayHost: route.relayHost || null,
+    relayPort: route.relayPort || null,
+    endpoint: route.endpoint || null,
+  };
 }
 
 export async function resetNetwayToolsForTests() {

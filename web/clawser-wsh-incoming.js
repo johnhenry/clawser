@@ -37,11 +37,17 @@ let _mcpClient = null;
 let _agentGateway = null;
 /** @type {import('./clawser-wsh-virtual-terminal-manager.js').VirtualTerminalManager|null} */
 let _virtualTerminalManager = null;
+/** @type {((request: object) => Promise<boolean>|boolean)|null} */
+let _sessionApprovalProvider = null;
+/** @type {import('./clawser-remote-runtime-audit.js').RemoteRuntimeAuditRecorder|null} */
+let _remoteAuditRecorder = null;
 
 export function setToolRegistry(registry) { _toolRegistry = registry; }
 export function setMcpClient(client) { _mcpClient = client; }
 export function setAgentGateway(gateway) { _agentGateway = gateway; }
 export function setVirtualTerminalManager(manager) { _virtualTerminalManager = manager; }
+export function setIncomingSessionApprovalProvider(provider) { _sessionApprovalProvider = provider; }
+export function setRemoteRuntimeAuditRecorder(recorder) { _remoteAuditRecorder = recorder; }
 
 // ── Peer context tracking ────────────────────────────────────────────
 
@@ -74,6 +80,10 @@ function capabilityList(capabilities) {
   return Object.entries(capabilities || {})
     .filter(([, enabled]) => !!enabled)
     .map(([name]) => name);
+}
+
+function emitIncomingStatusChanged(detail = {}) {
+  globalThis.dispatchEvent?.(new CustomEvent('clawser:wsh-exposure-changed', { detail }));
 }
 
 function selectActiveClient(msg) {
@@ -123,6 +133,7 @@ class IncomingPeerContext {
     this._listening = false;
     this._prevRelayHandler = null;
     this._nextChannelId = 1;
+    this._channels = new Map();
   }
 
   startListening() {
@@ -177,6 +188,7 @@ class IncomingPeerContext {
     if (clientChanged || !this._listening) {
       this.startListening();
     }
+    emitIncomingStatusChanged({ participantKey: this.participantKey, state: this.state });
   }
 
   async handleRelayMessage(msg) {
@@ -271,6 +283,7 @@ class IncomingPeerContext {
     }
 
     incomingSessions.delete(this.participantKey);
+    emitIncomingStatusChanged({ participantKey: this.participantKey, state: this.state });
   }
 
   async #handleOpen(msg) {
@@ -281,6 +294,12 @@ class IncomingPeerContext {
 
     if (!this.capabilities.shell) {
       await this.#sendReply(openFail({ reason: 'reverse peer did not expose shell access' }));
+      return;
+    }
+
+    const approved = await this.#approveOpen(msg);
+    if (!approved.allowed) {
+      await this.#sendReply(openFail({ reason: approved.reason }));
       return;
     }
 
@@ -297,11 +316,18 @@ class IncomingPeerContext {
       rows: msg.rows || 24,
     });
     if (resumed) {
+      this._channels.set(resumed.channelId, {
+        kind: msg.kind,
+        command: msg.command || '',
+        cols: msg.cols || 80,
+        rows: msg.rows || 24,
+      });
       await this.#sendReply(openOk({
         channelId: resumed.channelId,
         dataMode: 'virtual',
         capabilities: msg.kind === 'pty' ? ['resize', 'signal'] : [],
       }));
+      emitIncomingStatusChanged({ participantKey: this.participantKey, state: this.state });
       return;
     }
 
@@ -314,6 +340,12 @@ class IncomingPeerContext {
       rows: msg.rows || 24,
       autoStart: false,
     });
+    this._channels.set(channelId, {
+      kind: msg.kind,
+      command: msg.command || '',
+      cols: msg.cols || 80,
+      rows: msg.rows || 24,
+    });
 
     await this.#sendReply(openOk({
       channelId,
@@ -322,6 +354,7 @@ class IncomingPeerContext {
     }));
 
     await session.start();
+    emitIncomingStatusChanged({ participantKey: this.participantKey, state: this.state });
   }
 
   async #handleSessionData(msg) {
@@ -347,7 +380,9 @@ class IncomingPeerContext {
     if (!manager) return;
 
     if (Number.isInteger(msg.channel_id)) {
+      this._channels.delete(msg.channel_id);
       await manager.closeChannel(this.participantKey, msg.channel_id, { notifyRemote: false });
+      emitIncomingStatusChanged({ participantKey: this.participantKey, state: this.state });
       return;
     }
 
@@ -432,6 +467,62 @@ class IncomingPeerContext {
   async #sendReply(msg) {
     if (this.state !== 'active') return;
     await this.client.sendRelayControl(msg);
+  }
+
+  async #approveOpen(msg) {
+    const metadata = getParticipantMetadata(this.client);
+    const requireApproval = !!(this.client?.__clawserApprovalPolicy?.requireApproval || metadata.requireApproval);
+    if (!requireApproval) {
+      return { allowed: true, reason: 'auto-approved by reverse-peer policy' };
+    }
+
+    if (typeof _sessionApprovalProvider !== 'function') {
+      await _remoteAuditRecorder?.record?.('remote_session_denied', {
+        participantKey: this.participantKey,
+        username: this.username,
+        fingerprint: this.targetFingerprint,
+        kind: msg.kind,
+        command: msg.command || '',
+        layer: 'local-exposure',
+        code: 'approval-required',
+        reason: 'reverse peer requires approval but no approval provider is configured',
+        actor: 'operator',
+      });
+      return {
+        allowed: false,
+        reason: 'reverse peer requires approval but no approval UI is configured',
+      };
+    }
+
+    const approved = await _sessionApprovalProvider({
+      participantKey: this.participantKey,
+      username: this.username,
+      fingerprint: this.targetFingerprint,
+      kind: msg.kind,
+      command: msg.command || '',
+      capabilities: capabilityList(this.capabilities),
+      peerType: metadata.peerType,
+      shellBackend: metadata.shellBackend,
+    });
+    await _remoteAuditRecorder?.record?.(
+      approved ? 'remote_session_approved' : 'remote_session_denied',
+      {
+        participantKey: this.participantKey,
+        username: this.username,
+        fingerprint: this.targetFingerprint,
+        kind: msg.kind,
+        command: msg.command || '',
+        layer: 'local-exposure',
+        code: approved ? 'approved' : 'approval-denied',
+        reason: approved
+          ? 'operator approved incoming reverse session'
+          : 'operator denied incoming reverse session',
+        actor: 'operator',
+      },
+    );
+    return approved
+      ? { allowed: true, reason: 'approved by operator' }
+      : { allowed: false, reason: 'incoming reverse session was denied locally' };
   }
 }
 
@@ -529,6 +620,12 @@ export function listIncomingSessions() {
     fingerprint: session.targetFingerprint,
     createdAt: session.createdAt,
     state: session.state,
+    host: session.client?.__clawserReverseRegistration?.relayHost || null,
+    activeChannels: session._channels?.size || 0,
+    channels: [...(session._channels?.entries?.() || [])].map(([channelId, channel]) => ({
+      channelId,
+      ...channel,
+    })),
   }));
 }
 

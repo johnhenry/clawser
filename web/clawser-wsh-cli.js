@@ -32,6 +32,11 @@ const FLAG_SPEC = {
   type: 'value',
   backend: 'value',
   'vm-runtime': 'value',
+  preset: 'value',
+  'require-approval': true,
+  'memory-mb': 'value',
+  'cpu-shares': 'value',
+  'storage-mb': 'value',
   capability: 'value',
   verbose: true,
   json: true,
@@ -56,6 +61,13 @@ Usage:
   wsh tools [host]                 List MCP tools on connected host
   wsh reverse relay --expose-shell Register as reverse-connectable peer
   wsh peers relay                  List reverse-connected peers on relay
+  wsh vm list                      List browser VM runtimes
+  wsh vm start <runtime>           Start a browser VM runtime
+  wsh vm stop <runtime>            Stop a browser VM runtime
+  wsh vm reset <runtime>           Reset a browser VM runtime
+  wsh vm snapshot export <runtime> Export a VM snapshot as JSON
+  wsh vm snapshot import <runtime> <json>  Import a VM snapshot from JSON
+  wsh vm budget <runtime>          Show or update VM resource budget
   wsh suspend <session_id>         Suspend a session
   wsh resume <session_id>          Resume a suspended session
   wsh restart <session_id>         Restart PTY in a session
@@ -79,9 +91,44 @@ Options:
       --type <TYPE>                Filter peers by type
       --backend <BACKEND>          Filter peers by shell backend
       --vm-runtime <ID>            VM runtime id when exposing a vm-console peer
+      --preset <NAME>              Reverse exposure preset (full, shell-only, tools-only, files-only, vm-console)
+      --require-approval           Require approval for each incoming reverse session
+      --memory-mb <MB>             VM budget memory in MB (for wsh vm budget)
+      --cpu-shares <N>             VM CPU shares (for wsh vm budget)
+      --storage-mb <MB>            VM storage budget in MB (for wsh vm budget)
       --capability <CAP>           Filter peers by capability
   -v, --verbose                    Verbose output
 `;
+
+const REVERSE_EXPOSURE_PRESETS = Object.freeze({
+  full: Object.freeze({
+    expose: { shell: true, tools: true, fs: true },
+    peerType: 'browser-shell',
+    shellBackend: 'virtual-shell',
+  }),
+  'shell-only': Object.freeze({
+    expose: { shell: true, tools: false, fs: false },
+    peerType: 'browser-shell',
+    shellBackend: 'virtual-shell',
+  }),
+  'tools-only': Object.freeze({
+    expose: { shell: false, tools: true, fs: false },
+    peerType: 'worker',
+    shellBackend: 'exec-only',
+  }),
+  'files-only': Object.freeze({
+    expose: { shell: false, tools: false, fs: true },
+    peerType: 'worker',
+    shellBackend: 'exec-only',
+  }),
+  'vm-console': Object.freeze({
+    expose: { shell: true, tools: false, fs: false },
+    peerType: 'vm-guest',
+    shellBackend: 'vm-console',
+    vmRuntimeId: 'demo-linux',
+  }),
+});
+const REVERSE_PRESET_STORAGE_KEY = 'clawser_v1_wsh_reverse_presets';
 
 // ── Subcommand Metadata ───────────────────────────────────────────
 
@@ -129,6 +176,94 @@ export function registerWshCli(registry, getAgent, getShell) {
   function buildUrl(host, port, transport) {
     const scheme = transport === 'ws' ? 'wss' : 'https';
     return `${scheme}://${host}:${port}`;
+  }
+
+  function reversePresetContext(identity, host, port) {
+    return `${identity}@${host}:${port}`;
+  }
+
+  function loadSavedReversePreset(identity, host, port) {
+    if (typeof localStorage === 'undefined') return null;
+    try {
+      const raw = localStorage.getItem(REVERSE_PRESET_STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed?.[reversePresetContext(identity, host, port)] || null;
+    } catch {
+      return null;
+    }
+  }
+
+  function saveReversePreset(identity, host, port, value) {
+    if (typeof localStorage === 'undefined') return;
+    const key = reversePresetContext(identity, host, port);
+    const next = (() => {
+      try {
+        return JSON.parse(localStorage.getItem(REVERSE_PRESET_STORAGE_KEY) || '{}');
+      } catch {
+        return {};
+      }
+    })();
+    next[key] = value;
+    localStorage.setItem(REVERSE_PRESET_STORAGE_KEY, JSON.stringify(next));
+  }
+
+  function resolveReverseExposure(flags, savedPreset = null) {
+    const presetName = flags.preset || null;
+    const preset = presetName ? REVERSE_EXPOSURE_PRESETS[presetName] : null;
+    if (presetName && !preset) {
+      throw new Error(
+        `Unknown reverse preset "${presetName}". Supported presets: ${Object.keys(REVERSE_EXPOSURE_PRESETS).join(', ')}`
+      );
+    }
+
+    const hasExplicitPreset = Boolean(
+      flags.preset
+      || flags.type
+      || flags.backend
+      || flags['vm-runtime']
+      || flags['require-approval']
+      || flags['expose-shell']
+      || flags['expose-tools']
+      || flags['expose-fs']
+    );
+    const effectiveSavedPreset = !hasExplicitPreset ? savedPreset : null;
+    const hasExposeFlags = flags['expose-shell'] || flags['expose-tools'] || flags['expose-fs'];
+    const expose = {
+      shell: hasExposeFlags
+        ? !!flags['expose-shell']
+        : preset?.expose?.shell ?? effectiveSavedPreset?.expose?.shell ?? true,
+      tools: hasExposeFlags
+        ? !!flags['expose-tools']
+        : preset?.expose?.tools ?? effectiveSavedPreset?.expose?.tools ?? true,
+      fs: hasExposeFlags
+        ? !!flags['expose-fs']
+        : preset?.expose?.fs ?? effectiveSavedPreset?.expose?.fs ?? true,
+    };
+    const peerType = flags.type || preset?.peerType || effectiveSavedPreset?.peerType || 'browser-shell';
+    const shellBackend = flags.backend
+      || preset?.shellBackend
+      || effectiveSavedPreset?.shellBackend
+      || (expose.shell ? 'virtual-shell' : 'exec-only');
+    const vmRuntimeId = flags['vm-runtime']
+      || preset?.vmRuntimeId
+      || effectiveSavedPreset?.vmRuntimeId
+      || (peerType === 'vm-guest' || shellBackend === 'vm-console' ? 'demo-linux' : null);
+
+    return {
+      presetName: presetName || effectiveSavedPreset?.presetName || 'custom',
+      expose,
+      peerType,
+      shellBackend,
+      vmRuntimeId,
+      requireApproval: flags['require-approval'] != null
+        ? !!flags['require-approval']
+        : !!effectiveSavedPreset?.requireApproval,
+    };
+  }
+
+  function getVmRegistry() {
+    return globalThis.__clawserVmConsoleRegistry || null;
   }
 
   // ── Subcommand: keygen ─────────────────────────────────────────
@@ -403,17 +538,15 @@ export function registerWshCli(registry, getAgent, getShell) {
       const url = buildUrl(parsed.host, parsed.port, transport);
       const client = new WshClient();
 
-      // Parse --expose-* flags; default to all if none specified
-      const hasExpose = flags['expose-shell'] || flags['expose-tools'] || flags['expose-fs'];
-      const expose = {
-        shell: hasExpose ? !!flags['expose-shell'] : true,
-        tools: hasExpose ? !!flags['expose-tools'] : true,
-        fs: hasExpose ? !!flags['expose-fs'] : true,
-      };
-      const peerType = flags.type || 'browser-shell';
-      const shellBackend = flags.backend || (expose.shell ? 'virtual-shell' : 'exec-only');
-      const vmRuntimeId = flags['vm-runtime']
-        || (peerType === 'vm-guest' || shellBackend === 'vm-console' ? 'demo-linux' : null);
+      const savedPreset = loadSavedReversePreset(keyName, parsed.host, parsed.port);
+      const {
+        presetName,
+        expose,
+        peerType,
+        shellBackend,
+        vmRuntimeId,
+        requireApproval,
+      } = resolveReverseExposure(flags, savedPreset);
       const supportHints = supportHintsForRuntime({ peerType, shellBackend });
 
       const sessionId = await client.connectReverse(url, {
@@ -431,6 +564,8 @@ export function registerWshCli(registry, getAgent, getShell) {
       client.__clawserPeerMetadata = {
         peerType,
         shellBackend,
+        preset: presetName,
+        requireApproval,
         replayMode: supportHints.replayMode,
         supportsAttach: supportHints.supportsAttach,
         supportsReplay: supportHints.supportsReplay,
@@ -438,6 +573,39 @@ export function registerWshCli(registry, getAgent, getShell) {
         supportsTermSync: supportHints.supportsTermSync,
         vmRuntimeId,
       };
+      client.__clawserApprovalPolicy = {
+        requireApproval,
+      };
+      client.__clawserReverseRegistration = {
+        relayHost: parsed.host,
+        relayPort: parsed.port,
+        sessionId,
+        startedAt: Date.now(),
+        preset: presetName,
+      };
+      saveReversePreset(keyName, parsed.host, parsed.port, {
+        presetName,
+        expose,
+        peerType,
+        shellBackend,
+        vmRuntimeId,
+        requireApproval,
+      });
+      await globalThis.__clawserRemoteAuditRecorder?.record?.('remote_exposure_changed', {
+        actor: 'operator',
+        action: 'register',
+        relayHost: parsed.host,
+        relayPort: parsed.port,
+        preset: presetName,
+        approvalMode: requireApproval ? 'per-session' : 'auto',
+        peerType,
+        shellBackend,
+        expose,
+        vmRuntimeId,
+      });
+      globalThis.dispatchEvent?.(new CustomEvent('clawser:wsh-exposure-changed', {
+        detail: { host: parsed.host, action: 'registered' },
+      }));
 
       // Wire incoming handler, chaining with any existing handler
       if (typeof globalThis.__wshIncomingHandler === 'function') {
@@ -457,12 +625,92 @@ export function registerWshCli(registry, getAgent, getShell) {
       const exposing = Object.entries(expose).filter(([,v]) => v).map(([k]) => k).join(', ');
       return {
         stdout: `Registered as reverse peer ${shortFp} on ${parsed.host}:${parsed.port}\n` +
-                `Session: ${sessionId}\nExposing: ${exposing}\n` +
+                `Session: ${sessionId}\nPreset: ${presetName}\nExposing: ${exposing || 'none'}\nApproval: ${requireApproval ? 'per-session' : 'auto'}\n` +
                 `Waiting for incoming connections...\n`,
         stderr: '', exitCode: 0,
       };
     } catch (err) {
       return { stdout: '', stderr: `Reverse registration failed: ${err.message}\n`, exitCode: 1 };
+    }
+  }
+
+  async function cmdVm(positional, flags) {
+    const registry = getVmRegistry();
+    if (!registry) {
+      return { stdout: '', stderr: 'VM runtime registry is not ready.\n', exitCode: 1 };
+    }
+
+    const action = positional[0] || 'list';
+    const runtimeId = positional[1] || 'demo-linux';
+
+    try {
+      switch (action) {
+        case 'list': {
+          const runtimes = registry.list();
+          if (flags.json) {
+            return { stdout: `${JSON.stringify(runtimes, null, 2)}\n`, stderr: '', exitCode: 0 };
+          }
+          const lines = ['RUNTIME        STATE       MEMORY  CPU  STORAGE  PERSISTENCE'];
+          for (const runtime of runtimes) {
+            const budget = runtime.resourceBudget || {};
+            lines.push(
+              `${String(runtime.id || '').padEnd(14)}${String(runtime.running ? 'running' : 'stopped').padEnd(12)}${String((budget.memoryMb ?? '--') + 'MB').padEnd(8)}${String(budget.cpuShares ?? '--').padEnd(5)}${String((budget.storageMb ?? '--') + 'MB').padEnd(9)}${runtime.persistenceKey || '--'}`
+            );
+          }
+          return { stdout: `${lines.join('\n')}\n`, stderr: '', exitCode: 0 };
+        }
+        case 'start': {
+          const runtime = await registry.start(runtimeId);
+          return { stdout: `Started VM runtime ${runtime.id || runtimeId}\n`, stderr: '', exitCode: 0 };
+        }
+        case 'stop': {
+          const runtime = await registry.stop(runtimeId);
+          return { stdout: `Stopped VM runtime ${runtime.id || runtimeId}\n`, stderr: '', exitCode: 0 };
+        }
+        case 'reset': {
+          const runtime = await registry.reset(runtimeId);
+          return { stdout: `Reset VM runtime ${runtime.id || runtimeId}\n`, stderr: '', exitCode: 0 };
+        }
+        case 'snapshot': {
+          const subAction = positional[1];
+          const targetRuntime = positional[2] || 'demo-linux';
+          if (subAction === 'export') {
+            const snapshot = await registry.exportSnapshot(targetRuntime);
+            return { stdout: `${JSON.stringify(snapshot, null, 2)}\n`, stderr: '', exitCode: 0 };
+          }
+          if (subAction === 'import') {
+            const raw = positional.slice(3).join(' ');
+            if (!raw) {
+              return { stdout: '', stderr: 'Usage: wsh vm snapshot import <runtime> <json>\n', exitCode: 1 };
+            }
+            const snapshot = JSON.parse(raw);
+            await registry.importSnapshot(targetRuntime, snapshot);
+            return { stdout: `Imported snapshot into ${targetRuntime}\n`, stderr: '', exitCode: 0 };
+          }
+          return { stdout: '', stderr: 'Usage: wsh vm snapshot export|import <runtime> [json]\n', exitCode: 1 };
+        }
+        case 'budget': {
+          const updates = {};
+          if (flags['memory-mb']) updates.memoryMb = parseInt(flags['memory-mb'], 10);
+          if (flags['cpu-shares']) updates.cpuShares = parseInt(flags['cpu-shares'], 10);
+          if (flags['storage-mb']) updates.storageMb = parseInt(flags['storage-mb'], 10);
+          const budget = Object.keys(updates).length
+            ? await registry.updateBudget(runtimeId, updates)
+            : registry.describe(runtimeId)?.resourceBudget || null;
+          if (!budget) {
+            return { stdout: '', stderr: `Unknown VM runtime: ${runtimeId}\n`, exitCode: 1 };
+          }
+          return {
+            stdout: `${JSON.stringify(budget, null, 2)}\n`,
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        default:
+          return { stdout: '', stderr: 'Usage: wsh vm list|start|stop|reset|snapshot|budget\n', exitCode: 1 };
+      }
+    } catch (err) {
+      return { stdout: '', stderr: `VM command failed: ${err.message}\n`, exitCode: 1 };
     }
   }
 
@@ -981,6 +1229,8 @@ export function registerWshCli(registry, getAgent, getShell) {
         return cmdReverse(positional.slice(1), flags);
       case 'peers':
         return cmdPeers(positional.slice(1), flags);
+      case 'vm':
+        return cmdVm(positional.slice(1), flags);
       case 'suspend':
         return cmdSuspend(positional.slice(1));
       case 'resume':

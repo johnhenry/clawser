@@ -6,7 +6,9 @@ import {
   getIncomingSession,
   handleReverseConnect,
   listIncomingSessions,
+  setIncomingSessionApprovalProvider,
   setKernelBridge,
+  setRemoteRuntimeAuditRecorder,
   setToolRegistry,
   setVirtualTerminalManager,
 } from '../clawser-wsh-incoming.js';
@@ -71,6 +73,8 @@ beforeEach(() => {
   setVirtualTerminalManager(new VirtualTerminalManager({
     shellFactory: async () => createFakeShell(),
   }));
+  setIncomingSessionApprovalProvider(null);
+  setRemoteRuntimeAuditRecorder(null);
 });
 
 afterEach(async () => {
@@ -81,6 +85,8 @@ afterEach(async () => {
   setVirtualTerminalManager(null);
   setToolRegistry(null);
   setKernelBridge(null);
+  setIncomingSessionApprovalProvider(null);
+  setRemoteRuntimeAuditRecorder(null);
 });
 
 describe('clawser-wsh-incoming', () => {
@@ -147,6 +153,38 @@ describe('clawser-wsh-incoming', () => {
     const failure = client.sent.find((msg) => msg.type === MSG.OPEN_FAIL);
     assert.ok(failure);
     assert.match(failure.reason, /did not expose shell access/i);
+  });
+
+  it('requires approval when the reverse peer policy says so', async () => {
+    const approvals = [];
+    const client = createFakeClient();
+    client.__clawserPeerMetadata = {
+      peerType: 'browser-shell',
+      shellBackend: 'virtual-shell',
+      requireApproval: true,
+    };
+    getWshConnections().set('relay.example', client);
+    setIncomingSessionApprovalProvider(async (request) => {
+      approvals.push(request);
+      return false;
+    });
+
+    await handleReverseConnect({
+      username: 'carol',
+      target_fingerprint: 'SHA256:target',
+    });
+
+    await client.onRelayMessage({
+      type: MSG.OPEN,
+      kind: 'pty',
+      cols: 80,
+      rows: 24,
+    });
+
+    assert.equal(approvals.length, 1);
+    const failure = client.sent.find((msg) => msg.type === MSG.OPEN_FAIL);
+    assert.ok(failure);
+    assert.match(failure.reason, /denied locally/i);
   });
 
   it('reattaches an existing reverse PTY instead of discarding browser state', async () => {

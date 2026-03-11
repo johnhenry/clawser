@@ -213,6 +213,7 @@ function descriptorFromDirectHostBookmark(bookmark) {
 export class RemoteRuntimeRegistry {
   #descriptors = new Map()
   #aliases = new Map()
+  #serviceAliases = new Map()
   #auditRecorder
 
   constructor({ auditRecorder = null } = {}) {
@@ -262,10 +263,11 @@ export class RemoteRuntimeRegistry {
 
   linkIdentity({ canonicalId, alias }) {
     if (!canonicalId || !alias) return
-    const existingCanonicalId = this.#aliases.get(alias)
-    if (existingCanonicalId && existingCanonicalId !== canonicalId) {
-      this.#recordConflict(existingCanonicalId, `identityAlias:${alias}->${canonicalId}`)
-      this.#recordConflict(canonicalId, `identityAlias:${alias}->${existingCanonicalId}`)
+    const existingCanonicalIds = [...(this.#aliases.get(alias) || [])]
+    const conflictingCanonicalId = existingCanonicalIds.find((candidate) => candidate !== canonicalId)
+    if (conflictingCanonicalId) {
+      this.#recordConflict(conflictingCanonicalId, `identityAlias:${alias}->${canonicalId}`)
+      this.#recordConflict(canonicalId, `identityAlias:${alias}->${conflictingCanonicalId}`)
       return
     }
     const conflictingDescriptor = [...this.#descriptors.values()].find((descriptor) => {
@@ -279,17 +281,17 @@ export class RemoteRuntimeRegistry {
       this.#recordConflict(canonicalId, `identityAlias:${alias}->${conflictingDescriptor.identity.canonicalId}`)
       return
     }
-    this.#aliases.set(alias, canonicalId)
+    this.#addAlias(alias, canonicalId)
   }
 
   linkName(name, canonicalId) {
     if (!name || !canonicalId) return
     const normalized = name.startsWith('@') ? name : `@${name}`
-    this.#aliases.set(normalized, canonicalId)
-    this.#aliases.set(normalized.slice(1), canonicalId)
+    this.#addAlias(normalized, canonicalId)
+    this.#addAlias(normalized.slice(1), canonicalId)
   }
 
-  listPeers(filter = {}) {
+  queryPeers(filter = {}) {
     let peers = [...this.#descriptors.values()]
 
     if (filter.peerType) {
@@ -301,8 +303,67 @@ export class RemoteRuntimeRegistry {
     if (filter.capability) {
       peers = peers.filter((peer) => peer.capabilities.includes(filter.capability))
     }
+    if (filter.intent) {
+      peers = peers.filter((peer) => peerSupportsIntent(peer, filter.intent))
+    }
+    if (filter.source) {
+      peers = peers.filter((peer) => (peer.sources || []).includes(filter.source))
+    }
+    if (filter.status) {
+      peers = peers.filter((peer) => peerRuntimeStatus(peer) === filter.status)
+    }
+    if (filter.serviceType || filter.serviceName) {
+      peers = peers.filter((peer) => {
+        const services = descriptorServices(peer)
+        if (filter.serviceType && !services.some((service) => service.type === filter.serviceType)) {
+          return false
+        }
+        if (filter.serviceName && !services.some((service) => service.name === filter.serviceName)) {
+          return false
+        }
+        return true
+      })
+    }
+    if (filter.text) {
+      const query = String(filter.text).trim().toLowerCase()
+      peers = peers.filter((peer) => peerSearchText(peer).includes(query))
+    }
 
     return peers.sort((left, right) => left.identity.canonicalId.localeCompare(right.identity.canonicalId))
+  }
+
+  listPeers(filter = {}) {
+    return this.queryPeers(filter)
+  }
+
+  listServices(filter = {}) {
+    const services = []
+    for (const descriptor of this.queryPeers(filter.peerFilter || {})) {
+      for (const service of descriptorServices(descriptor)) {
+        if (filter.type && service.type !== filter.type) continue
+        if (filter.name && service.name !== filter.name) continue
+        if (filter.podId && service.podId !== filter.podId) continue
+        services.push(service)
+      }
+    }
+    return services.sort((left, right) => {
+      const podCompare = (left.podId || '').localeCompare(right.podId || '')
+      if (podCompare !== 0) return podCompare
+      return (left.name || '').localeCompare(right.name || '')
+    })
+  }
+
+  query(filter = {}) {
+    return {
+      peers: this.queryPeers(filter),
+      services: this.listServices({
+        type: filter.serviceType,
+        name: filter.serviceName,
+        podId: filter.podId,
+        peerFilter: filter,
+      }),
+      telemetry: this.telemetrySnapshot(filter),
+    }
   }
 
   getPeer(canonicalId) {
@@ -312,9 +373,11 @@ export class RemoteRuntimeRegistry {
   matchPeers(selector) {
     if (!selector || typeof selector !== 'string') return null
 
-    const aliasTarget = this.#aliases.get(selector)
-    if (aliasTarget && this.#descriptors.has(aliasTarget)) {
-      return [this.#descriptors.get(aliasTarget)]
+    const aliasTargets = [...(this.#aliases.get(selector) || [])]
+      .map((canonicalId) => this.#descriptors.get(canonicalId))
+      .filter(Boolean)
+    if (aliasTargets.length > 0) {
+      return aliasTargets
     }
 
     if (this.#descriptors.has(selector)) {
@@ -351,6 +414,20 @@ export class RemoteRuntimeRegistry {
     return scored.map((entry) => entry.route)
   }
 
+  resolveService(selector) {
+    if (!selector || typeof selector !== 'string') return null
+    const refs = [
+      ...(this.#serviceAliases.get(selector) || []),
+      ...(this.#serviceAliases.get(selector.startsWith('svc://') ? selector.slice('svc://'.length) : `svc://${selector}`) || []),
+    ].filter((ref, index, all) => {
+      return all.findIndex((candidate) => candidate.canonicalId === ref.canonicalId && candidate.serviceName === ref.serviceName) === index
+    })
+    if (refs.length !== 1) return null
+    const descriptor = this.resolvePeer(refs[0].canonicalId)
+    if (!descriptor) return null
+    return descriptorServices(descriptor).find((service) => service.name === refs[0].serviceName) || null
+  }
+
   recordRouteOutcome(selector, route, {
     status = 'success',
     reason = null,
@@ -363,6 +440,11 @@ export class RemoteRuntimeRegistry {
     const nextRoutes = descriptor.reachability.map((candidate) => {
       if (routeKey(candidate) !== routeKey(route)) return candidate
       const failures = candidate.failures || 0
+      const successCount = candidate.successCount || 0
+      const failureCount = candidate.failureCount || 0
+      const nextSuccessCount = status === 'success' ? successCount + 1 : successCount
+      const nextFailureCount = status === 'failure' ? failureCount + 1 : failureCount
+      const totalOutcomes = nextSuccessCount + nextFailureCount
       const nextFailures = status === 'success' ? 0 : failures + 1
       return {
         ...candidate,
@@ -376,6 +458,9 @@ export class RemoteRuntimeRegistry {
         lastOutcomeReason: reason,
         lastOutcomeLayer: layer,
         failures: nextFailures,
+        successCount: nextSuccessCount,
+        failureCount: nextFailureCount,
+        successRate: totalOutcomes > 0 ? nextSuccessCount / totalOutcomes : null,
       }
     })
 
@@ -384,6 +469,11 @@ export class RemoteRuntimeRegistry {
       reachability: nextRoutes,
       metadata: {
         ...(descriptor.metadata || {}),
+        runtimeQuality: nextRuntimeQuality(descriptor.metadata?.runtimeQuality, {
+          status,
+          layer,
+          timestamp,
+        }),
         lastRouteOutcome: {
           status,
           reason,
@@ -431,19 +521,92 @@ export class RemoteRuntimeRegistry {
 
     this.#descriptors.set(descriptor.identity.canonicalId, nextDescriptor)
     this.#indexAliases(nextDescriptor)
+    this.#indexServices(nextDescriptor)
     return nextDescriptor
+  }
+
+  telemetrySnapshot(filter = {}) {
+    const peers = this.queryPeers(filter)
+    const health = { healthy: 0, degraded: 0, offline: 0, unknown: 0 }
+    const routeKinds = new Map()
+    const denialLayers = new Map()
+    const replayModes = new Map()
+    let relayRoutes = 0
+    let directRoutes = 0
+
+    for (const peer of peers) {
+      const status = peerRuntimeStatus(peer)
+      health[status] = (health[status] || 0) + 1
+      const replayMode = peer?.metadata?.replayMode || 'unsupported'
+      replayModes.set(replayMode, (replayModes.get(replayMode) || 0) + 1)
+
+      const denials = peer?.metadata?.runtimeQuality?.denials || {}
+      for (const [layer, count] of Object.entries(denials)) {
+        denialLayers.set(layer, (denialLayers.get(layer) || 0) + (count || 0))
+      }
+
+      for (const route of peer.reachability || []) {
+        routeKinds.set(route.kind, (routeKinds.get(route.kind) || 0) + 1)
+        if (route.kind === 'reverse-relay' || route.kind === 'mesh-relay') relayRoutes += 1
+        if (route.kind === 'direct-host' || route.kind === 'mesh-direct') directRoutes += 1
+      }
+    }
+
+    return {
+      peerCount: peers.length,
+      health,
+      routeKinds: Object.fromEntries(routeKinds),
+      relayUsage: {
+        relayRoutes,
+        directRoutes,
+      },
+      denialLayers: Object.fromEntries(denialLayers),
+      replayModes: Object.fromEntries(replayModes),
+      services: this.listServices({ peerFilter: filter }).length,
+    }
   }
 
   #indexAliases(descriptor) {
     for (const alias of descriptor.identity.aliases || []) {
-      this.#aliases.set(alias, descriptor.identity.canonicalId)
+      this.#addAlias(alias, descriptor.identity.canonicalId)
     }
     if (descriptor.identity.fingerprint) {
-      this.#aliases.set(descriptor.identity.fingerprint, descriptor.identity.canonicalId)
+      this.#addAlias(descriptor.identity.fingerprint, descriptor.identity.canonicalId)
     }
     if (descriptor.identity.podId) {
-      this.#aliases.set(descriptor.identity.podId, descriptor.identity.canonicalId)
+      this.#addAlias(descriptor.identity.podId, descriptor.identity.canonicalId)
     }
+    this.#indexServices(descriptor)
+  }
+
+  #indexServices(descriptor) {
+    for (const service of descriptorServices(descriptor)) {
+      const keys = [
+        service.name,
+        `svc://${service.name}`,
+        service.address,
+      ].filter(Boolean)
+      for (const key of keys) {
+        if (!this.#serviceAliases.has(key)) {
+          this.#serviceAliases.set(key, [])
+        }
+        const refs = this.#serviceAliases.get(key)
+        if (!refs.some((ref) => ref.canonicalId === descriptor.identity.canonicalId && ref.serviceName === service.name)) {
+          refs.push({
+            canonicalId: descriptor.identity.canonicalId,
+            serviceName: service.name,
+          })
+        }
+      }
+    }
+  }
+
+  #addAlias(alias, canonicalId) {
+    if (!alias || !canonicalId) return
+    if (!this.#aliases.has(alias)) {
+      this.#aliases.set(alias, new Set())
+    }
+    this.#aliases.get(alias).add(canonicalId)
   }
 
   #recordConflict(canonicalId, conflict) {
@@ -480,8 +643,99 @@ export class RemoteRuntimeRegistry {
     if (route.health === 'healthy') score += 10
     if (route.health === 'degraded') score -= 8
     if (route.health === 'offline') score -= 25
+    if (Number.isFinite(route.successRate)) {
+      score += Math.round((route.successRate - 0.5) * 20)
+    }
 
     return score
+  }
+}
+
+function descriptorServices(descriptor) {
+  const podId = descriptor?.identity?.podId
+    || descriptor?.identity?.fingerprint
+    || descriptor?.identity?.canonicalId
+    || null
+  const details = descriptor?.metadata?.serviceDetails || {}
+  const names = unique([
+    ...(descriptor?.metadata?.services || []),
+    ...Object.keys(details),
+  ])
+  return names.map((name) => ({
+    ...(details[name] || {}),
+    name,
+    podId,
+  }))
+}
+
+function peerRuntimeStatus(peer) {
+  const routes = peer?.reachability || []
+  if (!routes.length) return 'unknown'
+  if (routes.some((route) => route.health === 'healthy' || route.health === 'online')) return 'healthy'
+  if (routes.some((route) => route.health === 'degraded')) return 'degraded'
+  if (routes.every((route) => route.health === 'offline')) return 'offline'
+  return 'unknown'
+}
+
+function peerSupportsIntent(peer, intent) {
+  switch (intent) {
+    case 'terminal':
+      return (peer.capabilities || []).includes('shell')
+        || peer.shellBackend === 'pty'
+        || peer.shellBackend === 'virtual-shell'
+        || peer.shellBackend === 'vm-console'
+    case 'exec':
+    case 'automation':
+      return (peer.capabilities || []).includes('exec')
+        || (peer.capabilities || []).includes('shell')
+    case 'files':
+      return (peer.capabilities || []).includes('fs')
+    case 'tools':
+    case 'service':
+      return (peer.capabilities || []).includes('tools') || descriptorServices(peer).length > 0
+    case 'gateway':
+      return (peer.capabilities || []).includes('gateway')
+    default:
+      return true
+  }
+}
+
+function peerSearchText(peer) {
+  return [
+    peer.username,
+    peer.identity?.canonicalId,
+    peer.identity?.fingerprint,
+    peer.identity?.podId,
+    ...(peer.identity?.aliases || []),
+    peer.peerType,
+    peer.shellBackend,
+    ...(peer.capabilities || []),
+    ...descriptorServices(peer).flatMap((service) => [service.name, service.type, service.address]),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+}
+
+function nextRuntimeQuality(existing = {}, {
+  status,
+  layer,
+  timestamp,
+}) {
+  const successCount = (existing.successCount || 0) + (status === 'success' ? 1 : 0)
+  const failureCount = (existing.failureCount || 0) + (status === 'failure' ? 1 : 0)
+  const total = successCount + failureCount
+  const denials = { ...(existing.denials || {}) }
+  if (status === 'failure' && layer) {
+    denials[layer] = (denials[layer] || 0) + 1
+  }
+  return {
+    successCount,
+    failureCount,
+    successRate: total > 0 ? successCount / total : null,
+    lastStatus: status,
+    lastTimestamp: timestamp || Date.now(),
+    denials,
   }
 }
 

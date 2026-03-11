@@ -41,6 +41,7 @@ import { GitStatusTool, GitDiffTool, GitLogTool, GitCommitTool, GitBranchTool, G
 import { BrowserOpenTool, BrowserReadPageTool, BrowserClickTool, BrowserFillTool, BrowserWaitTool, BrowserEvaluateTool, BrowserListTabsTool, BrowserCloseTabTool } from './clawser-browser-auto.js';
 import { SandboxRunTool, SandboxStatusTool } from './clawser-sandbox.js';
 import { registerWshTools } from './clawser-wsh-tools.js';
+import { listReverseExposureRegistrations } from './clawser-wsh-tools.js';
 import { registerNetwayTools } from './clawser-netway-tools.js';
 import { HwListTool, HwConnectTool, HwSendTool, HwReadTool, HwDisconnectTool, HwInfoTool } from './clawser-hardware.js';
 import { RemoteStatusTool, RemotePairTool, RemoteRevokeTool } from './clawser-remote.js';
@@ -103,6 +104,7 @@ import { createConfiguredShell } from './clawser-shell-factory.js';
 import { VirtualTerminalManager } from './clawser-wsh-virtual-terminal-manager.js';
 import { RemoteMountManager } from './clawser-remote-mounts.js';
 import { BrowserVmConsoleRegistry, DemoLinuxVmConsole } from './clawser-vm-console.js';
+import { listIncomingSessions } from './clawser-wsh-incoming.js';
 
 // ── Mesh agent bridge helper ─────────────────────────────────────
 /**
@@ -129,9 +131,26 @@ function getRemoteRuntimePanelState() {
       activeServices: [],
       routeExplanation: null,
       error: null,
+      localExposure: [],
+      filterText: '',
+      filterCapability: '',
+      filterPeerType: '',
+      telemetry: null,
     };
   }
   return state.ui.remoteRuntimePanel;
+}
+
+function localExposureStatus() {
+  const incomingByHost = new Map();
+  for (const session of listIncomingSessions()) {
+    const host = session.host || 'local'
+    incomingByHost.set(host, (incomingByHost.get(host) || 0) + 1)
+  }
+  return listReverseExposureRegistrations().map((entry) => ({
+    ...entry,
+    activeIncomingSessions: incomingByHost.get(entry.host) || 0,
+  }));
 }
 
 function remoteRuntimePeerSession(peer) {
@@ -351,12 +370,18 @@ function renderRemoteRuntimeWorkspacePanel() {
   bindRemoteRuntimePanelEvents();
 
   const panelState = getRemoteRuntimePanelState();
+  panelState.localExposure = localExposureStatus();
+  panelState.telemetry = state.remoteSessionBroker?.telemetrySnapshot?.() || null;
   container.innerHTML = renderRemoteRuntimePanel(state.remoteRuntimeRegistry, panelState);
   initRemoteRuntimePanelListeners({
     onOpenView: (selector, view) => {
       void openRemoteRuntimeView(selector, view);
     },
     onExplainRoute: (selector) => explainRemoteRuntimeRoute(selector),
+    onUpdateFilter: (key, value) => {
+      panelState[key] = value;
+      renderRemoteRuntimeWorkspacePanel();
+    },
   });
 
   if (panelState.activeView?.kind === 'terminal') {
@@ -402,6 +427,15 @@ function bindRemoteRuntimePanelEvents() {
           error,
         );
       }
+      if (isPanelRendered('remote')) {
+        renderRemoteRuntimeWorkspacePanel();
+      }
+    });
+  }
+
+  if (!state.ui._wshExposureUiBound) {
+    state.ui._wshExposureUiBound = true;
+    globalThis.addEventListener?.('clawser:wsh-exposure-changed', () => {
       if (isPanelRendered('remote')) {
         renderRemoteRuntimeWorkspacePanel();
       }
@@ -460,7 +494,11 @@ async function refreshReverseVirtualTerminalManager() {
 
   if (!_browserVmConsoleRegistry) {
     _browserVmConsoleRegistry = new BrowserVmConsoleRegistry();
-    const demoLinuxVm = new DemoLinuxVmConsole();
+    const workspaceId = getActiveWorkspaceId() || 'default';
+    const demoLinuxVm = new DemoLinuxVmConsole({
+      persistenceKey: `clawser_v1_vm_demo_linux_${workspaceId}`,
+    });
+    await demoLinuxVm.restorePersistedState();
     _browserVmConsoleRegistry.register('demo-linux', demoLinuxVm);
     _browserVmConsoleRegistry.register('default', demoLinuxVm, {
       label: 'Default VM Console',
@@ -469,6 +507,7 @@ async function refreshReverseVirtualTerminalManager() {
       capabilities: ['shell'],
     });
   }
+  globalThis.__clawserVmConsoleRegistry = _browserVmConsoleRegistry;
 
   _reverseVirtualTerminalManager = new VirtualTerminalManager({
     shellFactory: async () => createConfiguredShell({
@@ -481,8 +520,22 @@ async function refreshReverseVirtualTerminalManager() {
   });
 
   try {
-    const { setToolRegistry, setVirtualTerminalManager } = await import('./clawser-wsh-incoming.js');
+    const {
+      setIncomingSessionApprovalProvider,
+      setRemoteRuntimeAuditRecorder,
+      setToolRegistry,
+      setVirtualTerminalManager,
+    } = await import('./clawser-wsh-incoming.js');
     setVirtualTerminalManager(_reverseVirtualTerminalManager);
+    setRemoteRuntimeAuditRecorder(state.pod?.remoteAuditRecorder || null);
+    globalThis.__clawserRemoteAuditRecorder = state.pod?.remoteAuditRecorder || null;
+    setIncomingSessionApprovalProvider(async (request) => {
+      const capabilitySummary = (request.capabilities || []).join(', ') || 'none';
+      return modal.confirm(
+        `Allow ${request.username || 'remote peer'} to open a ${request.kind} session?\n\nBackend: ${request.peerType}/${request.shellBackend}\nCapabilities: ${capabilitySummary}\nCommand: ${request.command || '(interactive shell)'}`,
+        { okLabel: 'Allow', cancelLabel: 'Deny' },
+      );
+    });
     if (state.browserTools) {
       setToolRegistry(state.browserTools);
     }

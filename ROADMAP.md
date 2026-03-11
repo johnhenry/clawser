@@ -1636,7 +1636,7 @@ Stretch goals:
 
 - [ ] guest filesystem bridge
 - [ ] upload/download into the guest
-- [ ] VM lifecycle controls (`start`, `stop`, `reset`, `snapshot`)
+- [x] VM lifecycle controls (`start`, `stop`, `reset`, `snapshot`)
 - [ ] distro/image chooser
 
 Success criteria:
@@ -1653,7 +1653,7 @@ Current status:
 
 - [~] The product has a working VM-console peer MVP, but productionization work is still intentionally pending.
 - [~] The current implementation is ephemeral, demo-oriented, and centered on a single `demo-linux` runtime.
-- [ ] Image management, persistence, lifecycle controls, and resource governance are not implemented yet.
+- [~] Image management UI remains pending, but persistence, lifecycle controls, and resource governance are implemented for the `demo-linux` VM-console runtime.
 
 Questions to answer:
 
@@ -1666,10 +1666,10 @@ Questions to answer:
 Likely follow-up deliverables:
 
 - [ ] VM image management UI
-- [ ] snapshot/import/export
-- [ ] workspace-bound guest persistence
-- [ ] resource budgeting (memory, CPU, storage) in the browser
-- [ ] capability policy for VM control vs guest shell access
+- [x] snapshot/import/export
+- [x] workspace-bound guest persistence
+- [x] resource budgeting (memory, CPU, storage) in the browser
+- [x] capability policy for VM control vs guest shell access
 
 ### Phase 7A.9: Recommended Product Positioning
 
@@ -1872,15 +1872,15 @@ Why it matters:
 
 Required deliverables:
 
-- [ ] clear browser UI for what a tab is exposing:
+- [x] clear browser UI for what a tab is exposing:
   - shell
   - tools
   - filesystem
   - VM control
-- [ ] session approval and audit log where appropriate
-- [ ] richer `authorized_keys` option documentation and UI affordances
-- [ ] per-peer or per-identity exposure presets
-- [ ] visible remote-session status in the UI
+- [x] session approval and audit log where appropriate
+- [x] richer `authorized_keys` option documentation and UI affordances
+- [x] per-peer or per-identity exposure presets
+- [x] visible remote-session status in the UI
 
 Desired effect:
 
@@ -1900,7 +1900,7 @@ Required deliverables:
 
 - [x] `wsh peers --json`
 - [x] richer table output with peer type and backend
-- [ ] convenience selectors:
+- [x] convenience selectors:
   - connect to only peer
   - connect to last peer
   - [x] filter by capability
@@ -1971,14 +1971,14 @@ Why it matters:
 
 Required deliverables:
 
-- [ ] VM start/stop/reset
-- [ ] snapshot/import/export
-- [ ] persistent workspace binding
-- [ ] resource budgeting
+- [x] VM start/stop/reset
+- [x] snapshot/import/export
+- [x] persistent workspace binding
+- [x] resource budgeting
   - memory
   - CPU
   - storage
-- [ ] capability split between:
+- [x] capability split between:
   - guest shell access
   - guest filesystem
   - VM administration
@@ -2048,7 +2048,7 @@ Required convergence:
 
 - [x] make the remote UI consume canonical `RemotePeerDescriptor` records instead of ad hoc peer/session objects
 - [x] route all terminal/file/service openings through the session broker
-- [ ] distinguish clearly in the UI whether the target is:
+- [x] distinguish clearly in the UI whether the target is:
   - chat-only peer
   - service peer
   - browser shell peer
@@ -2086,6 +2086,10 @@ Required convergence:
   - naming a peer identity
   - naming a specific endpoint
   - naming a service hosted on a peer
+Current status note:
+
+- [x] peer identities and hosted services now resolve through separate canonical lookup paths in the runtime registry, and ambiguous service-name lookups fail safe instead of silently binding
+- [ ] explicit endpoint naming remains separate and is not yet exposed as a first-class named-target surface
 - [x] define reverse-peer resolution precedence:
   - explicit fingerprint
   - exact short fingerprint
@@ -2128,11 +2132,11 @@ Required convergence:
   - conflicting capability reports
   - conflicting transport information
   - stale liveness data
-- [ ] provide one query surface for:
+- [x] provide one canonical browser-side query surface for:
   - peer picker UI
-  - CLI peer listings
+  - route explanation / telemetry views
   - agent/routine targeting
-  - future marketplace/resource schedulers
+- [ ] align CLI peer listings and future marketplace/resource schedulers onto that same query abstraction
 
 Verification criteria:
 
@@ -2155,7 +2159,7 @@ Required convergence:
 
 - [x] map mesh scope templates to `wsh` exposure presets
 - [x] define a translation table between mesh scopes and `wsh` capabilities
-- [ ] support per-peer/per-identity presets that determine:
+- [x] support per-peer/per-identity presets that determine:
   - shell access
   - exec-only access
   - filesystem access
@@ -2195,12 +2199,12 @@ Required convergence:
 
 - [x] incorporate mesh trust scores into route ranking, not session admission bypass
 - [x] incorporate relay health and latency into `wsh` path selection
-- [ ] allow policy to require a minimum trust score for:
+- [x] allow policy to require a minimum trust score for:
   - relay use
   - compute delegation
   - filesystem exposure
   - VM control
-- [ ] record observed runtime quality back into trust/reputation systems where appropriate
+- [x] record observed runtime quality back into route-reputation signals where appropriate
   - uptime
   - attach/resume reliability
   - transfer reliability
@@ -2232,8 +2236,8 @@ Why this matters:
 Required convergence:
 
 - [x] allow gateway-capable peers to appear as remote runtime descriptors with explicit network capabilities
-- [ ] map mesh trust/quota/policy signals into gateway path selection
-- [ ] expose route provenance:
+- [x] map mesh trust/quota/policy signals into gateway path selection
+- [x] expose route provenance:
   - local
   - direct host gateway
   - reverse host gateway
@@ -2262,18 +2266,19 @@ Why this matters:
 Required convergence:
 
 - [x] let compute schedulers query the remote runtime registry rather than ad hoc peer lists
-- [ ] add capability classes relevant to compute:
+- [x] add current capability classes relevant to compute:
   - `exec`
   - `shell`
   - `wasm`
   - `gpu`
   - `vm_console`
-  - future guest-side execution APIs
-- [ ] allow schedulers to prefer:
+- [ ] define future guest-side execution APIs as additional compute/runtime classes
+- [x] allow schedulers to prefer:
   - real host peers for heavy compute
   - browser peers for light tool execution
   - VM peers for isolated Linux workloads
-- [ ] tie compute execution records into the same audit and trust loops as interactive sessions
+- [x] tie compute execution records into the same audit loop as interactive sessions
+- [ ] feed compute execution quality into longer-lived trust/reputation systems
 
 Verification criteria:
 
@@ -2320,9 +2325,9 @@ Why this matters:
 
 Required convergence:
 
-- [ ] define which peer types can accept deploy/install actions
+- [x] define current peer/runtime deployment classes via canonical `deploymentSupport` metadata
 - [x] allow app/skill deployment targeting through the remote runtime registry
-- [ ] surface whether a peer supports:
+- [x] surface whether a peer supports:
   - tool injection
   - skill sync
   - package install
@@ -2358,9 +2363,9 @@ Required convergence:
   - tool invocation
   - gateway use
   - automation execution
-- [ ] add explicit exposure-change audit coverage
-- [ ] distinguish operator actions from automated routing/runtime actions
-- [ ] expose cross-stack telemetry views:
+- [x] add explicit exposure-change audit coverage
+- [x] distinguish operator actions from automated routing/runtime actions
+- [x] expose cross-stack telemetry views:
   - peer health
   - route quality
   - relay usage
@@ -2418,15 +2423,15 @@ Why this matters:
 
 Required convergence:
 
-- [ ] allow routines to target canonical remote runtime descriptors
-- [ ] support scheduled health checks, syncs, backups, and maintenance against peers
-- [ ] ensure daemon/background execution can reuse the same session broker as interactive flows
+- [x] allow routines to target canonical remote runtime descriptors
+- [x] support scheduled health checks, syncs, backups, and maintenance against peers
+- [x] ensure daemon/background execution can reuse the same session broker as interactive flows
 - [x] apply policy and audit consistently to broker-routed automated sessions
 
 Current status note:
 
 - [x] broker-routed automation already uses the same runtime selection, policy checks, and audit path via `runAutomationOnPod`
-- [ ] the generic routines engine is not yet targeting canonical remote runtime descriptors directly
+- [x] the generic routines engine is now targeting canonical remote runtime descriptors directly when a routine action declares a remote target
 
 Verification criteria:
 
@@ -2439,11 +2444,11 @@ Goal: ensure all of the above appears as one product, not a bag of adjacent subs
 
 Required convergence:
 
-- [ ] one canonical peer picker
-- [ ] one canonical runtime/session status model
+- [x] one canonical peer picker
+- [x] one canonical runtime/session status model
 - [ ] one canonical audit trail for remote access
-- [ ] one canonical capability display model
-- [ ] one canonical route explanation model
+- [x] one canonical capability display model
+- [x] one canonical route explanation model
 
 This is the convergence that matters most to users.
 

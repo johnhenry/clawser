@@ -63,9 +63,16 @@ export function createRoutine(opts = {}) {
     action: {
       type: opts.action?.type || ACTION_TYPES.PROMPT,
       prompt: opts.action?.prompt || null,
+      command: opts.action?.command || null,
       tool: opts.action?.tool || null,
       args: opts.action?.args || null,
       steps: opts.action?.steps || null,
+      target: opts.action?.target || null,
+      intent: opts.action?.intent || null,
+      operation: opts.action?.operation || null,
+      path: opts.action?.path || null,
+      data: opts.action?.data || null,
+      constraints: opts.action?.constraints || null,
     },
     guardrails: {
       ...DEFAULT_GUARDRAILS,

@@ -283,6 +283,8 @@ export class ComputeRequest {
    * @param {*} [opts.input]        - Serializable input payload
    * @param {object} [opts.constraints]
    * @param {string} [opts.constraints.prefer] - 'gpu'|'cpu'|'any'
+   * @param {string} [opts.constraints.preferRuntimeClass]
+   * @param {string[]} [opts.constraints.capabilities]
    * @param {number} [opts.constraints.timeoutMs]
    * @param {number} [opts.constraints.maxMemoryMb]
    * @param {number} [opts.constraints.priority] - 0 = low, higher = more urgent
@@ -305,7 +307,10 @@ export class ComputeRequest {
     this.entry = entry;
     this.input = input ?? null;
     this.constraints = {
+      ...constraints,
       prefer: constraints.prefer ?? 'any',
+      preferRuntimeClass: constraints.preferRuntimeClass ?? null,
+      capabilities: [...(constraints.capabilities || [])],
       timeoutMs: constraints.timeoutMs ?? 30_000,
       maxMemoryMb: constraints.maxMemoryMb ?? null,
       priority: constraints.priority ?? 0,
@@ -449,6 +454,13 @@ export class ResourceScorer {
     if (prefer === 'gpu' && descriptor.resources.gpu > 0) s += 20;
     else if (prefer === 'cpu' && descriptor.resources.cpu > 0) s += 20;
     else if (prefer === 'any') s += 10;
+
+    const preferRuntimeClass = request.constraints?.preferRuntimeClass;
+    if (preferRuntimeClass && descriptor.capabilities.includes(`runtime:${preferRuntimeClass}`)) {
+      s += 60;
+    } else if (preferRuntimeClass) {
+      s -= 15;
+    }
 
     // Memory headroom: up to +15
     const reqMem = request.constraints?.maxMemoryMb ?? 0;

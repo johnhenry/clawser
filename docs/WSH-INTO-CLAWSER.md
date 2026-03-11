@@ -339,11 +339,24 @@ Or:
 wsh -i clawser-tab reverse localhost:4422 --expose-shell --expose-tools --expose-fs
 ```
 
+You can also use named presets and require local approval for each incoming reverse session:
+
+```bash
+wsh -i clawser-tab reverse localhost:4422 --preset shell-only --require-approval
+```
+
+For a VM-backed peer:
+
+```bash
+wsh -i clawser-tab reverse localhost:4422 --preset vm-console
+```
+
 What to expect:
 
 - Clawser first tries browser WebTransport to `https://relay-host:port`
 - if WebTransport is unavailable or the handshake fails, it automatically falls back to `wss://relay-host:port`
 - the terminal prints a short peer fingerprint
+- the browser remote panel shows what this tab is exposing, whether approvals are automatic or per-session, and how many incoming reverse sessions are active
 - the tab must stay open, because the reverse registration is tied to that live browser session
 - after registration, the relay knows this browser tab as a reverse-connectable peer
 

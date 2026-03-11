@@ -105,6 +105,7 @@ describe('configureRemoteRuntimeGateway', () => {
     await resetNetwayToolsForTests()
     assert.equal(records[0].operation, 'remote_gateway_bound')
     assert.equal(records[0].data.selector, 'gateway-peer')
+    assert.equal(records[0].data.routeProvenance.connectionKind, 'reverse-relay')
     assert.equal(records[1].operation, 'remote_gateway_closed')
   })
 
