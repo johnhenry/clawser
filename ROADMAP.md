@@ -36,9 +36,10 @@ Clawser is a **beta-quality** browser-native AI agent platform. The core runtime
 | **Batch 3** | Panel enhancements, agent loop integration, 9 API mismatch fixes |
 | **0.1.0-beta** | 9 feature module integrations with 36 new agent tools. Phase 2 UI/agent loop wiring for all 30 blocks. |
 | **Phase 7** | Virtual Server subsystem — SW fetch intercept, ServerManager, function/static/proxy handlers, 8 agent tools, FetchTool auto-routing, kernel svc:// integration, Servers UI panel |
-| **Phase 8** | BrowserMesh integration — 30 new modules for decentralized mesh: identity, trust, CRDT sync, P2P transport, naming, real transports, resource scheduling, payments, consensus, swarm coordination |
+| **Phase 8** | Remote runtime access expansion (`wsh`) — canonical runtime registry, session broker, reverse host parity, VM console peers, route policy, remote filesystems, and audit convergence |
+| **Phase 9** | BrowserMesh integration — 30 new modules for decentralized mesh: identity, trust, CRDT sync, P2P transport, naming, real transports, resource scheduling, payments, consensus, swarm coordination |
 | **OpenClaw Final** | Channel Gateway (`clawser-gateway.js`) — scheduler/routine lane through gateway, kernel tenantId threading, per-channel serialized queues, virtual channel keys, 105 gateway tests |
-| **Phase 8.11** | Subsystem wiring + doc-only features — wire code collision fix (21 codes migrated), 11 subsystems wired into bootstrap, SW mesh routing, WebTransport bridge, cross-origin comms, WebRTC mesh, mesh DevTools inspector (5 new modules, 139 new tests) |
+| **Phase 9.11** | Subsystem wiring + doc-only features — wire code collision fix (21 codes migrated), 11 subsystems wired into bootstrap, SW mesh routing, WebTransport bridge, cross-origin comms, WebRTC mesh, mesh DevTools inspector (5 new modules, 139 new tests) |
 
 ---
 
@@ -761,7 +762,7 @@ Turns Clawser into an OS-like platform that can serve HTTP requests entirely in 
 
 ---
 
-## Phase 7A: Remote Runtime Access Expansion (wsh)
+## Phase 8: Remote Runtime Access Expansion (wsh)
 
 Priority: turn `wsh` from "remote shell and relay protocol" into a coherent remote-runtime fabric for hosts, browser peers, and eventually browser-hosted Linux guests.
 
@@ -855,19 +856,19 @@ The Rust reverse-peer path now has first-class parity:
 
 The remaining roadmap work is now about convergence and breadth, not basic reverse-host viability.
 
-### Phase 7A Status Dashboard (March 10, 2026)
+### Phase 8 Status Dashboard (March 10, 2026)
 
 - `[x]` Canonical runtime contracts, peer metadata, and protocol bindings are in place.
 - `[x]` Browser reverse peers are interactive and capability-gated through the shared runtime model.
 - `[x]` Reverse-host runtime exists with `wsh-agent`, relay registration, PTY/exec/file/tool/gateway exposure, shared peer metadata, and user-level startup/install support.
-- `[x]` Attach/replay and route robustness are now uniform across the supported Phase 7A backends, with backend-specific replay modes surfaced explicitly.
+- `[x]` Attach/replay and route robustness are now uniform across the supported Phase 8 backends, with backend-specific replay modes surfaced explicitly.
 - `[x]` BrowserMesh naming, policy, and trust integration are landed; template/preset mapping, scope translation, denial provenance, and trust-aware ambiguous target selection now flow through the shared broker/runtime model.
 - `[x]` The remote UI and CLI now consume the shared runtime model, the topology/support/self-check docs are in place, and the remaining legacy duplicate runtime views have been removed.
 - `[x]` Gateway/service/deploy/automation/filesystem/audit convergence is landed through the shared runtime model, including compute routing, broker-backed Netway gateways, remote file modes, virtual-server service advertising, deployment/automation routing, and unified audit telemetry for discovery, routing, file/tool/gateway, and automation flows.
-- `[x]` VM peer support exists as a browser-side `vm-console` backend with a selectable `demo-linux` guest runtime, and the MVP is now complete at the Phase 7A level.
-- `[x]` Final readiness verification is complete, and the Phase 7A pre-BrowserMesh dependency gates are now satisfied.
+- `[x]` VM peer support exists as a browser-side `vm-console` backend with a selectable `demo-linux` guest runtime, and the MVP is now complete at the Phase 8 level.
+- `[x]` Final readiness verification is complete, and the Phase 8 pre-BrowserMesh dependency gates are now satisfied.
 
-Committed Phase 7A work already includes:
+Committed Phase 8 work already includes:
 
 - canonical `RemoteIdentity` / `RemotePeerDescriptor` / `ReachabilityDescriptor` / `SessionTarget`
 - richer `wsh` peer metadata and `wsh peers --json`
@@ -878,7 +879,7 @@ Committed Phase 7A work already includes:
 - route health tracking and backend-aware session hints
 - browser-side `vm-console` backend hooks and runtime registry plumbing
 
-### Phase 7A.1: Documented Runtime Modes
+### Phase 8.1: Documented Runtime Modes
 
 Goal: make the topology legible to contributors and users so the system stops looking more complete or more uniform than it really is.
 
@@ -901,7 +902,7 @@ Why first:
 - current implementation status is now nuanced enough that "remote shell works" is too vague to be trustworthy documentation
 - BrowserMesh planning will be cleaner if `wsh` topology is explicit before mesh routing starts depending on it
 
-### Phase 7A.2: Reverse Host Access For Non-Browser Peers
+### Phase 8.2: Reverse Host Access For Non-Browser Peers
 
 Goal: make "remote into a local machine via relay" a first-class, symmetric workflow.
 
@@ -951,7 +952,7 @@ Non-goals:
 - turning relay mode into the preferred path for machines that are already directly reachable
 - hiding the fact that relay mode is operationally more complex than direct host mode
 
-### Phase 7A.3: Peer Types And Capability Contracts
+### Phase 8.3: Peer Types And Capability Contracts
 
 Goal: stop treating all peers as morally the same when they clearly are not.
 
@@ -999,7 +1000,7 @@ Why this matters:
 - policy can become capability-driven rather than product-name-driven
 - future VM and worker peers become natural extensions instead of hacks
 
-### Phase 7A.4: Direct Peer Access vs Relay-Mediated Peer Access
+### Phase 8.4: Direct Peer Access vs Relay-Mediated Peer Access
 
 Goal: clarify where `wsh` should and should not expand.
 
@@ -1021,7 +1022,7 @@ Planned boundaries:
 - [x] BrowserMesh should not replace the `wsh` session model itself
 - [x] if direct peer-to-peer `wsh` is ever added, it should be a transport backend under the same session protocol, not a new product surface
 
-### Phase 7A.5: BrowserMesh Integration Contract For `wsh`
+### Phase 8.5: BrowserMesh Integration Contract For `wsh`
 
 Goal: define exactly how `wsh` integrates with the existing peer-to-peer architecture so the two systems compose cleanly without duplicating identity, discovery, relay, policy, or session logic.
 
@@ -1542,7 +1543,7 @@ This should be treated as mandatory roadmap scope, not optional polish.
 - [x] deterministic routing algorithm
 - [x] full integration test matrix across discovery, policy, transport, and session layers
 
-### Phase 7A.6: Browser-Hosted Linux Guest As A `wsh` Peer
+### Phase 8.6: Browser-Hosted Linux Guest As A `wsh` Peer
 
 Goal: support an entire Linux environment running inside the browser and expose it through the same relay/peer model as other `wsh` targets.
 
@@ -1550,7 +1551,7 @@ This is feasible in principle now.
 
 Current status:
 
-- [x] Model A is the implemented path for Phase 7A: the browser remains the relay-registered peer and routes terminal traffic into a VM-console backend.
+- [x] Model A is the implemented path for Phase 8: the browser remains the relay-registered peer and routes terminal traffic into a VM-console backend.
 - [x] The current shipped runtime is the `demo-linux` browser-side guest console used by the `vm-guest` / `vm-console` peer contract.
 - [ ] Model B is still deferred; there is no guest-side `wsh-server` inside a browser-hosted Linux distro.
 
@@ -1610,7 +1611,7 @@ Recommended sequence:
 - [x] **First** build Model A as a new browser peer backend
 - [ ] **Later** evaluate Model B if there is a need for true Unix fidelity inside the guest
 
-### Phase 7A.7: VM Peer MVP
+### Phase 8.7: VM Peer MVP
 
 Goal: prove that a browser-hosted Linux guest can be reached through `wsh` without re-architecting the whole system.
 
@@ -1645,7 +1646,7 @@ Success criteria:
 - [x] `wsh reverse-connect` opens an interactive guest console
 - [x] normal line-oriented Linux workflows are usable through the relay
 
-### Phase 7A.8: VM Peer Productionization
+### Phase 8.8: VM Peer Productionization
 
 Goal: decide whether browser-hosted Linux should remain a "console peer" feature or graduate into a real operator/runtime substrate.
 
@@ -1671,7 +1672,7 @@ Likely follow-up deliverables:
 - [x] resource budgeting (memory, CPU, storage) in the browser
 - [x] capability policy for VM control vs guest shell access
 
-### Phase 7A.9: Recommended Product Positioning
+### Phase 8.9: Recommended Product Positioning
 
 The current clean story is:
 
@@ -1682,7 +1683,7 @@ The current clean story is:
 
 That gives Clawser four legitimate remote-runtime modes without pretending they are interchangeable.
 
-### Phase 7A.10: Adjacent Features Worth Implementing
+### Phase 8.10: Adjacent Features Worth Implementing
 
 Goal: identify the features adjacent to the current `wsh` work that will materially improve operator usability, product coherence, and future extensibility.
 
@@ -2004,7 +2005,7 @@ Target outcome:
 - BrowserMesh helps find and route to peers
 - `wsh` still owns remote session behavior
 
-### Phase 7A.11: Missed Integration Opportunities And Required Convergences
+### Phase 8.11: Missed Integration Opportunities And Required Convergences
 
 Goal: capture the cross-subsystem integration opportunities that are easy to overlook because each subsystem already works in isolation, but that should be treated as required convergence work if Clawser is going to feel like one coherent operating environment.
 
@@ -2082,14 +2083,14 @@ Required convergence:
   - `@alice`
   - `@builder`
   - `@guestbox@relay.example.com`
-- [ ] preserve the distinction between:
+- [x] preserve the distinction between:
   - naming a peer identity
   - naming a specific endpoint
   - naming a service hosted on a peer
 Current status note:
 
 - [x] peer identities and hosted services now resolve through separate canonical lookup paths in the runtime registry, and ambiguous service-name lookups fail safe instead of silently binding
-- [ ] explicit endpoint naming remains separate and is not yet exposed as a first-class named-target surface
+- [x] explicit endpoint naming is now exposed as a first-class `endpoint://...` target surface, separate from peer and service naming
 - [x] define reverse-peer resolution precedence:
   - explicit fingerprint
   - exact short fingerprint
@@ -2278,7 +2279,7 @@ Required convergence:
   - browser peers for light tool execution
   - VM peers for isolated Linux workloads
 - [x] tie compute execution records into the same audit loop as interactive sessions
-- [ ] feed compute execution quality into longer-lived trust/reputation systems
+- [x] feed compute execution quality into longer-lived trust/reputation systems
 
 Verification criteria:
 
@@ -2299,7 +2300,7 @@ Why this matters:
 Required convergence:
 
 - [x] allow remote runtime descriptors to advertise hosted services
-- [ ] let the Virtual Server subsystem bind services to a peer/runtime target
+- [x] let the Virtual Server subsystem bind services to a peer/runtime target
 - [ ] distinguish between:
   - peer shell access
   - peer service browsing
@@ -2446,7 +2447,7 @@ Required convergence:
 
 - [x] one canonical peer picker
 - [x] one canonical runtime/session status model
-- [ ] one canonical audit trail for remote access
+- [x] one canonical audit trail for remote access
 - [x] one canonical capability display model
 - [x] one canonical route explanation model
 
@@ -2469,7 +2470,7 @@ They care whether:
 - they can trust what it exposes
 - they can tell what failed when it fails
 
-### Phase 7A.12: Explicit Non-Priorities
+### Phase 8.12: Explicit Non-Priorities
 
 Goal: state what should *not* absorb roadmap energy yet, even if it sounds adjacent.
 
@@ -2534,7 +2535,7 @@ Correct relationship:
 
 ---
 
-## Phase 8: BrowserMesh Integration
+## Phase 9: BrowserMesh Integration
 
 Turns Clawser into a first-class node in the BrowserMesh decentralized mesh — peer-to-peer connectivity, cryptographic identity, CRDT replication, resource sharing, and payment channels. All mesh features are opt-in via `config.mesh.enabled`. Clawser works fully standalone; BrowserMesh makes it distributed.
 
@@ -2544,7 +2545,7 @@ Turns Clawser into a first-class node in the BrowserMesh decentralized mesh — 
 **Identity encoding**: base64url(SHA-256(publicKey)) — 43 chars.
 **Trust model**: Float [0.0, 1.0] with multiplicative transitive decay.
 
-### Phase 8.1: Foundation (Core Identity + P2P Connectivity)
+### Phase 9.1: Foundation (Core Identity + P2P Connectivity)
 - [x] `clawser-mesh-identity.js` — Multi-identity Ed25519 management, DID format, IndexedDB/Vault persistence, AutoIdentityManager, IdentitySelector, cross-tab sync (~550 LOC, 85 tests)
 - [x] `clawser-mesh-keyring.js` — Key hierarchy & linking (device, delegate, org, alias, recovery), SignedKeyLink with Ed25519 signatures, verifyCryptoChain (~320 LOC, 87 tests)
 - [x] `clawser-mesh-wsh-bridge.js` — WshKeyStore↔MeshIdentityManager bridge: hex↔base64url conversion, import/export, bidirectional sync (~150 LOC, 21 tests)
@@ -2558,7 +2559,7 @@ Turns Clawser into a first-class node in the BrowserMesh decentralized mesh — 
 - [x] base64url migration in `web/packages/wsh/src/auth.mjs` (podId, fingerprintToPodId, podIdToFingerprint)
 - [x] Float trust migration in `web/clawser-tool-builder.js` (DynamicTool.trustLevel float [0.0, 1.0])
 
-### Phase 8.2: Access Control + Communication
+### Phase 9.2: Access Control + Communication
 - [x] `clawser-mesh-acl.js` — Remote access control: scope templates, roster management, invitation tokens, ACLEngine integration. Wraps BrowserMesh `remote-access.md` (~400 LOC, 53 tests)
 - [x] `clawser-mesh-naming.js` — Decentralized name resolution: @name, mesh:// URIs, TTL-based expiry, ownership transfer. Wraps BrowserMesh `name-resolution.md` (~350 LOC, 41 tests)
 - [x] `clawser-mesh-chat.js` — CRDT-backed chatrooms: message log, ORSet membership, presence, moderation. Wraps BrowserMesh `chat-protocol.md` (~500 LOC, 51 tests)
@@ -2566,43 +2567,43 @@ Turns Clawser into a first-class node in the BrowserMesh decentralized mesh — 
 - [x] `clawser-mesh-files.js` — Content-addressed file transfer: SHA-256 chunking, ChunkStore, TransferOffer/TransferState, progress tracking, resume support. Wraps BrowserMesh `file-transfer.md` (~450 LOC, 71 tests)
 - [x] `clawser-mesh-tools.js` — 7 BrowserTool subclasses exposing mesh stream/file operations to AI agent: stream open/close/list, file send/accept/list/cancel (~350 LOC, 34 tests)
 
-### Phase 8.3: Resources + Economics
+### Phase 9.3: Resources + Economics
 - [x] `clawser-mesh-resources.js` — Resource advertisement + discovery + job scheduling. Wraps BrowserMesh `resource-marketplace.md` (~500 LOC, 82 tests)
 - [x] `clawser-mesh-quotas.js` — Per-identity resource quotas with enforcement + overage policy. Wraps BrowserMesh `quota-metering.md` (~420 LOC, 75 tests)
 - [x] `clawser-mesh-payments.js` — Payment channels: credits, WebLN/Lightning, ecash/Cashu, escrow pattern. Wraps BrowserMesh `payment-channels.md` (~480 LOC, 78 tests)
 - [x] `clawser-mesh-audit.js` — Cryptographic audit trail: signed events, Merkle proofs, non-repudiation. Wraps BrowserMesh `audit-recorder.md` (~450 LOC, 71 tests)
 
-### Phase 8.4: Advanced Coordination
+### Phase 9.4: Advanced Coordination
 - [x] `clawser-mesh-consensus.js` — Voting & consensus: simple/super/unanimous/weighted majority, proposals, tallying. Wraps BrowserMesh `voting-protocol.md` (~520 LOC, 89 tests)
 - [x] `clawser-mesh-swarm.js` — Swarm coordination: leader election, yield control, task distribution (leader-follower, round-robin, load-balanced, redundant, pipeline). Wraps BrowserMesh `swarm-protocol.md` (~560 LOC, 93 tests)
 - [x] `clawser-mesh-migration.js` — Agent state migration between peers: checkpoint, transfer, verify, activate (~430 LOC, 68 tests)
-- [x] ~~`clawser-mesh-directory.js`~~ — Covered by `clawser-mesh-naming.js` (Phase 8.2)
+- [x] ~~`clawser-mesh-directory.js`~~ — Covered by `clawser-mesh-naming.js` (Phase 9.2)
 - [x] `clawser-mesh-gateway.js` — Gateway node [thin wrapper]. Wraps BrowserMesh `relay-service.md` (~380 LOC, 62 tests)
 
-### Phase 8.5: App Ecosystem
+### Phase 9.5: App Ecosystem
 - [x] `clawser-mesh-apps.js` — Decentralized app distribution: install/publish/verify via DHT, capability-scoped permissions. AppManifest, AppInstance state machine, AppRegistry, AppStore, AppRPC, AppEventBus (~667 LOC, 116 tests)
 
-### Phase 8.6: Naming & Addressing
-- [x] ~~`clawser-mesh-naming.js`~~ — Implemented in Phase 8.2: `@name`, `mesh://`, DID URIs, TTL expiry, ownership transfer
+### Phase 9.6: Naming & Addressing
+- [x] ~~`clawser-mesh-naming.js`~~ — Implemented in Phase 9.2: `@name`, `mesh://`, DID URIs, TTL expiry, ownership transfer
 - [x] `clawser-mesh-discovery.js` — mDNS/relay peer discovery + BroadcastChannel for same-origin. DiscoveryManager, BroadcastChannelStrategy, RelayStrategy, ManualStrategy, ServiceDirectory with `svc://` URIs (~605 LOC, 104 tests)
 - [x] Integrate with kernel ServiceRegistry for `svc://` scheme resolution (via ServiceDirectory)
-- [x] ~~Human-friendly naming layer~~ — Covered by `clawser-mesh-naming.js` (Phase 8.2)
+- [x] ~~Human-friendly naming layer~~ — Covered by `clawser-mesh-naming.js` (Phase 9.2)
 
-### Phase 8.7: Real Transports
+### Phase 9.7: Real Transports
 - [x] `clawser-mesh-websocket.js` — All transports unified: WebSocketTransport (reconnection, heartbeat, exponential backoff), WebRTCTransport (SDP offer/answer, ICE trickle), WebTransportTransport (HTTP/3 datagrams, bidirectional streams), NATTraversal (STUN/TURN), TransportFactory (browser detection, preference-ordered negotiation) (~1069 LOC, 77 tests)
 - [x] NAT traversal (STUN/TURN) integration via NATTraversal class
 - [x] TransportFactory handles relay/signaling bootstrap
 
-### Phase 8.8: Resource Description + Scheduling
+### Phase 9.8: Resource Description + Scheduling
 - [x] `clawser-mesh-scheduler.js` — ScheduledTask (7 statuses), TaskConstraints, TaskQueue (priority queue), MeshScheduler (4 policies: best-fit, first-fit, round-robin, load-balanced) (~87 tests)
 - [x] `clawser-mesh-marketplace.js` — ServiceListing (pricing: free/per-call/subscription/credits), ServiceReview, Marketplace (ownership enforcement, self-review prevention), MarketplaceIndex (inverted index) (~94 tests)
 
-### Phase 8.9: Advanced Capabilities
+### Phase 9.9: Advanced Capabilities
 - [x] `clawser-mesh-capabilities.js` — CapabilityToken (unforgeable, attenuate/revoke), CapabilityChain (verify monotonicity), CapabilityValidator (revokeTree cascade), WasmSandboxPolicy, WasmSandbox state machine, SandboxRegistry (~530 LOC, 72 tests)
 - [x] `clawser-mesh-delta-sync.js` — DeltaEntry, DeltaLog (append-only, auto-compaction), DeltaEncoder/Decoder (set/delete/merge ops), SyncSession, SyncCoordinator (multi-peer) (~480 LOC, 54 tests)
 - [x] `clawser-mesh-visualizations.js` — TrustGraphLayout (force-directed), TrustHeatmap, TopologySnapshot, TopologyLayout (circular/grid/hierarchical), TopologyDiff, VisualizationExporter (~520 LOC, 56 tests)
 
-### Phase 8.10: Pod Abstraction
+### Phase 9.10: Pod Abstraction
 - [x] `web/packages/pod/src/pod.mjs` — Pod base class: 6-phase boot sequence (identity, discovery, messaging), zero Clawser deps, Ed25519 identity via mesh-primitives, BroadcastChannel peer discovery, role finalization (~300 LOC, 16 tests)
 - [x] `web/packages/pod/src/detect-kind.mjs` — Classify execution context into 8 pod kinds: service-worker, shared-worker, worker, worklet, server, iframe, spawned, window (~55 LOC, 10 tests)
 - [x] `web/packages/pod/src/capabilities.mjs` — Detect messaging/network/storage/compute capabilities from globalThis (~65 LOC, 7 tests)
@@ -2616,7 +2617,7 @@ Turns Clawser into a first-class node in the BrowserMesh decentralized mesh — 
 - [x] `state.services.pod` slot added for Pod singleton tracking
 - [x] 6 test files, 55 tests total (pod, detect-kind, capabilities, discovery, messaging, embed)
 
-### Phase 8.11: Subsystem Wiring + Doc-Only Features
+### Phase 9.11: Subsystem Wiring + Doc-Only Features
 - [x] **Wire code collision fix** — Migrated 21 wire codes from 4 modules (orchestrator, marketplace, apps, consensus) to canonical MESH_TYPE registry in `constants.mjs` (range 0xD8–0xEC). All modules now import from registry, no hardcoded hex values remain
 - [x] **Full subsystem bootstrap** — Wired 11 deferred subsystems into app bootstrap: ResourceRegistry, Marketplace, QuotaManager, QuotaEnforcer, PaymentRouter, ConsensusManager, MeshRelayClient, MeshNameResolver, AppRegistry, AppStore, MeshOrchestrator. State slots, ClawserPod instantiation, lifecycle wiring, orchestrator tool registration, live ResourceRegistry data in mesh panel
 - [x] `web/clawser-mesh-sw-routing.js` — ServiceWorker mesh routing: MeshFetchRouter intercepts `mesh://` and `*.mesh.local` URLs, parseMeshRequest URL parser (~200 LOC, 17 tests)
@@ -2628,23 +2629,23 @@ Turns Clawser into a first-class node in the BrowserMesh decentralized mesh — 
 ### Scope Estimate
 | Category | Modules | Est. LOC | Est. Tests |
 |----------|---------|----------|------------|
-| Identity (Phase 8.1) | 3 | ~1,800 | ~100 |
-| Access Control (Phase 8.2) | 1 | ~750 | ~50 |
-| Transport (Phase 8.1) | 4 | ~2,600 | ~80 |
-| Data/State (Phase 8.1–8.2) | 3 | ~2,200 | ~90 |
-| Resources/Economics (Phase 8.3) | 4 | ~2,400 | ~70 |
-| Infrastructure (Phase 8.4) | 5 | ~1,500 | ~50 |
-| App Ecosystem (Phase 8.5) | 1 | ~600 | ~30 |
-| Naming & Addressing (Phase 8.6) | 2 | ~1,200 | ~60 |
-| Real Transports (Phase 8.7) | 3 | ~2,000 | ~80 |
-| Resource Scheduling (Phase 8.8) | 3 | ~1,800 | ~60 |
-| Advanced Capabilities (Phase 8.9) | — | ~1,500 | ~50 |
+| Identity (Phase 9.1) | 3 | ~1,800 | ~100 |
+| Access Control (Phase 9.2) | 1 | ~750 | ~50 |
+| Transport (Phase 9.1) | 4 | ~2,600 | ~80 |
+| Data/State (Phase 9.1–9.2) | 3 | ~2,200 | ~90 |
+| Resources/Economics (Phase 9.3) | 4 | ~2,400 | ~70 |
+| Infrastructure (Phase 9.4) | 5 | ~1,500 | ~50 |
+| App Ecosystem (Phase 9.5) | 1 | ~600 | ~30 |
+| Naming & Addressing (Phase 9.6) | 2 | ~1,200 | ~60 |
+| Real Transports (Phase 9.7) | 3 | ~2,000 | ~80 |
+| Resource Scheduling (Phase 9.8) | 3 | ~1,800 | ~60 |
+| Advanced Capabilities (Phase 9.9) | — | ~1,500 | ~50 |
 | Kernel Extensions | — | ~300 | ~30 |
 | **Total** | **30 new + 8 ext** | **~18,500–22,000** | **~710** |
 
 ---
 
-## Phase 9: Public BrowserMesh Package Surface (Future)
+## Phase 10: Public BrowserMesh Package Surface (Future)
 
 Priority: Complete the documented `@browsermesh/*` package ecosystem. The mesh runtime works internally (30+ modules, 3,700+ tests) but the public API surface promised in documentation does not exist as shippable packages.
 
@@ -2667,25 +2668,25 @@ Priority: Complete the documented `@browsermesh/*` package ecosystem. The mesh r
 - `@browsermesh/admission`
 - `@browsermesh/cli`
 
-### Phase 9.1: Freeze the BrowserMesh Contract
+### Phase 10.1: Freeze the BrowserMesh Contract
 - [ ] Choose canonical package map — promote existing substrate into `@browsermesh/runtime`, `@browsermesh/client`, `@browsermesh/server`; keep `mesh-primitives` as internal shared package
 - [ ] Define canonical runtime entrypoints: `installPodRuntime()`, `createRuntime()`, `createClient()`, `createServer()`
 - [ ] Mark each spec as: implemented, partial, doc-only, or obsolete
 - [ ] Resolve documentation inconsistencies (ARCHITECTURE-AUDIT.md vs ROADMAP.md on BrowserMesh status)
 
-### Phase 9.2: Consolidate the Runtime
+### Phase 10.2: Consolidate the Runtime
 - [ ] Extract or alias `web/packages/pod` into `@browsermesh/runtime`
 - [ ] Wrap `Pod` with documented runtime API surface
 - [ ] Add client/server wrappers around existing transport stack
 - [ ] Provide missing documented entrypoints so `installPodRuntime(...)` examples actually run
 - [ ] Back `docs/browsermesh/specs/reference/client-api.md` with real code
 
-### Phase 9.3: Align Specs to Code
+### Phase 10.3: Align Specs to Code
 - [ ] Add or update formal specs for all implemented modules (identity keyring, trust graph, resource marketplace, payment channels, quota metering, voting protocol, swarm protocol, app distribution, audit recorder, relay service)
 - [ ] Update spec index and dependency graph
 - [ ] Add implementation-status sections to specs with shipping code
 
-### Phase 9.4: Build Missing Package Layers
+### Phase 10.4: Build Missing Package Layers
 - [ ] `@browsermesh/storage` — Distributed storage abstraction (reuse OPFS, CRDT sync)
 - [ ] `@browsermesh/compute` — Compute routing (reuse `clawser-mesh-resources.js`, `clawser-mesh-scheduler.js`)
 - [ ] `@browsermesh/manifest` — App manifest validation and packaging
@@ -2693,7 +2694,7 @@ Priority: Complete the documented `@browsermesh/*` package ecosystem. The mesh r
 - [ ] `@browsermesh/admission` — Admission control and capability enforcement
 - [ ] `@browsermesh/cli` — CLI tooling for mesh operations (reuse `wsh` for bridge/remote transport)
 
-### Phase 9.5: End-to-End and Interop Testing
+### Phase 10.5: End-to-End and Interop Testing
 - [ ] Multi-tab discovery test
 - [ ] Service advertisement and lookup across real runtime instances
 - [ ] Stream open/data/close across pods

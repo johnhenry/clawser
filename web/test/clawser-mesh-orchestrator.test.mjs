@@ -576,6 +576,7 @@ describe('MeshOrchestrator', () => {
   it('runComputeTask auto-selects broker-backed runtime peers', async () => {
     const calls = []
     const records = []
+    const trustUpdates = []
     const registryOrch = makeOrchestrator({
       peerNode: makePeerNode({
         exec: undefined,
@@ -603,6 +604,11 @@ describe('MeshOrchestrator', () => {
           records.push({ operation, data })
         },
       },
+      peerRegistry: {
+        recordObservedTrust(fingerprint, level) {
+          trustUpdates.push({ fingerprint, level })
+        },
+      },
     })
 
     const result = await registryOrch.runComputeTask({ command: 'node job.mjs' })
@@ -614,6 +620,7 @@ describe('MeshOrchestrator', () => {
     assert.equal(calls[0].opts.intent, 'automation')
     assert.equal(records[0].operation, 'remote_compute_dispatched')
     assert.equal(records[1].operation, 'remote_compute_completed')
+    assert.deepEqual(trustUpdates, [{ fingerprint: 'relay-peer', level: 1 }])
   })
 
   it('selectComputeTarget can prefer VM runtimes when requested', () => {

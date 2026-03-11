@@ -318,12 +318,24 @@ export class RemoteRuntimePolicyAdapter {
       successRate: total > 0 ? successCount / total : null,
       denials,
     })
+    const fingerprint = descriptor?.identity?.fingerprint
+    if (fingerprint && this.#peerRegistry?.recordObservedTrust) {
+      this.#peerRegistry.recordObservedTrust(
+        fingerprint,
+        total > 0 ? successCount / total : 0,
+      )
+    }
   }
 
   #trustLevelFor(descriptor) {
     const fingerprint = descriptor?.identity?.fingerprint
-    if (this.#peerRegistry && fingerprint && this.#peerRegistry.getTrust) {
-      return this.#peerRegistry.getTrust(fingerprint)
+    if (this.#peerRegistry && fingerprint) {
+      if (this.#peerRegistry.getReputation) {
+        return this.#peerRegistry.getReputation(fingerprint)
+      }
+      if (this.#peerRegistry.getTrust) {
+        return this.#peerRegistry.getTrust(fingerprint)
+      }
     }
     if (Number.isFinite(descriptor?.metadata?.trustLevel)) {
       return descriptor.metadata.trustLevel

@@ -37,6 +37,8 @@ export class PeerRegistry {
 
   /** @type {Function} */
   #onLog
+  /** @type {Map<string, number>} */
+  #observedTrust = new Map()
 
   /**
    * @param {object} opts
@@ -252,6 +254,45 @@ export class PeerRegistry {
   }
 
   /**
+   * Record a runtime-observed trust/reputation signal without overwriting
+   * the operator's explicit trust graph input.
+   *
+   * @param {string} pubKey
+   * @param {number} level
+   * @returns {number}
+   */
+  recordObservedTrust(pubKey, level) {
+    const clamped = Math.max(0, Math.min(1, Number(level) || 0))
+    this.#observedTrust.set(pubKey, clamped)
+    this.#onLog(3, `PeerRegistry: observed trust ${clamped} for ${pubKey}`)
+    return clamped
+  }
+
+  /**
+   * @param {string} pubKey
+   * @returns {number}
+   */
+  getObservedTrust(pubKey) {
+    return this.#observedTrust.get(pubKey) ?? 0
+  }
+
+  /**
+   * Combined reputation score used for route ranking. Explicit trust remains
+   * authoritative, with observed runtime quality blended in as a secondary
+   * signal.
+   *
+   * @param {string} pubKey
+   * @returns {number}
+   */
+  getReputation(pubKey) {
+    const explicit = this.getTrust(pubKey)
+    const observed = this.getObservedTrust(pubKey)
+    return explicit > 0
+      ? Math.max(0, Math.min(1, explicit * 0.7 + observed * 0.3))
+      : observed
+  }
+
+  /**
    * Check whether a peer is trusted, optionally within a scope.
    *
    * @param {string} pubKey
@@ -340,6 +381,7 @@ export class PeerRegistry {
       localPodId: this.#localPodId,
       peers: this.#peerManager.toJSON(),
       trust: this.#trustGraph.toJSON(),
+      observedTrust: Object.fromEntries(this.#observedTrust),
       acl: this.#acl.toJSON(),
     }
   }
@@ -365,12 +407,16 @@ export class PeerRegistry {
     const trustGraph = Trust ? Trust.fromJSON(data.trust) : undefined
     const acl = ACL ? ACL.fromJSON(data.acl) : undefined
 
-    return new PeerRegistry({
+    const registry = new PeerRegistry({
       localPodId: data.localPodId,
       peerManager,
       trustGraph,
       acl,
     })
+    for (const [pubKey, level] of Object.entries(data.observedTrust || {})) {
+      registry.#observedTrust.set(pubKey, level)
+    }
+    return registry
   }
 
   // ── Internal helpers ────────────────────────────────────────────────

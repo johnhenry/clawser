@@ -1,8 +1,8 @@
-# Phase 7A Remote Runtime Program
+# Phase 8 Remote Runtime Program (Formerly Phase 7A)
 
 ## Summary
 
-Implement the remaining **Phase 7A** roadmap only. **Phase 9 packageization is explicitly out of scope.**  
+Implement the remaining **Phase 8** roadmap only. **Phase 10 packageization is explicitly out of scope.**
 When execution starts, first write this plan verbatim to `docs/PHASE-7A-IMPLEMENTATION-PLAN.md`, then implement it in order.
 
 Chosen defaults:
@@ -36,7 +36,7 @@ As of **March 11, 2026**, implementation is in progress with the following phase
 
 Current interpretation:
 
-- `[x]` means the phase exit gate is substantially met for the current Phase 7A scope.
+- `[x]` means the phase exit gate is substantially met for the current Phase 8 scope.
 - `[~]` means major implementation is present, but at least one exit-gate item is still incomplete.
 - `[ ]` means the phase has not yet reached implementation-ready completion.
 

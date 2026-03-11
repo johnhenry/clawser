@@ -82,6 +82,8 @@ describe('clawser-server.js exports', async () => {
   it('exports SSEChannel class', () => assertExport(mod, 'SSEChannel', 'class'));
   it('exports getServerManager function', () => assertExport(mod, 'getServerManager', 'function'));
   it('exports initServerManager function', () => assertExport(mod, 'initServerManager', 'function'));
+  it('exports setServerRuntimeServiceResolver function', () => assertExport(mod, 'setServerRuntimeServiceResolver', 'function'));
+  it('exports resolveRuntimeProxyTarget function', () => assertExport(mod, 'resolveRuntimeProxyTarget', 'function'));
   it('ServerManager has static createSkillHandler', () => {
     assert.equal(typeof mod.ServerManager.createSkillHandler, 'function');
   });

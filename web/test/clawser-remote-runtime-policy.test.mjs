@@ -292,4 +292,36 @@ describe('RemoteRuntimePolicyAdapter', () => {
 
     assert.match(ranked[0].policy.reasons.join(','), /quota-blocked:jobsPerHour/)
   })
+
+  it('records observed runtime quality back into peer reputation', () => {
+    const peerRegistry = {
+      recorded: [],
+      checkAccess() {
+        return { allowed: true }
+      },
+      recordObservedTrust(fingerprint, level) {
+        this.recorded.push({ fingerprint, level })
+      },
+      getReputation() {
+        return 0.6
+      },
+    }
+    const adapter = new RemoteRuntimePolicyAdapter({ peerRegistry })
+    const descriptor = createRemotePeerDescriptor({
+      identity: createRemoteIdentity({ canonicalId: 'peer-5', fingerprint: 'peer-5' }),
+      username: 'runtime',
+      peerType: 'host',
+      shellBackend: 'pty',
+      capabilities: ['shell'],
+      reachability: [],
+      sources: ['wsh-relay'],
+    })
+
+    adapter.observeOutcome(descriptor, null, { status: 'success' })
+    adapter.observeOutcome(descriptor, null, { status: 'failure' })
+
+    assert.equal(peerRegistry.recorded.length, 2)
+    assert.equal(peerRegistry.recorded[0].fingerprint, 'peer-5')
+    assert.equal(typeof peerRegistry.recorded[0].level, 'number')
+  })
 })

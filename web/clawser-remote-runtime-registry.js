@@ -214,6 +214,7 @@ export class RemoteRuntimeRegistry {
   #descriptors = new Map()
   #aliases = new Map()
   #serviceAliases = new Map()
+  #endpointAliases = new Map()
   #auditRecorder
 
   constructor({ auditRecorder = null } = {}) {
@@ -428,6 +429,30 @@ export class RemoteRuntimeRegistry {
     return descriptorServices(descriptor).find((service) => service.name === refs[0].serviceName) || null
   }
 
+  resolveEndpoint(selector) {
+    if (!selector || typeof selector !== 'string') return null
+    const key = selector.startsWith('endpoint://') ? selector : `endpoint://${selector}`
+    const refs = [
+      ...(this.#endpointAliases.get(selector) || []),
+      ...(this.#endpointAliases.get(key) || []),
+    ].filter((ref, index, all) => {
+      return all.findIndex((candidate) => (
+        candidate.canonicalId === ref.canonicalId
+        && candidate.endpoint === ref.endpoint
+        && candidate.routeKind === ref.routeKind
+      )) === index
+    })
+    if (refs.length !== 1) return null
+    return { ...refs[0] }
+  }
+
+  resolvePeerService(selector, serviceName) {
+    if (!selector || !serviceName) return null
+    const descriptor = this.resolvePeer(selector)
+    if (!descriptor) return null
+    return descriptorServices(descriptor).find((service) => service.name === serviceName) || null
+  }
+
   recordRouteOutcome(selector, route, {
     status = 'success',
     reason = null,
@@ -576,6 +601,7 @@ export class RemoteRuntimeRegistry {
     if (descriptor.identity.podId) {
       this.#addAlias(descriptor.identity.podId, descriptor.identity.canonicalId)
     }
+    this.#indexEndpoints(descriptor)
     this.#indexServices(descriptor)
   }
 
@@ -596,6 +622,39 @@ export class RemoteRuntimeRegistry {
             canonicalId: descriptor.identity.canonicalId,
             serviceName: service.name,
           })
+        }
+      }
+    }
+  }
+
+  #indexEndpoints(descriptor) {
+    const names = unique([
+      descriptor?.metadata?.name,
+      descriptor?.username,
+      descriptor?.identity?.canonicalId,
+      ...(descriptor?.identity?.aliases || []),
+    ])
+    for (const route of descriptor?.reachability || []) {
+      const endpoint = route.endpoint
+        || (route.relayHost ? `https://${route.relayHost}:${route.relayPort || 4422}` : null)
+      if (!endpoint) continue
+      const ref = {
+        canonicalId: descriptor.identity.canonicalId,
+        endpoint,
+        routeKind: route.kind || null,
+      }
+      for (const name of names.filter(Boolean)) {
+        const key = name.startsWith('endpoint://') ? name : `endpoint://${name.replace(/^@/, '')}`
+        if (!this.#endpointAliases.has(key)) {
+          this.#endpointAliases.set(key, [])
+        }
+        const refs = this.#endpointAliases.get(key)
+        if (!refs.some((candidate) => (
+          candidate.canonicalId === ref.canonicalId
+          && candidate.endpoint === ref.endpoint
+          && candidate.routeKind === ref.routeKind
+        ))) {
+          refs.push(ref)
         }
       }
     }

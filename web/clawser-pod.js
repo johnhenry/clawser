@@ -279,6 +279,7 @@ export class ClawserPod extends Pod {
       remoteSessionBroker: this.#remoteSessionBroker,
       resourceRegistry: this.#resourceRegistry,
       auditRecorder: this.#remoteAuditRecorder,
+      peerRegistry: this.#registry,
     })
 
     return {

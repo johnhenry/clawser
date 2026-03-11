@@ -55,7 +55,7 @@ import { UndoTool, UndoStatusTool, RedoTool } from './clawser-undo.js';
 import { IntentClassifyTool, IntentOverrideTool } from './clawser-intent.js';
 import { HeartbeatStatusTool, HeartbeatRunTool } from './clawser-heartbeat.js';
 import { registerExtensionTools, initExtensionBadge } from './clawser-extension-tools.js';
-import { initServerManager, getServerManager } from './clawser-server.js';
+import { initServerManager, getServerManager, setServerRuntimeServiceResolver } from './clawser-server.js';
 import { registerServerTools } from './clawser-server-tools.js';
 import { bindServerManagerServices } from './clawser-server-services.js';
 import { renderServerList, initServerPanel } from './clawser-ui-servers.js';
@@ -136,9 +136,75 @@ function getRemoteRuntimePanelState() {
       filterCapability: '',
       filterPeerType: '',
       telemetry: null,
+      auditEntries: [],
     };
   }
   return state.ui.remoteRuntimePanel;
+}
+
+function currentRemoteAuditEntries(limit = 20) {
+  const entries = state.auditChain?.slice?.(-Math.max(limit * 4, 40)) || [];
+  const activeSelector = getRemoteRuntimePanelState().activeSelector;
+  return entries
+    .filter((entry) => entry?.operation?.startsWith?.('remote_'))
+    .filter((entry) => {
+      if (!activeSelector) return true;
+      const selector = entry?.data?.selector || entry?.data?.canonicalId || entry?.data?.podId || null;
+      return !selector || selector === activeSelector;
+    })
+    .slice(-limit)
+    .reverse()
+    .map((entry) => ({
+      sequence: entry.sequence,
+      timestamp: entry.timestamp,
+      operation: entry.operation,
+      actor: entry.data?.actor || entry.authorPodId || 'system',
+      selector: entry.data?.selector || entry.data?.canonicalId || entry.data?.podId || null,
+      layer: entry.data?.layer || entry.data?.failure?.layer || entry.data?.route?.kind || null,
+      outcome: entry.data?.outcome || entry.data?.status || null,
+      summary: entry.data?.reason
+        || entry.data?.error
+        || entry.data?.command
+        || entry.data?.path
+        || entry.data?.toolName
+        || entry.data?.serviceName
+        || null,
+    }));
+}
+
+function configureServerRuntimeResolver() {
+  setServerRuntimeServiceResolver(async ({ kind, selector = null, serviceName = null }) => {
+    const registry = state.remoteRuntimeRegistry;
+    if (!registry) {
+      throw new Error('Remote runtime registry is not available');
+    }
+
+    if (kind === 'service') {
+      const service = registry.resolveService(serviceName);
+      if (!service) {
+        throw new Error(`Unknown runtime service: ${serviceName}`);
+      }
+      return service;
+    }
+
+    if (kind === 'runtime-service') {
+      const service = registry.resolvePeerService(selector, serviceName);
+      if (!service) {
+        throw new Error(`Unknown runtime service: ${selector}/${serviceName}`);
+      }
+      return service;
+    }
+
+    if (kind === 'endpoint') {
+      const endpoint = registry.resolveEndpoint(serviceName);
+      if (!endpoint) {
+        throw new Error(`Unknown runtime endpoint: ${serviceName}`);
+      }
+      return endpoint;
+    }
+
+    throw new Error(`Unsupported runtime service lookup kind: ${kind}`);
+  });
 }
 
 function localExposureStatus() {
@@ -372,6 +438,7 @@ function renderRemoteRuntimeWorkspacePanel() {
   const panelState = getRemoteRuntimePanelState();
   panelState.localExposure = localExposureStatus();
   panelState.telemetry = state.remoteSessionBroker?.telemetrySnapshot?.() || null;
+  panelState.auditEntries = currentRemoteAuditEntries();
   container.innerHTML = renderRemoteRuntimePanel(state.remoteRuntimeRegistry, panelState);
   initRemoteRuntimePanelListeners({
     onOpenView: (selector, view) => {
@@ -643,6 +710,7 @@ async function initMeshSubsystem() {
     state.orchestrator = result.orchestrator;
     state.remoteRuntimeRegistry = result.remoteRuntimeRegistry || state.pod.remoteRuntimeRegistry;
     state.remoteSessionBroker = result.remoteSessionBroker || state.pod.remoteSessionBroker;
+    configureServerRuntimeResolver();
     state.remoteMountManager = new RemoteMountManager({
       mountableFs: state.workspaceFs,
       runtimeRegistry: state.remoteRuntimeRegistry,
@@ -1295,6 +1363,7 @@ export async function initWorkspace(wsId, convId) {
     // Virtual Server subsystem (Phase 7) — 8 tools
     try {
       await initServerManager();
+      configureServerRuntimeResolver();
       registerServerTools(state.browserTools, () => getActiveWorkspaceId());
     } catch (e) { console.warn('[clawser] Server manager init failed:', e); }
 

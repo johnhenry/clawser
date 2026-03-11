@@ -93,6 +93,17 @@ function deploymentSupportSummary(peer) {
     .join(', ') || 'none'
 }
 
+function auditEntrySummary(entry) {
+  const pieces = [
+    entry?.operation,
+    entry?.selector ? `target:${entry.selector}` : null,
+    entry?.layer ? `via:${entry.layer}` : null,
+    entry?.outcome ? `outcome:${entry.outcome}` : null,
+    entry?.summary || null,
+  ].filter(Boolean)
+  return pieces.join(' | ')
+}
+
 // ── Remote Terminal Panel ───────────────────────────────────────
 
 /**
@@ -466,6 +477,7 @@ export function renderRemoteRuntimePanel(runtimeRegistry, {
   filterCapability = '',
   filterPeerType = '',
   telemetry = null,
+  auditEntries = [],
 } = {}) {
   const query = runtimeRegistry?.query?.({
     text: filterText,
@@ -575,6 +587,32 @@ export function renderRemoteRuntimePanel(runtimeRegistry, {
       </div>`
     : '';
 
+  const auditHtml = Array.isArray(auditEntries) && auditEntries.length
+    ? `
+      <div class="rc-panel rc-runtime-audit">
+        <div class="rc-panel-header">
+          <span class="rc-panel-title">Remote Audit</span>
+          <span class="rc-panel-count">${auditEntries.length} event${auditEntries.length === 1 ? '' : 's'}</span>
+        </div>
+        <div class="rc-runtime-list-body">
+          ${auditEntries.map((entry) => `
+            <div class="rc-runtime-row">
+              <div class="rc-runtime-summary">
+                <div class="rc-runtime-summary-main">
+                  <span class="rc-runtime-name">${esc(entry.operation || 'remote_event')}</span>
+                  <span class="rc-svc-type-badge">${esc(entry.actor || 'system')}</span>
+                </div>
+                <div class="rc-runtime-summary-meta">
+                  <span class="rc-runtime-id">#${esc(String(entry.sequence ?? '--'))}</span>
+                  <span class="rc-runtime-last-seen">${esc(fmtTime(entry.timestamp) || '--')}</span>
+                </div>
+              </div>
+              <div class="rc-runtime-session-hints">${esc(auditEntrySummary(entry) || 'no details')}</div>
+            </div>`).join('')}
+        </div>
+      </div>`
+    : ''
+
   return `
     <div class="rc-runtime-browser">
       <div class="rc-runtime-column">
@@ -606,6 +644,7 @@ export function renderRemoteRuntimePanel(runtimeRegistry, {
             </div>` : ''}
           <div class="rc-runtime-list-body">${peerRows}</div>
         </div>
+        ${auditHtml}
       </div>
       <div class="rc-runtime-detail-wrap">
         ${routeExplanation ? `

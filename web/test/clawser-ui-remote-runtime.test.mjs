@@ -204,6 +204,32 @@ describe('renderRemoteRuntimePanel', () => {
     assert.match(html, /Denials: 2/);
     assert.match(html, /All peer types/);
   });
+
+  it('renders canonical remote audit entries', () => {
+    const html = renderRemoteRuntimePanel(makeRegistry(), {
+      activeSelector: 'host:alpha',
+      auditEntries: [
+        {
+          sequence: 41,
+          timestamp: Date.now(),
+          operation: 'remote_session_opened',
+          actor: 'operator',
+          selector: 'host:alpha',
+          layer: 'direct-host',
+          outcome: 'success',
+          summary: 'pwd',
+        },
+      ],
+    });
+
+    assert.match(html, /Remote Audit/);
+    assert.match(html, /remote_session_opened/);
+    assert.match(html, /operator/);
+    assert.match(html, /target:host:alpha/);
+    assert.match(html, /via:direct-host/);
+    assert.match(html, /outcome:success/);
+    assert.match(html, /pwd/);
+  });
 });
 
 describe('supportHintsForRuntime', () => {

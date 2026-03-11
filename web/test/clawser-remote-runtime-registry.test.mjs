@@ -213,6 +213,45 @@ describe('RemoteRuntimeRegistry', () => {
     assert.equal(registry.resolveService('shell-api')?.address, 'mesh://alpha/shell-api')
   })
 
+  it('resolves endpoint aliases independently from peer and service names', () => {
+    const registry = new RemoteRuntimeRegistry()
+    registry.ingestDescriptor(createRemotePeerDescriptor({
+      identity: createRemoteIdentity({
+        canonicalId: 'host:alpha',
+        fingerprint: 'alpha-fingerprint',
+        aliases: ['@alpha'],
+      }),
+      username: 'alpha',
+      peerType: 'host',
+      shellBackend: 'pty',
+      capabilities: ['shell'],
+      reachability: [
+        createReachabilityDescriptor({
+          kind: 'direct-host',
+          source: 'direct-bookmark',
+          endpoint: 'https://alpha.example.test:4422',
+        }),
+      ],
+      metadata: {
+        name: 'alpha',
+        services: ['shell-api'],
+        serviceDetails: {
+          'shell-api': {
+            type: 'terminal',
+            address: 'mesh://alpha/shell-api',
+          },
+        },
+      },
+    }))
+
+    const endpoint = registry.resolveEndpoint('alpha')
+
+    assert.equal(endpoint.endpoint, 'https://alpha.example.test:4422')
+    assert.equal(endpoint.routeKind, 'direct-host')
+    assert.equal(registry.resolvePeer('@alpha').identity.canonicalId, 'host:alpha')
+    assert.equal(registry.resolveService('shell-api')?.address, 'mesh://alpha/shell-api')
+  })
+
   it('provides aggregate telemetry snapshots for peer health and relay usage', () => {
     const registry = new RemoteRuntimeRegistry()
     registry.ingestDescriptor(createRemotePeerDescriptor({

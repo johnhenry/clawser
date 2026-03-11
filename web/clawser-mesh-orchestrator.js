@@ -239,6 +239,8 @@ export class MeshOrchestrator {
   #resourceRegistry
   /** @type {object|null} */
   #auditRecorder
+  /** @type {object|null} */
+  #peerRegistry
   /** @type {Map<string, object>} podId -> peer info */
   #knownPeers = new Map()
   /** @type {Map<string, object>} name -> { podId, port } */
@@ -262,9 +264,10 @@ export class MeshOrchestrator {
    * @param {object} [opts.remoteSessionBroker] - RemoteSessionBroker or null
    * @param {object} [opts.resourceRegistry] - ResourceRegistry or null
    * @param {object} [opts.auditRecorder]     - RemoteRuntimeAuditRecorder or null
+   * @param {object} [opts.peerRegistry]      - PeerRegistry or null
    * @param {Function} [opts.onLog]           - Logging callback
    */
-  constructor({ peerNode, serviceAdvertiser, serviceBrowser, router, runtimeRegistry, remoteSessionBroker, resourceRegistry, auditRecorder, onLog }) {
+  constructor({ peerNode, serviceAdvertiser, serviceBrowser, router, runtimeRegistry, remoteSessionBroker, resourceRegistry, auditRecorder, peerRegistry, onLog }) {
     if (!peerNode) {
       throw new Error('peerNode is required')
     }
@@ -276,6 +279,7 @@ export class MeshOrchestrator {
     this.#remoteSessionBroker = remoteSessionBroker ?? null
     this.#resourceRegistry = resourceRegistry ?? null
     this.#auditRecorder = auditRecorder ?? null
+    this.#peerRegistry = peerRegistry ?? null
     this.#onLog = onLog ?? null
   }
 
@@ -297,6 +301,12 @@ export class MeshOrchestrator {
 
   async #recordAudit(operation, data = {}) {
     await this.#auditRecorder?.record?.(operation, data)
+  }
+
+  #recordComputeReputation(descriptor, score) {
+    const fingerprint = descriptor?.identity?.fingerprint || null
+    if (!fingerprint || !this.#peerRegistry?.recordObservedTrust) return
+    this.#peerRegistry.recordObservedTrust(fingerprint, score)
   }
 
   // -- Pod queries ----------------------------------------------------------
@@ -653,22 +663,28 @@ export class MeshOrchestrator {
     })
     const runtime = this.#resolveRuntime(podId)
     if (runtime && this.#remoteSessionBroker) {
-      const result = await this.#remoteSessionBroker.openSession(podId, {
-        intent: 'automation',
-        command,
-        timeout: timeoutMs || selection.request?.constraints?.timeoutMs || 30_000,
-      })
-      await this.#recordAudit('remote_compute_completed', {
-        actor: 'automation',
-        podId,
-        source: selection.source,
-        exitCode: result.exitCode ?? 0,
-      })
-      return {
-        podId,
-        output: result.output || '',
-        exitCode: result.exitCode ?? 0,
-        source: selection.source,
+      try {
+        const result = await this.#remoteSessionBroker.openSession(podId, {
+          intent: 'automation',
+          command,
+          timeout: timeoutMs || selection.request?.constraints?.timeoutMs || 30_000,
+        })
+        this.#recordComputeReputation(runtime, (result.exitCode ?? 0) === 0 ? 1 : 0.7)
+        await this.#recordAudit('remote_compute_completed', {
+          actor: 'automation',
+          podId,
+          source: selection.source,
+          exitCode: result.exitCode ?? 0,
+        })
+        return {
+          podId,
+          output: result.output || '',
+          exitCode: result.exitCode ?? 0,
+          source: selection.source,
+        }
+      } catch (error) {
+        this.#recordComputeReputation(runtime, 0)
+        throw error
       }
     }
 

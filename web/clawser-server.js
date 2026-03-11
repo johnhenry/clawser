@@ -46,6 +46,95 @@ function guessMime(filename) {
   return MIME_TYPES[ext] || 'application/octet-stream';
 }
 
+let _runtimeServiceResolver = null;
+
+export function setServerRuntimeServiceResolver(resolver) {
+  _runtimeServiceResolver = typeof resolver === 'function' ? resolver : null;
+}
+
+function appendProxyPath(baseAddress, targetPath) {
+  const base = new URL(baseAddress);
+  const incoming = new URL(targetPath || '/', 'http://clawser.local');
+  const basePath = base.pathname.replace(/\/$/, '');
+  const incomingPath = incoming.pathname || '/';
+  base.pathname = `${basePath}${incomingPath === '/' ? '' : incomingPath}`;
+  base.search = incoming.search || '';
+  return base.toString();
+}
+
+async function resolveRuntimeProxyTarget(proxyTarget, targetPath, resolver = _runtimeServiceResolver) {
+  if (typeof proxyTarget !== 'string' || !proxyTarget.trim()) {
+    throw new Error('Proxy handler missing proxyTarget');
+  }
+
+  if (/^https?:\/\//i.test(proxyTarget)) {
+    return appendProxyPath(proxyTarget, targetPath);
+  }
+
+  if (proxyTarget.startsWith('svc://')) {
+    if (typeof resolver !== 'function') {
+      throw new Error('No runtime service resolver is configured');
+    }
+    const serviceName = proxyTarget.slice('svc://'.length).trim();
+    if (!serviceName) {
+      throw new Error('Service proxy target must include a service name');
+    }
+    const resolved = await resolver({
+      kind: 'service',
+      serviceName,
+      proxyTarget,
+    });
+    if (!resolved?.address || !/^https?:\/\//i.test(resolved.address)) {
+      throw new Error(`Service "${serviceName}" is not bound to an HTTP endpoint`);
+    }
+    return appendProxyPath(resolved.address, targetPath);
+  }
+
+  if (proxyTarget.startsWith('runtime://')) {
+    if (typeof resolver !== 'function') {
+      throw new Error('No runtime service resolver is configured');
+    }
+    const spec = proxyTarget.slice('runtime://'.length).trim();
+    const slashIndex = spec.indexOf('/');
+    const selector = slashIndex === -1 ? spec : spec.slice(0, slashIndex);
+    const serviceName = slashIndex === -1 ? '' : spec.slice(slashIndex + 1);
+    if (!selector || !serviceName) {
+      throw new Error('Runtime proxy target must be runtime://<selector>/<service>');
+    }
+    const resolved = await resolver({
+      kind: 'runtime-service',
+      selector,
+      serviceName,
+      proxyTarget,
+    });
+    if (!resolved?.address || !/^https?:\/\//i.test(resolved.address)) {
+      throw new Error(`Runtime service "${selector}/${serviceName}" is not bound to an HTTP endpoint`);
+    }
+    return appendProxyPath(resolved.address, targetPath);
+  }
+
+  if (proxyTarget.startsWith('endpoint://')) {
+    if (typeof resolver !== 'function') {
+      throw new Error('No runtime service resolver is configured');
+    }
+    const endpointName = proxyTarget.slice('endpoint://'.length).trim();
+    if (!endpointName) {
+      throw new Error('Endpoint proxy target must include an endpoint name');
+    }
+    const resolved = await resolver({
+      kind: 'endpoint',
+      endpointName,
+      proxyTarget,
+    });
+    if (!resolved?.endpoint || !/^https?:\/\//i.test(resolved.endpoint)) {
+      throw new Error(`Endpoint "${endpointName}" is not bound to an HTTP endpoint`);
+    }
+    return appendProxyPath(resolved.endpoint, targetPath);
+  }
+
+  throw new Error(`Unsupported proxy target: ${proxyTarget}`);
+}
+
 /**
  * Escape HTML special characters to prevent XSS.
  * NOTE: Intentionally local — this module is a headless server manager that
@@ -399,7 +488,7 @@ export class ServerManager {
       } catch { /* ignore bad rewrite rules */ }
     }
 
-    const targetUrl = handler.proxyTarget.replace(/\/$/, '') + targetPath;
+    const targetUrl = await resolveRuntimeProxyTarget(handler.proxyTarget, targetPath);
     const reqHeaders = new Headers(headers);
 
     if (handler.proxyHeaders) {
@@ -722,3 +811,5 @@ export async function initServerManager() {
   await mgr.init();
   return mgr;
 }
+
+export { resolveRuntimeProxyTarget };
