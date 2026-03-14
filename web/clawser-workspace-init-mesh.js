@@ -13,6 +13,7 @@ import { $, state } from './clawser-state.js';
 import { modal } from './clawser-modal.js';
 import { getActiveWorkspaceId } from './clawser-workspaces.js';
 import { isPanelRendered } from './clawser-router.js';
+import { renderMeshPanel, initMeshListeners } from './clawser-ui-mesh.js';
 import { addMsg } from './clawser-ui-chat.js';
 import { bridgePeerAgent } from './clawser-peer-agent.js';
 import { ChannelGateway } from './clawser-gateway.js';
@@ -460,6 +461,32 @@ export function renderRemoteRuntimeWorkspacePanel() {
   updatePeerBadge(state.peerNode);
 }
 
+/**
+ * Re-render the mesh dashboard panel if it is currently visible.
+ * Mirrors the render logic in buildLazyPanelConfig() but can be called
+ * reactively from peer lifecycle events without circular imports.
+ */
+export function refreshMeshWorkspacePanel() {
+  if (!isPanelRendered('mesh')) return;
+  const c = $('meshContainer');
+  if (!c) return;
+  const podId = state.peerNode?.podId || 'local';
+  const peerLabel = state.peerNode?.wallet?.getDefault()?.label || 'This Pod';
+  const peers = state.peerNode?.registry?.listPeers?.() || [];
+  const services = state.serviceDirectory?.listAll?.() || [];
+  c.innerHTML = renderMeshPanel({
+    localPod: { podId, label: peerLabel, uptime: 0 },
+    peers,
+    resources: (state.resourceRegistry?.listAll?.() || []).flatMap(d =>
+      Object.entries(d.resources || {}).filter(([,v]) => v > 0).map(([type, value]) =>
+        ({ podId: d.podId, type, used: value, capacity: value })
+      )
+    ),
+    services,
+  });
+  initMeshListeners();
+}
+
 function bindRemoteRuntimePanelEvents() {
   if (state.remoteSessionBroker && !state.remoteSessionBroker._remoteRuntimeUiBound) {
     state.remoteSessionBroker._remoteRuntimeUiBound = true;
@@ -600,7 +627,8 @@ export async function initMeshSubsystem() {
     }
 
     // Layer mesh networking on top of the pod
-    const result = await state.pod.initMesh();
+    const relayUrl = localStorage.getItem('clawser_signaling_url') || undefined
+    const result = await state.pod.initMesh({ relayUrl });
     state.peerNode = result.peerNode;
     state.swarmCoordinator = result.swarmCoordinator;
     state.discoveryManager = result.discoveryManager;
@@ -773,6 +801,9 @@ export async function initMeshSubsystem() {
         if (state.swarmCoordinator) {
           try { state.swarmCoordinator.join(peerId) } catch { /* non-fatal */ }
         }
+
+        // Re-render mesh panel to reflect new peer
+        refreshMeshWorkspacePanel()
       })
 
       state.peerNode.on('peer:disconnect', (peer) => {
@@ -794,6 +825,9 @@ export async function initMeshSubsystem() {
         if (state.swarmCoordinator) {
           try { state.swarmCoordinator.leave(peerId) } catch { /* non-fatal */ }
         }
+
+        // Re-render mesh panel to reflect peer departure
+        refreshMeshWorkspacePanel()
       })
     }
 

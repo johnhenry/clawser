@@ -79,9 +79,10 @@ export function renderMeshPanel(opts = {}) {
     topologyRows += '<div class="mesh-empty">No connected peers</div>'
   } else {
     for (const p of peers) {
+      const id = p.podId || p.fingerprint || ''
       topologyRows += `
-        <div class="mesh-pod-row" data-pod-id="${esc(p.podId)}">
-          <span class="mesh-pod-id">${esc(truncId(p.podId))}</span>
+        <div class="mesh-pod-row" data-pod-id="${esc(id)}">
+          <span class="mesh-pod-id">${esc(truncId(id))}</span>
           <span class="mesh-pod-label">${esc(p.label || '--')}</span>
           ${healthIndicator(p.latency)}
           <span class="mesh-pod-uptime">${fmtDuration(p.uptime)}</span>

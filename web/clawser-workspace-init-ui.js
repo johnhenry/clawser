@@ -17,8 +17,8 @@ import {
 import { renderServerList, initServerPanel } from './clawser-ui-servers.js';
 import { renderSwarmPanel, initSwarmListeners } from './clawser-ui-swarms.js';
 import { renderTransferPanel, initTransferListeners } from './clawser-ui-transfers.js';
-import { renderMeshPanel, initMeshListeners } from './clawser-ui-mesh.js';
 import { renderIdentityWallet, initIdentityWalletListeners, renderContactBook, initContactBookListeners, renderConnectionPanel, initConnectionListeners, renderAuditLog, initAuditLogListeners } from './clawser-ui-peers.js';
+import { refreshMeshWorkspacePanel } from './clawser-workspace-init-mesh.js';
 
 // ── Lazy Panel Rendering (Gap 11.1) ──────────────────────────────
 /**
@@ -121,25 +121,7 @@ export function buildLazyPanelConfig(renderRemotePanel) {
       c.innerHTML = renderTransferPanel({ active, history, localPodId: podId });
       initTransferListeners();
     },
-    mesh: () => {
-      const c = $('meshContainer');
-      if (!c) return;
-      const podId = state.peerNode?.podId || 'local';
-      const peerLabel = state.peerNode?.wallet?.getDefault()?.label || 'This Pod';
-      const peers = state.peerNode?.registry?.listPeers?.() || [];
-      const services = state.serviceDirectory?.listAll?.() || [];
-      c.innerHTML = renderMeshPanel({
-        localPod: { podId, label: peerLabel, uptime: 0 },
-        peers,
-        resources: (state.resourceRegistry?.listAll?.() || []).flatMap(d =>
-          Object.entries(d.resources || {}).filter(([,v]) => v > 0).map(([type, value]) =>
-            ({ podId: d.podId, type, used: value, capacity: value })
-          )
-        ),
-        services,
-      });
-      initMeshListeners();
-    },
+    mesh: () => refreshMeshWorkspacePanel(),
     peers: () => {
       const c = $('peersContainer');
       if (!c) return;

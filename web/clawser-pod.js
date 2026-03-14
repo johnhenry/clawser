@@ -8,8 +8,8 @@ import { MeshIdentityManager } from './clawser-mesh-identity.js'
 import { IdentityWallet } from './clawser-identity-wallet.js'
 import { PeerRegistry } from './clawser-peer-registry.js'
 import { PeerNode } from './clawser-peer-node.js'
-import { SwarmCoordinator } from './clawser-mesh-swarm.js'
-import { DiscoveryManager, DiscoveryRecord, RelayStrategy, ServiceDirectory } from './clawser-mesh-discovery.js'
+import { SwarmCoordinator, SwimMembership } from './clawser-mesh-swarm.js'
+import { DiscoveryManager, DiscoveryRecord, RelayStrategy, PexStrategy, ServiceDirectory } from './clawser-mesh-discovery.js'
 import { MeshTransportNegotiator } from './clawser-mesh-transport.js'
 import { AuditChain } from './clawser-mesh-audit.js'
 import { StreamMultiplexer } from './clawser-mesh-streams.js'
@@ -243,8 +243,12 @@ export class ClawserPod extends Pod {
     this.#peerNode = new PeerNode({ wallet: this.#wallet, registry: this.#registry })
     await this.#peerNode.boot({ label: 'default' })
 
-    // 5. SwarmCoordinator
-    this.#swarmCoordinator = new SwarmCoordinator(podId)
+    // 5. SwarmCoordinator — with SWIM membership protocol
+    const swim = new SwimMembership({
+      localId: podId,
+      sendFn: () => {}, // placeholder — wired to transport later
+    })
+    this.#swarmCoordinator = new SwarmCoordinator(podId, { swim })
 
     // 6. DiscoveryManager — peer discovery with TTL-based pruning
     const localRecord = new DiscoveryRecord({ podId, label: 'clawser' })
@@ -261,6 +265,10 @@ export class ClawserPod extends Pod {
         podId,
       }))
     }
+
+    // 6c. Add PEX discovery strategy for transitive peer exchange
+    const pexStrategy = new PexStrategy({ localId: podId })
+    this.#discoveryManager.addStrategy(pexStrategy)
 
     // 7. TransportNegotiator — tries adapters in preference order
     this.#transportNegotiator = new MeshTransportNegotiator()
@@ -591,6 +599,8 @@ export class ClawserPod extends Pod {
     return {
       peerNode: this.#peerNode,
       swarmCoordinator: this.#swarmCoordinator,
+      swim,
+      pexStrategy,
       discoveryManager: this.#discoveryManager,
       transportNegotiator: this.#transportNegotiator,
       auditChain: this.#auditChain,

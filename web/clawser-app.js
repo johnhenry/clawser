@@ -186,6 +186,17 @@ state.heartbeatRunner = new HeartbeatRunner({
 state.authProfileManager = new AuthProfileManager({ vault: state.vault });
 state.metricsCollector = new MetricsCollector();
 state.ringBufferLog = new RingBufferLog(1000);
+
+// Catch unhandled promise rejections globally (early, after ringBufferLog is ready)
+globalThis.addEventListener('unhandledrejection', (event) => {
+  const msg = event.reason?.message || String(event.reason)
+  console.error('[clawser] Unhandled rejection:', msg)
+  // Log to ring buffer if available
+  if (state?.ringBufferLog) {
+    state.ringBufferLog.push({ level: 'error', type: 'unhandled_rejection', message: msg, timestamp: Date.now() })
+  }
+});
+
 state.checkpointIDB = new CheckpointIndexedDB();
 state.daemonController = new DaemonController({
   getStateFn: () => state.agent?.getState(),
@@ -321,12 +332,15 @@ async function showVaultModal(vault) {
 
   return new Promise((resolve) => {
     const ac = new AbortController();
+    const form = modal.querySelector('form');
+    // Clean up any previous onsubmit handler to prevent listener accumulation
+    form.onsubmit = null;
     modal.showModal();
     input.focus();
     modal.addEventListener('cancel', (e) => {
       e.preventDefault(); // prevent Escape from closing — user must submit
     }, { signal: ac.signal });
-    modal.querySelector('form').onsubmit = async (e) => {
+    form.addEventListener('submit', async (e) => {
       e.preventDefault();
       error.style.display = 'none';
       const pass = input.value;
@@ -353,7 +367,7 @@ async function showVaultModal(vault) {
         // verify() leaves the vault unlocked with the correct key
         vault.resetIdleTimer();
         modal.close();
-        ac.abort();
+        ac.abort(); // removes both cancel and submit listeners
         input.value = '';
         confirm.value = '';
         resolve();
@@ -363,7 +377,7 @@ async function showVaultModal(vault) {
         error.textContent = err.message || 'Invalid passphrase';
         error.style.display = '';
       }
-    };
+    }, { signal: ac.signal });
   });
 }
 
@@ -467,12 +481,6 @@ initHomeListeners();
     }
   } catch { /* IDB not available or empty — ignore */ }
 })();
-
-// Catch unhandled promise rejections globally
-window.addEventListener('unhandledrejection', (e) => {
-  console.error('[clawser] Unhandled promise rejection:', e.reason);
-  e.preventDefault();
-});
 
 // Auto-save on page unload.
 // beforeunload cannot await async shutdown(), so we do sync-safe work only.

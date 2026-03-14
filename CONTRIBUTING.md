@@ -136,19 +136,40 @@ LLM providers extend `LLMProvider` in `clawser-providers.js`.
 
 ## Testing
 
-Tests use `node:test` with `node:assert/strict`. All test files live in `web/test/` and follow the naming pattern `clawser-<module>.test.mjs`.
+Tests use `node:test` with `node:assert/strict`. All test files live in `web/test/` and follow the naming pattern `clawser-<module>.test.mjs`. The custom runner `web/test/run-tests.mjs` organizes tests into groups for fast feedback.
+
+### Running Tests
 
 ```bash
-npm test              # All 236 test files
-npm run test:fast     # Core + channels (fast feedback loop)
-npm run test:core     # Agent, tools, providers, shell
-npm run test:mesh     # Mesh networking (31 files)
-npm run test:e2e      # End-to-end scenarios
-npm run test:changed  # Only files with git changes
+# Full suite
+npm test                # All test files
+
+# Group-based execution (recommended for development)
+npm run test:fast       # Core + channels — fast feedback loop
+npm run test:core       # Agent, tools, providers, shell (89 files)
+npm run test:mesh       # All mesh networking (31 files)
+npm run test:mesh-net   # Peer, transport, relay, gateway, websocket (7 files)
+npm run test:mesh-sync  # Sync, delta-sync, streams, migration (4 files)
+npm run test:mesh-identity # Identity, keyring, trust, ACL, capabilities (6 files)
+npm run test:mesh-apps  # Apps, marketplace, payments, quotas (6 files)
+npm run test:mesh-ops   # Audit, consensus, scheduler, tools, wsh-bridge (8 files)
+npm run test:e2e        # End-to-end scenarios (1 file)
+npm run test:changed    # Only files with git changes
+
+# Direct runner with options
+node web/test/run-tests.mjs --group fast --concurrency 4
+node web/test/run-tests.mjs --group mesh-net --list  # dry-run
+
+# Individual test file
+node --import ./web/test/_setup-globals.mjs --test web/test/clawser-<module>.test.mjs
 ```
+
+### Writing Tests
 
 - Stub browser globals (`BrowserTool`, `window`, `document`) before importing modules
 - `web/test/_setup-globals.mjs` provides localStorage, document, and navigator stubs
+- Use `async` test functions, never callback-style `done`
+- Clean up timers in `afterEach` to prevent process hangs
 - Add new tests by creating `web/test/clawser-<module>.test.mjs`
 
 ## Pull Requests

@@ -242,11 +242,11 @@ and CLAUDE.md. Consolidate to a single source of truth.
 Describes a test setup that no longer matches the current `node:test` + run-tests.mjs
 infrastructure.
 
-### 7.4 localStorage Key Prefix Inconsistency [LOW]
-Some keys use `clawser_` prefix, others use `clawser-`. Document the canonical pattern.
+### 7.4 localStorage Key Prefix Inconsistency [DONE]
+All keys consistently use `clawser_` (underscore). Documented in `clawser-state.js` comment above `lsKey`.
 
-### 7.5 Placeholder URLs [LOW]
-`your-org` placeholder in README and CONTRIBUTING. Replace with actual GitHub org.
+### 7.5 Placeholder URLs [DONE]
+`your-org` placeholder in README and CONTRIBUTING — already replaced with `johnhenry`.
 
 ---
 
@@ -344,8 +344,8 @@ workspace but the source files remain as reference.
 ### 11.4 5 Stale Merged Branches [LOW]
 Safe to delete: branches that were merged but not cleaned up.
 
-### 11.5 playwright.config.js References Nonexistent Directory [LOW]
-Points to `./tests` which doesn't exist. Tests are in `web/test/`.
+### 11.5 playwright.config.js References Nonexistent Directory [DONE]
+`testDir` updated from `./tests` to `./web/test`.
 
 ---
 
@@ -367,3 +367,17 @@ Points to `./tests` which doesn't exist. Tests are in `web/test/`.
 | **Total** | **2** | **11** | **29** | **18** | **60** |
 
 **2 critical, 11 high, 29 medium, 18 low = 60 items total.**
+
+---
+
+## Progress Tracker
+
+### Batch 1-4 (2026-03-14): 16 items addressed
+- [x] 11.1 Remove dead broadcastPeerList()
+- [x] 2.1 CI now runs npm test (was already present)
+- [x] 3.1 Agent cancel(), removeGoal(), updateGoal() (memory already had forget tool)
+- [x] 3.2 PeerNodeServer.unregisterService()
+- [x] 3.3 SwarmCoordinator.cancelTask()
+- [x] 3.4 GatewayNode.revokeRoute()
+- [x] 3.5 HealthMonitor.getThresholds(), clearHeartbeat(), untrack()
+- Remaining: 44 items

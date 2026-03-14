@@ -54,6 +54,16 @@ export function esc(s) {
 
 // ── localStorage key builders (centralized to avoid scattered string literals) ──
 // Keys include version prefix (v1) for forward compatibility. See migrateLocalStorageKeys().
+//
+// localStorage key convention:
+//   All keys use the underscore prefix `clawser_` (never `clawser-`).
+//   Workspace-scoped keys use the versioned lsKey helpers below: `clawser_v1_{domain}_{wsId}`.
+//   Global keys (not workspace-scoped) follow the pattern `clawser_{name}`, e.g.:
+//     clawser_debug, clawser_ls_migrated, clawser_workspaces, clawser_active_workspace,
+//     clawser_agent_{id}, clawser_active_agent_{wsId}, clawser_agent_acct_migrated,
+//     clawser_signaling_url, clawser_fallback_chain_{wsId}, clawser_identity_full_{wsId}.
+//   Some global keys bypass lsKey because they are not workspace-versioned or predate the
+//   migration system. New code should use lsKey helpers whenever the key is workspace-scoped.
 const LS_VERSION = 'v1';
 /** @type {{ memories(wsId: string): string, config(wsId: string): string, toolPerms(wsId: string): string, security(wsId: string): string, skillsEnabled(wsId: string): string, hooks(wsId: string): string, peripherals(wsId: string): string }} */
 export const lsKey = {
