@@ -879,6 +879,59 @@ Committed Phase 8 work already includes:
 - route health tracking and backend-aware session hints
 - browser-side `vm-console` backend hooks and runtime registry plumbing
 
+Phase 8 execution artifacts also include:
+
+- ADR-style decisions covering:
+  - layer ownership
+  - relay separation
+  - identity convergence
+  - policy precedence
+  - route selection
+- a deterministic validation harness spanning:
+  - direct host
+  - reverse browser peer
+  - reverse host peer
+  - VM peer
+  - stale discovery
+  - relay loss
+  - conflicting metadata
+  - capability mismatch
+
+### Phase 8 Verification Evidence
+
+Recorded verification for the completed Phase 8 program:
+
+- Rust verification:
+  - `cargo test -p wsh-cli -p wsh-client -p wsh-server -p wsh-core`
+- Browser/runtime verification:
+  - `node --import ./web/test/_setup-globals.mjs --test web/test/clawser-remote-runtime-registry.test.mjs web/test/clawser-remote-runtime-policy.test.mjs web/test/clawser-remote-runtime-wsh.test.mjs web/test/clawser-ui-remote-runtime.test.mjs web/test/clawser-mesh-orchestrator.test.mjs web/test/clawser-netway-tools.test.mjs web/test/clawser-remote-mounts.test.mjs web/test/clawser-vm-console.test.mjs web/test/clawser-wsh-incoming.test.mjs web/test/clawser-wsh-reverse-handshake.test.mjs web/test/clawser-wsh-virtual-terminal-runtime.test.mjs web/test/clawser-wsh-virtual-session.test.mjs web/test/clawser-pod.test.mjs web/test/clawser-mesh-bootstrap.test.mjs web/test/clawser-routine-runtime.test.mjs`
+- Hygiene:
+  - `git diff --check`
+
+Coverage matrix:
+
+- identity/discovery merge:
+  - `clawser-remote-runtime-registry.test.mjs`
+  - `clawser-mesh-bootstrap.test.mjs`
+- policy precedence / naming / route selection:
+  - `clawser-remote-runtime-policy.test.mjs`
+  - `clawser-remote-runtime-registry.test.mjs`
+- session behavior / attach / replay / relay loss:
+  - `clawser-wsh-incoming.test.mjs`
+  - `clawser-wsh-virtual-terminal-runtime.test.mjs`
+  - `clawser-wsh-virtual-session.test.mjs`
+  - reverse-host Rust tests
+- gateway / compute / services / automation targeting:
+  - `clawser-mesh-orchestrator.test.mjs`
+  - `clawser-netway-tools.test.mjs`
+  - `clawser-remote-runtime-wsh.test.mjs`
+- canonical query / telemetry views:
+  - `clawser-remote-runtime-registry.test.mjs`
+  - `clawser-ui-remote-runtime.test.mjs`
+- VM peer behavior:
+  - `clawser-vm-console.test.mjs`
+  - `clawser-wsh-reverse-handshake.test.mjs`
+
 ### Phase 8.1: Documented Runtime Modes
 
 Goal: make the topology legible to contributors and users so the system stops looking more complete or more uniform than it really is.
