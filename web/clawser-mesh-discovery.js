@@ -393,44 +393,63 @@ export class RelayStrategy extends DiscoveryStrategy {
     this.#podId = podId;
   }
 
+  /** @type {WebSocket|null} */
+  #ws = null;
+
+  /** @type {number|null} */
+  #reconnectTimer = null;
+
   /**
-   * Register with the relay server and start listening.
+   * Connect to the relay/signaling server and start listening for peers.
+   * Automatically reconnects on disconnect while active.
    * @returns {Promise<void>}
    */
   async start() {
     if (this.active) return;
-    // In a real implementation, this would open a WebSocket to #relayUrl
-    // and register #podId. For now, just mark as active.
     this._active = true;
+    await this.#connect();
   }
 
   /**
-   * Deregister from the relay server and stop listening.
+   * Close the WebSocket and stop listening.
    * @returns {Promise<void>}
    */
   async stop() {
     if (!this.active) return;
-    // In a real implementation, this would close the WebSocket.
     this._active = false;
+    clearTimeout(this.#reconnectTimer);
+    this.#reconnectTimer = null;
+    if (this.#ws) {
+      this.#ws.onclose = null; // prevent reconnect
+      this.#ws.close(1000, 'strategy stopped');
+      this.#ws = null;
+    }
+    this.#peers.clear();
   }
 
   /**
-   * Announce a record to the relay server.
+   * Announce a discovery record to the relay server.
+   * The signaling server broadcasts our presence to other peers on registration,
+   * so this sends a lightweight announce if the connection is open.
    * @param {DiscoveryRecord} record
    * @returns {Promise<void>}
    */
   async announce(record) {
-    // In a real implementation, this would send the record to the relay server.
-    // For now, no-op.
+    if (this.#ws && this.#ws.readyState === 1) {
+      this.#ws.send(JSON.stringify({
+        type: 'signal',
+        target: '__broadcast__',
+        data: { type: 'discovery-announce', record: record.toJSON?.() ?? record },
+      }));
+    }
   }
 
   /**
-   * Query the relay server for peers matching an optional filter.
+   * Query cached peers matching an optional filter.
    * @param {object} [filter]
    * @returns {Promise<DiscoveryRecord[]>}
    */
   async query(filter) {
-    // In a real implementation, this would query the relay server.
     const results = [];
     for (const record of this.#peers.values()) {
       if (!record.isExpired() && record.matchesFilter(filter)) {
@@ -438,6 +457,87 @@ export class RelayStrategy extends DiscoveryStrategy {
       }
     }
     return results;
+  }
+
+  // ── Internal ──────────────────────────────────────────────────────
+
+  /** Open WebSocket, register, and wire message handlers. */
+  async #connect() {
+    if (!this.active) return;
+
+    try {
+      const WS = globalThis.WebSocket;
+      if (!WS) throw new Error('WebSocket not available');
+      const ws = new WS(this.#relayUrl);
+      this.#ws = ws;
+
+      await new Promise((resolve, reject) => {
+        ws.onopen = () => {
+          ws.send(JSON.stringify({ type: 'register', podId: this.#podId }));
+          resolve();
+        };
+        ws.onerror = () => reject(new Error('WebSocket connection failed'));
+        setTimeout(() => reject(new Error('WebSocket connection timeout')), 10000);
+      });
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          this.#handleMessage(msg);
+        } catch { /* ignore malformed */ }
+      };
+
+      ws.onclose = () => {
+        this.#ws = null;
+        // Auto-reconnect after 3s if still active
+        if (this.active) {
+          this.#reconnectTimer = setTimeout(() => this.#connect(), 3000);
+        }
+      };
+    } catch {
+      // Retry after 5s on connection failure
+      if (this.active) {
+        this.#reconnectTimer = setTimeout(() => this.#connect(), 5000);
+      }
+    }
+  }
+
+  /** Handle incoming signaling messages and fire discovery callbacks. */
+  #handleMessage(msg) {
+    if (msg.type === 'peers') {
+      // Full peer list from server — sync our cache
+      for (const podId of msg.peers) {
+        if (podId === this.#podId) continue;
+        if (!this.#peers.has(podId)) {
+          const record = new DiscoveryRecord({
+            podId,
+            label: podId.slice(0, 8),
+            transport: 'relay',
+            source: 'relay',
+          });
+          this.#peers.set(podId, record);
+          this._fireDiscovered(record);
+        }
+      }
+    }
+
+    if (msg.type === 'peer-joined') {
+      const { podId } = msg;
+      if (podId && podId !== this.#podId && !this.#peers.has(podId)) {
+        const record = new DiscoveryRecord({
+          podId,
+          label: podId.slice(0, 8),
+          transport: 'relay',
+          source: 'relay',
+        });
+        this.#peers.set(podId, record);
+        this._fireDiscovered(record);
+      }
+    }
+
+    if (msg.type === 'peer-left') {
+      this.#peers.delete(msg.podId);
+    }
   }
 }
 

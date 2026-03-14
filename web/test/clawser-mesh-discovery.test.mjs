@@ -1,5 +1,5 @@
 // Run with: node --import ./web/test/_setup-globals.mjs --test web/test/clawser-mesh-discovery.test.mjs
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
@@ -277,7 +277,35 @@ describe('BroadcastChannelStrategy', () => {
 // RelayStrategy
 // ---------------------------------------------------------------------------
 
+// Mock WebSocket helper for RelayStrategy tests
+let __mockWs = null;
+const __originalWS = globalThis.WebSocket;
+function __installMockWS() {
+  __mockWs = null;
+  globalThis.WebSocket = class MockWebSocket {
+    constructor() {
+      this.readyState = 1;
+      this.sent = [];
+      this.onopen = null;
+      this.onmessage = null;
+      this.onclose = null;
+      this.onerror = null;
+      __mockWs = this;
+      const self = this;
+      const poll = () => { if (self.onopen) self.onopen(); else setTimeout(poll, 1); };
+      setTimeout(poll, 1);
+    }
+    send(data) { this.sent.push(JSON.parse(data)); }
+    close() { this.readyState = 3; if (this.onclose) this.onclose(); }
+    _receive(data) { if (this.onmessage) this.onmessage({ data: JSON.stringify(data) }); }
+  };
+}
+function __restoreMockWS() { globalThis.WebSocket = __originalWS; __mockWs = null; }
+
 describe('RelayStrategy', () => {
+  beforeEach(() => { __installMockWS(); });
+  afterEach(() => { __restoreMockWS(); });
+
   it('constructor sets type to relay', () => {
     const s = new RelayStrategy({ relayUrl: 'ws://relay.example.com', podId: 'pod-1' });
     assert.equal(s.type, 'relay');
@@ -297,32 +325,101 @@ describe('RelayStrategy', () => {
     );
   });
 
-  it('start activates', async () => {
-    const s = new RelayStrategy({ relayUrl: 'ws://x', podId: 'p' });
+  it('start opens WebSocket and registers', async () => {
+    const s = new RelayStrategy({ relayUrl: 'ws://x', podId: 'pod-test' });
     await s.start();
     assert.equal(s.active, true);
+    assert.ok(__mockWs);
+    assert.equal(__mockWs.sent.length, 1);
+    assert.equal(__mockWs.sent[0].type, 'register');
+    assert.equal(__mockWs.sent[0].podId, 'pod-test');
+    await s.stop();
   });
 
-  it('stop deactivates', async () => {
+  it('stop closes WebSocket and clears peers', async () => {
     const s = new RelayStrategy({ relayUrl: 'ws://x', podId: 'p' });
     await s.start();
+    // Inject a peer
+    __mockWs._receive({ type: 'peer-joined', podId: 'pod-remote' });
+    const before = await s.query();
+    assert.equal(before.length, 1);
+
     await s.stop();
     assert.equal(s.active, false);
+    const after = await s.query();
+    assert.equal(after.length, 0);
   });
 
-  it('announce does not throw', async () => {
+  it('fires discovered callback on peers message', async () => {
+    const s = new RelayStrategy({ relayUrl: 'ws://x', podId: 'pod-local' });
+    const discovered = [];
+    s.onDiscovered((record) => discovered.push(record));
+
+    await s.start();
+    __mockWs._receive({ type: 'peers', peers: ['pod-local', 'pod-a', 'pod-b'] });
+
+    assert.equal(discovered.length, 2); // excludes self
+    assert.ok(discovered.some(r => r.podId === 'pod-a'));
+    assert.ok(discovered.some(r => r.podId === 'pod-b'));
+    await s.stop();
+  });
+
+  it('fires discovered callback on peer-joined', async () => {
+    const s = new RelayStrategy({ relayUrl: 'ws://x', podId: 'pod-local' });
+    const discovered = [];
+    s.onDiscovered((record) => discovered.push(record));
+
+    await s.start();
+    __mockWs._receive({ type: 'peer-joined', podId: 'pod-new' });
+
+    assert.equal(discovered.length, 1);
+    assert.equal(discovered[0].podId, 'pod-new');
+    assert.equal(discovered[0].source, 'relay');
+    await s.stop();
+  });
+
+  it('removes peer on peer-left', async () => {
+    const s = new RelayStrategy({ relayUrl: 'ws://x', podId: 'pod-local' });
+    await s.start();
+
+    __mockWs._receive({ type: 'peer-joined', podId: 'pod-gone' });
+    assert.equal((await s.query()).length, 1);
+
+    __mockWs._receive({ type: 'peer-left', podId: 'pod-gone' });
+    assert.equal((await s.query()).length, 0);
+    await s.stop();
+  });
+
+  it('does not discover self', async () => {
+    const s = new RelayStrategy({ relayUrl: 'ws://x', podId: 'pod-me' });
+    const discovered = [];
+    s.onDiscovered((record) => discovered.push(record));
+
+    await s.start();
+    __mockWs._receive({ type: 'peer-joined', podId: 'pod-me' });
+
+    assert.equal(discovered.length, 0);
+    await s.stop();
+  });
+
+  it('announce sends over WebSocket', async () => {
     const s = new RelayStrategy({ relayUrl: 'ws://x', podId: 'p' });
     await s.start();
     const record = new DiscoveryRecord({ podId: 'p' });
     await s.announce(record);
+    assert.equal(__mockWs.sent.length, 2); // register + announce
+    assert.equal(__mockWs.sent[1].type, 'signal');
     await s.stop();
   });
 
-  it('query returns empty array (no real relay)', async () => {
-    const s = new RelayStrategy({ relayUrl: 'ws://x', podId: 'p' });
+  it('query returns cached peers', async () => {
+    const s = new RelayStrategy({ relayUrl: 'ws://x', podId: 'pod-local' });
     await s.start();
+    __mockWs._receive({ type: 'peers', peers: ['pod-local', 'pod-a'] });
+
     const results = await s.query();
-    assert.ok(Array.isArray(results));
+    assert.equal(results.length, 1);
+    assert.equal(results[0].podId, 'pod-a');
     await s.stop();
   });
 });

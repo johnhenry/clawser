@@ -18,6 +18,7 @@ import { bridgePeerAgent } from './clawser-peer-agent.js';
 import { ChannelGateway } from './clawser-gateway.js';
 import { ClawserPod } from './clawser-pod.js';
 import { registerMeshTools } from './clawser-mesh-tools.js';
+import { registerMeshPeerTools } from './clawser-mesh-peer-tools.js';
 import { registerIdentityTools } from './clawser-mesh-identity-tools.js';
 import { createMeshctlTools } from './clawser-mesh-orchestrator.js';
 import { getServerManager, setServerRuntimeServiceResolver } from './clawser-server.js';
@@ -622,6 +623,38 @@ export async function initMeshSubsystem() {
     state.appRegistry = result.appRegistry;
     state.appStore = result.appStore;
     state.orchestrator = result.orchestrator;
+    // Track 1: Transports
+    state.transportFactory = result.transportFactory;
+    // Track 2: Security
+    state.handshakeCoordinator = result.handshakeCoordinator;
+    state.meshACL = result.meshACL;
+    state.capabilityValidator = result.capabilityValidator;
+    state.crossOriginBridge = result.crossOriginBridge;
+    state.sessionManager = result.sessionManager;
+    // Track 3: Communication
+    state.meshChat = result.meshChat;
+    state.gatewayNode = result.gatewayNode;
+    state.gatewayDiscovery = result.gatewayDiscovery;
+    state.torrentManager = result.torrentManager;
+    state.ipfsStore = result.ipfsStore;
+    // Track 2 (continued)
+    state.verificationQuorum = result.verificationQuorum;
+    // Track 4: Compute
+    state.meshScheduler = result.meshScheduler;
+    state.federatedCompute = result.federatedCompute;
+    state.agentSwarmCoordinator = result.agentSwarmCoordinator;
+    // Track 5: Ops
+    state.dhtNode = result.dhtNode;
+    state.creditLedger = result.creditLedger;
+    state.escrowManager = result.escrowManager;
+    state.healthMonitor = result.healthMonitor;
+    state.meshRouter = result.meshRouter;
+    state.migrationEngine = result.migrationEngine;
+    state.meshInspector = result.meshInspector;
+    state.stealthAgent = result.stealthAgent;
+    state.meshFetchRouter = result.meshFetchRouter;
+    state.timestampAuthority = result.timestampAuthority;
+    state.syncCoordinator = result.syncCoordinator;
     state.remoteRuntimeRegistry = result.remoteRuntimeRegistry || state.pod.remoteRuntimeRegistry;
     state.remoteSessionBroker = result.remoteSessionBroker || state.pod.remoteSessionBroker;
     globalThis.__clawserRemoteRuntimeRegistry = state.remoteRuntimeRegistry;
@@ -650,15 +683,118 @@ export async function initMeshSubsystem() {
     if (state.browserTools) {
       try {
         registerMeshTools(state.browserTools, state.streamMultiplexer, state.fileTransfer);
+        // Wire DHT node into existing mesh tools context
+        const { meshToolsContext } = await import('./clawser-mesh-tools.js');
+        if (state.dhtNode) meshToolsContext.setDhtNode(state.dhtNode);
         registerIdentityTools(state.browserTools);
         // Register orchestrator tools
         if (state.orchestrator) {
           const meshctlTools = createMeshctlTools(state.orchestrator);
           for (const tool of meshctlTools) state.browserTools.register(tool);
         }
+        // Register peer subsystem tools (chat, scheduler, compute, etc.)
+        registerMeshPeerTools(state.browserTools, {
+          meshChat: state.meshChat,
+          meshScheduler: state.meshScheduler,
+          federatedCompute: state.federatedCompute,
+          agentSwarmCoordinator: state.agentSwarmCoordinator,
+          healthMonitor: state.healthMonitor,
+          escrowManager: state.escrowManager,
+          meshRouter: state.meshRouter,
+          timestampAuthority: state.timestampAuthority,
+          stealthAgent: state.stealthAgent,
+          syncCoordinator: state.syncCoordinator,
+          gatewayNode: state.gatewayNode,
+          torrentManager: state.torrentManager,
+          ipfsStore: state.ipfsStore,
+          meshACL: state.meshACL,
+          capabilityValidator: state.capabilityValidator,
+          sessionManager: state.sessionManager,
+          crossOriginBridge: state.crossOriginBridge,
+          verificationQuorum: state.verificationQuorum,
+          migrationEngine: state.migrationEngine,
+          creditLedger: state.creditLedger,
+        });
+        // Register devtools inspector tool (Track 5)
+        if (state.meshInspector) {
+          try {
+            const { MeshInspectTool } = await import('./clawser-mesh-devtools.js');
+            state.browserTools.register(new MeshInspectTool({
+              pod: state.pod,
+              peerNode: state.peerNode,
+              swarmCoordinator: state.swarmCoordinator,
+              transportNegotiator: state.transportNegotiator,
+              auditChain: state.auditChain,
+              streamMultiplexer: state.streamMultiplexer,
+              fileTransfer: state.fileTransfer,
+              serviceDirectory: state.serviceDirectory,
+              syncEngine: state.syncEngine,
+              resourceRegistry: state.resourceRegistry,
+              meshMarketplace: state.meshMarketplace,
+              quotaManager: state.quotaManager,
+              quotaEnforcer: state.quotaEnforcer,
+              paymentRouter: state.paymentRouter,
+              consensusManager: state.consensusManager,
+              relayClient: state.relayClient,
+              nameResolver: state.nameResolver,
+              appRegistry: state.appRegistry,
+              appStore: state.appStore,
+              orchestrator: state.orchestrator,
+              sessionManager: state.sessionManager,
+              discoveryManager: state.discoveryManager,
+            }));
+          } catch (e) {
+            console.warn('[clawser] MeshInspectTool registration failed (non-fatal):', e.message);
+          }
+        }
       } catch (e) {
         console.warn('[clawser] Mesh tool registration failed (non-fatal):', e.message);
       }
+    }
+
+    // Wire peer lifecycle events for session-scoped modules
+    if (state.peerNode) {
+      state.peerNode.on('peer:connect', (peer) => {
+        const peerId = peer?.fingerprint || peer?.podId || peer?.pubKey
+        if (!peerId) return
+        console.log(`[clawser] Peer connected: ${peerId}`)
+
+        // Add route for the new peer
+        if (state.meshRouter) {
+          try { state.meshRouter.addRoute(peerId, peerId, 1) } catch { /* non-fatal */ }
+        }
+
+        // Register peer with gateway node
+        if (state.gatewayNode) {
+          try { state.gatewayNode.registerPeer?.(peerId) } catch { /* non-fatal */ }
+        }
+
+        // Join swarm coordinator
+        if (state.swarmCoordinator) {
+          try { state.swarmCoordinator.join(peerId) } catch { /* non-fatal */ }
+        }
+      })
+
+      state.peerNode.on('peer:disconnect', (peer) => {
+        const peerId = peer?.fingerprint || peer?.podId || peer?.pubKey
+        if (!peerId) return
+        console.log(`[clawser] Peer disconnected: ${peerId}`)
+
+        // Remove peer route
+        if (state.meshRouter) {
+          try { state.meshRouter.removeRoute?.(peerId) } catch { /* non-fatal */ }
+        }
+
+        // Remove from gateway
+        if (state.gatewayNode) {
+          try { state.gatewayNode.unregisterPeer?.(peerId) } catch { /* non-fatal */ }
+        }
+
+        // Leave swarm coordinator
+        if (state.swarmCoordinator) {
+          try { state.swarmCoordinator.leave(peerId) } catch { /* non-fatal */ }
+        }
+      })
     }
 
     console.log('[clawser] P2P mesh initialized via ClawserPod — podId:', state.pod.podId);
@@ -693,6 +829,37 @@ export async function initMeshSubsystem() {
     state.remoteRuntimeRegistry = null;
     state.remoteSessionBroker = null;
     state.remoteMountManager = null;
+    // Track 1
+    state.transportFactory = null;
+    // Track 2
+    state.handshakeCoordinator = null;
+    state.meshACL = null;
+    state.capabilityValidator = null;
+    state.crossOriginBridge = null;
+    state.verificationQuorum = null;
+    state.sessionManager = null;
+    // Track 3
+    state.meshChat = null;
+    state.gatewayNode = null;
+    state.gatewayDiscovery = null;
+    state.torrentManager = null;
+    state.ipfsStore = null;
+    // Track 4
+    state.meshScheduler = null;
+    state.federatedCompute = null;
+    state.agentSwarmCoordinator = null;
+    // Track 5
+    state.dhtNode = null;
+    state.creditLedger = null;
+    state.escrowManager = null;
+    state.healthMonitor = null;
+    state.meshRouter = null;
+    state.migrationEngine = null;
+    state.meshInspector = null;
+    state.stealthAgent = null;
+    state.meshFetchRouter = null;
+    state.timestampAuthority = null;
+    state.syncCoordinator = null;
   }
 }
 
