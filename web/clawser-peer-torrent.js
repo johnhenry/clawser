@@ -1,4 +1,5 @@
 /**
+// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
  * clawser-peer-torrent.js -- WebTorrent integration for P2P file distribution.
  *
  * CDN-loads webtorrent browser bundle for swarm-based file sharing.
@@ -168,13 +169,15 @@ export class TorrentManager {
         this.#wtAvailable = true
         this.#onLog(2, 'WebTorrent client initialized from globalThis.WebTorrent')
       } else {
-        // Try CDN load — this will fail in Node.js test env
+        // Try CDN load via esm.sh — this will fail in Node.js test env
         try {
-          const mod = await import('https://cdn.jsdelivr.net/npm/webtorrent@2.5.1/webtorrent.min.js')
-          if (typeof globalThis.WebTorrent === 'function') {
-            this.#client = new globalThis.WebTorrent()
+          const mod = await import('https://esm.sh/webtorrent@2.8.5')
+          const WT = mod.default || mod.WebTorrent
+          if (typeof WT === 'function') {
+            globalThis.WebTorrent = WT
+            this.#client = new WT()
             this.#wtAvailable = true
-            this.#onLog(2, 'WebTorrent loaded from CDN')
+            this.#onLog(2, 'WebTorrent loaded from CDN (esm.sh)')
           }
         } catch {
           this.#wtAvailable = false
