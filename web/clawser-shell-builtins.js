@@ -13,8 +13,6 @@
  *   Process-Like (3): xargs, test, [
  */
 
-import { normalizePath } from './clawser-shell.js';
-
 // ── Helpers ─────────────────────────────────────────────────────
 
 /**

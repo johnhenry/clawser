@@ -32,7 +32,7 @@ Clawser is a browser-native AI agent platform built as pure ES modules with no b
 │         │                │                      │               │
 │  ┌──────┴──────┐  ┌──────┴──────┐  ┌───────────┴────────────┐  │
 │  │  Providers  │  │   Tools     │  │       Skills            │  │
-│  │  (38+ LLMs) │  │  (70+ tools)│  │  (agentskills.io)      │  │
+│  │  (38+ LLMs) │  │ (100+ tools)│  │  (agentskills.io)      │  │
 │  └──────┬──────┘  └──────┬──────┘  └───────────┬────────────┘  │
 │         │                │                      │               │
 │  ┌──────┴──────┐  ┌──────┴──────┐  ┌───────────┴────────────┐  │
@@ -44,7 +44,7 @@ Clawser is a browser-native AI agent platform built as pure ES modules with no b
 
 ## Core Agent
 
-**File**: `clawser-agent.js` (3,234 LOC)
+**File**: `clawser-agent.js` (3,765 LOC)
 
 The agent core contains four classes:
 
@@ -94,7 +94,7 @@ Main orchestrator managing:
 
 ## Provider System
 
-**File**: `clawser-providers.js` (1,474 LOC)
+**File**: `clawser-providers.js` (1,868 LOC)
 
 ### Three Tiers
 
@@ -120,7 +120,7 @@ Tier 1 (Built-in)          Tier 2 (OpenAI-Compatible)       Tier 3 (ai.matey)
 
 ## Tool System
 
-**File**: `clawser-tools.js` (1,373 LOC)
+**File**: `clawser-tools.js` (1,729 LOC)
 
 ### Permission Engine
 
@@ -137,7 +137,7 @@ Default mapping:
 - `internal`, `read` → `auto` (always allowed)
 - `network`, `write`, `browser` → `approve` (requires user confirmation)
 
-### Tool Categories (29 tools)
+### Tool Categories (100+ tools)
 
 | Category | Tools |
 |----------|-------|
@@ -155,7 +155,7 @@ Plus 36 tools from feature modules (tool builder, channels, delegate, git, brows
 
 ## Codex (Code Execution)
 
-**File**: `clawser-codex.js` (365 LOC)
+**File**: `clawser-codex.js` (379 LOC)
 
 For providers that don't support native tool calling (Chrome AI, Perplexity), the Codex executes JavaScript code blocks from LLM responses in a sandboxed environment.
 
@@ -168,7 +168,7 @@ The Codex uses **andbox** (`web/packages/andbox/`) — a Worker-based sandbox wi
 
 ## Skills System
 
-**File**: `clawser-skills.js` (1,526 LOC)
+**File**: `clawser-skills.js` (2,016 LOC)
 
 Implements the [Agent Skills open standard](https://agentskills.io).
 
@@ -198,7 +198,7 @@ Discover (OPFS scan) → Enable/Disable (localStorage)
 
 ## MCP Integration
 
-**File**: `clawser-mcp.js` (303 LOC)
+**File**: `clawser-mcp.js` (425 LOC)
 
 Model Context Protocol client using Streamable HTTP transport:
 
@@ -215,15 +215,15 @@ Tools are prefixed `mcp_*` and have `network` permission level.
 
 ## State Management
 
-**File**: `clawser-state.js` (171 LOC)
+**File**: `clawser-state.js` (481 LOC)
 
 Global singleton with ~55 fields covering agent, conversations, tools, skills, UI state, and 25+ feature module references. Cross-module communication via a simple event bus (`on`/`off`/`emit`).
 
-All persistent state uses workspace-scoped localStorage keys built by `lsKey` helpers (e.g., `clawser_memories_{wsId}`).
+All persistent state uses workspace-scoped localStorage keys built by `lsKey` helpers (e.g., `clawser_v1_memories_{wsId}`).
 
 ## Routing
 
-**File**: `clawser-router.js` (91 LOC)
+**File**: `clawser-router.js` (167 LOC)
 
 Hash-based SPA routing:
 ```
@@ -237,7 +237,7 @@ Hash-based SPA routing:
 
 ## Shell
 
-**File**: `clawser-shell.js` (1,124 LOC) + `clawser-shell-builtins.js` (~1,500 LOC)
+**File**: `clawser-shell.js` (1,883 LOC) + `clawser-shell-builtins.js` (~1,492 LOC)
 
 AST-based virtual shell:
 ```
@@ -306,10 +306,10 @@ The Chrome extension can inject an `InjectedPod` into any page via `inject_pod` 
 │  /clawser_skills/{name}/SKILL.md     │
 ├─────────────────────────────────────┤
 │        localStorage (Config)         │
-│  clawser_memories_{wsId}             │
-│  clawser_config_{wsId}               │
-│  clawser_tool_perms_{wsId}           │
-│  clawser_skills_enabled_{wsId}       │
+│  clawser_v1_memories_{wsId}           │
+│  clawser_v1_config_{wsId}            │
+│  clawser_v1_tool_perms_{wsId}        │
+│  clawser_v1_skills_enabled_{wsId}    │
 │  clawser_workspaces (workspace list) │
 │  clawser_active_workspace            │
 │  + 8 more per-workspace keys         │
@@ -369,7 +369,7 @@ handleRoute()
   → initWorkspace(wsId)
       → Create ClawserAgent with dependencies
       → agent.init()
-      → Register ~70 tools (browser + feature + skill + gap-fill)
+      → Register ~100 tools (browser + feature + skill + gap-fill)
       → Create shell session + terminal session manager
       → Restore config, memories, conversations (event log → checkpoint fallback)
       → Build provider chain, start daemon/routines

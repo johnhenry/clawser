@@ -128,26 +128,30 @@ export class McpClient {
     let buffer = '';
     let result = null;
 
-    while (true) {
-      if (signal?.aborted) throw new Error('MCP SSE response timed out');
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
+    try {
+      while (true) {
+        if (signal?.aborted) throw new Error('MCP SSE response timed out');
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
 
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
 
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          try {
-            const data = JSON.parse(line.slice(6));
-            if (data.result !== undefined) result = data.result;
-            if (data.error) throw new Error(`MCP SSE error: ${data.error.message}`);
-          } catch (e) {
-            if (e.message.startsWith('MCP SSE')) throw e;
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.result !== undefined) result = data.result;
+              if (data.error) throw new Error(`MCP SSE error: ${data.error.message}`);
+            } catch (e) {
+              if (e.message.startsWith('MCP SSE')) throw e;
+            }
           }
         }
       }
+    } finally {
+      reader.releaseLock();
     }
 
     return result;

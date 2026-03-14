@@ -6,13 +6,13 @@ Feature modules extend the core agent with specialized capabilities. Each module
 
 | Module | File | Tools | Description |
 |--------|------|-------|-------------|
-| Tool Builder | `clawser-tool-builder.js` | `tool_create`, `tool_edit`, `tool_delete`, `tool_list` | Dynamic tool creation at runtime |
+| Tool Builder | `clawser-tool-builder.js` | `tool_build`, `tool_test`, `tool_list_custom`, `tool_edit`, `tool_remove`, `tool_promote` | Dynamic tool creation at runtime |
 | Channel Gateway | `clawser-gateway.js` | — | Central hub orchestrating channel plugins, scheduler lane, and mesh sessions into the agent. Per-channel serialized queuing, scope isolation, tenantId threading, response routing. |
-| Multi-Channel | `clawser-channels.js` | `channel_create`, `channel_list`, `channel_send`, `channel_receive` | Cross-tab and WebSocket messaging |
+| Multi-Channel | `clawser-channels.js` | `channel_create`, `channel_list`, `channel_send`, `channel_history`, `channel_delete` | Cross-tab and WebSocket messaging |
 | Delegation | `clawser-delegate.js` | `agent_delegate` | Sub-agent task delegation |
 | Git | `clawser-git.js` | `git_status`, `git_diff`, `git_commit`, `git_log`, `git_recall` | Git-aware operations via OPFS |
 | Routines | `clawser-routines.js` | `routine_create`, `routine_list`, `routine_run`, `routine_delete` | Scheduled and triggered routines |
-| Sandbox | `clawser-sandbox.js` | `sandbox_exec`, `sandbox_status` | Sandboxed code execution (uses andbox Worker sandbox) |
+| Sandbox | `clawser-sandbox.js` | `sandbox_run`, `sandbox_status` | Sandboxed code execution (uses andbox Worker sandbox) |
 | Hardware | `clawser-hardware.js` | `hw_list`, `hw_connect`, `hw_send`, `hw_read`, `hw_disconnect`, `hw_info`, `hw_monitor` | Hardware device integration |
 | wsh Tools | `clawser-wsh-tools.js` | `wsh_connect`, `wsh_exec`, `wsh_fetch`, `wsh_upload`, `wsh_download`, `wsh_pty_open`, `wsh_pty_write`, `wsh_disconnect`, `wsh_sessions`, `wsh_mcp_call` | Remote shell, file transfer, CORS proxy |
 | Goals | `clawser-goals.js` | `goal_add`, `goal_update`, `goal_add_artifact`, `goal_decompose`, `goal_list` | Hierarchical goal tracking |

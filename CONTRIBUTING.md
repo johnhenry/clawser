@@ -8,7 +8,7 @@ Clawser runs entirely in the browser with no build step. To start developing:
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/your-org/clawser.git
+   git clone https://github.com/johnhenry/clawser.git
    cd clawser
    ```
 
@@ -29,7 +29,7 @@ That's it. There is no `npm install`, no bundler, no transpiler.
 - **Build step**: None. All source files are ES modules loaded directly by the browser.
 - **Dependencies**: Zero npm dependencies. External libraries (vimble, ai.matey, html2canvas, fflate) are loaded via CDN at runtime.
 - **Storage**: OPFS (Origin Private File System) for persistence, localStorage for configuration
-- **Testing**: Open `web/test.html` in Chrome to run the regression test suite (39 modules)
+- **Testing**: `npm test` runs 236 test files via `node:test` (see Testing section below)
 
 ## Code Style
 
@@ -136,16 +136,26 @@ LLM providers extend `LLMProvider` in `clawser-providers.js`.
 
 ## Testing
 
-- Open `web/test.html` in Chrome to run the full test suite
-- Tests are browser-based (no Node.js test runner)
-- 39 test modules covering agent core, tools, providers, shell, skills, and feature modules
-- Add new tests by creating a test function and registering it in `test.html`
+Tests use `node:test` with `node:assert/strict`. All test files live in `web/test/` and follow the naming pattern `clawser-<module>.test.mjs`.
+
+```bash
+npm test              # All 236 test files
+npm run test:fast     # Core + channels (fast feedback loop)
+npm run test:core     # Agent, tools, providers, shell
+npm run test:mesh     # Mesh networking (31 files)
+npm run test:e2e      # End-to-end scenarios
+npm run test:changed  # Only files with git changes
+```
+
+- Stub browser globals (`BrowserTool`, `window`, `document`) before importing modules
+- `web/test/_setup-globals.mjs` provides localStorage, document, and navigator stubs
+- Add new tests by creating `web/test/clawser-<module>.test.mjs`
 
 ## Pull Requests
 
 1. Fork the repository and create a feature branch from `main`
 2. Keep changes focused: one feature or fix per PR
-3. Ensure all tests pass in `web/test.html`
+3. Ensure all tests pass (`npm test`)
 4. Add tests for new tools, providers, or significant features
 5. Update documentation if you change public APIs
 6. Write a clear PR description explaining the "why" behind the change

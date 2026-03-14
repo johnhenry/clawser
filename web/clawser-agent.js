@@ -1382,10 +1382,15 @@ export class ClawserAgent {
     if (this.#browserTools?.has(call.name)) {
       this.#onToolCall(call.name, params, null);
       if (_toolTimeout && _toolTimeout > 0) {
-        result = await Promise.race([
-          this.#browserTools.execute(call.name, params),
-          new Promise((_, rej) => setTimeout(() => rej(new Error(`Tool "${call.name}" timed out after ${_toolTimeout}ms`)), _toolTimeout)),
-        ]).catch(e => ({ success: false, output: '', error: e.message }));
+        let timer;
+        const timeout = new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`Tool "${call.name}" timed out after ${_toolTimeout}ms`)), _toolTimeout) });
+        try {
+          result = await Promise.race([this.#browserTools.execute(call.name, params), timeout]);
+        } catch (e) {
+          result = { success: false, output: '', error: e.message };
+        } finally {
+          clearTimeout(timer);
+        }
       } else {
         result = await this.#browserTools.execute(call.name, params);
       }

@@ -2,6 +2,9 @@
   "name": "clawser",
   "private": true,
   "description": "Browser-native AI agent workspace with tools, memory, and goals.",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "start": "node web/serve-https.mjs",
     "start:http": "npx serve web/ -l 8080",

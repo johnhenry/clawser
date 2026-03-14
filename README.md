@@ -266,7 +266,7 @@ Clawser is a pure JavaScript agent platform that runs entirely in the browser. I
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/your-org/clawser.git
+   git clone https://github.com/johnhenry/clawser.git
    cd clawser
    ```
 
@@ -487,7 +487,7 @@ No build step required. Edit JS files in `web/` and reload the browser.
 
 **Running tests:**
 ```bash
-npm test              # All 142+ test files (1830+ tests)
+npm test              # All 236 test files
 npm run test:fast     # Core + channels (97 files)
 npm run test:core     # Agent, tools, providers, shell (89 files)
 npm run test:mesh     # Mesh networking (31 files)
@@ -522,8 +522,7 @@ Step-by-step guides to get productive with Clawser — see the [full tutorial in
 | Document | Description |
 |----------|-------------|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System design, data flow, security model |
-| [ROADMAP.md](ROADMAP.md) | 5-phase development roadmap |
-| [CHANGELOG.md](CHANGELOG.md) | Version history |
+| [ROADMAP.md](ROADMAP.md) | Development roadmap and version history |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Development setup, code style, adding tools/providers |
 | [SECURITY.md](SECURITY.md) | Permission model, autonomy levels, XSS prevention, storage |
 | [GAPS.md](GAPS.md) | Known gaps with action plans |

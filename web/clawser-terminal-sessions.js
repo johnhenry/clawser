@@ -370,7 +370,7 @@ export class TerminalSessionManager {
     }
 
     // Auto-persist after each result so sessions survive page refresh
-    this.persist().catch(() => {});
+    this.persist().catch(e => console.warn('[clawser] Session persist:', e.message));
   }
 
   recordAgentPrompt(content) {

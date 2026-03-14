@@ -6,7 +6,15 @@ import { loadAccounts } from './clawser-accounts.js';
 import { updateRouteHash } from './clawser-router.js';
 import { estimateCost, classifyError } from './clawser-providers.js';
 import { createItemBar, _relativeTime, _downloadText } from './clawser-item-bar.js';
-import { recordCostEvent } from './clawser-ui-config.js';
+// Lazy import to break circular dependency with clawser-ui-config.js
+let _recordCostEvent = null;
+async function getRecordCostEvent() {
+  if (!_recordCostEvent) {
+    const mod = await import('./clawser-ui-config.js');
+    _recordCostEvent = mod.recordCostEvent;
+  }
+  return _recordCostEvent;
+}
 
 // ── Lightweight markdown rendering for agent messages ──────────
 let _marked = null;
@@ -1185,7 +1193,7 @@ export async function sendMessage() {
             const cost = estimateCost(model, usage);
             state.sessionCost += cost;
             updateCostDisplay();
-            recordCostEvent(model, usage, cost * 100);
+            (await getRecordCostEvent())(model, usage, cost * 100);
           }
         } else if (chunk.type === 'safety_redacted') {
           // Safety pipeline redacted the streamed content — replace what's already rendered
@@ -1229,7 +1237,7 @@ export async function sendMessage() {
         const cost = estimateCost(model, result.usage);
         state.sessionCost += cost;
         updateCostDisplay();
-        recordCostEvent(model, result.usage, cost * 100);
+        (await getRecordCostEvent())(model, result.usage, cost * 100);
       }
 
       switch (result.status) {

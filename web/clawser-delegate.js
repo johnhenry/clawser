@@ -132,7 +132,7 @@ export class SubAgent {
     }
 
     this.#status = 'running';
-    this.#emit('delegate_start', { goal: this.#goal, depth: this.#depth });
+    this.#emit('delegate_start', { goal: this.#goal, depth: this.#depth }); // emitted for future extension hooks
 
     for (let i = 0; i < this.#maxIterations; i++) {
       if (this.#status === 'cancelled') {
@@ -171,7 +171,7 @@ export class SubAgent {
             toolCalls: this.#toolCallCount,
             cost: this.#estimateCost(),
           };
-          this.#emit('delegate_complete', this.#result);
+          this.#emit('delegate_complete', this.#result); // emitted for future extension hooks
           return this.#result;
         }
 
@@ -211,7 +211,7 @@ export class SubAgent {
           toolCalls: this.#toolCallCount,
           cost: this.#estimateCost(),
         };
-        this.#emit('delegate_error', { error: e.message });
+        this.#emit('delegate_error', { error: e.message }); // emitted for future extension hooks
         return this.#result;
       }
     }
@@ -226,7 +226,7 @@ export class SubAgent {
       toolCalls: this.#toolCallCount,
       cost: this.#estimateCost(),
     };
-    this.#emit('delegate_timeout', this.#result);
+    this.#emit('delegate_timeout', this.#result); // emitted for future extension hooks
     return this.#result;
   }
 
@@ -248,7 +248,7 @@ export class SubAgent {
     }
 
     this.#status = 'running';
-    this.#emit('delegate_start', { goal: this.#goal, depth: this.#depth });
+    this.#emit('delegate_start', { goal: this.#goal, depth: this.#depth }); // emitted for future extension hooks
 
     for (let i = 0; i < this.#maxIterations; i++) {
       if (this.#status === 'cancelled') {
@@ -291,7 +291,7 @@ export class SubAgent {
             toolCalls: this.#toolCallCount,
             cost: this.#estimateCost(),
           };
-          this.#emit('delegate_complete', this.#result);
+          this.#emit('delegate_complete', this.#result); // emitted for future extension hooks
           yield { type: 'done', success: true, summary: this.#result.summary, iterations: i + 1 };
           return;
         }
@@ -335,7 +335,7 @@ export class SubAgent {
           toolCalls: this.#toolCallCount,
           cost: this.#estimateCost(),
         };
-        this.#emit('delegate_error', { error: e.message });
+        this.#emit('delegate_error', { error: e.message }); // emitted for future extension hooks
         yield { type: 'done', success: false, summary: this.#result.summary };
         return;
       }
@@ -351,7 +351,7 @@ export class SubAgent {
       toolCalls: this.#toolCallCount,
       cost: this.#estimateCost(),
     };
-    this.#emit('delegate_timeout', this.#result);
+    this.#emit('delegate_timeout', this.#result); // emitted for future extension hooks
     yield { type: 'done', success: false, summary: this.#result.summary };
   }
 
@@ -360,7 +360,7 @@ export class SubAgent {
    */
   cancel() {
     this.#status = 'cancelled';
-    this.#emit('delegate_cancel', { goal: this.#goal });
+    this.#emit('delegate_cancel', { goal: this.#goal }); // emitted for future extension hooks
   }
 
   /**

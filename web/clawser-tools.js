@@ -14,13 +14,12 @@
 import { opfsWalk, opfsWalkDir } from './clawser-opfs.js';
 
 // Lazy import to avoid circular dependency (clawser-cors-fetch.js extends BrowserTool)
-let _corsFetchFallback = null;
+let _corsFetchPromise = null;
 async function getCorsFetchFallback() {
-  if (!_corsFetchFallback) {
-    const mod = await import('./clawser-cors-fetch.js');
-    _corsFetchFallback = mod.corsFetchFallback;
+  if (!_corsFetchPromise) {
+    _corsFetchPromise = import('./clawser-cors-fetch.js').then(mod => mod.corsFetchFallback);
   }
-  return _corsFetchFallback;
+  return _corsFetchPromise;
 }
 
 // ── WorkspaceFs — scopes OPFS paths to workspace home ────────────
@@ -674,7 +673,14 @@ export class FsListTool extends BrowserTool {
   #getShellState;
   /** @type {Function|null} */
   #showDotfiles;
-  constructor(ws, getShellState, showDotfiles) { super(); this.#ws = ws; this.#getShellState = getShellState || null; this.#showDotfiles = showDotfiles || null; }
+  constructor(ws, getShellState, options = {}) {
+    super();
+    this.#ws = ws;
+    this.#getShellState = getShellState || null;
+    // Accept options.showDotfiles or a bare function for backward compat
+    const sd = typeof options === 'function' ? options : options.showDotfiles;
+    this.#showDotfiles = sd || null;
+  }
 
   get name() { return 'browser_fs_list'; }
   get description() {
@@ -1025,8 +1031,7 @@ export class EvalJsTool extends BrowserTool {
   }
   get permission() { return 'approve'; }
 
-  async execute(args) {
-    const code = args.code || args.script;
+  async execute({ code }) {
     if (!this._sandbox) {
       const { createSandbox } = await import('./packages-andbox.js');
       this._sandbox = createSandbox({
@@ -1594,12 +1599,13 @@ export function createDefaultRegistry(workspaceFs, getShellState, showDotfiles) 
   registry.register(new DomModifyTool());
   registry.register(new FsReadTool(workspaceFs, getShellState));
   registry.register(new FsWriteTool(workspaceFs, getShellState));
-  registry.register(new FsListTool(workspaceFs, getShellState, showDotfiles));
+  registry.register(new FsListTool(workspaceFs, getShellState, { showDotfiles }));
   registry.register(new FsDeleteTool(workspaceFs, getShellState));
   registry.register(new FsMkdirTool(workspaceFs, getShellState));
   registry.register(new StorageGetTool());
   registry.register(new StorageSetTool());
   registry.register(new StorageListTool());
+  registry.register(new StorageDeleteTool());
   registry.register(new ClipboardReadTool());
   registry.register(new ClipboardWriteTool());
   registry.register(new NavigateTool());

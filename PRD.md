@@ -187,13 +187,13 @@ index.html (SPA entry point)
 
 ## 5. Core Modules
 
-### 5.1 Agent Core (`clawser-agent.js` — 3,742 LOC)
+### 5.1 Agent Core (`clawser-agent.js` — 3,765 LOC)
 
 The central agent runtime providing:
 
 - **ClawserAgent**: Async run loop with streaming (`run()`, `runStream()`)
 - **EventLog**: Append-only JSONL event persistence in OPFS
-- **HookPipeline**: 6 lifecycle points (beforeInbound, beforeToolCall, afterToolCall, beforeOutbound, onError, onComplete)
+- **HookPipeline**: 6 lifecycle points (beforeInbound, beforeToolCall, beforeOutbound, transformResponse, onSessionStart, onSessionEnd)
 - **AutonomyController**: 3 levels (readonly/supervised/full), per-hour rate limits, daily + monthly cost limits, time-of-day restrictions, PolicyEngine integration
 - **Context Compaction**: Auto-summarizes old messages when context exceeds threshold
 - **Idle Timeout**: Auto-compacts on resume after configurable idle period
@@ -415,7 +415,7 @@ The agent operates in a decide-execute cycle:
 6. **LLM Call** → route to active provider (streaming or batch)
 7. **Cost Recording** → update AutonomyController + CostLedger
 8. **Tool Execution** → parallel for read-only, sequential for write tools
-9. **Hook Pipeline** → run `afterToolCall` hooks
+9. **Hook Pipeline** → run `beforeOutbound` hooks
 10. **Safety Scan** → check tool outputs for leaked secrets
 11. **Context Management** → compact if over threshold
 12. **Repeat** from step 5 until no more tool calls or iteration limit reached

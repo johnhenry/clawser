@@ -1,10 +1,13 @@
 /**
  * clawser-workspace-lifecycle.js — Workspace creation, switching, and initialization
  *
- * Extracted from clawser-app.js. Contains:
- *   - createShellSession()  — fresh shell for current workspace
- *   - switchWorkspace()     — save current, switch, restore target
- *   - initWorkspace()       — full bootstrap from scratch
+ * Orchestrator that delegates to:
+ *   - clawser-workspace-init-tools.js  — tool registration
+ *   - clawser-workspace-init-ui.js     — lazy panel rendering
+ *   - clawser-workspace-init-mesh.js   — mesh/P2P/channel/remote-runtime
+ *
+ * Keeps: kernel integration state, syncRoutinesToIDB, createShellSession,
+ *        cleanupWorkspace, switchWorkspace, initWorkspace.
  */
 import { $, state, lsKey, setSending, setConversation, resetConversationState, on, emit } from './clawser-state.js';
 import { modal } from './clawser-modal.js';
@@ -13,581 +16,40 @@ import { loadConversations } from './clawser-conversations.js';
 import { saveConfig, applyRestoredConfig, rebuildProviderDropdown, setupProviders } from './clawser-accounts.js';
 import { updateRouteHash, PANELS, resetRenderedPanels, isPanelRendered } from './clawser-router.js';
 import { setStatus, addMsg, addErrorMsg, addToolCall, addInlineToolCall, updateInlineToolCall, addEvent, updateState, updateCostDisplay, replaySessionHistory, replayFromEvents, updateConvNameDisplay, persistActiveConversation, renderToolCalls, resetChatUI } from './clawser-ui-chat.js';
-import { refreshFiles, renderGoals, renderToolRegistry, renderSkills, applySecuritySettings, renderAutonomySection, renderIdentitySection, renderRoutingSection, renderAuthProfilesSection, renderSelfRepairSection, updateCacheStats, renderLimitsSection, renderSandboxSection, renderHeartbeatSection, updateCostMeter, updateAutonomyBadge, updateDaemonBadge, refreshDashboard, renderMountList, renderOAuthSection, renderTerminalSessionBar, replayTerminalSession, renderToolManagementPanel, initAgentPicker, updateAgentLabel, renderAgentPanel, terminalAskUser, renderMarketplace, renderChannelPanel, updateChannelBadge, restoreSavedChannels, initSharedWorkerFromConfig } from './clawser-ui-panels.js';
-import { AgentStorage } from './clawser-agent-storage.js';
-import { SwitchAgentTool, ConsultAgentTool } from './clawser-tools.js';
+import { renderGoals, renderToolRegistry, renderSkills, applySecuritySettings, renderAutonomySection, renderIdentitySection, renderRoutingSection, renderAuthProfilesSection, renderSelfRepairSection, updateCacheStats, renderLimitsSection, renderSandboxSection, renderHeartbeatSection, updateCostMeter, updateAutonomyBadge, updateDaemonBadge, refreshDashboard, renderOAuthSection, renderTerminalSessionBar, replayTerminalSession, initAgentPicker, updateAgentLabel, restoreSavedChannels, updateChannelBadge, initSharedWorkerFromConfig } from './clawser-ui-panels.js';
 import { TerminalSessionManager } from './clawser-terminal-sessions.js';
 
 import { ClawserAgent } from './clawser-agent.js';
-import { createDefaultRegistry, WorkspaceFs, registerAgentTools, AskUserQuestionTool } from './clawser-tools.js';
-import { ShellTool } from './clawser-shell.js';
+import { createDefaultRegistry, WorkspaceFs } from './clawser-tools.js';
 
-// Kernel integration (optional — no-op if kernel not initialized)
+import { SkillMarketplace } from './clawser-marketplace.js';
+import { createConfiguredShell } from './clawser-shell-factory.js';
+
+// Fallback chain
+import { FallbackChain, FallbackExecutor } from './clawser-fallback.js';
+
+// ── Extracted modules ────────────────────────────────────────────
+import { registerAllTools } from './clawser-workspace-init-tools.js';
+import { registerLazyPanelRenders, buildLazyPanelConfig } from './clawser-workspace-init-ui.js';
+import {
+  initMeshSubsystem,
+  createMeshAgentHost,
+  getReverseVirtualTerminalManager,
+  configureServerRuntimeResolver,
+  refreshReverseVirtualTerminalManager,
+  renderRemoteRuntimeWorkspacePanel,
+  createChannelGateway,
+} from './clawser-workspace-init-mesh.js';
+
+// Re-export for external consumers
+export { createMeshAgentHost, getReverseVirtualTerminalManager };
+
+// ── Kernel integration (optional — no-op if kernel not initialized) ──
 let _kernelIntegration = null;
 /** Set the kernel integration adapter for workspace lifecycle hooks. */
 export function setKernelIntegration(ki) { _kernelIntegration = ki; }
 /** Get the current kernel integration adapter. */
 export function getKernelIntegration() { return _kernelIntegration; }
-import { ActivateSkillTool, DeactivateSkillTool, SkillInstallTool, SkillUpdateTool, SkillRemoveTool, SkillListTool, SkillSearchTool } from './clawser-skills.js';
-import { SkillMarketplace } from './clawser-marketplace.js';
-
-import { MountListTool, MountResolveTool } from './clawser-mount.js';
-import { ToolBuildTool, ToolTestTool, ToolListCustomTool, ToolEditTool, ToolRemoveTool } from './clawser-tool-builder.js';
-import { ChannelListTool, ChannelSendTool, ChannelHistoryTool } from './clawser-channels.js';
-import { ChannelGateway } from './clawser-gateway.js';
-import { bridgePeerAgent } from './clawser-peer-agent.js';
-import { DelegateTool } from './clawser-delegate.js';
-import { GitStatusTool, GitDiffTool, GitLogTool, GitCommitTool, GitBranchTool, GitRecallTool } from './clawser-git.js';
-import { BrowserOpenTool, BrowserReadPageTool, BrowserClickTool, BrowserFillTool, BrowserWaitTool, BrowserEvaluateTool, BrowserListTabsTool, BrowserCloseTabTool } from './clawser-browser-auto.js';
-import { SandboxRunTool, SandboxStatusTool } from './clawser-sandbox.js';
-import { registerWshTools } from './clawser-wsh-tools.js';
-import { listReverseExposureRegistrations } from './clawser-wsh-tools.js';
-import { registerNetwayTools } from './clawser-netway-tools.js';
-import { HwListTool, HwConnectTool, HwSendTool, HwReadTool, HwDisconnectTool, HwInfoTool } from './clawser-hardware.js';
-import { RemoteStatusTool, RemotePairTool, RemoteRevokeTool } from './clawser-remote.js';
-import { GoalAddTool, GoalUpdateTool, GoalAddArtifactTool, GoalListTool } from './clawser-goals.js';
-import { DaemonStatusTool, DaemonCheckpointTool } from './clawser-daemon.js';
-import { OAuthListTool, OAuthConnectTool, OAuthDisconnectTool, OAuthApiTool } from './clawser-oauth.js';
-import { AuthListProfilesTool, AuthSwitchProfileTool, AuthStatusTool } from './clawser-auth-profiles.js';
-import { RoutineCreateTool, RoutineListTool, RoutineDeleteTool, RoutineRunTool, RoutineHistoryTool, RoutineToggleTool, RoutineUpdateTool } from './clawser-routines.js';
-import { SelfRepairStatusTool, SelfRepairConfigureTool } from './clawser-self-repair.js';
-import { UndoTool, UndoStatusTool, RedoTool } from './clawser-undo.js';
-import { IntentClassifyTool, IntentOverrideTool } from './clawser-intent.js';
-import { HeartbeatStatusTool, HeartbeatRunTool } from './clawser-heartbeat.js';
-import { registerExtensionTools, initExtensionBadge } from './clawser-extension-tools.js';
-import { initServerManager, getServerManager, setServerRuntimeServiceResolver } from './clawser-server.js';
-import { registerServerTools } from './clawser-server-tools.js';
-import { bindServerManagerServices } from './clawser-server-services.js';
-import { renderServerList, initServerPanel } from './clawser-ui-servers.js';
-import { ClawserPod } from './clawser-pod.js';
-import { registerMeshTools } from './clawser-mesh-tools.js';
-import { registerIdentityTools } from './clawser-mesh-identity-tools.js';
-import { createMeshctlTools } from './clawser-mesh-orchestrator.js';
-import { renderSwarmPanel, initSwarmListeners } from './clawser-ui-swarms.js';
-import { renderTransferPanel, initTransferListeners } from './clawser-ui-transfers.js';
-import { renderMeshPanel, initMeshListeners } from './clawser-ui-mesh.js';
-import { renderIdentityWallet, initIdentityWalletListeners, renderContactBook, initContactBookListeners, renderConnectionPanel, initConnectionListeners, renderAuditLog, initAuditLogListeners } from './clawser-ui-peers.js';
-import {
-  initRemoteFilesListeners,
-  initRemoteRuntimePanelListeners,
-  initRemoteTerminalListeners,
-  renderRemoteRuntimePanel,
-  updatePeerBadge,
-} from './clawser-ui-remote.js';
-
-// Phase 7: Remote gateway
-import { GatewayServer } from './clawser-gateway-server.js';
-
-// Phase 8: OAuth + Integration tools
-import { GoogleCalendarListTool, GoogleCalendarCreateTool, GoogleGmailSearchTool, GoogleGmailSendTool, GoogleDriveListTool, GoogleDriveReadTool, GoogleDriveCreateTool } from './clawser-google-tools.js';
-import { NotionSearchTool, NotionCreatePageTool, NotionUpdatePageTool, NotionQueryDatabaseTool } from './clawser-notion-tools.js';
-import { SlackChannelsTool, SlackPostTool, SlackHistoryTool } from './clawser-slack-tools.js';
-import { LinearIssuesTool, LinearCreateIssueTool, LinearUpdateIssueTool } from './clawser-linear-tools.js';
-import { GitHubPrReviewTool, GitHubIssueCreateTool, GitHubCodeSearchTool } from './clawser-integration-github.js';
-import { CalendarAwarenessTool, CalendarFreeBusyTool, CalendarQuickAddTool } from './clawser-integration-calendar.js';
-import { EmailDraftTool, EmailSummarizeTool, EmailTriageTool } from './clawser-integration-email.js';
-import { SlackMonitorTool, SlackDraftResponseTool } from './clawser-integration-slack.js';
-
-// Phase 5: Browser infrastructure
-import { FsObserver } from './clawser-fs-observer.js';
-import { TabViewManager } from './clawser-tab-views.js';
-
-// Phase 9: CORS fetch proxy
-import { ExtCorsFetchTool, setCorsFetchClient } from './clawser-cors-fetch.js';
-import { getExtensionClient } from './clawser-extension-tools.js';
-
-// Fallback chain
-import { FallbackChain, FallbackExecutor } from './clawser-fallback.js';
-import { ModelManager, ModelRegistry, ModelCache } from './clawser-models.js';
-import { ModelListTool, ModelPullTool, ModelRemoveTool, ModelStatusTool, TranscribeTool, SpeakTool, CaptionTool, OcrTool, DetectObjectsTool, ClassifyImageTool, ClassifyTextTool } from './clawser-model-tools.js';
-import { createConfiguredShell } from './clawser-shell-factory.js';
-import { VirtualTerminalManager } from './clawser-wsh-virtual-terminal-manager.js';
-import { RemoteMountManager } from './clawser-remote-mounts.js';
-import { BrowserVmConsoleRegistry, createBuiltinVmImages } from './clawser-vm-console.js';
-import { listIncomingSessions } from './clawser-wsh-incoming.js';
-
-// ── Mesh agent bridge helper ─────────────────────────────────────
-/**
- * Create an AgentHost for a PeerSession, wired through the ChannelGateway.
- * Call this when establishing a PeerSession to enable agent queries from the peer.
- *
- * @param {import('./clawser-peer-session.js').PeerSession} session
- * @returns {import('./clawser-peer-agent.js').AgentHost|null}
- */
-export function createMeshAgentHost(session) {
-  if (!state.agent || !state.gateway) {
-    console.warn('[clawser] Cannot create mesh agent host — agent or gateway not available');
-    return null;
-  }
-  return bridgePeerAgent(session, state.agent, state.gateway,
-    (level, msg) => console.log(`[mesh-agent] ${msg}`));
-}
-
-function getRemoteRuntimePanelState() {
-  if (!state.ui.remoteRuntimePanel) {
-    state.ui.remoteRuntimePanel = {
-      activeSelector: null,
-      activeView: null,
-      activeServices: [],
-      routeExplanation: null,
-      error: null,
-      localExposure: [],
-      filterText: '',
-      filterCapability: '',
-      filterPeerType: '',
-      telemetry: null,
-      auditEntries: [],
-      vmError: null,
-    };
-  }
-  return state.ui.remoteRuntimePanel;
-}
-
-function currentRemoteAuditEntries(limit = 20) {
-  const entries = state.auditChain?.slice?.(-Math.max(limit * 4, 40)) || [];
-  const activeSelector = getRemoteRuntimePanelState().activeSelector;
-  return entries
-    .filter((entry) => entry?.operation?.startsWith?.('remote_'))
-    .filter((entry) => {
-      if (!activeSelector) return true;
-      const selector = entry?.data?.selector || entry?.data?.canonicalId || entry?.data?.podId || null;
-      return !selector || selector === activeSelector;
-    })
-    .slice(-limit)
-    .reverse()
-    .map((entry) => ({
-      sequence: entry.sequence,
-      timestamp: entry.timestamp,
-      operation: entry.operation,
-      actor: entry.data?.actor || entry.authorPodId || 'system',
-      selector: entry.data?.selector || entry.data?.canonicalId || entry.data?.podId || null,
-      layer: entry.data?.layer || entry.data?.failure?.layer || entry.data?.route?.kind || null,
-      outcome: entry.data?.outcome || entry.data?.status || null,
-      summary: entry.data?.reason
-        || entry.data?.error
-        || entry.data?.command
-        || entry.data?.path
-        || entry.data?.toolName
-        || entry.data?.serviceName
-        || null,
-    }));
-}
-
-function configureServerRuntimeResolver() {
-  setServerRuntimeServiceResolver(async ({ kind, selector = null, serviceName = null }) => {
-    const registry = state.remoteRuntimeRegistry;
-    if (!registry) {
-      throw new Error('Remote runtime registry is not available');
-    }
-
-    if (kind === 'service') {
-      const service = registry.resolveService(serviceName);
-      if (!service) {
-        throw new Error(`Unknown runtime service: ${serviceName}`);
-      }
-      return service;
-    }
-
-    if (kind === 'runtime-service') {
-      const service = registry.resolvePeerService(selector, serviceName);
-      if (!service) {
-        throw new Error(`Unknown runtime service: ${selector}/${serviceName}`);
-      }
-      return service;
-    }
-
-    if (kind === 'managed-server') {
-      const server = registry.resolveManagedServer(selector, serviceName);
-      if (!server) {
-        throw new Error(`Unknown managed runtime server: ${selector}/${serviceName}`);
-      }
-      return server;
-    }
-
-    if (kind === 'endpoint') {
-      const endpoint = registry.resolveEndpoint(serviceName);
-      if (!endpoint) {
-        throw new Error(`Unknown runtime endpoint: ${serviceName}`);
-      }
-      return endpoint;
-    }
-
-    throw new Error(`Unsupported runtime service lookup kind: ${kind}`);
-  });
-}
-
-function localExposureStatus() {
-  const incomingByHost = new Map();
-  for (const session of listIncomingSessions()) {
-    const host = session.host || 'local'
-    incomingByHost.set(host, (incomingByHost.get(host) || 0) + 1)
-  }
-  return listReverseExposureRegistrations().map((entry) => ({
-    ...entry,
-    activeIncomingSessions: incomingByHost.get(entry.host) || 0,
-  }));
-}
-
-function remoteRuntimePeerSession(peer) {
-  return {
-    pubKey: peer?.identity?.fingerprint || peer?.identity?.canonicalId || '',
-    remotePodId: peer?.identity?.podId || peer?.identity?.canonicalId || '',
-  };
-}
-
-function mergePeerServices(peer, discoveredServices = [], brokerServices = []) {
-  const services = new Map();
-  for (const service of discoveredServices || []) {
-    const key = service.address || `${service.podId || 'peer'}:${service.name || 'service'}`;
-    services.set(key, { ...service });
-  }
-  for (const service of brokerServices || []) {
-    const key = service.address || `${service.podId || 'peer'}:${service.name || 'service'}`;
-    services.set(key, { ...service });
-  }
-  for (const service of Object.values(peer?.metadata?.serviceDetails || {})) {
-    const key = service.address || `${service.podId || peer?.identity?.podId || 'peer'}:${service.name || 'service'}`;
-    services.set(key, { ...service });
-  }
-  return [...services.values()].sort((left, right) => (left.name || '').localeCompare(right.name || ''));
-}
-
-function createBrokerTerminalClient(selector) {
-  return {
-    async execute(command) {
-      const result = await state.remoteSessionBroker.openSession(selector, {
-        intent: 'exec',
-        command,
-      });
-      return {
-        output: result?.output ?? '',
-        exitCode: result?.exitCode ?? 0,
-        route: result?.route || null,
-      };
-    },
-  };
-}
-
-function normalizeBrokerFileRead(result) {
-  if (result?.data instanceof Uint8Array || typeof result?.data === 'string') {
-    return result;
-  }
-  if (typeof result?.content === 'string') {
-    return { data: result.content, size: result.content.length };
-  }
-  return { data: '', size: 0 };
-}
-
-function createBrokerFileClient(selector) {
-  return {
-    async listFiles(path) {
-      const result = await state.remoteSessionBroker.openSession(selector, {
-        intent: 'files',
-        requiredCapabilities: ['fs'],
-        operation: 'list',
-        path,
-      });
-      return result?.entries || [];
-    },
-    async readFile(path) {
-      const result = await state.remoteSessionBroker.openSession(selector, {
-        intent: 'files',
-        requiredCapabilities: ['fs'],
-        operation: 'read',
-        path,
-      });
-      return normalizeBrokerFileRead(result);
-    },
-    async writeFile(path, data) {
-      return await state.remoteSessionBroker.openSession(selector, {
-        intent: 'files',
-        requiredCapabilities: ['fs'],
-        operation: 'write',
-        path,
-        data,
-      });
-    },
-    async deleteFile(path) {
-      return await state.remoteSessionBroker.openSession(selector, {
-        intent: 'files',
-        requiredCapabilities: ['fs'],
-        operation: 'remove',
-        path,
-      });
-    },
-  };
-}
-
-async function openRemoteRuntimeView(selector, view) {
-  const panelState = getRemoteRuntimePanelState();
-  const registry = state.remoteRuntimeRegistry;
-  const broker = state.remoteSessionBroker;
-  const peer = registry?.resolvePeer?.(selector);
-  if (!registry || !broker || !peer) {
-    panelState.error = `Unknown remote runtime: ${selector}`;
-    renderRemoteRuntimeWorkspacePanel();
-    return;
-  }
-
-  try {
-    panelState.error = null;
-    panelState.activeSelector = selector;
-
-    if (view === 'terminal') {
-      panelState.routeExplanation = broker.explainRoute(selector, {
-        intent: 'exec',
-      });
-      panelState.activeView = {
-        kind: 'terminal',
-        client: createBrokerTerminalClient(selector),
-        session: remoteRuntimePeerSession(peer),
-      };
-      panelState.activeServices = [];
-    } else if (view === 'files') {
-      panelState.routeExplanation = broker.explainRoute(selector, {
-        intent: 'files',
-        requiredCapabilities: ['fs'],
-      });
-      panelState.activeView = {
-        kind: 'files',
-        client: createBrokerFileClient(selector),
-        session: remoteRuntimePeerSession(peer),
-      };
-      panelState.activeServices = [];
-    } else if (view === 'services') {
-      panelState.routeExplanation = broker.explainRoute(selector, {
-        intent: 'service',
-      });
-      const brokerResult = await broker.openSession(selector, { intent: 'service' });
-      const discovered = state.serviceBrowser?.getServicesByPod?.(peer.identity?.podId || '') || [];
-      panelState.activeServices = mergePeerServices(peer, discovered, brokerResult?.services || []);
-      panelState.activeView = {
-        kind: 'services',
-        session: remoteRuntimePeerSession(peer),
-      };
-    } else if (view === 'servers') {
-      panelState.routeExplanation = broker.explainRoute(selector, {
-        intent: 'server-management',
-      });
-      panelState.activeServices = registry.listManagedServers({
-        peerFilter: { selector },
-        podId: peer.identity?.podId || peer.identity?.fingerprint || peer.identity?.canonicalId || null,
-      });
-      panelState.activeView = {
-        kind: 'servers',
-        session: remoteRuntimePeerSession(peer),
-      };
-    }
-  } catch (error) {
-    const intent = view === 'files'
-      ? 'files'
-      : view === 'services'
-        ? 'service'
-        : view === 'servers'
-          ? 'server-management'
-          : 'exec';
-    panelState.error = describeRemoteRuntimeError(error);
-    panelState.routeExplanation = routeExplanationFromError(selector, intent, error);
-  }
-
-  renderRemoteRuntimeWorkspacePanel();
-}
-
-function explainRemoteRuntimeRoute(selector) {
-  const panelState = getRemoteRuntimePanelState();
-  const intentOptions = remotePanelIntentOptions(panelState);
-  try {
-    panelState.error = null;
-    panelState.activeSelector = selector;
-    panelState.routeExplanation = state.remoteSessionBroker.explainRoute(
-      selector,
-      intentOptions
-    );
-  } catch (error) {
-    panelState.error = describeRemoteRuntimeError(error);
-    panelState.routeExplanation = routeExplanationFromError(selector, intentOptions.intent, error);
-  }
-  renderRemoteRuntimeWorkspacePanel();
-}
-
-function remotePanelIntentOptions(panelState) {
-  return panelState.activeView?.kind === 'files'
-    ? { intent: 'files', requiredCapabilities: ['fs'] }
-    : panelState.activeView?.kind === 'services'
-      ? { intent: 'service' }
-      : panelState.activeView?.kind === 'servers'
-        ? { intent: 'server-management' }
-      : { intent: 'exec' };
-}
-
-function describeRemoteRuntimeError(error) {
-  if (!error) return 'Unknown remote runtime error';
-  const layer = error.layer ? `[${error.layer}] ` : '';
-  return `${layer}${error.message || String(error)}`;
-}
-
-function routeExplanationFromError(selector, intent, error) {
-  return {
-    connectionKind: 'failed',
-    reason: error?.message || String(error),
-    target: { selector, intent },
-    descriptor: { capabilities: [] },
-    health: {
-      health: error?.layer === 'routing' ? 'degraded' : 'failed',
-      lastOutcomeReason: error?.message || String(error),
-      lastOutcomeLayer: error?.layer || 'unknown',
-    },
-    resumability: { replayMode: 'unsupported' },
-    warnings: [
-      error?.layer ? `layer:${error.layer}` : null,
-      error?.code ? `code:${error.code}` : null,
-    ].filter(Boolean),
-    alternatives: [],
-    failure: {
-      layer: error?.layer || 'unknown',
-      code: error?.code || 'remote-session-error',
-    },
-  };
-}
-
-function renderRemoteRuntimeWorkspacePanel() {
-  const container = $('remoteContainer');
-  if (!container) return;
-  if (!state.peerNode) {
-    container.innerHTML = '<div class="rc-empty" style="padding:1.5rem;opacity:0.6">Remote access requires an active peer connection. Start a mesh session first.</div>';
-    return;
-  }
-  if (!state.remoteRuntimeRegistry || !state.remoteSessionBroker) {
-    container.innerHTML = '<div class="rc-empty" style="padding:1.5rem;opacity:0.6">Remote runtime services are still initializing.</div>';
-    return;
-  }
-
-  bindRemoteRuntimePanelEvents();
-
-  const panelState = getRemoteRuntimePanelState();
-  panelState.localExposure = localExposureStatus();
-  panelState.telemetry = state.remoteSessionBroker?.telemetrySnapshot?.() || null;
-  panelState.auditEntries = currentRemoteAuditEntries();
-  container.innerHTML = renderRemoteRuntimePanel(state.remoteRuntimeRegistry, {
-    ...panelState,
-    vmRuntimes: _browserVmConsoleRegistry?.list?.() || [],
-    vmImages: _browserVmConsoleRegistry?.listImages?.() || [],
-    defaultVmRuntimeId: _browserVmConsoleRegistry?.getDefaultRuntimeId?.() || null,
-  });
-  initRemoteRuntimePanelListeners({
-    onOpenView: (selector, view) => {
-      void openRemoteRuntimeView(selector, view);
-    },
-    onExplainRoute: (selector) => explainRemoteRuntimeRoute(selector),
-    onUpdateFilter: (key, value) => {
-      panelState[key] = value;
-      renderRemoteRuntimeWorkspacePanel();
-    },
-    onVmAction: async (action, target) => {
-      if (!_browserVmConsoleRegistry) return;
-      panelState.vmError = null;
-      try {
-        if (action === 'install-image') {
-          const installed = _browserVmConsoleRegistry.install(target, {
-            workspaceId: getActiveWorkspaceId() || 'default',
-          });
-          await _browserVmConsoleRegistry.get(installed.id)?.restorePersistedState?.();
-        } else if (action === 'set-default') {
-          _browserVmConsoleRegistry.setDefault(target);
-        } else if (action === 'start-runtime') {
-          await _browserVmConsoleRegistry.start(target);
-        } else if (action === 'stop-runtime') {
-          await _browserVmConsoleRegistry.stop(target);
-        } else if (action === 'reset-runtime') {
-          await _browserVmConsoleRegistry.reset(target);
-        } else if (action === 'remove-runtime') {
-          _browserVmConsoleRegistry.uninstall(target);
-        }
-      } catch (error) {
-        panelState.vmError = error?.message || String(error);
-      }
-      renderRemoteRuntimeWorkspacePanel();
-    },
-  });
-
-  if (panelState.activeView?.kind === 'terminal') {
-    initRemoteTerminalListeners(panelState.activeView.client);
-  } else if (panelState.activeView?.kind === 'files') {
-    initRemoteFilesListeners(panelState.activeView.client);
-  }
-
-  updatePeerBadge(state.peerNode);
-}
-
-function bindRemoteRuntimePanelEvents() {
-  if (state.remoteSessionBroker && !state.remoteSessionBroker._remoteRuntimeUiBound) {
-    state.remoteSessionBroker._remoteRuntimeUiBound = true;
-    state.remoteSessionBroker.on('route:selected', (selection) => {
-      const panelState = getRemoteRuntimePanelState();
-      if (panelState.activeSelector === selection?.target?.selector) {
-        try {
-          panelState.routeExplanation = state.remoteSessionBroker.explainRoute(
-            selection.target.selector,
-            remotePanelIntentOptions(panelState),
-          );
-        } catch {
-          panelState.routeExplanation = {
-            ...selection,
-            connectionKind: selection.route?.kind || 'unknown',
-            reason: `${selection.descriptor?.peerType || 'unknown'}/${selection.descriptor?.shellBackend || 'unknown'} via ${selection.route?.kind || 'unknown'}`,
-          };
-        }
-      }
-      if (isPanelRendered('remote')) {
-        renderRemoteRuntimeWorkspacePanel();
-      }
-    });
-    state.remoteSessionBroker.on('session:failed', ({ selection, error }) => {
-      const panelState = getRemoteRuntimePanelState();
-      const selector = selection?.target?.selector || panelState.activeSelector;
-      if (panelState.activeSelector === selector) {
-        panelState.error = describeRemoteRuntimeError(error);
-        panelState.routeExplanation = routeExplanationFromError(
-          selector,
-          selection?.target?.intent || remotePanelIntentOptions(panelState).intent,
-          error,
-        );
-      }
-      if (isPanelRendered('remote')) {
-        renderRemoteRuntimeWorkspacePanel();
-      }
-    });
-  }
-
-  if (!state.ui._wshExposureUiBound) {
-    state.ui._wshExposureUiBound = true;
-    globalThis.addEventListener?.('clawser:wsh-exposure-changed', () => {
-      if (isPanelRendered('remote')) {
-        renderRemoteRuntimeWorkspacePanel();
-      }
-    });
-  }
-
-  if (state.serviceBrowser && !state.serviceBrowser._remoteRuntimeUiBound) {
-    state.serviceBrowser._remoteRuntimeUiBound = true;
-    const refresh = () => {
-      if (isPanelRendered('remote')) {
-        renderRemoteRuntimeWorkspacePanel();
-      }
-    };
-    state.serviceBrowser.on('discovered', refresh);
-    state.serviceBrowser.on('lost', refresh);
-  }
-
-  if (_browserVmConsoleRegistry && !_browserVmConsoleRegistry._remoteRuntimeUiBound) {
-    _browserVmConsoleRegistry._remoteRuntimeUiBound = true;
-    _browserVmConsoleRegistry.on('changed', () => {
-      if (isPanelRendered('remote')) {
-        renderRemoteRuntimeWorkspacePanel();
-      }
-    });
-  }
-}
 
 // ── Routine → IndexedDB sync (background execution) ─────────────
 /**
@@ -615,66 +77,6 @@ async function syncRoutinesToIDB() {
 // Export for use by other modules (e.g., routine UI after changes)
 export { syncRoutinesToIDB };
 
-let _reverseVirtualTerminalManager = null;
-let _browserVmConsoleRegistry = null;
-
-export function getReverseVirtualTerminalManager() {
-  return _reverseVirtualTerminalManager;
-}
-
-async function refreshReverseVirtualTerminalManager() {
-  if (_reverseVirtualTerminalManager) {
-    await _reverseVirtualTerminalManager.close();
-  }
-
-  if (!_browserVmConsoleRegistry) {
-    _browserVmConsoleRegistry = new BrowserVmConsoleRegistry();
-    const workspaceId = getActiveWorkspaceId() || 'default';
-    for (const image of createBuiltinVmImages()) {
-      _browserVmConsoleRegistry.registerImage(image);
-    }
-    const demoLinuxVm = _browserVmConsoleRegistry.install('demo-linux', { workspaceId });
-    await _browserVmConsoleRegistry.get(demoLinuxVm.id)?.restorePersistedState?.();
-    _browserVmConsoleRegistry.setDefault(demoLinuxVm.id);
-  }
-  globalThis.__clawserVmConsoleRegistry = _browserVmConsoleRegistry;
-  state.features.vmConsoleRegistry = _browserVmConsoleRegistry;
-
-  _reverseVirtualTerminalManager = new VirtualTerminalManager({
-    shellFactory: async () => createConfiguredShell({
-      workspaceFs: state.workspaceFs,
-      getAgent: () => state.agent,
-      getRoutineEngine: () => state.routineEngine,
-      getModelManager: () => state.modelManager,
-    }),
-    vmConsoleFactory: async ({ peerContext }) => _browserVmConsoleRegistry.createShell(peerContext?.vmRuntimeId || 'default'),
-  });
-
-  try {
-    const {
-      setIncomingSessionApprovalProvider,
-      setRemoteRuntimeAuditRecorder,
-      setToolRegistry,
-      setVirtualTerminalManager,
-    } = await import('./clawser-wsh-incoming.js');
-    setVirtualTerminalManager(_reverseVirtualTerminalManager);
-    setRemoteRuntimeAuditRecorder(state.pod?.remoteAuditRecorder || null);
-    globalThis.__clawserRemoteAuditRecorder = state.pod?.remoteAuditRecorder || null;
-    setIncomingSessionApprovalProvider(async (request) => {
-      const capabilitySummary = (request.capabilities || []).join(', ') || 'none';
-      return modal.confirm(
-        `Allow ${request.username || 'remote peer'} to open a ${request.kind} session?\n\nBackend: ${request.peerType}/${request.shellBackend}\nCapabilities: ${capabilitySummary}\nCommand: ${request.command || '(interactive shell)'}`,
-        { okLabel: 'Allow', cancelLabel: 'Deny' },
-      );
-    });
-    if (state.browserTools) {
-      setToolRegistry(state.browserTools);
-    }
-  } catch (err) {
-    console.warn('[clawser] reverse terminal manager wiring failed', err);
-  }
-}
-
 // ── Shell session management ─────────────────────────────────────
 /** Create a fresh shell session for the current workspace. Sources .clawserrc and registers CLI. */
 export async function createShellSession() {
@@ -692,157 +94,59 @@ export async function createShellSession() {
   await refreshReverseVirtualTerminalManager();
 }
 
-// ── Lazy Panel Rendering (Gap 11.1) ──────────────────────────────
-/**
- * Deferred panel render registry. Maps panel names to render callbacks.
- * When a panel is first activated, its render callback fires once.
- * Config panel is NOT deferred because its render functions apply runtime
- * settings (autonomy levels, cache TTL, etc.) that affect agent behavior.
+// ── Cleanup workspace ──────────────────────────────────────────
+/** Tear down the current workspace: stop services, persist state, destroy kernel tenant.
+ * Must be called before switching or destroying a workspace to prevent state leaks.
  */
-const _deferredRenders = new Map();
+export async function cleanupWorkspace() {
+  if (!state.agent) return;
 
-/**
- * Register deferred render callbacks for panels that don't need
- * eager DOM population. Called during workspace init/switch.
- * @param {Object} renders - Map of panel name → render callback
- */
-function registerLazyPanelRenders(renders) {
-  // Clear old listeners
-  for (const [panelName, { el, handler }] of _deferredRenders) {
-    if (el) el.removeEventListener('panel:firstrender', handler);
+  // Clear update interval to prevent stale timer stacking
+  if (state._updateInterval) { clearInterval(state._updateInterval); state._updateInterval = null; }
+
+  // Stop daemon and routine engine before saving
+  state.routineEngine.stop();
+  await state.daemonController.stop().catch(e => console.warn('[clawser] Daemon stop:', e.message));
+
+  // Persist terminal session before switching
+  if (state.terminalSessions) {
+    await state.terminalSessions.persist().catch(e => console.warn('[clawser] Terminal persist:', e.message));
   }
-  _deferredRenders.clear();
 
-  for (const [panelName, renderFn] of Object.entries(renders)) {
-    const panelDef = PANELS[panelName];
-    if (!panelDef) continue;
-    const el = $(panelDef.id);
-    if (!el) continue;
-
-    // If the panel was already rendered (e.g. chat), run immediately
-    if (isPanelRendered(panelName)) {
-      renderFn();
-      continue;
-    }
-
-    const handler = () => {
-      renderFn();
-      _deferredRenders.delete(panelName);
-    };
-    el.addEventListener('panel:firstrender', handler, { once: true });
-    _deferredRenders.set(panelName, { el, handler });
+  // Destroy kernel tenant for outgoing workspace
+  if (_kernelIntegration) {
+    const oldWsId = state.agent.getWorkspace();
+    _kernelIntegration.destroyWorkspaceTenant(oldWsId);
   }
-}
 
-// ── P2P Mesh Initialization ─────────────────────────────────────
-/**
- * Initialize or reinitialize the P2P mesh subsystem via ClawserPod.
- * Creates a Pod (identity, discovery, messaging) then layers on
- * PeerNode + SwarmCoordinator. Safe to call multiple times.
- */
-async function initMeshSubsystem() {
+  // Save current workspace state
+  await persistActiveConversation();
+  state.agent.persistMemories();
+  await state.agent.persistCheckpoint();
+  saveConfig();
+
+  // Save routine state
   try {
-    // Boot pod if not already running
-    if (!state.pod) {
-      state.pod = new ClawserPod();
-      await state.pod.boot({ discoveryTimeout: 500 });
-    }
+    const wsId = state.agent.getWorkspace();
+    const routineData = state.routineEngine.toJSON();
+    if (routineData) localStorage.setItem(lsKey.routines(wsId), JSON.stringify(routineData));
+  } catch (e) { console.warn('[clawser] routine save failed', e); }
 
-    // Layer mesh networking on top of the pod
-    const result = await state.pod.initMesh();
-    state.peerNode = result.peerNode;
-    state.swarmCoordinator = result.swarmCoordinator;
-    state.discoveryManager = result.discoveryManager;
-    state.transportNegotiator = result.transportNegotiator;
-    state.auditChain = result.auditChain;
-    state.streamMultiplexer = result.streamMultiplexer;
-    state.fileTransfer = result.fileTransfer;
-    state.serviceDirectory = result.serviceDirectory;
-    state.serviceAdvertiser = result.serviceAdvertiser;
-    state.serviceBrowser = result.serviceBrowser;
-    state.syncEngine = result.syncEngine;
-    state.resourceRegistry = result.resourceRegistry;
-    state.meshMarketplace = result.meshMarketplace;
-    state.quotaManager = result.quotaManager;
-    state.quotaEnforcer = result.quotaEnforcer;
-    state.paymentRouter = result.paymentRouter;
-    state.consensusManager = result.consensusManager;
-    state.relayClient = result.relayClient;
-    state.nameResolver = result.nameResolver;
-    state.appRegistry = result.appRegistry;
-    state.appStore = result.appStore;
-    state.orchestrator = result.orchestrator;
-    state.remoteRuntimeRegistry = result.remoteRuntimeRegistry || state.pod.remoteRuntimeRegistry;
-    state.remoteSessionBroker = result.remoteSessionBroker || state.pod.remoteSessionBroker;
-    globalThis.__clawserRemoteRuntimeRegistry = state.remoteRuntimeRegistry;
-    configureServerRuntimeResolver();
-    state.remoteMountManager = new RemoteMountManager({
-      mountableFs: state.workspaceFs,
-      runtimeRegistry: state.remoteRuntimeRegistry,
-      sessionBroker: state.remoteSessionBroker,
-      auditRecorder: state.pod.remoteAuditRecorder,
-    });
-    if (state.serverServiceSyncCleanup) {
-      try { state.serverServiceSyncCleanup() } catch {}
-      state.serverServiceSyncCleanup = null
-    }
-    try {
-      const serverManager = getServerManager()
-      state.serverServiceSyncCleanup = await bindServerManagerServices({
-        serverManager,
-        serviceAdvertiser: state.serviceAdvertiser,
-      })
-    } catch (e) {
-      console.warn('[clawser] Virtual server service sync failed (non-fatal):', e.message)
-    }
+  // Shut down the ClawserPod (stops peer node, sync engine, relay, etc.)
+  if (state.pod) {
+    try { await state.pod.shutdown(); } catch { /* best-effort */ }
+  }
 
-    // Register mesh tools if tool registry is available
-    if (state.browserTools) {
-      try {
-        registerMeshTools(state.browserTools, state.streamMultiplexer, state.fileTransfer);
-        registerIdentityTools(state.browserTools);
-        // Register orchestrator tools
-        if (state.orchestrator) {
-          const meshctlTools = createMeshctlTools(state.orchestrator);
-          for (const tool of meshctlTools) state.browserTools.register(tool);
-        }
-      } catch (e) {
-        console.warn('[clawser] Mesh tool registration failed (non-fatal):', e.message);
-      }
-    }
+  // Stop channel gateway
+  if (state.gateway) {
+    try { state.gateway.stop(); } catch { /* best-effort */ }
+  }
 
-    console.log('[clawser] P2P mesh initialized via ClawserPod — podId:', state.pod.podId);
-  } catch (err) {
-    console.warn('[clawser] P2P mesh init failed (non-fatal):', err.message);
-    state.peerNode = null;
-    state.swarmCoordinator = null;
-    state.discoveryManager = null;
-    state.transportNegotiator = null;
-    state.auditChain = null;
-    state.streamMultiplexer = null;
-    state.fileTransfer = null;
-    state.serviceDirectory = null;
-    state.serviceAdvertiser = null;
-    state.serviceBrowser = null;
-    if (state.serverServiceSyncCleanup) {
-      try { state.serverServiceSyncCleanup() } catch {}
-      state.serverServiceSyncCleanup = null
+  // Deactivate all skills
+  if (state.skillRegistry) {
+    for (const name of [...state.skillRegistry.activeSkills.keys()]) {
+      state.skillRegistry.deactivate(name);
     }
-    state.syncEngine = null;
-    state.resourceRegistry = null;
-    state.meshMarketplace = null;
-    state.quotaManager = null;
-    state.quotaEnforcer = null;
-    state.paymentRouter = null;
-    state.consensusManager = null;
-    state.relayClient = null;
-    state.nameResolver = null;
-    state.appRegistry = null;
-    state.appStore = null;
-    state.orchestrator = null;
-    state.remoteRuntimeRegistry = null;
-    state.remoteSessionBroker = null;
-    state.remoteMountManager = null;
   }
 }
 
@@ -857,36 +161,7 @@ export async function switchWorkspace(newId, convId) {
   setStatus('busy', 'switching workspace...');
   history.replaceState(null, '', '#workspace/' + newId);
 
-  // Clear update interval to prevent stale timer stacking
-  if (state._updateInterval) { clearInterval(state._updateInterval); state._updateInterval = null; }
-
-  // Stop daemon and routine engine before saving
-  state.routineEngine.stop();
-  await state.daemonController.stop().catch(() => {});
-
-  // Persist terminal session before switching
-  if (state.terminalSessions) {
-    await state.terminalSessions.persist().catch(() => {});
-  }
-
-  // Destroy kernel tenant for outgoing workspace
-  if (_kernelIntegration) {
-    const oldWsId = state.agent.getWorkspace();
-    _kernelIntegration.destroyWorkspaceTenant(oldWsId);
-  }
-
-  // Save current workspace
-  await persistActiveConversation();
-  state.agent.persistMemories();
-  await state.agent.persistCheckpoint();
-  saveConfig();
-
-  // Save routine state before switching
-  try {
-    const wsId = state.agent.getWorkspace();
-    const routineData = state.routineEngine.toJSON();
-    if (routineData) localStorage.setItem(lsKey.routines(wsId), JSON.stringify(routineData));
-  } catch (e) { console.warn('[clawser] routine save failed', e); }
+  await cleanupWorkspace();
 
   // Reset agent state
   await state.agent.reinit({});
@@ -920,11 +195,6 @@ export async function switchWorkspace(newId, convId) {
   resetChatUI();
   $('memResults').innerHTML = '';
   $('goalList').innerHTML = '';
-
-  // Clear skills state
-  for (const name of [...state.skillRegistry.activeSkills.keys()]) {
-    state.skillRegistry.deactivate(name);
-  }
 
   resetConversationState();
   updateCostDisplay();
@@ -1005,92 +275,7 @@ export async function switchWorkspace(newId, convId) {
     state.gateway.setTenantId(_kernelIntegration?.getWorkspaceTenantId(newId) || null);
   }
   await initMeshSubsystem();
-  registerLazyPanelRenders({
-    tools:    () => renderToolRegistry(),
-    goals:    () => renderGoals(),
-    files:    () => { refreshFiles(); renderMountList(); },
-    skills:   () => renderSkills(),
-    dashboard: () => refreshDashboard(),
-    servers:  () => { initServerPanel(); renderServerList(); },
-    channels: () => renderChannelPanel(),
-    marketplace: () => {
-      const container = $('marketplaceContainer');
-      if (container && state.marketplace) {
-        renderMarketplace(container, state.marketplace, {
-          onInstall: () => renderSkills(),
-          onUninstall: () => renderSkills(),
-        });
-      }
-    },
-    toolMgmt: () => renderToolManagementPanel(),
-    agents:   () => { renderAgentPanel(); },
-    swarms: () => {
-      const c = $('swarmsContainer');
-      if (!c) return;
-      const podId = state.peerNode?.podId || 'local';
-      const sc = state.swarmCoordinator;
-      const getSwarms = () => sc?.listSwarms?.() || [];
-      const listenerOpts = {
-        onCreate: (opts) => {
-          if (sc) {
-            sc.submitTask(opts.goal, opts.strategy || 'round_robin', {});
-            addMsg('system', `Swarm task submitted: "${opts.goal}"`);
-          }
-        },
-        onRefresh: () => {
-          c.innerHTML = renderSwarmPanel({ swarms: getSwarms(), localPodId: podId });
-          initSwarmListeners(listenerOpts);
-        },
-      };
-      c.innerHTML = renderSwarmPanel({ swarms: getSwarms(), localPodId: podId });
-      initSwarmListeners(listenerOpts);
-    },
-    transfers: () => {
-      const c = $('transfersContainer');
-      if (!c) return;
-      const podId = state.peerNode?.podId || 'local';
-      const ft = state.fileTransfer;
-      const active = ft?.listTransfers?.({ status: 'transferring' }) || [];
-      const history = ft?.listTransfers?.({ status: 'completed' }) || [];
-      c.innerHTML = renderTransferPanel({ active, history, localPodId: podId });
-      initTransferListeners();
-    },
-    mesh: () => {
-      const c = $('meshContainer');
-      if (!c) return;
-      const podId = state.peerNode?.podId || 'local';
-      const peerLabel = state.peerNode?.wallet?.getDefault()?.label || 'This Pod';
-      const peers = state.peerNode?.registry?.listPeers?.() || [];
-      const services = state.serviceDirectory?.listAll?.() || [];
-      c.innerHTML = renderMeshPanel({
-        localPod: { podId, label: peerLabel, uptime: 0 },
-        peers,
-        resources: (state.resourceRegistry?.listAll?.() || []).flatMap(d =>
-          Object.entries(d.resources || {}).filter(([,v]) => v > 0).map(([type, value]) =>
-            ({ podId: d.podId, type, used: value, capacity: value })
-          )
-        ),
-        services,
-      });
-      initMeshListeners();
-    },
-    peers: () => {
-      const c = $('peersContainer');
-      if (!c) return;
-      if (state.peerNode) {
-        c.innerHTML = renderIdentityWallet(state.peerNode) + renderContactBook(state.peerNode.wallet) + renderConnectionPanel(state.peerNode) + renderAuditLog(state.peerNode);
-        initIdentityWalletListeners(state.peerNode);
-        initContactBookListeners(state.peerNode.wallet);
-        initConnectionListeners(state.peerNode);
-        initAuditLogListeners(state.peerNode);
-      } else {
-        c.innerHTML = '<div class="peer-empty" style="padding:1.5rem;opacity:0.6">P2P peer subsystem not initialized. Start a mesh session to enable peer management.</div>';
-      }
-    },
-    remote: () => {
-      renderRemoteRuntimeWorkspacePanel();
-    },
-  });
+  registerLazyPanelRenders(buildLazyPanelConfig(() => renderRemoteRuntimeWorkspacePanel()));
 
   updateState();
 
@@ -1209,288 +394,8 @@ export async function initWorkspace(wsId, convId) {
     // Wire kernel integration to agent (Fix H8)
     state.agent._kernelIntegration = _kernelIntegration;
 
-    registerAgentTools(state.browserTools, state.agent);
-
-    state.browserTools.register(new ActivateSkillTool(state.skillRegistry, () => {
-      renderSkills();
-    }));
-    state.browserTools.register(new DeactivateSkillTool(state.skillRegistry, () => {
-      renderSkills();
-    }));
-
-    // Register shell tool (reads current shell from state.shell)
-    state.browserTools.register(new ShellTool(() => state.shell));
-
-    // ── Feature module tools (36 tools) ──────────────────────────
-
-    // Mount (2)
-    state.browserTools.register(new MountListTool(state.workspaceFs));
-    state.browserTools.register(new MountResolveTool(state.workspaceFs));
-
-    // Local AI Models (11)
-    if (!state.modelManager) {
-      state.modelManager = new ModelManager();
-    }
-    state.browserTools.register(new ModelListTool(state.modelManager));
-    state.browserTools.register(new ModelPullTool(state.modelManager));
-    state.browserTools.register(new ModelRemoveTool(state.modelManager));
-    state.browserTools.register(new ModelStatusTool(state.modelManager));
-    state.browserTools.register(new TranscribeTool(state.modelManager));
-    state.browserTools.register(new SpeakTool(state.modelManager));
-    state.browserTools.register(new CaptionTool(state.modelManager));
-    state.browserTools.register(new OcrTool(state.modelManager));
-    state.browserTools.register(new DetectObjectsTool(state.modelManager));
-    state.browserTools.register(new ClassifyImageTool(state.modelManager));
-    state.browserTools.register(new ClassifyTextTool(state.modelManager));
-
-    // Tool Builder (5)
-    state.browserTools.register(new ToolBuildTool(state.toolBuilder));
-    state.browserTools.register(new ToolTestTool(state.toolBuilder));
-    state.browserTools.register(new ToolListCustomTool(state.toolBuilder));
-    state.browserTools.register(new ToolEditTool(state.toolBuilder));
-    state.browserTools.register(new ToolRemoveTool(state.toolBuilder));
-
-    // Channels (3)
-    state.browserTools.register(new ChannelListTool(state.channelManager));
-    state.browserTools.register(new ChannelSendTool(state.channelManager));
-    state.browserTools.register(new ChannelHistoryTool(state.channelManager));
-
-    // Delegate (1) — uses lazy closures for provider/tool access
-    state.browserTools.register(new DelegateTool({
-      manager: state.delegateManager,
-      chatFn: async (messages, tools) => {
-        const providerSelect = $('providerSelect');
-        const provId = providerSelect?.value || 'echo';
-        const provider = state.providers?.get(provId);
-        if (!provider) return { content: 'No provider available', tool_calls: [] };
-        return provider.chat(messages, { tools });
-      },
-      executeFn: async (name, params) => state.browserTools.execute(name, params),
-      toolSpecs: () => state.browserTools.allSpecs(),
-    }));
-
-    // Git (6)
-    state.browserTools.register(new GitStatusTool(state.gitBehavior));
-    state.browserTools.register(new GitDiffTool(state.gitBehavior));
-    state.browserTools.register(new GitLogTool(state.gitBehavior));
-    state.browserTools.register(new GitCommitTool(state.gitBehavior));
-    state.browserTools.register(new GitBranchTool(state.gitBehavior));
-    state.browserTools.register(new GitRecallTool(state.gitMemory));
-
-    // Browser Automation (8)
-    state.browserTools.register(new BrowserOpenTool(state.automationManager));
-    state.browserTools.register(new BrowserReadPageTool(state.automationManager));
-    state.browserTools.register(new BrowserClickTool(state.automationManager));
-    state.browserTools.register(new BrowserFillTool(state.automationManager));
-    state.browserTools.register(new BrowserWaitTool(state.automationManager));
-    state.browserTools.register(new BrowserEvaluateTool(state.automationManager));
-    state.browserTools.register(new BrowserListTabsTool(state.automationManager));
-    state.browserTools.register(new BrowserCloseTabTool(state.automationManager));
-
-    // Sandbox (2)
-    state.browserTools.register(new SandboxRunTool(state.sandboxManager));
-    state.browserTools.register(new SandboxStatusTool(state.sandboxManager));
-
-    // wsh — Web Shell (10 tools)
-    registerWshTools(state.browserTools);
-
-    // netway — Virtual Networking (8 tools)
-    registerNetwayTools(state.browserTools);
-
-    // Hardware (6)
-    state.browserTools.register(new HwListTool(state.peripheralManager));
-    state.browserTools.register(new HwConnectTool(state.peripheralManager));
-    state.browserTools.register(new HwSendTool(state.peripheralManager));
-    state.browserTools.register(new HwReadTool(state.peripheralManager));
-    state.browserTools.register(new HwDisconnectTool(state.peripheralManager));
-    state.browserTools.register(new HwInfoTool(state.peripheralManager));
-
-    // Remote (3)
-    state.browserTools.register(new RemoteStatusTool(state.pairingManager));
-    state.browserTools.register(new RemotePairTool(state.pairingManager));
-    state.browserTools.register(new RemoteRevokeTool(state.pairingManager));
-
-    // ── Gap-fill tools (31 tools from blocks 0-29) ─────────────
-
-    // Goals (4)
-    state.browserTools.register(new GoalAddTool(state.goalManager));
-    state.browserTools.register(new GoalUpdateTool(state.goalManager));
-    state.browserTools.register(new GoalAddArtifactTool(state.goalManager));
-    state.browserTools.register(new GoalListTool(state.goalManager));
-
-    // Daemon (2)
-    state.browserTools.register(new DaemonStatusTool(state.daemonController));
-    state.browserTools.register(new DaemonCheckpointTool(state.daemonController));
-
-    // OAuth (4)
-    state.browserTools.register(new OAuthListTool(state.oauthManager));
-    state.browserTools.register(new OAuthConnectTool(state.oauthManager));
-    state.browserTools.register(new OAuthDisconnectTool(state.oauthManager));
-    state.browserTools.register(new OAuthApiTool(state.oauthManager));
-
-    // Auth Profiles (3)
-    state.browserTools.register(new AuthListProfilesTool(state.authProfileManager));
-    state.browserTools.register(new AuthSwitchProfileTool(state.authProfileManager));
-    state.browserTools.register(new AuthStatusTool(state.authProfileManager));
-
-    // Routines (7)
-    state.browserTools.register(new RoutineCreateTool(state.routineEngine));
-    state.browserTools.register(new RoutineListTool(state.routineEngine));
-    state.browserTools.register(new RoutineDeleteTool(state.routineEngine));
-    state.browserTools.register(new RoutineRunTool(state.routineEngine));
-    state.browserTools.register(new RoutineHistoryTool(state.routineEngine));
-    state.browserTools.register(new RoutineToggleTool(state.routineEngine));
-    state.browserTools.register(new RoutineUpdateTool(state.routineEngine));
-
-    // Self-Repair (2)
-    state.browserTools.register(new SelfRepairStatusTool(state.selfRepairEngine));
-    state.browserTools.register(new SelfRepairConfigureTool(state.selfRepairEngine));
-
-    // Undo/Redo (3)
-    state.browserTools.register(new UndoTool(state.undoManager));
-    state.browserTools.register(new UndoStatusTool(state.undoManager));
-    state.browserTools.register(new RedoTool(state.undoManager));
-
-    // Intent (2)
-    state.browserTools.register(new IntentClassifyTool(state.intentRouter));
-    state.browserTools.register(new IntentOverrideTool(state.intentRouter));
-
-    // Heartbeat (2)
-    state.browserTools.register(new HeartbeatStatusTool(state.heartbeatRunner));
-    state.browserTools.register(new HeartbeatRunTool(state.heartbeatRunner));
-
-    // Skills Registry (5)
-    state.browserTools.register(new SkillSearchTool(state.skillRegistryClient));
-    state.browserTools.register(new SkillInstallTool(state.skillRegistryClient, state.skillRegistry, () => getActiveWorkspaceId()));
-    state.browserTools.register(new SkillUpdateTool(state.skillRegistryClient, state.skillRegistry, () => getActiveWorkspaceId()));
-    state.browserTools.register(new SkillRemoveTool(state.skillRegistry, () => getActiveWorkspaceId()));
-    state.browserTools.register(new SkillListTool(state.skillRegistry));
-
-    // AskUserQuestion (1)
-    state.browserTools.register(new AskUserQuestionTool(async (questions) => {
-      return terminalAskUser(questions);
-    }));
-
-    // Agents (Block 37) — storage + tools
-    try {
-      const opfsRoot = await navigator.storage.getDirectory();
-      let globalAgentDir;
-      try { globalAgentDir = await opfsRoot.getDirectoryHandle('clawser_agents', { create: true }); } catch { globalAgentDir = null; }
-      let wsAgentDir;
-      try {
-        const wsBase = await opfsRoot.getDirectoryHandle('clawser_workspaces', { create: true });
-        const wsHandle = await wsBase.getDirectoryHandle(activeWsId, { create: true });
-        wsAgentDir = await wsHandle.getDirectoryHandle('.agents', { create: true });
-      } catch { wsAgentDir = null; }
-      state.agentStorage = new AgentStorage({ globalDir: globalAgentDir, wsDir: wsAgentDir, wsId: activeWsId });
-      await state.agentStorage.seedBuiltins();
-
-      // Seed built-in accounts (echo, chrome-ai) and migrate unlinked agents
-      try {
-        const { seedBuiltinAccounts, loadAccounts } = await import('./clawser-accounts.js');
-        const { migrateAgentAccounts } = await import('./clawser-agent-storage.js');
-        seedBuiltinAccounts();
-        if (!localStorage.getItem('clawser_agent_acct_migrated')) {
-          const migrated = await migrateAgentAccounts(loadAccounts(), state.agentStorage);
-          if (migrated > 0) console.log(`[clawser] Migrated ${migrated} agents to accounts`);
-          localStorage.setItem('clawser_agent_acct_migrated', '1');
-        }
-      } catch (e) { console.warn('[clawser] Agent account seeding/migration failed:', e); }
-
-      // Register agent tools
-      state.browserTools.register(new SwitchAgentTool(state.agentStorage, state.agent));
-      state.browserTools.register(new ConsultAgentTool(state.agentStorage, {
-        providers: state.providers,
-        browserTools: state.browserTools,
-        mcpManager: state.mcpManager,
-        onLog: (level, msg) => console.log(`[consult] ${msg}`),
-        createEngine: async (engineOpts) => {
-          const sub = await ClawserAgent.create(engineOpts);
-          sub.init({});
-          return sub;
-        },
-      }));
-
-      // Restore active agent
-      const activeAgent = await state.agentStorage.getActive();
-      if (activeAgent) {
-        await state.agent.applyAgent(activeAgent);
-        updateAgentLabel(activeAgent);
-      }
-    } catch (e) {
-      console.warn('[clawser] Agent storage init failed:', e);
-    }
-
-    // Chrome Extension — real browser control (34 tools)
-    registerExtensionTools(state.browserTools);
-    initExtensionBadge();
-
-    // Virtual Server subsystem (Phase 7) — 8 tools
-    try {
-      await initServerManager();
-      configureServerRuntimeResolver();
-      registerServerTools(state.browserTools, () => getActiveWorkspaceId());
-    } catch (e) { console.warn('[clawser] Server manager init failed:', e); }
-
-    // Phase 7: Remote Gateway Server
-    try {
-      const gw = new GatewayServer({
-        pairing: state.pairingManager,
-        agent: state.agent,
-        serverManager: getServerManager(),
-      });
-      state.gatewayServer = gw;
-    } catch (e) { console.warn('[clawser] Gateway server init failed:', e); }
-
-    // Phase 8: OAuth integration tools (7 Google + 4 Notion + 3 Slack + 3 Linear = 17)
-    // Tools receive the OAuthManager and call getClient(provider) internally
-    const oauth = state.oauthManager;
-    state.browserTools.register(new GoogleCalendarListTool(oauth));
-    state.browserTools.register(new GoogleCalendarCreateTool(oauth));
-    state.browserTools.register(new GoogleGmailSearchTool(oauth));
-    state.browserTools.register(new GoogleGmailSendTool(oauth));
-    state.browserTools.register(new GoogleDriveListTool(oauth));
-    state.browserTools.register(new GoogleDriveReadTool(oauth));
-    state.browserTools.register(new GoogleDriveCreateTool(oauth));
-    state.browserTools.register(new NotionSearchTool(oauth));
-    state.browserTools.register(new NotionCreatePageTool(oauth));
-    state.browserTools.register(new NotionUpdatePageTool(oauth));
-    state.browserTools.register(new NotionQueryDatabaseTool(oauth));
-    state.browserTools.register(new SlackChannelsTool(oauth));
-    state.browserTools.register(new SlackPostTool(oauth));
-    state.browserTools.register(new SlackHistoryTool(oauth));
-    state.browserTools.register(new LinearIssuesTool(oauth));
-    state.browserTools.register(new LinearCreateIssueTool(oauth));
-    state.browserTools.register(new LinearUpdateIssueTool(oauth));
-
-    // Phase 8: Integration wrappers (3 GitHub + 3 Calendar + 3 Email + 2 Slack = 11)
-    state.browserTools.register(new GitHubPrReviewTool(oauth));
-    state.browserTools.register(new GitHubIssueCreateTool(oauth));
-    state.browserTools.register(new GitHubCodeSearchTool(oauth));
-    state.browserTools.register(new CalendarAwarenessTool(oauth));
-    state.browserTools.register(new CalendarFreeBusyTool(oauth));
-    state.browserTools.register(new CalendarQuickAddTool(oauth));
-    state.browserTools.register(new EmailDraftTool(oauth));
-    state.browserTools.register(new EmailSummarizeTool(oauth));
-    state.browserTools.register(new EmailTriageTool(oauth));
-    state.browserTools.register(new SlackMonitorTool(oauth));
-    state.browserTools.register(new SlackDraftResponseTool(oauth));
-
-    // Phase 9: CORS fetch proxy (1)
-    state.browserTools.register(new ExtCorsFetchTool(getExtensionClient()));
-    setCorsFetchClient(getExtensionClient());
-
-    // Phase 5: FileSystemObserver (optional, Chrome 129+)
-    try {
-      state.fsObserver = new FsObserver();
-    } catch (e) { /* FsObserver unavailable in this browser */ }
-
-    // Phase 5: TabViewManager
-    try {
-      state.tabViewManager = new TabViewManager();
-    } catch (e) { /* Tab views unavailable */ }
-
-    state.agent.refreshToolSpecs();
+    // ── Register all tools ──────────────────────────────────────
+    await registerAllTools({ activeWsId, configureServerRuntimeResolver });
 
     // Wire safety pipeline into tool registry for defense-in-depth
     // (catches Codex path, executeToolDirect, and any direct registry calls)
@@ -1676,20 +581,7 @@ export async function initWorkspace(wsId, convId) {
     updateChannelBadge();
 
     // ── Channel Gateway ──
-    // Central hub for all inbound channel messages → agent → outbound responses.
-    // tenantId comes from the kernel integration so each message is attributable
-    // to the workspace's kernel tenant for resource tracking and isolation.
-    state.gateway = new ChannelGateway({
-      agent: state.agent,
-      tenantId: _kernelIntegration?.getWorkspaceTenantId(wsId) || null,
-      onIngest: (channelId, msg) => {
-        addMsg('user', msg.content, null, channelId);
-      },
-      onRespond: (channelId, text) => {
-        addMsg('agent', text, null, channelId);
-      },
-      onLog: (msg) => console.log(`[gateway] ${msg}`),
-    });
+    state.gateway = createChannelGateway(wsId, _kernelIntegration);
 
     // Wire gateway to WSH incoming sessions
     try {
@@ -1701,93 +593,7 @@ export async function initWorkspace(wsId, convId) {
     await initMeshSubsystem();
 
     // ── Deferred renders: non-config panels (Gap 11.1) ──
-    // These panels keep empty DOM until the user first clicks on them.
-    registerLazyPanelRenders({
-      tools:    () => renderToolRegistry(),
-      files:    () => { refreshFiles(); renderMountList(); },
-      goals:    () => renderGoals(),
-      skills:   () => renderSkills(),
-      toolMgmt: () => renderToolManagementPanel(),
-      agents:   () => { renderAgentPanel(); },
-      dashboard: () => refreshDashboard(),
-      servers:  () => { initServerPanel(); renderServerList(); },
-      channels: () => renderChannelPanel(),
-      marketplace: () => {
-        const container = $('marketplaceContainer');
-        if (container && state.marketplace) {
-          renderMarketplace(container, state.marketplace, {
-            onInstall: () => renderSkills(),
-            onUninstall: () => renderSkills(),
-          });
-        }
-      },
-      swarms: () => {
-        const c = $('swarmsContainer');
-        if (!c) return;
-        const podId = state.peerNode?.podId || 'local';
-        const sc = state.swarmCoordinator;
-        const getSwarms = () => sc?.listSwarms?.() || [];
-        const listenerOpts = {
-          onCreate: (opts) => {
-            if (sc) {
-              sc.submitTask(opts.goal, opts.strategy || 'round_robin', {});
-              addMsg('system', `Swarm task submitted: "${opts.goal}"`);
-            }
-          },
-          onRefresh: () => {
-            c.innerHTML = renderSwarmPanel({ swarms: getSwarms(), localPodId: podId });
-            initSwarmListeners(listenerOpts);
-          },
-        };
-        c.innerHTML = renderSwarmPanel({ swarms: getSwarms(), localPodId: podId });
-        initSwarmListeners(listenerOpts);
-      },
-      transfers: () => {
-        const c = $('transfersContainer');
-        if (!c) return;
-        const podId = state.peerNode?.podId || 'local';
-        const ft = state.fileTransfer;
-        const active = ft?.listTransfers?.({ status: 'transferring' }) || [];
-        const history = ft?.listTransfers?.({ status: 'completed' }) || [];
-        c.innerHTML = renderTransferPanel({ active, history, localPodId: podId });
-        initTransferListeners();
-      },
-      mesh: () => {
-        const c = $('meshContainer');
-        if (!c) return;
-        const podId = state.peerNode?.podId || 'local';
-        const peerLabel = state.peerNode?.wallet?.getDefault()?.label || 'This Pod';
-        const peers = state.peerNode?.registry?.listPeers?.() || [];
-        const services = state.serviceDirectory?.listAll?.() || [];
-        c.innerHTML = renderMeshPanel({
-          localPod: { podId, label: peerLabel, uptime: 0 },
-          peers,
-          resources: (state.resourceRegistry?.listAll?.() || []).flatMap(d =>
-          Object.entries(d.resources || {}).filter(([,v]) => v > 0).map(([type, value]) =>
-            ({ podId: d.podId, type, used: value, capacity: value })
-          )
-        ),
-          services,
-        });
-        initMeshListeners();
-      },
-      peers: () => {
-        const c = $('peersContainer');
-        if (!c) return;
-        if (state.peerNode) {
-          c.innerHTML = renderIdentityWallet(state.peerNode) + renderContactBook(state.peerNode.wallet) + renderConnectionPanel(state.peerNode) + renderAuditLog(state.peerNode);
-          initIdentityWalletListeners(state.peerNode);
-          initContactBookListeners(state.peerNode.wallet);
-          initConnectionListeners(state.peerNode);
-          initAuditLogListeners(state.peerNode);
-        } else {
-          c.innerHTML = '<div class="peer-empty" style="padding:1.5rem;opacity:0.6">P2P peer subsystem not initialized. Start a mesh session to enable peer management.</div>';
-        }
-      },
-      remote: () => {
-        renderRemoteRuntimeWorkspacePanel();
-      },
-    });
+    registerLazyPanelRenders(buildLazyPanelConfig(() => renderRemoteRuntimeWorkspacePanel()));
 
     // Agent picker must be initialized eagerly — it attaches to the
     // header provider label which is visible on every page load.

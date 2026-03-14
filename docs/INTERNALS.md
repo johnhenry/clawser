@@ -76,7 +76,7 @@ Three permission levels per tool:
 | `approve` | Show confirmation dialog before execution |
 | `denied` | Block execution entirely |
 
-Permissions are persisted per-workspace in `localStorage` at key `clawser_tool_perms_{wsId}`.
+Permissions are persisted per-workspace in `localStorage` at key `clawser_v1_tool_perms_{wsId}`.
 
 **Domain allowlist:** `FetchTool` can restrict fetched URLs to specific domains. Requests outside the allowlist are blocked.
 
@@ -137,7 +137,7 @@ Central hub connecting channel plugins, scheduler routines, WSH, and mesh sessio
 ## Workspace Isolation
 
 Each workspace gets:
-- Separate `localStorage` keys: `clawser_memories_{id}`, `clawser_config_{id}`, `clawser_tool_perms_{id}`
+- Separate `localStorage` keys: `clawser_v1_memories_{id}`, `clawser_v1_config_{id}`, `clawser_v1_tool_perms_{id}`
 - Separate OPFS directory: `clawser_workspaces/{id}/`
 - Separate conversation history, goals, skills (workspace skills override global)
 - Independent agent configuration (provider, model, API key)

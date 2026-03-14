@@ -92,7 +92,7 @@ export declare class FsWriteTool extends BrowserTool {
 }
 
 export declare class FsListTool extends BrowserTool {
-  constructor(ws: WorkspaceFs, getShellState?: () => any, showDotfiles?: () => boolean);
+  constructor(ws: WorkspaceFs, getShellState?: () => any, options?: { showDotfiles?: () => boolean } | (() => boolean));
   get name(): string;
   get description(): string;
   get parameters(): object;
@@ -328,4 +328,4 @@ export declare function checkQuota(): Promise<QuotaInfo>;
 
 // ── createDefaultRegistry ──────────────────────────────────────
 
-export declare function createDefaultRegistry(workspaceFs: WorkspaceFs, getShellState?: () => any, showDotfiles?: () => boolean): BrowserToolRegistry;
+export declare function createDefaultRegistry(workspaceFs: WorkspaceFs, getShellState?: () => any, showDotfiles?: () => boolean | (() => boolean)): BrowserToolRegistry;

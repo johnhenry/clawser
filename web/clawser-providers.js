@@ -657,7 +657,7 @@ export class EchoProvider extends LLMProvider {
   get name() { return 'echo'; }
   get displayName() { return 'Echo (no LLM)'; }
 
-  async chat(request) {
+  async chat(request, apiKey, modelOverride, options = {}) {
     const messages = request.messages || [];
     const lastUser = [...messages].reverse().find(m => m.role === 'user');
     const content = lastUser

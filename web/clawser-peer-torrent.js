@@ -170,7 +170,7 @@ export class TorrentManager {
       } else {
         // Try CDN load — this will fail in Node.js test env
         try {
-          const mod = await import('https://cdn.jsdelivr.net/npm/webtorrent@latest/webtorrent.min.js')
+          const mod = await import('https://cdn.jsdelivr.net/npm/webtorrent@2.5.1/webtorrent.min.js')
           if (typeof globalThis.WebTorrent === 'function') {
             this.#client = new globalThis.WebTorrent()
             this.#wtAvailable = true

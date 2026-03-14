@@ -214,7 +214,7 @@ state.routineEngine = new RoutineEngine({
   onNotify: (routine, message) => addEvent('routine', message),
   onChange: () => {
     // Sync routine state to IndexedDB for background runners
-    import('./clawser-workspace-lifecycle.js').then(m => m.syncRoutinesToIDB()).catch(() => {});
+    import('./clawser-workspace-lifecycle.js').then(m => m.syncRoutinesToIDB()).catch(e => console.warn('[clawser] Routine sync:', e.message));
   },
 });
 
@@ -320,11 +320,12 @@ async function showVaultModal(vault) {
   }
 
   return new Promise((resolve) => {
+    const ac = new AbortController();
     modal.showModal();
     input.focus();
     modal.addEventListener('cancel', (e) => {
       e.preventDefault(); // prevent Escape from closing — user must submit
-    });
+    }, { signal: ac.signal });
     modal.querySelector('form').onsubmit = async (e) => {
       e.preventDefault();
       error.style.display = 'none';
@@ -352,6 +353,7 @@ async function showVaultModal(vault) {
         // verify() leaves the vault unlocked with the correct key
         vault.resetIdleTimer();
         modal.close();
+        ac.abort();
         input.value = '';
         confirm.value = '';
         resolve();
@@ -406,7 +408,7 @@ export async function shutdown() {
   const ki = getKernelIntegration();
   if (ki) await quiet(() => ki.close());
 
-  emit('shutdown');
+  emit('shutdown'); // emitted for future extension hooks
 }
 
 // ── Startup ─────────────────────────────────────────────────────
@@ -466,6 +468,12 @@ initHomeListeners();
   } catch { /* IDB not available or empty — ignore */ }
 })();
 
+// Catch unhandled promise rejections globally
+window.addEventListener('unhandledrejection', (e) => {
+  console.error('[clawser] Unhandled promise rejection:', e.reason);
+  e.preventDefault();
+});
+
 // Auto-save on page unload.
 // beforeunload cannot await async shutdown(), so we do sync-safe work only.
 // The visibilitychange handler (below) is the primary async save trigger.
@@ -485,7 +493,7 @@ document.addEventListener('visibilitychange', () => {
   if (state.shuttingDown) return;
   if (document.visibilityState === 'hidden' && state.agent) {
     try { state.agent.persistMemories(); } catch { /* ignore */ }
-    state.agent.persistCheckpoint().catch(() => { /* ignore */ });
+    state.agent.persistCheckpoint().catch(e => console.warn('[clawser] Checkpoint save:', e.message));
     try { state.agent.persistConfig?.(); } catch { /* ignore */ }
   }
 });

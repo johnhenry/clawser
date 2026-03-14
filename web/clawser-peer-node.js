@@ -137,8 +137,8 @@ export class PeerNode {
       }
 
       // Wire registry events to our event bus (store refs for cleanup)
-      this.#boundPeerConnect = (peer) => { this.#emit('peer:connect', peer) }
-      this.#boundPeerDisconnect = (peer) => { this.#emit('peer:disconnect', peer) }
+      this.#boundPeerConnect = (peer) => { this.#emit('peer:connect', peer) } // emitted for future extension hooks
+      this.#boundPeerDisconnect = (peer) => { this.#emit('peer:disconnect', peer) } // emitted for future extension hooks
       this.#registry.onPeerConnect(this.#boundPeerConnect)
       this.#registry.onPeerDisconnect(this.#boundPeerDisconnect)
 

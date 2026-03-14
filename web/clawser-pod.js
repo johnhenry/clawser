@@ -317,6 +317,17 @@ export class ClawserPod extends Pod {
     // Listeners can subscribe via pod.on('pod:message', ...)
   }
 
+  /**
+   * Tear down the pod and all mesh subsystems.
+   * Stops the peer node, sync engine, relay client, and WSH connectors,
+   * then nulls all references so the pod can be garbage-collected.
+   * Delegates to Pod.shutdown() at the end for base-class cleanup.
+   *
+   * Called by cleanupWorkspace() during workspace switching / destruction.
+   *
+   * @param {object} [opts] - Forwarded to Pod.shutdown()
+   * @returns {Promise<void>}
+   */
   async shutdown(opts = {}) {
     if (this.#peerNode && this.#peerNode.state === 'running') {
       try { await this.#peerNode.shutdown() } catch { /* non-fatal */ }

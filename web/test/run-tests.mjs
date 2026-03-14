@@ -148,6 +148,7 @@ const child = spawn(
   [
     '--import', join(TEST_DIR, '_setup-globals.mjs'),
     '--test',
+    '--test-force-exit',
     `--test-concurrency=${concurrency}`,
     ...filePaths,
   ],
