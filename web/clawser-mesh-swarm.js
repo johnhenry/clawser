@@ -20,6 +20,15 @@ export const SWARM_LEAVE = MESH_TYPE.SWARM_LEAVE
 export const SWARM_HEARTBEAT = MESH_TYPE.SWARM_HEARTBEAT
 export const SWARM_TASK_ASSIGN = MESH_TYPE.SWARM_TASK_ASSIGN
 
+// SWIM protocol wire types
+export const SWIM_PING = 0xF0;
+export const SWIM_ACK = 0xF1;
+export const SWIM_PING_REQ = 0xF2;
+export const SWIM_PING_ACK = 0xF3;
+
+/** @type {readonly string[]} */
+export const SWIM_MEMBER_STATES = Object.freeze(['alive', 'suspect', 'dead', 'left']);
+
 // ---------------------------------------------------------------------------
 // Enums
 // ---------------------------------------------------------------------------
@@ -536,11 +545,15 @@ export class SwarmCoordinator {
   /** @type {Map<string, SwarmTask>} taskId -> SwarmTask */
   #tasks = new Map();
 
+  /** @type {SwimMembership|null} */
+  #swim = null;
+
   /**
    * @param {string} localPodId
    * @param {object} [opts]
    * @param {number} [opts.heartbeatMs]
    * @param {number} [opts.electionTimeoutMs]
+   * @param {SwimMembership} [opts.swim] - Optional SWIM membership protocol instance
    */
   constructor(localPodId, opts = {}) {
     this.#election = new LeaderElection(localPodId, opts);
@@ -549,6 +562,13 @@ export class SwarmCoordinator {
     // Add self as first member
     const self = new SwarmMember({ podId: localPodId });
     this.#distributor.addMember(self);
+
+    // Wire up SWIM membership protocol if provided
+    this.#swim = opts.swim ?? null;
+    if (this.#swim) {
+      this.#swim.onJoin = (podId) => this.join(podId);
+      this.#swim.onDead = (podId) => this.leave(podId);
+    }
   }
 
   /** @returns {LeaderElection} */
@@ -559,6 +579,11 @@ export class SwarmCoordinator {
   /** @returns {TaskDistributor} */
   get distributor() {
     return this.#distributor;
+  }
+
+  /** @returns {SwimMembership|null} */
+  get swim() {
+    return this.#swim;
   }
 
   /**
@@ -572,6 +597,9 @@ export class SwarmCoordinator {
     const member = new SwarmMember({ podId, capabilities });
     this.#distributor.addMember(member);
     this.#election.addCandidate(podId);
+    if (this.#swim) {
+      this.#swim.addMember(podId);
+    }
     return member;
   }
 
@@ -583,6 +611,9 @@ export class SwarmCoordinator {
    */
   leave(podId) {
     this.#election.removeCandidate(podId);
+    if (this.#swim) {
+      this.#swim.removeMember(podId);
+    }
     return this.#distributor.removeMember(podId);
   }
 
@@ -671,6 +702,611 @@ export class SwarmCoordinator {
   /** @returns {boolean} true if the local pod is the elected leader */
   get isLeader() {
     return this.#election.role === 'leader';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// SwimMembership — SWIM protocol (Scalable Weakly-consistent Infection-style
+// Membership) for failure detection and membership dissemination.
+// ---------------------------------------------------------------------------
+
+/**
+ * Implements the SWIM protocol for decentralised failure detection.
+ *
+ * Each tick the local node pings a random peer. If the peer does not
+ * respond within `pingTimeoutMs`, indirect pings are sent through `k`
+ * random intermediaries.  If the target still does not respond it is
+ * marked *suspect*, and after `suspectTimeoutMs` it is declared *dead*.
+ *
+ * Membership updates (join, suspect, dead, leave) are piggybacked on
+ * every ping/ack message so they disseminate in O(log n) rounds.
+ */
+export class SwimMembership {
+  /** @type {string} */
+  #localId;
+
+  /** @type {function} */
+  #sendFn;
+
+  /** @type {Map<string, {state: string, incarnation: number, suspectAt: number|null}>} */
+  #members = new Map();
+
+  /** @type {number} */
+  #localIncarnation = 0;
+
+  /** @type {string[]} */
+  #pingQueue = [];
+
+  /** @type {Map<number, {targetId: string, timer: *}>} seq -> pending info */
+  #pendingPings = new Map();
+
+  /** @type {Array<{podId: string, state: string, incarnation: number}>} */
+  #updateBuffer = [];
+
+  /** @type {*} */
+  #timer = null;
+
+  /** @type {number} */
+  #seqCounter = 0;
+
+  /** @type {number} */
+  #pingIntervalMs;
+
+  /** @type {number} */
+  #pingTimeoutMs;
+
+  /** @type {number} */
+  #suspectTimeoutMs;
+
+  /** @type {number} */
+  #indirectPingCount;
+
+  /** @type {function|null} */
+  onJoin;
+
+  /** @type {function|null} */
+  onSuspect;
+
+  /** @type {function|null} */
+  onDead;
+
+  /** @type {function|null} */
+  onLeave;
+
+  /** @type {function} */
+  #nowFn;
+
+  /**
+   * @param {object} opts
+   * @param {string} opts.localId             - This node's pod ID
+   * @param {function} opts.sendFn            - (targetId, msg) => void
+   * @param {number} [opts.pingIntervalMs=1000]
+   * @param {number} [opts.pingTimeoutMs=500]
+   * @param {number} [opts.suspectTimeoutMs=5000]
+   * @param {number} [opts.indirectPingCount=3]
+   * @param {function|null} [opts.onJoin]
+   * @param {function|null} [opts.onSuspect]
+   * @param {function|null} [opts.onDead]
+   * @param {function|null} [opts.onLeave]
+   * @param {function} [opts.nowFn=Date.now]
+   */
+  constructor({
+    localId,
+    sendFn,
+    pingIntervalMs = 1000,
+    pingTimeoutMs = 500,
+    suspectTimeoutMs = 5000,
+    indirectPingCount = 3,
+    onJoin = null,
+    onSuspect = null,
+    onDead = null,
+    onLeave = null,
+    nowFn = Date.now,
+  }) {
+    if (!localId || typeof localId !== 'string') {
+      throw new Error('localId is required and must be a non-empty string');
+    }
+    if (typeof sendFn !== 'function') {
+      throw new Error('sendFn is required and must be a function');
+    }
+    this.#localId = localId;
+    this.#sendFn = sendFn;
+    this.#pingIntervalMs = pingIntervalMs;
+    this.#pingTimeoutMs = pingTimeoutMs;
+    this.#suspectTimeoutMs = suspectTimeoutMs;
+    this.#indirectPingCount = indirectPingCount;
+    this.onJoin = onJoin;
+    this.onSuspect = onSuspect;
+    this.onDead = onDead;
+    this.onLeave = onLeave;
+    this.#nowFn = nowFn;
+
+    // Add self as the first alive member
+    this.#members.set(localId, { state: 'alive', incarnation: 0, suspectAt: null });
+  }
+
+  /** @returns {string} */
+  get localId() {
+    return this.#localId;
+  }
+
+  /** @returns {number} Total member count */
+  get size() {
+    return this.#members.size;
+  }
+
+  /** @returns {number} Count of alive members */
+  get aliveCount() {
+    let count = 0;
+    for (const entry of this.#members.values()) {
+      if (entry.state === 'alive') count++;
+    }
+    return count;
+  }
+
+  /**
+   * Begin periodic ping rounds.
+   */
+  start() {
+    if (this.#timer) return;
+    this.#timer = setInterval(() => this.#pingRound(), this.#pingIntervalMs);
+  }
+
+  /**
+   * Stop the protocol — clear interval, pending ping timers, and suspect timers.
+   */
+  stop() {
+    if (this.#timer) {
+      clearInterval(this.#timer);
+      this.#timer = null;
+    }
+    for (const pending of this.#pendingPings.values()) {
+      if (pending.timer) clearTimeout(pending.timer);
+    }
+    this.#pendingPings.clear();
+  }
+
+  /**
+   * Add a member as alive with incarnation 0.
+   *
+   * @param {string} podId
+   */
+  addMember(podId) {
+    if (podId === this.#localId) return;
+    if (this.#members.has(podId)) return;
+    this.#members.set(podId, { state: 'alive', incarnation: 0, suspectAt: null });
+    this.#enqueueUpdate({ podId, state: 'alive', incarnation: 0 });
+    if (this.onJoin) this.onJoin(podId);
+  }
+
+  /**
+   * Mark a member as left, enqueue a leave update, and invoke the onLeave callback.
+   *
+   * @param {string} podId
+   */
+  removeMember(podId) {
+    const entry = this.#members.get(podId);
+    if (!entry) return;
+    entry.state = 'left';
+    entry.suspectAt = null;
+    this.#enqueueUpdate({ podId, state: 'left', incarnation: entry.incarnation });
+    if (this.onLeave) this.onLeave(podId);
+  }
+
+  /**
+   * Return the state of a member, or null if unknown.
+   *
+   * @param {string} podId
+   * @returns {string|null}
+   */
+  getState(podId) {
+    const entry = this.#members.get(podId);
+    return entry ? entry.state : null;
+  }
+
+  /**
+   * Return a copy of the full membership map.
+   *
+   * @returns {Map<string, {state: string, incarnation: number, suspectAt: number|null}>}
+   */
+  getMembers() {
+    return new Map(this.#members);
+  }
+
+  /**
+   * Return an array of pod IDs whose state is 'alive'.
+   *
+   * @returns {string[]}
+   */
+  aliveMembers() {
+    const result = [];
+    for (const [podId, entry] of this.#members) {
+      if (entry.state === 'alive') result.push(podId);
+    }
+    return result;
+  }
+
+  /**
+   * Dispatch an incoming SWIM message to the appropriate handler.
+   *
+   * @param {string} fromId - Sender pod ID
+   * @param {object} msg    - Wire message
+   */
+  handleMessage(fromId, msg) {
+    switch (msg.type) {
+      case SWIM_PING:
+        this.#handlePing(fromId, msg);
+        break;
+      case SWIM_ACK:
+        this.#handleAck(fromId, msg);
+        break;
+      case SWIM_PING_REQ:
+        this.#handlePingReq(fromId, msg);
+        break;
+      case SWIM_PING_ACK:
+        this.#handlePingAck(fromId, msg);
+        break;
+    }
+  }
+
+  /**
+   * Serialize for inspection.
+   *
+   * @returns {object}
+   */
+  toJSON() {
+    const members = {};
+    for (const [podId, entry] of this.#members) {
+      members[podId] = { ...entry };
+    }
+    return {
+      localId: this.#localId,
+      localIncarnation: this.#localIncarnation,
+      members,
+      updateBufferSize: this.#updateBuffer.length,
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // Private — ping round
+  // -------------------------------------------------------------------------
+
+  /**
+   * Pick the next target from a shuffled queue and send a SWIM_PING
+   * with piggybacked updates.  Start an ack timer.
+   */
+  #pingRound() {
+    if (this.#pingQueue.length === 0) {
+      this.#refillPingQueue();
+    }
+    if (this.#pingQueue.length === 0) return; // no peers
+
+    const targetId = this.#pingQueue.shift();
+    const entry = this.#members.get(targetId);
+    if (!entry || entry.state === 'dead' || entry.state === 'left') return;
+
+    const seq = ++this.#seqCounter;
+    const updates = this.#drainUpdates();
+
+    this.#sendFn(targetId, {
+      type: SWIM_PING,
+      from: this.#localId,
+      seq,
+      updates,
+    });
+
+    const timer = setTimeout(() => this.#onPingTimeout(targetId, seq), this.#pingTimeoutMs);
+    this.#pendingPings.set(seq, { targetId, timer });
+  }
+
+  // -------------------------------------------------------------------------
+  // Private — message handlers
+  // -------------------------------------------------------------------------
+
+  /**
+   * Handle an incoming SWIM_PING: process piggybacked updates and reply
+   * with a SWIM_ACK carrying our own updates.
+   *
+   * @param {string} fromId
+   * @param {object} msg
+   */
+  #handlePing(fromId, msg) {
+    if (msg.updates) {
+      for (const u of msg.updates) this.#processUpdate(u);
+    }
+    const updates = this.#drainUpdates();
+    this.#sendFn(fromId, {
+      type: SWIM_ACK,
+      from: this.#localId,
+      seq: msg.seq,
+      updates,
+    });
+  }
+
+  /**
+   * Handle an incoming SWIM_ACK: clear the pending ping timer and process
+   * piggybacked updates.
+   *
+   * @param {string} fromId
+   * @param {object} msg
+   */
+  #handleAck(fromId, msg) {
+    const pending = this.#pendingPings.get(msg.seq);
+    if (pending) {
+      clearTimeout(pending.timer);
+      this.#pendingPings.delete(msg.seq);
+    }
+    if (msg.updates) {
+      for (const u of msg.updates) this.#processUpdate(u);
+    }
+  }
+
+  /**
+   * Handle a SWIM_PING_REQ: ping the target on behalf of the requester.
+   *
+   * @param {string} fromId
+   * @param {object} msg
+   */
+  #handlePingReq(fromId, msg) {
+    const seq = ++this.#seqCounter;
+    const updates = this.#drainUpdates();
+
+    this.#sendFn(msg.target, {
+      type: SWIM_PING,
+      from: this.#localId,
+      seq,
+      updates,
+    });
+
+    // When the ack comes back, forward it as SWIM_PING_ACK
+    const timer = setTimeout(() => {
+      this.#pendingPings.delete(seq);
+      // Target didn't respond — notify requester with empty ack
+      this.#sendFn(fromId, {
+        type: SWIM_PING_ACK,
+        from: this.#localId,
+        target: msg.target,
+        originalFrom: fromId,
+        seq: msg.seq,
+        updates: [],
+      });
+    }, this.#pingTimeoutMs);
+
+    this.#pendingPings.set(seq, {
+      targetId: msg.target,
+      timer,
+      // Stash requester info so #handleAck can forward
+      indirectFor: { originalFrom: fromId, originalSeq: msg.seq },
+    });
+  }
+
+  /**
+   * Handle a SWIM_PING_ACK: the indirect ping succeeded — clear the
+   * indirect timeout for the target.
+   *
+   * @param {string} fromId
+   * @param {object} msg
+   */
+  #handlePingAck(fromId, msg) {
+    // Clear pending indirect timeout for this target
+    const pending = this.#pendingPings.get(msg.seq);
+    if (pending) {
+      clearTimeout(pending.timer);
+      this.#pendingPings.delete(msg.seq);
+    }
+    if (msg.updates) {
+      for (const u of msg.updates) this.#processUpdate(u);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Private — timeouts
+  // -------------------------------------------------------------------------
+
+  /**
+   * Called when a direct ping times out.  Send SWIM_PING_REQ to k random
+   * alive members and start an indirect timeout.
+   *
+   * @param {string} targetId
+   * @param {number} seq
+   */
+  #onPingTimeout(targetId, seq) {
+    this.#pendingPings.delete(seq);
+
+    // Pick k random alive peers (excluding self and target) to relay
+    const candidates = this.aliveMembers().filter(id => id !== targetId && id !== this.#localId);
+    const relays = this.#pickRandom(candidates, this.#indirectPingCount);
+
+    if (relays.length === 0) {
+      // No intermediaries — go straight to suspect
+      this.#onIndirectTimeout(targetId);
+      return;
+    }
+
+    const indirectSeq = ++this.#seqCounter;
+    for (const relayId of relays) {
+      this.#sendFn(relayId, {
+        type: SWIM_PING_REQ,
+        from: this.#localId,
+        target: targetId,
+        seq: indirectSeq,
+      });
+    }
+
+    // Start indirect timeout — if no SWIM_PING_ACK arrives, mark suspect
+    const timer = setTimeout(() => {
+      this.#pendingPings.delete(indirectSeq);
+      this.#onIndirectTimeout(targetId);
+    }, this.#pingTimeoutMs);
+
+    this.#pendingPings.set(indirectSeq, { targetId, timer });
+  }
+
+  /**
+   * Called when indirect pings also fail.  Mark the target as suspect
+   * and start a suspect timer.
+   *
+   * @param {string} targetId
+   */
+  #onIndirectTimeout(targetId) {
+    const entry = this.#members.get(targetId);
+    if (!entry || entry.state !== 'alive') return;
+
+    entry.state = 'suspect';
+    entry.suspectAt = this.#nowFn();
+    this.#enqueueUpdate({ podId: targetId, state: 'suspect', incarnation: entry.incarnation });
+    if (this.onSuspect) this.onSuspect(targetId);
+
+    // Start suspect timer
+    const timer = setTimeout(() => this.#onSuspectTimeout(targetId), this.#suspectTimeoutMs);
+    // Store with a unique seq so it can be cleared on stop()
+    const seq = ++this.#seqCounter;
+    this.#pendingPings.set(seq, { targetId, timer });
+  }
+
+  /**
+   * Called when the suspect timer expires.  If the member is still
+   * suspect, declare it dead.
+   *
+   * @param {string} podId
+   */
+  #onSuspectTimeout(podId) {
+    const entry = this.#members.get(podId);
+    if (!entry || entry.state !== 'suspect') return;
+
+    entry.state = 'dead';
+    entry.suspectAt = null;
+    this.#enqueueUpdate({ podId, state: 'dead', incarnation: entry.incarnation });
+    if (this.onDead) this.onDead(podId);
+  }
+
+  // -------------------------------------------------------------------------
+  // Private — update dissemination
+  // -------------------------------------------------------------------------
+
+  /**
+   * Apply a SWIM membership update using the standard rules:
+   *  - Higher incarnation always wins
+   *  - Same incarnation: dead > suspect > alive
+   *  - Self-suspicion: bump local incarnation, broadcast alive
+   *
+   * @param {{podId: string, state: string, incarnation: number}} update
+   */
+  #processUpdate(update) {
+    const { podId, state, incarnation } = update;
+
+    // Self-suspicion refutation
+    if (podId === this.#localId) {
+      if (state === 'suspect' || state === 'dead') {
+        this.#localIncarnation = Math.max(this.#localIncarnation, incarnation) + 1;
+        this.#enqueueUpdate({ podId: this.#localId, state: 'alive', incarnation: this.#localIncarnation });
+      }
+      return;
+    }
+
+    const entry = this.#members.get(podId);
+    if (!entry) {
+      // Unknown member — add if alive or suspect
+      if (state === 'alive' || state === 'suspect') {
+        this.#members.set(podId, { state, incarnation, suspectAt: state === 'suspect' ? this.#nowFn() : null });
+        if (state === 'alive' && this.onJoin) this.onJoin(podId);
+        if (state === 'suspect' && this.onSuspect) this.onSuspect(podId);
+      }
+      return;
+    }
+
+    // Higher incarnation always wins
+    if (incarnation > entry.incarnation) {
+      const oldState = entry.state;
+      entry.incarnation = incarnation;
+      entry.state = state;
+      entry.suspectAt = state === 'suspect' ? this.#nowFn() : null;
+      this.#fireStateCallbacks(podId, oldState, state);
+      return;
+    }
+
+    // Same incarnation — apply state priority: dead > suspect > alive
+    if (incarnation === entry.incarnation) {
+      const priority = { alive: 0, suspect: 1, dead: 2, left: 3 };
+      if ((priority[state] ?? -1) > (priority[entry.state] ?? -1)) {
+        const oldState = entry.state;
+        entry.state = state;
+        entry.suspectAt = state === 'suspect' ? this.#nowFn() : null;
+        this.#fireStateCallbacks(podId, oldState, state);
+      }
+    }
+    // Lower incarnation — ignore
+  }
+
+  /**
+   * Fire the appropriate callback when a member's state changes.
+   *
+   * @param {string} podId
+   * @param {string} oldState
+   * @param {string} newState
+   */
+  #fireStateCallbacks(podId, oldState, newState) {
+    if (oldState === newState) return;
+    if (newState === 'alive' && this.onJoin) this.onJoin(podId);
+    if (newState === 'suspect' && this.onSuspect) this.onSuspect(podId);
+    if (newState === 'dead' && this.onDead) this.onDead(podId);
+    if (newState === 'left' && this.onLeave) this.onLeave(podId);
+  }
+
+  /**
+   * Enqueue a membership update for piggybacking on future messages.
+   * The buffer is capped at 10 entries; duplicates for the same podId
+   * are replaced, keeping the newest update.
+   *
+   * @param {{podId: string, state: string, incarnation: number}} update
+   */
+  #enqueueUpdate(update) {
+    // Deduplicate by podId — keep newest
+    const idx = this.#updateBuffer.findIndex(u => u.podId === update.podId);
+    if (idx !== -1) {
+      this.#updateBuffer[idx] = update;
+    } else {
+      this.#updateBuffer.push(update);
+    }
+    // Cap at 10
+    if (this.#updateBuffer.length > 10) {
+      this.#updateBuffer.shift();
+    }
+  }
+
+  /**
+   * Return and clear the current update buffer.
+   *
+   * @returns {Array<{podId: string, state: string, incarnation: number}>}
+   */
+  #drainUpdates() {
+    const updates = [...this.#updateBuffer];
+    this.#updateBuffer = [];
+    return updates;
+  }
+
+  /**
+   * Shuffle alive members (excluding self) into the ping queue.
+   */
+  #refillPingQueue() {
+    const alive = this.aliveMembers().filter(id => id !== this.#localId);
+    this.#pingQueue = this.#pickRandom(alive, alive.length);
+  }
+
+  /**
+   * Fisher-Yates shuffle of `arr`, returning the first `count` elements.
+   *
+   * @param {string[]} arr
+   * @param {number} count
+   * @returns {string[]}
+   */
+  #pickRandom(arr, count) {
+    const copy = [...arr];
+    for (let i = copy.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [copy[i], copy[j]] = [copy[j], copy[i]];
+    }
+    return copy.slice(0, count);
   }
 }
 
