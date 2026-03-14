@@ -352,13 +352,13 @@ describe('signaling server', () => {
   // ── Disconnection ────────────────────────────────────────────────
 
   describe('disconnection', () => {
-    it('broadcasts disconnected + updated peer list when a client leaves', async () => {
+    it('sends peer-left event when a client leaves', async () => {
       const a = await connect(port)
       const b = await connect(port)
 
       send(a.ws, { type: 'register', podId: 'pod-a' })
       send(b.ws, { type: 'register', podId: 'pod-b' })
-      await waitForMessages(a.messages, 3) // registered + peers + peers
+      await waitForMessages(a.messages, 3) // registered + peers + peer-joined
       await waitForMessages(b.messages, 2)
 
       const aInitialCount = a.messages.length
@@ -366,16 +366,12 @@ describe('signaling server', () => {
       // pod-b disconnects
       b.ws.close()
 
-      // pod-a should receive disconnected + new peers list
-      await waitForMessages(a.messages, aInitialCount + 2)
+      // pod-a should receive peer-left event
+      await waitForMessages(a.messages, aInitialCount + 1)
 
-      const disconnectMsg = a.messages.find((m, i) => i >= aInitialCount && m.type === 'disconnected')
-      assert.ok(disconnectMsg)
-      assert.equal(disconnectMsg.podId, 'pod-b')
-
-      const peersMsg = a.messages.find((m, i) => i >= aInitialCount && m.type === 'peers')
-      assert.ok(peersMsg)
-      assert.deepEqual(peersMsg.peers, ['pod-a'])
+      const leaveMsg = a.messages.find((m, i) => i >= aInitialCount && m.type === 'peer-left')
+      assert.ok(leaveMsg)
+      assert.equal(leaveMsg.podId, 'pod-b')
 
       a.ws.close()
     })
@@ -499,5 +495,305 @@ describe('origin restriction', () => {
 
     // Connection should be closed by server
     await new Promise((resolve) => ws.on('close', resolve))
+  })
+})
+
+// ─── Connection limits ──────────────────────────────────────────────
+
+describe('signaling connection limits', () => {
+  let instance
+  let port
+
+  beforeEach(async () => {
+    instance = createServer({ port: 0, maxConnections: 2 })
+    port = await instance.listen(0)
+  })
+
+  afterEach(async () => {
+    await instance.close()
+  })
+
+  it('rejects connections when at capacity', async () => {
+    const a = await connect(port)
+    const b = await connect(port)
+    send(a.ws, { type: 'register', podId: 'pod-a' })
+    send(b.ws, { type: 'register', podId: 'pod-b' })
+    await waitForMessages(a.messages, 2)
+    await waitForMessages(b.messages, 2)
+
+    // Third connection should be rejected
+    const c = await connect(port)
+    await waitForMessages(c.messages, 1)
+
+    assert.equal(c.messages[0].type, 'error')
+    assert.ok(c.messages[0].message.includes('capacity'))
+
+    await new Promise(resolve => c.ws.on('close', resolve))
+
+    a.ws.close()
+    b.ws.close()
+  })
+})
+
+// ─── Rate limiting ──────────────────────────────────────────────────
+
+describe('signaling rate limiting', () => {
+  let instance
+  let port
+
+  beforeEach(async () => {
+    instance = createServer({ port: 0, maxMessagesPerMinute: 3 })
+    port = await instance.listen(0)
+  })
+
+  afterEach(async () => {
+    await instance.close()
+  })
+
+  it('rate limits forwarded messages', async () => {
+    const a = await connect(port)
+    const b = await connect(port)
+
+    send(a.ws, { type: 'register', podId: 'pod-a' })
+    send(b.ws, { type: 'register', podId: 'pod-b' })
+    await waitForMessages(a.messages, 2)
+    await waitForMessages(b.messages, 2)
+
+    const aInitialCount = a.messages.length
+
+    // Send 4 offers, 4th should be rate limited
+    for (let i = 0; i < 4; i++) {
+      send(a.ws, { type: 'offer', target: 'pod-b', sdp: `sdp-${i}` })
+    }
+
+    // Wait for rate limit error
+    await waitForMessages(a.messages, aInitialCount + 1)
+
+    const err = a.messages[a.messages.length - 1]
+    assert.equal(err.type, 'error')
+    assert.ok(err.message.includes('rate limit'))
+
+    a.ws.close()
+    b.ws.close()
+  })
+})
+
+// ─── Encapsulated peers ─────────────────────────────────────────────
+
+describe('signaling encapsulated peers', () => {
+  let instance
+  let port
+
+  beforeEach(async () => {
+    instance = createServer({ port: 0 })
+    port = await instance.listen(0)
+  })
+
+  afterEach(async () => {
+    await instance.close()
+  })
+
+  it('exposes peerCount and listPeers instead of raw peers Map', async () => {
+    assert.equal(instance.peerCount, 0)
+    assert.deepEqual(instance.listPeers(), [])
+
+    const a = await connect(port)
+    send(a.ws, { type: 'register', podId: 'pod-a' })
+    await waitForMessages(a.messages, 2)
+
+    assert.equal(instance.peerCount, 1)
+    assert.deepEqual(instance.listPeers(), ['pod-a'])
+
+    a.ws.close()
+  })
+})
+
+// ─── Incremental peer events ────────────────────────────────────────
+
+describe('signaling incremental peer events', () => {
+  let instance
+  let port
+
+  beforeEach(async () => {
+    instance = createServer({ port: 0 })
+    port = await instance.listen(0)
+  })
+
+  afterEach(async () => {
+    await instance.close()
+  })
+
+  it('sends peer-joined to existing peers on new registration', async () => {
+    const a = await connect(port)
+    send(a.ws, { type: 'register', podId: 'pod-a' })
+    await waitForMessages(a.messages, 2) // registered + peers
+
+    const aInitialCount = a.messages.length
+
+    const b = await connect(port)
+    send(b.ws, { type: 'register', podId: 'pod-b' })
+    await waitForMessages(a.messages, aInitialCount + 1)
+
+    const joinMsg = a.messages[a.messages.length - 1]
+    assert.equal(joinMsg.type, 'peer-joined')
+    assert.equal(joinMsg.podId, 'pod-b')
+
+    // New peer gets full list
+    await waitForMessages(b.messages, 2)
+    const peersMsg = b.messages.find(m => m.type === 'peers')
+    assert.ok(peersMsg)
+    assert.ok(peersMsg.peers.includes('pod-a'))
+    assert.ok(peersMsg.peers.includes('pod-b'))
+
+    a.ws.close()
+    b.ws.close()
+  })
+
+  it('sends peer-left to remaining peers on disconnect', async () => {
+    const a = await connect(port)
+    const b = await connect(port)
+
+    send(a.ws, { type: 'register', podId: 'pod-a' })
+    send(b.ws, { type: 'register', podId: 'pod-b' })
+    await waitForMessages(a.messages, 3) // registered + peers + peer-joined
+    await waitForMessages(b.messages, 2) // registered + peers
+
+    const aInitialCount = a.messages.length
+
+    b.ws.close()
+    await waitForMessages(a.messages, aInitialCount + 1)
+
+    const leaveMsg = a.messages[a.messages.length - 1]
+    assert.equal(leaveMsg.type, 'peer-left')
+    assert.equal(leaveMsg.podId, 'pod-b')
+
+    a.ws.close()
+  })
+})
+
+// ─── ICE server auth ────────────────────────────────────────────────
+
+describe('signaling /ice-servers auth', () => {
+  it('is open when no ICE_API_TOKEN is set', async () => {
+    const instance = createServer({ port: 0 })
+    const port = await instance.listen(0)
+
+    const res = await fetch(`http://127.0.0.1:${port}/ice-servers`)
+    assert.equal(res.status, 200)
+    const body = await res.json()
+    assert.ok(Array.isArray(body))
+
+    await instance.close()
+  })
+
+  it('requires bearer token when ICE_API_TOKEN is set', async () => {
+    const instance = createServer({ port: 0, env: { ICE_API_TOKEN: 'secret-token' } })
+    const port = await instance.listen(0)
+
+    // No token → 401
+    const res1 = await fetch(`http://127.0.0.1:${port}/ice-servers`)
+    assert.equal(res1.status, 401)
+
+    // Wrong token → 401
+    const res2 = await fetch(`http://127.0.0.1:${port}/ice-servers`, {
+      headers: { Authorization: 'Bearer wrong' },
+    })
+    assert.equal(res2.status, 401)
+
+    // Correct token → 200
+    const res3 = await fetch(`http://127.0.0.1:${port}/ice-servers`, {
+      headers: { Authorization: 'Bearer secret-token' },
+    })
+    assert.equal(res3.status, 200)
+    const body = await res3.json()
+    assert.ok(Array.isArray(body))
+
+    await instance.close()
+  })
+})
+
+// ─── AUTH_MODE=authenticated ────────────────────────────────────────
+
+describe('signaling AUTH_MODE=authenticated', () => {
+  let instance
+  let port
+
+  beforeEach(async () => {
+    instance = createServer({ port: 0, authMode: 'authenticated' })
+    port = await instance.listen(0)
+  })
+
+  afterEach(async () => {
+    await instance.close()
+  })
+
+  it('rejects registration without pubKey and signature', async () => {
+    const { ws, messages } = await connect(port)
+    const closed = new Promise(resolve => ws.on('close', resolve))
+    send(ws, { type: 'register', podId: 'pod-a' })
+    await waitForMessages(messages, 1)
+
+    assert.equal(messages[0].type, 'error')
+    assert.ok(messages[0].message.includes('pubKey'))
+
+    await closed
+  })
+
+  it('rejects registration with invalid signature', async () => {
+    // Import webcrypto for key generation
+    const { webcrypto } = await import('node:crypto')
+    const keyPair = await webcrypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify'])
+    const pubKeyRaw = new Uint8Array(await webcrypto.subtle.exportKey('raw', keyPair.publicKey))
+    const pubKeyB64 = btoa(String.fromCharCode(...pubKeyRaw))
+    // Sign a different message than podId
+    const wrongSig = new Uint8Array(await webcrypto.subtle.sign('Ed25519', keyPair.privateKey, new TextEncoder().encode('wrong-pod-id')))
+    const sigB64 = btoa(String.fromCharCode(...wrongSig))
+
+    const { ws, messages } = await connect(port)
+    const closed = new Promise(resolve => ws.on('close', resolve))
+    send(ws, { type: 'register', podId: 'pod-a', pubKey: pubKeyB64, signature: sigB64 })
+    await waitForMessages(messages, 1)
+
+    assert.equal(messages[0].type, 'error')
+    assert.ok(messages[0].message.includes('verification failed'))
+
+    await closed
+  })
+
+  it('accepts registration with valid signature', async () => {
+    const { webcrypto } = await import('node:crypto')
+    const keyPair = await webcrypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify'])
+    const pubKeyRaw = new Uint8Array(await webcrypto.subtle.exportKey('raw', keyPair.publicKey))
+    const pubKeyB64 = btoa(String.fromCharCode(...pubKeyRaw))
+    const podId = 'pod-authenticated'
+    const sig = new Uint8Array(await webcrypto.subtle.sign('Ed25519', keyPair.privateKey, new TextEncoder().encode(podId)))
+    const sigB64 = btoa(String.fromCharCode(...sig))
+
+    const { ws, messages } = await connect(port)
+    send(ws, { type: 'register', podId, pubKey: pubKeyB64, signature: sigB64 })
+    await waitForMessages(messages, 2) // registered + peers
+
+    assert.equal(messages[0].type, 'registered')
+    assert.equal(messages[0].podId, podId)
+
+    ws.close()
+  })
+})
+
+// ─── AUTH_MODE=open ─────────────────────────────────────────────────
+
+describe('signaling AUTH_MODE=open', () => {
+  it('does not require signature', async () => {
+    const instance = createServer({ port: 0, authMode: 'open' })
+    const port = await instance.listen(0)
+
+    const { ws, messages } = await connect(port)
+    send(ws, { type: 'register', podId: 'pod-open' })
+    await waitForMessages(messages, 2)
+
+    assert.equal(messages[0].type, 'registered')
+
+    ws.close()
+    await instance.close()
   })
 })

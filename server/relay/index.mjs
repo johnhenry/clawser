@@ -20,10 +20,12 @@
  * Env vars:
  *   PORT                    — listen port (default 8788)
  *   MAX_MESSAGES_PER_MINUTE — per-peer rate limit (default 600)
+ *   MAX_CONNECTIONS          — max simultaneous WebSocket connections (default 1024)
  */
 
 import http from 'node:http'
 import { WebSocketServer } from 'ws'
+import { fileURLToPath } from 'node:url'
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 
@@ -168,6 +170,7 @@ function createRelayServer(opts = {}) {
   const env = opts.env ?? process.env
   const port = opts.port ?? (Number(env.PORT) || 8788)
   const maxMessagesPerMinute = opts.maxMessagesPerMinute ?? (Number(env.MAX_MESSAGES_PER_MINUTE) || 600)
+  const maxConnections = opts.maxConnections ?? (Number(env.MAX_CONNECTIONS) || 1024)
   const onLog = opts.onLog ?? console.log
 
   const startedAt = Date.now()
@@ -214,9 +217,23 @@ function createRelayServer(opts = {}) {
 
   // ── WebSocket server ─────────────────────────────────────────────
 
-  const wss = new WebSocketServer({ server })
+  const wss = new WebSocketServer({ server, maxPayload: 64 * 1024 })
 
   wss.on('connection', (ws) => {
+    if (wss.clients.size > maxConnections) {
+      send(ws, { type: 'error', message: 'server at capacity' })
+      ws.close(4503, 'too many connections')
+      return
+    }
+
+    ws.isAlive = true
+    ws.on('pong', () => { ws.isAlive = true })
+    const heartbeat = setInterval(() => {
+      if (!ws.isAlive) { ws.terminate(); return }
+      ws.isAlive = false
+      ws.ping()
+    }, 30_000)
+
     let registered = false
     let podId = null
 
@@ -241,6 +258,13 @@ function createRelayServer(opts = {}) {
       if (!registered) {
         if (msg.type !== 'register' || typeof msg.podId !== 'string' || !msg.podId) {
           send(ws, { type: 'error', message: 'first message must be { type: "register", podId: string }' })
+          return
+        }
+
+        if (typeof msg.podId !== 'string' || msg.podId.length > 128) {
+          send(ws, { type: 'error', message: 'podId must be a string of 128 chars or fewer' })
+          ws.close(4400, 'invalid podId')
+          clearTimeout(registrationTimeout)
           return
         }
 
@@ -291,6 +315,7 @@ function createRelayServer(opts = {}) {
     })
 
     ws.on('close', () => {
+      clearInterval(heartbeat)
       clearTimeout(registrationTimeout)
       if (podId) {
         relay.unregister(podId)
@@ -329,8 +354,9 @@ function createRelayServer(opts = {}) {
    */
   function close() {
     return new Promise((resolve) => {
-      for (const podId of relay.listPeers()) {
-        relay.unregister(podId)
+      // Terminate all clients (registered + unregistered)
+      for (const ws of wss.clients) {
+        ws.terminate()
       }
       wsBySocket.clear()
 
@@ -345,17 +371,22 @@ function createRelayServer(opts = {}) {
 
 // ─── Direct execution ────────────────────────────────────────────────
 
-const isMain = process.argv[1] && (
-  process.argv[1].endsWith('/index.mjs') ||
-  process.argv[1].endsWith('\\index.mjs')
-)
+const isMain = process.argv[1] === fileURLToPath(import.meta.url)
 
 if (isMain) {
-  const { listen } = createRelayServer()
-  const port = await listen()
+  const instance = createRelayServer()
+  const port = await instance.listen()
   console.log(`[relay] listening on port ${port}`)
   console.log(`[relay] health check: http://localhost:${port}/health`)
   console.log(`[relay] stats: http://localhost:${port}/stats`)
+
+  const shutdown = async () => {
+    console.log('\n[relay] shutting down...')
+    await instance.close()
+    process.exitCode = 0
+  }
+  process.on('SIGINT', shutdown)
+  process.on('SIGTERM', shutdown)
 }
 
 export { createRelayServer, RelayServer }

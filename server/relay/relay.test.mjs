@@ -346,3 +346,41 @@ describe('relay server', () => {
     })
   })
 })
+
+// ─── Connection limits ──────────────────────────────────────────────
+
+describe('relay connection limits', () => {
+  let instance
+  let port
+
+  beforeEach(async () => {
+    instance = createRelayServer({ port: 0, maxConnections: 2, onLog: () => {} })
+    port = await instance.listen(0)
+  })
+
+  afterEach(async () => {
+    await instance.close()
+  })
+
+  it('rejects connections when at capacity', async () => {
+    const a = await connect(port)
+    const b = await connect(port)
+    send(a.ws, { type: 'register', podId: 'pod-a' })
+    send(b.ws, { type: 'register', podId: 'pod-b' })
+    await waitForMessages(a.messages, 1)
+    await waitForMessages(b.messages, 1)
+
+    // Third connection should be rejected
+    const c = await connect(port)
+    await waitForMessages(c.messages, 1)
+
+    assert.equal(c.messages[0].type, 'error')
+    assert.ok(c.messages[0].message.includes('capacity'))
+
+    // Wait for close
+    await new Promise(resolve => c.ws.on('close', resolve))
+
+    a.ws.close()
+    b.ws.close()
+  })
+})

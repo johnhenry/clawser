@@ -14,9 +14,11 @@
  *   POD_LABEL     — human-readable label for this pod (default hostname)
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs'
+import { readFile, writeFile, mkdir, readdir, stat, unlink, access, realpath } from 'node:fs/promises'
+import { existsSync, mkdirSync } from 'node:fs'
 import { join, resolve, relative, dirname, basename } from 'node:path'
 import { webcrypto } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 import { hostname } from 'node:os'
 
 // ─── ServerIdentity ──────────────────────────────────────────────────
@@ -107,10 +109,22 @@ class ServerFileSystem {
   /**
    * @param {string} rootDir — root directory for file storage
    */
+  #rootResolved = false
+
   constructor(rootDir) {
     this.#rootDir = resolve(rootDir)
     if (!existsSync(this.#rootDir)) {
       mkdirSync(this.#rootDir, { recursive: true })
+    }
+  }
+
+  /** Lazily resolve rootDir through realpath (handles macOS /tmp → /private/tmp). */
+  async #ensureRootResolved() {
+    if (!this.#rootResolved) {
+      try {
+        this.#rootDir = await realpath(this.#rootDir)
+      } catch { /* keep original if it fails */ }
+      this.#rootResolved = true
     }
   }
 
@@ -124,16 +138,27 @@ class ServerFileSystem {
    * @param {string} path
    * @returns {string}
    */
-  #resolve(path) {
+  async #resolvePath(path) {
     if (path == null) {
       throw new Error('path is required')
     }
+    await this.#ensureRootResolved()
     const resolved = resolve(this.#rootDir, String(path))
     const rel = relative(this.#rootDir, resolved)
     if (rel.startsWith('..') || resolve(this.#rootDir, rel) !== resolved) {
       throw new Error('path traversal not allowed')
     }
-    return resolved
+    // Resolve symlinks and re-check containment
+    try {
+      const real = await realpath(resolved)
+      if (!real.startsWith(this.#rootDir)) {
+        throw new Error('path traversal not allowed (symlink)')
+      }
+      return real
+    } catch (err) {
+      if (err.code === 'ENOENT') return resolved // file doesn't exist yet (write case)
+      throw err
+    }
   }
 
   /**
@@ -142,19 +167,25 @@ class ServerFileSystem {
    * @returns {Promise<{ name: string, type: string, size: number }[]>}
    */
   async list(path = '.') {
-    const dir = this.#resolve(path)
-    if (!existsSync(dir)) return []
+    const dir = await this.#resolvePath(path)
+    try {
+      await access(dir)
+    } catch {
+      return []
+    }
 
-    const entries = readdirSync(dir)
-    return entries.map(name => {
+    const entries = await readdir(dir)
+    const results = []
+    for (const name of entries) {
       const full = join(dir, name)
-      const stat = statSync(full)
-      return {
+      const s = await stat(full)
+      results.push({
         name,
-        type: stat.isDirectory() ? 'directory' : 'file',
-        size: stat.size,
-      }
-    })
+        type: s.isDirectory() ? 'directory' : 'file',
+        size: s.size,
+      })
+    }
+    return results
   }
 
   /**
@@ -163,12 +194,14 @@ class ServerFileSystem {
    * @returns {Promise<{ data: string, size: number }>}
    */
   async read(path) {
-    const full = this.#resolve(path)
-    if (!existsSync(full)) {
-      throw new Error(`file not found: ${path}`)
+    const full = await this.#resolvePath(path)
+    try {
+      const data = await readFile(full, 'utf-8')
+      return { data, size: Buffer.byteLength(data, 'utf-8') }
+    } catch (err) {
+      if (err.code === 'ENOENT') throw new Error(`file not found: ${path}`)
+      throw err
     }
-    const data = readFileSync(full, 'utf-8')
-    return { data, size: Buffer.byteLength(data, 'utf-8') }
   }
 
   /**
@@ -183,16 +216,13 @@ class ServerFileSystem {
     }
     const str = String(data)
     const size = Buffer.byteLength(str, 'utf-8')
-    // 10MB limit to prevent disk exhaustion
     if (size > 10 * 1024 * 1024) {
       throw new Error(`file size ${size} exceeds 10MB limit`)
     }
-    const full = this.#resolve(path)
+    const full = await this.#resolvePath(path)
     const dir = dirname(full)
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true })
-    }
-    writeFileSync(full, str, 'utf-8')
+    await mkdir(dir, { recursive: true })
+    await writeFile(full, str, 'utf-8')
     return { success: true, size }
   }
 
@@ -202,16 +232,18 @@ class ServerFileSystem {
    * @returns {Promise<{ success: boolean }>}
    */
   async delete(path) {
-    const full = this.#resolve(path)
-    if (!existsSync(full)) {
-      return { success: false }
+    const full = await this.#resolvePath(path)
+    try {
+      const s = await stat(full)
+      if (s.isDirectory()) {
+        return { success: false, error: 'cannot delete directory' }
+      }
+      await unlink(full)
+      return { success: true }
+    } catch (err) {
+      if (err.code === 'ENOENT') return { success: false }
+      throw err
     }
-    const s = statSync(full)
-    if (s.isDirectory()) {
-      return { success: false, error: 'cannot delete directory' }
-    }
-    unlinkSync(full)
-    return { success: true }
   }
 
   /**
@@ -220,15 +252,18 @@ class ServerFileSystem {
    * @returns {Promise<{ name: string, type: string, size: number, modified: number }|null>}
    */
   async stat(path) {
-    const full = this.#resolve(path)
-    if (!existsSync(full)) return null
-
-    const s = statSync(full)
-    return {
-      name: basename(full),
-      type: s.isDirectory() ? 'directory' : 'file',
-      size: s.size,
-      modified: s.mtimeMs,
+    const full = await this.#resolvePath(path)
+    try {
+      const s = await stat(full)
+      return {
+        name: basename(full),
+        type: s.isDirectory() ? 'directory' : 'file',
+        size: s.size,
+        modified: s.mtimeMs,
+      }
+    } catch (err) {
+      if (err.code === 'ENOENT') return null
+      throw err
     }
   }
 }
@@ -244,16 +279,19 @@ class ServerAgent {
   #name
   #systemPrompt
   #memories
+  #maxMemories
 
   /**
    * @param {object} opts
    * @param {string} opts.name
    * @param {string} [opts.systemPrompt]
+   * @param {number} [opts.maxMemories]
    */
-  constructor({ name, systemPrompt }) {
+  constructor({ name, systemPrompt, maxMemories }) {
     this.#name = name
     this.#systemPrompt = systemPrompt ?? `You are ${name}, a server-side Clawser agent.`
     this.#memories = []
+    this.#maxMemories = maxMemories ?? 1024
   }
 
   /** @returns {string} */
@@ -320,6 +358,10 @@ class ServerAgent {
    * @param {object} entry — { key, content, category? }
    */
   addMemory(entry) {
+    // Cap at maxMemories entries to prevent memory exhaustion
+    if (this.#memories.length >= this.#maxMemories) {
+      this.#memories.shift()
+    }
     this.#memories.push({
       id: `mem-${this.#memories.length}`,
       key: entry.key,
@@ -348,6 +390,7 @@ class PeerNodeServer {
   #services = new Map()
   #onLog
   #ws = null
+  #serviceToken
 
   /**
    * @param {object} opts
@@ -355,13 +398,16 @@ class PeerNodeServer {
    * @param {string} [opts.dataDir]       — root directory for file storage
    * @param {string} [opts.signalingUrl]  — signaling server WebSocket URL
    * @param {string} [opts.agentName]     — name for the built-in agent
+   * @param {string} [opts.serviceToken]  — auth token for remote service calls
+   * @param {number} [opts.maxMemories]   — max memory entries for the agent
    * @param {(msg: string) => void} [opts.onLog]
    */
-  constructor({ identity, dataDir, signalingUrl, agentName, onLog }) {
+  constructor({ identity, dataDir, signalingUrl, agentName, serviceToken, maxMemories, onLog }) {
     this.#identity = identity
     this.#fileSystem = new ServerFileSystem(dataDir ?? './data')
-    this.#agent = new ServerAgent({ name: agentName ?? 'server-agent' })
+    this.#agent = new ServerAgent({ name: agentName ?? 'server-agent', maxMemories })
     this.#signalingUrl = signalingUrl ?? null
+    this.#serviceToken = serviceToken ?? webcrypto.randomUUID()
     this.#onLog = onLog ?? console.log
 
     // Register built-in services
@@ -467,6 +513,30 @@ class PeerNodeServer {
     return this.#services.get(name)
   }
 
+  /** @returns {string} */
+  get serviceToken() {
+    return this.#serviceToken
+  }
+
+  /**
+   * Authenticated service call for remote peers.
+   * @param {string} name
+   * @param {string} method
+   * @param {object} args
+   * @param {string} token
+   * @returns {Promise<object>}
+   */
+  async callService(name, method, args, token) {
+    if (token !== this.#serviceToken) {
+      return { success: false, error: 'unauthorized' }
+    }
+    const svc = this.#services.get(name)
+    if (!svc || !svc[method]) {
+      return { success: false, error: `unknown service method: ${name}.${method}` }
+    }
+    return svc[method](args)
+  }
+
   /** @returns {string[]} */
   get connectedPeers() {
     return Array.from(this.#connectedPeers)
@@ -506,16 +576,15 @@ async function createServerKernel(opts = {}) {
     dataDir: opts.dataDir,
     signalingUrl: opts.signalingUrl,
     agentName: opts.agentName,
+    serviceToken: opts.serviceToken,
+    maxMemories: opts.maxMemories,
     onLog: opts.onLog,
   })
 }
 
 // ─── Direct execution ────────────────────────────────────────────────
 
-const isMain = process.argv[1] && (
-  process.argv[1].endsWith('/index.mjs') ||
-  process.argv[1].endsWith('\\index.mjs')
-)
+const isMain = process.argv[1] === fileURLToPath(import.meta.url)
 
 if (isMain) {
   const env = process.env
@@ -524,6 +593,7 @@ if (isMain) {
     signalingUrl: env.SIGNALING_URL,
     agentName: env.AGENT_NAME ?? 'server-agent',
     label: env.POD_LABEL,
+    maxMemories: Number(env.MAX_MEMORIES) || undefined,
     onLog: console.log,
   })
 
@@ -532,17 +602,13 @@ if (isMain) {
   console.log(`[kernel] services: ${kernel.listServices().join(', ')}`)
   console.log(`[kernel] data dir: ${kernel.fileSystem.rootDir}`)
 
-  // Graceful shutdown
-  process.on('SIGINT', async () => {
+  const shutdown = async () => {
     console.log('\n[kernel] shutting down...')
     await kernel.stop()
-    process.exit(0)
-  })
-
-  process.on('SIGTERM', async () => {
-    await kernel.stop()
-    process.exit(0)
-  })
+    process.exitCode = 0
+  }
+  process.on('SIGINT', shutdown)
+  process.on('SIGTERM', shutdown)
 }
 
 export { ServerIdentity, ServerFileSystem, ServerAgent, PeerNodeServer, createServerKernel }

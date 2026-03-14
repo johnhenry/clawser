@@ -23,9 +23,14 @@
  *   ORIGINS     — comma-separated allowed origins (empty = allow all)
  *   AUTH_MODE   — 'open' (default) | 'authenticated' (stub)
  *   ICE_SERVERS — JSON array override for ICE config
+ *   MAX_CONNECTIONS       — max concurrent WebSocket connections (default 1024)
+ *   MAX_MESSAGES_PER_MINUTE — per-pod rate limit (default 300)
+ *   ICE_API_TOKEN         — Bearer token to protect /ice-servers endpoint
  */
 
 import http from 'node:http'
+import { fileURLToPath } from 'node:url'
+import { webcrypto } from 'node:crypto'
 import { WebSocketServer } from 'ws'
 import { getIceServers } from './stun-turn.mjs'
 
@@ -70,12 +75,29 @@ export function createServer(opts = {}) {
   const allowedOrigins = parseOrigins(opts.origins ?? env.ORIGINS)
   const authMode = opts.authMode ?? env.AUTH_MODE ?? 'open'
   const iceServers = getIceServers(env)
+  const maxConnections = opts.maxConnections ?? (Number(env.MAX_CONNECTIONS) || 1024)
+  const maxMessagesPerMinute = opts.maxMessagesPerMinute ?? (Number(env.MAX_MESSAGES_PER_MINUTE) || 300)
+  const iceApiToken = env.ICE_API_TOKEN ?? null
 
   /** @type {Map<string, import('ws').WebSocket>} podId → ws */
   const peers = new Map()
 
   /** @type {Map<import('ws').WebSocket, string>} ws → podId (reverse lookup) */
   const wsBySocket = new Map()
+
+  /** @type {Map<string, { count: number, resetAt: number }>} */
+  const rateLimits = new Map()
+
+  function checkRateLimit(podId) {
+    const now = Date.now()
+    let entry = rateLimits.get(podId)
+    if (!entry || now >= entry.resetAt) {
+      entry = { count: 0, resetAt: now + 60_000 }
+      rateLimits.set(podId, entry)
+    }
+    entry.count++
+    return entry.count <= maxMessagesPerMinute
+  }
 
   // ── HTTP server ──────────────────────────────────────────────────
 
@@ -101,6 +123,13 @@ export function createServer(opts = {}) {
     }
 
     if (req.method === 'GET' && req.url === '/ice-servers') {
+      if (iceApiToken) {
+        const auth = req.headers.authorization
+        if (!auth || auth !== `Bearer ${iceApiToken}`) {
+          res.writeHead(401, headers)
+          return res.end(JSON.stringify({ error: 'unauthorized' }))
+        }
+      }
       res.writeHead(200, headers)
       return res.end(JSON.stringify(iceServers))
     }
@@ -111,7 +140,7 @@ export function createServer(opts = {}) {
 
   // ── WebSocket server ─────────────────────────────────────────────
 
-  const wss = new WebSocketServer({ server })
+  const wss = new WebSocketServer({ server, maxPayload: 64 * 1024 })
 
   wss.on('connection', (ws, req) => {
     const origin = req.headers.origin
@@ -120,6 +149,20 @@ export function createServer(opts = {}) {
       ws.close(4403, 'origin not allowed')
       return
     }
+
+    if (wss.clients.size > maxConnections) {
+      send(ws, { type: 'error', message: 'server at capacity' })
+      ws.close(4503, 'too many connections')
+      return
+    }
+
+    ws.isAlive = true
+    ws.on('pong', () => { ws.isAlive = true })
+    const heartbeat = setInterval(() => {
+      if (!ws.isAlive) { ws.terminate(); return }
+      ws.isAlive = false
+      ws.ping()
+    }, 30_000)
 
     let registered = false
     let podId = null
@@ -132,7 +175,7 @@ export function createServer(opts = {}) {
       }
     }, 10_000)
 
-    ws.on('message', (raw) => {
+    ws.on('message', async (raw) => {
       let msg
       try {
         msg = JSON.parse(raw.toString())
@@ -148,10 +191,38 @@ export function createServer(opts = {}) {
           return
         }
 
-        // Auth check (stub for 'authenticated' mode)
+        if (msg.podId.length > 128) {
+          send(ws, { type: 'error', message: 'podId must be 128 chars or fewer' })
+          ws.close(4400, 'invalid podId')
+          clearTimeout(registrationTimeout)
+          return
+        }
+
+        // Auth check — Ed25519 signature verification
         if (authMode === 'authenticated') {
-          // Future: verify msg.signature against podId public key
-          // For now, fall through and accept like open mode
+          if (!msg.pubKey || !msg.signature) {
+            send(ws, { type: 'error', message: 'authenticated mode requires pubKey and signature' })
+            ws.close(4401, 'missing credentials')
+            clearTimeout(registrationTimeout)
+            return
+          }
+          try {
+            const pubKeyBytes = Uint8Array.from(atob(msg.pubKey), c => c.charCodeAt(0))
+            const sigBytes = Uint8Array.from(atob(msg.signature), c => c.charCodeAt(0))
+            const key = await webcrypto.subtle.importKey('raw', pubKeyBytes, { name: 'Ed25519' }, false, ['verify'])
+            const valid = await webcrypto.subtle.verify('Ed25519', key, sigBytes, new TextEncoder().encode(msg.podId))
+            if (!valid) {
+              send(ws, { type: 'error', message: 'signature verification failed' })
+              ws.close(4401, 'invalid signature')
+              clearTimeout(registrationTimeout)
+              return
+            }
+          } catch (err) {
+            send(ws, { type: 'error', message: 'authentication failed' })
+            ws.close(4401, 'auth error')
+            clearTimeout(registrationTimeout)
+            return
+          }
         }
 
         // Reject duplicate podId
@@ -172,13 +243,18 @@ export function createServer(opts = {}) {
         // Confirm registration
         send(ws, { type: 'registered', podId })
 
-        // Broadcast updated peer list to everyone
-        broadcastPeerList()
+        // Send full peer list to the new peer; notify others of join
+        send(ws, { type: 'peers', peers: [...peers.keys()] })
+        broadcast({ type: 'peer-joined', podId }, ws)
         return
       }
 
       // ── Forwarding ───────────────────────────────────────────────
       if (FORWARDABLE.has(msg.type)) {
+        if (!checkRateLimit(podId)) {
+          send(ws, { type: 'error', message: 'rate limit exceeded' })
+          return
+        }
         const { target, ...payload } = msg
         if (typeof target !== 'string' || !target) {
           send(ws, { type: 'error', message: 'forwarded messages require a "target" field' })
@@ -206,14 +282,15 @@ export function createServer(opts = {}) {
     })
 
     ws.on('close', () => {
+      clearInterval(heartbeat)
       clearTimeout(registrationTimeout)
       if (podId) {
         peers.delete(podId)
         wsBySocket.delete(ws)
 
         // Notify remaining peers
-        broadcast({ type: 'disconnected', podId })
-        broadcastPeerList()
+        broadcast({ type: 'peer-left', podId })
+        rateLimits.delete(podId)
       }
     })
 
@@ -224,9 +301,9 @@ export function createServer(opts = {}) {
 
   // ── Broadcasting helpers ─────────────────────────────────────────
 
-  function broadcast(data) {
-    for (const ws of peers.values()) {
-      send(ws, data)
+  function broadcast(data, exclude) {
+    for (const [, ws] of peers) {
+      if (ws !== exclude) send(ws, data)
     }
   }
 
@@ -263,9 +340,9 @@ export function createServer(opts = {}) {
    */
   function close() {
     return new Promise((resolve) => {
-      // Close all WebSocket connections
-      for (const ws of peers.values()) {
-        ws.close(1001, 'server shutting down')
+      // Close all WebSocket connections (registered + unregistered)
+      for (const ws of wss.clients) {
+        ws.terminate()
       }
       peers.clear()
       wsBySocket.clear()
@@ -276,20 +353,25 @@ export function createServer(opts = {}) {
     })
   }
 
-  return { server, wss, peers, listen, close }
+  return { server, wss, get peerCount() { return peers.size }, listPeers: () => [...peers.keys()], listen, close }
 }
 
 // ─── Direct execution ────────────────────────────────────────────────
 
-const isMain = process.argv[1] && (
-  process.argv[1].endsWith('/index.mjs') ||
-  process.argv[1].endsWith('\\index.mjs')
-)
+const isMain = process.argv[1] === fileURLToPath(import.meta.url)
 
 if (isMain) {
-  const { listen } = createServer()
-  const port = await listen()
+  const instance = createServer()
+  const port = await instance.listen()
   console.log(`[signaling] listening on port ${port}`)
   console.log(`[signaling] auth mode: ${process.env.AUTH_MODE ?? 'open'}`)
   console.log(`[signaling] health check: http://localhost:${port}/health`)
+
+  const shutdown = async () => {
+    console.log('\n[signaling] shutting down...')
+    await instance.close()
+    process.exitCode = 0
+  }
+  process.on('SIGINT', shutdown)
+  process.on('SIGTERM', shutdown)
 }

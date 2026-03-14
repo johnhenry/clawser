@@ -397,3 +397,188 @@ describe('createServerKernel', () => {
     assert.ok(result.response.includes('ping'))
   })
 })
+
+// ─── Symlink safety ─────────────────────────────────────────────────
+
+describe('ServerFileSystem symlink safety', () => {
+  let tmpDir
+  let fs
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'clawser-symlink-test-'))
+    fs = new ServerFileSystem(tmpDir)
+  })
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('rejects symlinks pointing outside root', async () => {
+    const { symlinkSync, writeFileSync } = await import('node:fs')
+    // Create a real file outside the root, then symlink to it
+    const outsideDir = mkdtempSync(join(tmpdir(), 'clawser-outside-'))
+    writeFileSync(join(outsideDir, 'secret.txt'), 'secret data')
+    symlinkSync(join(outsideDir, 'secret.txt'), join(tmpDir, 'escape-link'))
+
+    await assert.rejects(
+      () => fs.read('escape-link'),
+      (err) => err.message.includes('traversal')
+    )
+
+    rmSync(outsideDir, { recursive: true, force: true })
+  })
+})
+
+// ─── Configurable memory limit ──────────────────────────────────────
+
+describe('ServerAgent memory limit', () => {
+  it('defaults to 1024', () => {
+    const agent = new ServerAgent({ name: 'mem-test' })
+    // Fill up to 1024
+    for (let i = 0; i < 1024; i++) {
+      agent.addMemory({ key: `k${i}`, content: `c${i}` })
+    }
+    // c0 should still be present (exactly at capacity, no eviction yet)
+    assert.equal(agent.searchMemories('c0').length, 1)
+
+    // Adding one more triggers eviction of the oldest (c0)
+    agent.addMemory({ key: 'overflow', content: 'overflow' })
+    assert.equal(agent.searchMemories('c0').length, 0)
+    assert.equal(agent.searchMemories('overflow').length, 1)
+  })
+
+  it('respects custom maxMemories', () => {
+    const agent = new ServerAgent({ name: 'mem-test', maxMemories: 3 })
+    agent.addMemory({ key: 'a', content: 'alpha' })
+    agent.addMemory({ key: 'b', content: 'beta' })
+    agent.addMemory({ key: 'c', content: 'gamma' })
+
+    // All three present
+    assert.equal(agent.searchMemories('alpha').length, 1)
+    assert.equal(agent.searchMemories('gamma').length, 1)
+
+    // Adding a 4th should evict the first
+    agent.addMemory({ key: 'd', content: 'delta' })
+    assert.equal(agent.searchMemories('alpha').length, 0)
+    assert.equal(agent.searchMemories('delta').length, 1)
+  })
+
+  it('FIFO eviction when at capacity', () => {
+    const agent = new ServerAgent({ name: 'fifo', maxMemories: 2 })
+    agent.addMemory({ key: 'first', content: 'first-content' })
+    agent.addMemory({ key: 'second', content: 'second-content' })
+    agent.addMemory({ key: 'third', content: 'third-content' })
+
+    assert.equal(agent.searchMemories('first').length, 0) // evicted
+    assert.equal(agent.searchMemories('second').length, 1)
+    assert.equal(agent.searchMemories('third').length, 1)
+  })
+})
+
+// ─── Service auth ───────────────────────────────────────────────────
+
+describe('PeerNodeServer service auth', () => {
+  let tmpDir
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'clawser-auth-test-'))
+  })
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('callService with valid token succeeds', async () => {
+    const identity = await ServerIdentity.generate('auth-test')
+    const peer = new PeerNodeServer({
+      identity,
+      dataDir: tmpDir,
+      onLog: () => {},
+    })
+
+    const token = peer.serviceToken
+    assert.ok(typeof token === 'string')
+
+    const result = await peer.callService('agent', 'run', { message: 'test' }, token)
+    assert.ok(result.response.includes('test'))
+  })
+
+  it('callService with invalid token returns unauthorized', async () => {
+    const identity = await ServerIdentity.generate('auth-test')
+    const peer = new PeerNodeServer({
+      identity,
+      dataDir: tmpDir,
+      onLog: () => {},
+    })
+
+    const result = await peer.callService('agent', 'run', { message: 'test' }, 'wrong-token')
+    assert.equal(result.success, false)
+    assert.equal(result.error, 'unauthorized')
+  })
+
+  it('callService with missing token returns unauthorized', async () => {
+    const identity = await ServerIdentity.generate('auth-test')
+    const peer = new PeerNodeServer({
+      identity,
+      dataDir: tmpDir,
+      onLog: () => {},
+    })
+
+    const result = await peer.callService('agent', 'run', { message: 'test' }, undefined)
+    assert.equal(result.success, false)
+    assert.equal(result.error, 'unauthorized')
+  })
+
+  it('callService with unknown method returns error', async () => {
+    const identity = await ServerIdentity.generate('auth-test')
+    const peer = new PeerNodeServer({
+      identity,
+      dataDir: tmpDir,
+      onLog: () => {},
+    })
+
+    const token = peer.serviceToken
+    const result = await peer.callService('agent', 'nonexistent', {}, token)
+    assert.equal(result.success, false)
+    assert.ok(result.error.includes('unknown'))
+  })
+
+  it('getService still works for local/trusted use', async () => {
+    const identity = await ServerIdentity.generate('local-test')
+    const peer = new PeerNodeServer({
+      identity,
+      dataDir: tmpDir,
+      onLog: () => {},
+    })
+
+    const agentSvc = peer.getService('agent')
+    const result = await agentSvc.run({ message: 'local' })
+    assert.ok(result.response.includes('local'))
+  })
+
+  it('auto-generates serviceToken if not provided', async () => {
+    const identity = await ServerIdentity.generate('auto-token')
+    const peer = new PeerNodeServer({
+      identity,
+      dataDir: tmpDir,
+      onLog: () => {},
+    })
+
+    assert.ok(peer.serviceToken)
+    assert.ok(peer.serviceToken.length > 0)
+  })
+
+  it('uses provided serviceToken', async () => {
+    const identity = await ServerIdentity.generate('custom-token')
+    const peer = new PeerNodeServer({
+      identity,
+      dataDir: tmpDir,
+      serviceToken: 'my-custom-token',
+      onLog: () => {},
+    })
+
+    assert.equal(peer.serviceToken, 'my-custom-token')
+    const result = await peer.callService('agent', 'run', { message: 'hi' }, 'my-custom-token')
+    assert.ok(result.response.includes('hi'))
+  })
+})

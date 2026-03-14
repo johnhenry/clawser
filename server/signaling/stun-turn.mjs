@@ -28,7 +28,9 @@ export function getIceServers(env = process.env) {
     try {
       const parsed = JSON.parse(env.ICE_SERVERS)
       if (Array.isArray(parsed) && parsed.length > 0) return parsed
-    } catch { /* fall through to defaults */ }
+    } catch (err) {
+      console.warn(`[stun-turn] Invalid ICE_SERVERS JSON (falling back to defaults): ${err.message}`)
+    }
   }
 
   const servers = [...DEFAULT_STUN_SERVERS]
