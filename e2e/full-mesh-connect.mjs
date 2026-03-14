@@ -7,7 +7,7 @@
   const { ManualStrategy, DiscoveryRecord } = await import('./clawser-mesh-discovery.js')
 
   const localPodId = state.pod.podId
-  const signalingPort = 8787
+  const signalingPort = window.__sigPort || 8787
   const results = { localPodId: localPodId.slice(0, 12), steps: [] }
 
   // ── 1. Connect to signaling server ──
