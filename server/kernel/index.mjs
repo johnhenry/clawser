@@ -391,6 +391,8 @@ class PeerNodeServer {
   #onLog
   #ws = null
   #serviceToken
+  #mdns = null
+  #mdnsPort = null
 
   /**
    * @param {object} opts
@@ -400,14 +402,16 @@ class PeerNodeServer {
    * @param {string} [opts.agentName]     — name for the built-in agent
    * @param {string} [opts.serviceToken]  — auth token for remote service calls
    * @param {number} [opts.maxMemories]   — max memory entries for the agent
+   * @param {number} [opts.mdnsPort]      — port to advertise via mDNS (enables LAN discovery)
    * @param {(msg: string) => void} [opts.onLog]
    */
-  constructor({ identity, dataDir, signalingUrl, agentName, serviceToken, maxMemories, onLog }) {
+  constructor({ identity, dataDir, signalingUrl, agentName, serviceToken, maxMemories, mdnsPort, onLog }) {
     this.#identity = identity
     this.#fileSystem = new ServerFileSystem(dataDir ?? './data')
     this.#agent = new ServerAgent({ name: agentName ?? 'server-agent', maxMemories })
     this.#signalingUrl = signalingUrl ?? null
     this.#serviceToken = serviceToken ?? webcrypto.randomUUID()
+    this.#mdnsPort = mdnsPort ?? null
     this.#onLog = onLog ?? console.log
 
     // Register built-in services
@@ -442,6 +446,26 @@ class PeerNodeServer {
       // In production, would establish WebSocket and register
       // Omitted here to avoid hard dependency on ws in tests
     }
+
+    // Start mDNS LAN discovery if a port is configured
+    if (this.#mdnsPort) {
+      try {
+        const { MdnsDiscovery } = await import('./mdns.mjs')
+        this.#mdns = new MdnsDiscovery({
+          podId: this.#identity.podId,
+          port: this.#mdnsPort,
+          label: this.#identity.label,
+          onLog: this.#onLog,
+        })
+        this.#mdns.onPeerDiscovered((peer) => {
+          this.#connectedPeers.add(peer.podId)
+          this.#onLog(`[kernel] mDNS peer: ${peer.podId} at ${peer.host}:${peer.port}`)
+        })
+        await this.#mdns.start()
+      } catch (err) {
+        this.#onLog(`[kernel] mDNS init failed (non-fatal): ${err.message}`)
+      }
+    }
   }
 
   /**
@@ -453,6 +477,11 @@ class PeerNodeServer {
     if (this.#state === 'stopped') return
     this.#state = 'stopped'
     this.#connectedPeers.clear()
+
+    if (this.#mdns) {
+      await this.#mdns.stop()
+      this.#mdns = null
+    }
 
     if (this.#ws) {
       this.#ws.close()
@@ -537,6 +566,11 @@ class PeerNodeServer {
     return svc[method](args)
   }
 
+  /** @returns {object|null} MdnsDiscovery instance or null */
+  get mdns() {
+    return this.#mdns
+  }
+
   /** @returns {string[]} */
   get connectedPeers() {
     return Array.from(this.#connectedPeers)
@@ -578,6 +612,7 @@ async function createServerKernel(opts = {}) {
     agentName: opts.agentName,
     serviceToken: opts.serviceToken,
     maxMemories: opts.maxMemories,
+    mdnsPort: opts.mdnsPort,
     onLog: opts.onLog,
   })
 }
@@ -594,6 +629,7 @@ if (isMain) {
     agentName: env.AGENT_NAME ?? 'server-agent',
     label: env.POD_LABEL,
     maxMemories: Number(env.MAX_MEMORIES) || undefined,
+    mdnsPort: Number(env.MDNS_PORT) || undefined,
     onLog: console.log,
   })
 

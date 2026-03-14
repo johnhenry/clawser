@@ -9,6 +9,7 @@
     "test": "node --test kernel.test.mjs"
   },
   "dependencies": {
+    "multicast-dns": "^7.2.5",
     "ws": "^8.16.0"
   }
 }
