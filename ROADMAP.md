@@ -1553,16 +1553,14 @@ Current status:
 
 - [x] Model A is the implemented path for Phase 8: the browser remains the relay-registered peer and routes terminal traffic into a VM-console backend.
 - [x] The current shipped runtime is the `demo-linux` browser-side guest console used by the `vm-guest` / `vm-console` peer contract.
-- [ ] Model B is still deferred; there is no guest-side `wsh-server` inside a browser-hosted Linux distro.
+- [x] Model B is intentionally extracted from Phase 8 into a separate initiative so the shipped VM-console work is not treated as incomplete remote-runtime core work.
 
 Relevant prior art:
 
 - JSLinux / TinyEMU can boot real Linux userlands in-browser
 - v86 can boot Linux guests and exposes serial-console-oriented interaction patterns
 
-The key design choice is **what exactly becomes the peer**.
-
-There are two credible models:
+The key design choice for Phase 8 is that **the browser remains the peer**.
 
 #### Model A: VM Console Peer
 
@@ -1585,31 +1583,7 @@ Limitations:
 - filesystem, process, and networking operations are guest-specific and need adapters
 - fidelity depends on the emulator’s console surface
 
-#### Model B: Full Guest `wsh-server`
-
-The guest Linux distro becomes a real host from `wsh`’s perspective.
-
-- boot the Linux guest in the browser
-- run a native `wsh-server` inside the guest
-- either give it guest networking or bridge it through the browser host
-- treat it as a direct or relay-registered host target
-
-Advantages:
-
-- best semantic fidelity
-- real PTY behavior inside the guest
-- the guest can look like a normal Unix host to `wsh`
-
-Limitations:
-
-- much more complex bootstrapping
-- guest networking and key management become real infrastructure problems
-- substantially heavier startup and persistence story
-
-Recommended sequence:
-
-- [x] **First** build Model A as a new browser peer backend
-- [ ] **Later** evaluate Model B if there is a need for true Unix fidelity inside the guest
+Model B is no longer tracked here; it now lives in its own initiative below so Phase 8 can close cleanly around the shipped browser-peer VM model.
 
 ### Phase 8.7: VM Peer MVP
 
@@ -1659,10 +1633,8 @@ Current status:
 Questions to answer:
 
 - should the guest be ephemeral per tab, persisted per workspace, or restored from snapshots?
-- should the guest share Clawser identity material or have its own guest-side keys?
 - does the product want "developer sandbox in a tab", "portable demo environment", or "real long-lived personal Linux workspace"?
 - how much guest networking is acceptable in-browser?
-- is a guest console enough, or is a real guest-side `wsh-server` worth the complexity?
 
 Likely follow-up deliverables:
 
@@ -1682,6 +1654,123 @@ The current clean story is:
 - **Use VM peers** when you want a portable, browser-hosted Linux environment accessible through the same relay/session/auth model, with the current scope limited to the `demo-linux` VM-console MVP.
 
 That gives Clawser four legitimate remote-runtime modes without pretending they are interchangeable.
+
+---
+
+## Initiative: Guest-Native `wsh-server` In Browser Linux Guests (Model B)
+
+Priority: separate, high-complexity follow-on initiative after Phase 8, not a prerequisite for BrowserMesh.
+
+Goal: make a browser-hosted Linux guest behave like a real `wsh` host by running a native `wsh-server` inside the guest instead of routing everything through the browser-owned VM-console adapter.
+
+Why this is separate:
+
+- it is not a convergence problem anymore; it is a new architecture branch
+- it introduces guest networking, guest identity, and guest bootstrap concerns that Phase 8 deliberately avoided
+- it changes what "the peer" means: browser peer vs guest host
+- it can easily create product confusion if mixed into the shipped Phase 8 VM-console model too early
+
+Current status:
+
+- [ ] Not started
+- [ ] No guest-side `wsh-server` is packaged into browser-hosted Linux guests today
+- [ ] No guest-network path or browser-to-guest relay bridge exists for a real in-guest host endpoint
+
+What Model B means:
+
+- boot a Linux guest in the browser
+- run a native `wsh-server` inside that guest
+- give the guest a reachable control/data path:
+  - direct guest networking if feasible, or
+  - a browser-hosted bridge that still preserves guest-host semantics
+- treat the guest as a real host target from `wsh`’s perspective
+
+Why it is attractive:
+
+- best terminal fidelity available inside a browser-hosted Linux environment
+- real PTY behavior inside the guest instead of console emulation
+- cleaner semantics for host-like workloads:
+  - job control
+  - shell startup behavior
+  - process supervision
+  - guest-local files and tools
+- clearer long-term story if browser-hosted guests become serious personal or team runtimes
+
+Why it is expensive:
+
+- guest networking becomes a real subsystem, not just a UI concern
+- guest identity and key material need a product decision:
+  - share browser identity
+  - derive linked guest identity
+  - or generate independent guest host keys
+- guest bootstrap now includes packaging and starting `wsh-server`
+- auth and trust UX become more complex:
+  - browser peer trust
+  - guest host trust
+  - bridge trust if traffic is proxied through the browser
+- persistence story gets heavier:
+  - image contents
+  - host keys
+  - authorized keys
+  - service state inside the guest
+
+Scope for the initiative:
+
+1. Guest packaging
+   - build or bundle a guest-side `wsh-server`
+   - define how it is installed into the selected guest image
+   - define startup behavior inside the guest
+
+2. Guest networking / reachability
+   - direct in-browser guest networking, or
+   - browser bridge that exposes the guest `wsh-server` safely
+   - explicit route model in the runtime registry so operators can tell whether they are talking to:
+     - browser shell peer
+     - browser VM-console peer
+     - guest-native `wsh-server`
+
+3. Identity and trust
+   - define guest host-key lifecycle
+   - decide relationship between browser identity and guest identity
+   - define TOFU / known-host behavior for guest-native sessions
+   - define authorized-key injection or bootstrap flow
+
+4. Runtime and UI integration
+   - add a distinct backend label for guest-native hosts
+   - keep VM-console and guest-native host targets visually separate
+   - support routing by intent/capability without flattening the two models together
+
+5. Operations
+   - guest-side startup and failure diagnostics
+   - persistence and snapshot interaction with host keys/state
+   - recovery story after snapshot import/export
+
+Entry criteria before starting:
+
+- [x] Phase 8 Model A VM-console path is implemented and usable
+- [x] canonical runtime registry, broker, policy, audit, and capability model are in place
+- [x] VM filesystem/image/runtime management exists on the browser side
+- [ ] there is a clear product reason to need guest-native Unix fidelity beyond the current VM-console model
+
+Non-goals:
+
+- replacing the existing Model A VM-console path
+- making BrowserMesh depend on guest-native hosts before the feature is proven
+- hiding the distinction between browser-owned VM peers and guest-native host targets
+
+Success criteria:
+
+- a browser-hosted Linux guest can run a native `wsh-server`
+- the runtime registry distinguishes guest-native host targets from VM-console peers
+- `wsh` clients can connect with host-like semantics and real PTY behavior inside the guest
+- trust, auth, audit, and persistence rules are explicit and testable end to end
+
+Open design questions:
+
+- should the guest share Clawser identity material or have its own guest-side keys?
+- should the browser proxy the guest endpoint, or should the guest own its own routed identity?
+- how should snapshots interact with guest host keys and authorized-key state?
+- when both Model A and Model B exist, which one should be the default operator entrypoint?
 
 ### Phase 8.10: Adjacent Features Worth Implementing
 

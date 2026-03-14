@@ -3,7 +3,7 @@
 ## Summary
 
 Implement the remaining **Phase 8** roadmap only. **Phase 10 packageization is explicitly out of scope.**
-When execution starts, first write this plan verbatim to `docs/PHASE-7A-IMPLEMENTATION-PLAN.md`, then implement it in order.
+When execution starts, first write this plan verbatim to `docs/PHASE-8-REMOTE-RUNTIME-PLAN.md`, then implement it in order.
 
 Chosen defaults:
 - Primary reverse-host end state: **`wsh-agent` first**
