@@ -804,6 +804,21 @@ export class ClawserAgent {
   /** Resume the agent from paused state. */
   resumeAgent() { this.#paused = false; }
 
+  // ── Cancel ──────────────────────────────────────────────────
+  /** @type {AbortController|null} */
+  #runAbort = null;
+
+  /** Cancel the currently running agent loop. Safe to call when idle. */
+  cancel() {
+    if (this.#runAbort) {
+      this.#runAbort.abort();
+      this.#runAbort = null;
+    }
+  }
+
+  /** @returns {boolean} Whether the agent is currently running. */
+  get isRunning() { return this.#runAbort !== null; }
+
   // ── Callbacks ────────────────────────────────────────────────
   #onEvent = () => {};
   #onLog = () => {};
@@ -1654,6 +1669,7 @@ export class ClawserAgent {
   async run() {
     if (this.#destroyed) throw new Error('Agent has been destroyed');
     if (this.#paused) return { status: -1, data: 'Agent is paused (cost runaway). Resume or reset to continue.' };
+    this.#runAbort = new AbortController();
     this.#metrics?.increment('agent.runs');
     const _runStart = Date.now();
 
@@ -1689,6 +1705,12 @@ export class ClawserAgent {
     let codexDone = false;
 
     while (maxIterations-- > 0) {
+      // Check for cancellation
+      if (this.#runAbort?.signal?.aborted) {
+        this.#runAbort = null;
+        return { status: -2, data: 'Cancelled' };
+      }
+
       // Proactive context compaction
       if (this.estimateHistoryTokens() > (this.#config.compactionThreshold || 12000)) {
         await this.compactContext();
@@ -2011,6 +2033,12 @@ export class ClawserAgent {
     let codexDone = false;
 
     while (maxIterations-- > 0) {
+      // Check for cancellation
+      if (this.#runAbort?.signal?.aborted) {
+        this.#runAbort = null;
+        return { status: -2, data: 'Cancelled' };
+      }
+
       // Proactive context compaction
       if (this.estimateHistoryTokens() > (this.#config.compactionThreshold || 12000)) {
         await this.compactContext();

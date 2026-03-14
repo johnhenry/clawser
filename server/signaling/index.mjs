@@ -307,10 +307,7 @@ export function createServer(opts = {}) {
     }
   }
 
-  function broadcastPeerList() {
-    const peerList = Array.from(peers.keys())
-    broadcast({ type: 'peers', peers: peerList })
-  }
+  // broadcastPeerList() removed — replaced by incremental peer-joined/peer-left events
 
   // ── Public API ───────────────────────────────────────────────────
 

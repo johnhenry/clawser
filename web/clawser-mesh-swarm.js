@@ -680,6 +680,21 @@ export class SwarmCoordinator {
   }
 
   /**
+   * Cancel a pending or assigned task.
+   *
+   * @param {string} taskId
+   * @returns {boolean} true if the task was found and cancelled
+   */
+  cancelTask(taskId) {
+    const task = this.#tasks.get(taskId);
+    if (!task) return false;
+    if (task.status === 'completed' || task.status === 'failed') return false;
+    task.status = 'cancelled';
+    task.completedAt = Date.now();
+    return true;
+  }
+
+  /**
    * List tasks, optionally filtering by status.
    *
    * @param {object} [opts]

@@ -542,6 +542,15 @@ class PeerNodeServer {
     return this.#services.get(name)
   }
 
+  /**
+   * Remove a registered service.
+   * @param {string} name
+   * @returns {boolean}
+   */
+  unregisterService(name) {
+    return this.#services.delete(name)
+  }
+
   /** @returns {string} */
   get serviceToken() {
     return this.#serviceToken

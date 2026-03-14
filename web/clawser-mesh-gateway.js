@@ -1,4 +1,5 @@
 /**
+// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
  * clawser-mesh-gateway.js -- Gateway Node for BrowserMesh.
  *
  * Thin wrapper around relay functionality providing multi-hop routing,
@@ -436,6 +437,17 @@ export class GatewayNode {
     });
     this.#routeTable.addRoute(route);
     return route;
+  }
+
+  /**
+   * Revoke (remove) an advertised route.
+   *
+   * @param {string} fromPodId
+   * @param {string} toPodId
+   * @returns {boolean} true if a route was removed
+   */
+  revokeRoute(fromPodId, toPodId) {
+    return this.#routeTable.removeRoute(fromPodId, toPodId);
   }
 
   /**

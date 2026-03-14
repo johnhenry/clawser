@@ -1,4 +1,5 @@
 /**
+// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
  * clawser-peer-health.js — Automatic health monitoring with self-healing.
  *
  * Watches heartbeats, detects failures, triggers workload migration.
@@ -324,6 +325,36 @@ export class HealthMonitor {
     if (thresholds && typeof thresholds === 'object') {
       Object.assign(this.#thresholds, thresholds)
     }
+  }
+
+  /**
+   * Return current threshold configuration.
+   * @returns {object}
+   */
+  getThresholds() {
+    return { ...this.#thresholds }
+  }
+
+  /**
+   * Reset heartbeat history for a specific peer.
+   * @param {string} podId
+   */
+  clearHeartbeat(podId) {
+    const peer = this.#peers.get(podId)
+    if (peer) {
+      peer.lastHeartbeat = null
+      peer.missedHeartbeats = 0
+      peer.latencyMs = null
+    }
+  }
+
+  /**
+   * Completely remove a peer from monitoring.
+   * @param {string} podId
+   * @returns {boolean}
+   */
+  untrack(podId) {
+    return this.#peers.delete(podId)
   }
 
   // -- Events ---------------------------------------------------------------
