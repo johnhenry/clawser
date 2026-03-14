@@ -619,6 +619,191 @@ export class ManualStrategy extends DiscoveryStrategy {
 }
 
 // ---------------------------------------------------------------------------
+// PexStrategy — Peer Exchange
+// ---------------------------------------------------------------------------
+
+/**
+ * Discovers peers by exchanging peer lists with directly connected peers.
+ *
+ * When a new peer connects, both sides exchange their known peer lists.
+ * This reduces dependency on the signaling server — peers can discover
+ * each other transitively through the mesh itself.
+ *
+ * Usage:
+ *   const pex = new PexStrategy({ localId: podId })
+ *   discoveryManager.addStrategy(pex)
+ *   // When a WebRTC peer connects:
+ *   pex.addPeer(remotePodId, sendFn)
+ *   // When a WebRTC message arrives with type PEX_EXCHANGE:
+ *   pex.handleMessage(fromPodId, msg)
+ */
+export class PexStrategy extends DiscoveryStrategy {
+  /** @type {string} */
+  #localId;
+
+  /** @type {Map<string, DiscoveryRecord>} */
+  #peers = new Map();
+
+  /** @type {Map<string, function>} podId -> sendFn */
+  #transports = new Map();
+
+  /** @type {number} */
+  #exchangeIntervalMs;
+
+  /** @type {*} */
+  #timer = null;
+
+  /**
+   * @param {object} opts
+   * @param {string} opts.localId - Local pod identifier
+   * @param {number} [opts.exchangeIntervalMs=30000] - Periodic exchange interval
+   */
+  constructor({ localId, exchangeIntervalMs = 30000 }) {
+    super({ type: 'pex' });
+    if (!localId || typeof localId !== 'string') {
+      throw new Error('localId is required and must be a non-empty string');
+    }
+    this.#localId = localId;
+    this.#exchangeIntervalMs = exchangeIntervalMs;
+  }
+
+  /**
+   * Start periodic peer exchange.
+   * @returns {Promise<void>}
+   */
+  async start() {
+    if (this.active) return;
+    this._active = true;
+    this.#timer = setInterval(() => this.#exchangeAll(), this.#exchangeIntervalMs);
+  }
+
+  /**
+   * Stop periodic exchange and clear state.
+   * @returns {Promise<void>}
+   */
+  async stop() {
+    if (!this.active) return;
+    this._active = false;
+    clearInterval(this.#timer);
+    this.#timer = null;
+    this.#transports.clear();
+    this.#peers.clear();
+  }
+
+  /**
+   * Announce is a no-op for PEX — peers are announced via exchange.
+   * @param {DiscoveryRecord} _record
+   * @returns {Promise<void>}
+   */
+  async announce(_record) { /* no-op */ }
+
+  /**
+   * Return cached peers matching an optional filter.
+   * @param {object} [filter]
+   * @returns {Promise<DiscoveryRecord[]>}
+   */
+  async query(filter) {
+    const results = [];
+    for (const record of this.#peers.values()) {
+      if (!record.isExpired() && record.matchesFilter(filter)) {
+        results.push(record);
+      }
+    }
+    return results;
+  }
+
+  /**
+   * Register a directly connected peer and immediately exchange peer lists.
+   *
+   * @param {string} podId - Remote peer's pod identifier
+   * @param {function} sendFn - (msg: object) => void — sends to this peer
+   */
+  addPeer(podId, sendFn) {
+    if (podId === this.#localId) return;
+    this.#transports.set(podId, sendFn);
+
+    // Add as a discovered peer if not already known
+    if (!this.#peers.has(podId)) {
+      const record = new DiscoveryRecord({
+        podId,
+        label: podId.slice(0, 8),
+        transport: 'webrtc',
+        source: 'pex',
+      });
+      this.#peers.set(podId, record);
+      this._fireDiscovered(record);
+    }
+
+    // Immediately send our peer list to the new peer
+    this.#sendExchange(podId);
+  }
+
+  /**
+   * Remove a disconnected peer's transport.
+   *
+   * @param {string} podId
+   */
+  removePeer(podId) {
+    this.#transports.delete(podId);
+  }
+
+  /**
+   * Handle an incoming PEX exchange message from a remote peer.
+   * Creates DiscoveryRecords for any unknown peers and fires callbacks.
+   *
+   * @param {string} fromPodId
+   * @param {object} msg - { type: 'pex-exchange', peers: string[] }
+   */
+  handleMessage(fromPodId, msg) {
+    if (msg.type !== 'pex-exchange' || !Array.isArray(msg.peers)) return;
+
+    for (const podId of msg.peers) {
+      if (podId === this.#localId) continue;
+      if (this.#peers.has(podId)) continue;
+
+      const record = new DiscoveryRecord({
+        podId,
+        label: podId.slice(0, 8),
+        transport: 'webrtc',
+        source: 'pex',
+      });
+      this.#peers.set(podId, record);
+      this._fireDiscovered(record);
+    }
+  }
+
+  /** @returns {string[]} List of known peer IDs */
+  knownPeers() {
+    return [...this.#peers.keys()];
+  }
+
+  /** @returns {number} Number of peers with active transports */
+  get connectedCount() {
+    return this.#transports.size;
+  }
+
+  // ── Internal ──────────────────────────────────────────────────────
+
+  /** Send our peer list to a specific peer. */
+  #sendExchange(targetPodId) {
+    const sendFn = this.#transports.get(targetPodId);
+    if (!sendFn) return;
+    sendFn({
+      type: 'pex-exchange',
+      from: this.#localId,
+      peers: [...this.#peers.keys()],
+    });
+  }
+
+  /** Exchange peer lists with all connected peers. */
+  #exchangeAll() {
+    for (const podId of this.#transports.keys()) {
+      this.#sendExchange(podId);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // SharedWorkerRelayStrategy
 // ---------------------------------------------------------------------------
 
