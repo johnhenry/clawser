@@ -72,6 +72,12 @@
       ws.onclose = () => {
         state.registered = false
         updateUI()
+        // Auto-reconnect after 1 second
+        setTimeout(connect, 1000)
+      }
+
+      ws.onerror = () => {
+        // onclose will fire after this
       }
     }
 
