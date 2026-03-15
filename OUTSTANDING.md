@@ -20,10 +20,11 @@ Each item has a severity tag:
 
 ## 1. Architecture & Code Quality
 
-### 1.1 God Module: workspace-lifecycle.js [HIGH]
-`clawser-workspace-lifecycle.js` has 71 imports, 1,836 LOC, and is the highest-churn
-file (40 commits). Single assembly point for the entire app. No `cleanupWorkspace()`
-pairs with `initWorkspace()`. Needs splitting into phase-based initialization modules.
+### 1.1 God Module: workspace-lifecycle.js [DONE]
+Already split into 642 LOC orchestrator that delegates to:
+- `clawser-workspace-init-tools.js` — tool registration
+- `clawser-workspace-init-mesh.js` — mesh subsystem initialization
+- `clawser-workspace-init-ui.js` — UI panel wiring
 
 ### 1.2 Circular Dependencies (3 chains) [MEDIUM]
 - `tools ↔ cors-fetch` — tool registry imports CORS fetch, which imports tools
@@ -415,9 +416,9 @@ Safe to delete: branches that were merged but not cleaned up.
 - [x] 2.2 Provider tests (28 tests)
 - Fast suite: 3728 → 3804 tests
 
-### Remaining (~15 items)
-- [ ] 1.1 Split workspace-lifecycle.js (large refactor)
-- [ ] 1.2 Break circular deps (3 chains)
+### Remaining (~13 items)
+- [x] 1.1 workspace-lifecycle.js already split (642 LOC, delegates to 3 init modules)
+- [ ] 1.2 Break circular deps (3 chains — tools↔cors-fetch, ui-chat↔ui-config, shell↔builtins)
 - [ ] 1.3 CDN version pinning + SRI hashes
 - [ ] 1.7 Event listener accumulation in vault dialog
 - [ ] 2.3 UI module tests (15 modules)
