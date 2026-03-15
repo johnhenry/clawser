@@ -1,21 +1,21 @@
-# webroll — Browser-Native Mesh Rollup Framework
+# raijin — Browser-Native Mesh Rollup Framework
 
 > A modular rollup framework that runs entirely in the browser.
 > Build sovereign rollups where the users ARE the validators.
 
 ---
 
-## Package Name: `webroll`
+## Package Name: `raijin`
 
 Short, memorable, immediately conveys "web + rollup." The name signals browser-native
-without being exclusionary of Node.js. Sub-packages use `@webroll/` scope.
+without being exclusionary of Node.js. Sub-packages use `@raijin/` scope.
 
 ---
 
 ## Monorepo Structure
 
 ```
-webroll/
+raijin/
 ├── packages/
 │   ├── core/        — state machine, blocks, transactions (ZERO deps)
 │   ├── consensus/   — PBFT + leader rotation (depends on core)
@@ -65,7 +65,7 @@ Every arrow points down from core. No cycles. validator is the composition root.
 
 ## Package APIs (Key Interfaces)
 
-### @webroll/core — Zero Dependencies
+### @raijin/core — Zero Dependencies
 
 ```typescript
 // Injected interfaces — bring your own implementation
@@ -89,7 +89,7 @@ class StateMachine {
 }
 ```
 
-### @webroll/consensus — Transport Agnostic
+### @raijin/consensus — Transport Agnostic
 
 ```typescript
 // Injected — the rollup doesn't know about WebRTC
@@ -113,7 +113,7 @@ class PBFTConsensus {
 }
 ```
 
-### @webroll/da — Pluggable Data Availability
+### @raijin/da — Pluggable Data Availability
 
 ```typescript
 interface DALayer {
@@ -127,7 +127,7 @@ class EthBlobDA implements DALayer { /* ... */ }
 class LocalDA implements DALayer { /* for testing */ }
 ```
 
-### @webroll/validator — Composition Root
+### @raijin/validator — Composition Root
 
 ```typescript
 class ValidatorNode {
@@ -163,15 +163,15 @@ class ValidatorNode {
 `web/clawser-rollup-integration.js` — the ONLY file that imports both:
 
 ```javascript
-import { ValidatorNode } from '@webroll/validator'
+import { ValidatorNode } from '@raijin/validator'
 import { PeerNode } from './clawser-pod.js'
 
-// Adapter: Clawser PeerNode → webroll NetworkTransport
+// Adapter: Clawser PeerNode → raijin NetworkTransport
 class ClawserTransportAdapter {
   constructor(peerNode) { ... }
-  broadcast(msg) { this.peerNode.broadcast('webroll:consensus', msg) }
-  send(to, msg) { this.peerNode.send(to, 'webroll:consensus', msg) }
-  onMessage(handler) { this.peerNode.on('webroll:consensus', handler) }
+  broadcast(msg) { this.peerNode.broadcast('raijin:consensus', msg) }
+  send(to, msg) { this.peerNode.send(to, 'raijin:consensus', msg) }
+  onMessage(handler) { this.peerNode.on('raijin:consensus', handler) }
 }
 
 // Factory
@@ -188,7 +188,7 @@ export async function createClawserValidator(opts) {
 }
 ```
 
-| Clawser Module | webroll Interface | Adapter |
+| Clawser Module | raijin Interface | Adapter |
 |---------------|-------------------|---------|
 | PeerNode.broadcast | NetworkTransport | ClawserTransportAdapter |
 | GossipProtocol | GossipTransport | ClawserGossipAdapter |
@@ -206,7 +206,7 @@ export async function createClawserValidator(opts) {
 | Arbitrum Orbit | Go/Rust | Server | Single operator | $5K-50K/mo |
 | Sovereign SDK | Rust | Server/WASM | Configurable | $1K-10K/mo |
 | Stackr | TypeScript | Server | Centralized | $500-5K/mo |
-| **webroll** | **TypeScript** | **Browser** | **P2P PBFT** | **$0** |
+| **raijin** | **TypeScript** | **Browser** | **P2P PBFT** | **$0** |
 
 Zero server cost. The users' browsers are the infrastructure.
 
@@ -221,14 +221,14 @@ Trade-offs:
 
 | Package | LOC | External Deps |
 |---------|-----|---------------|
-| @webroll/core | 1,200 | none |
-| @webroll/consensus | 1,500 | none |
-| @webroll/mempool | 600 | none |
-| @webroll/da | 800 | viem (peer, optional) |
-| @webroll/bridge | 900 | viem (peer) |
-| @webroll/contracts | 600 | OpenZeppelin |
-| @webroll/validator | 700 | none |
-| @webroll/sdk | 500 | none |
+| @raijin/core | 1,200 | none |
+| @raijin/consensus | 1,500 | none |
+| @raijin/mempool | 600 | none |
+| @raijin/da | 800 | viem (peer, optional) |
+| @raijin/bridge | 900 | viem (peer) |
+| @raijin/contracts | 600 | OpenZeppelin |
+| @raijin/validator | 700 | none |
+| @raijin/sdk | 500 | none |
 | **Total source** | **~6,800** | |
 | Tests (~60%) | ~4,000 | vitest |
 | Clawser integration | ~200 | both |
@@ -238,11 +238,11 @@ Trade-offs:
 
 ## Build Order
 
-1. `@webroll/core` — foundation, zero deps, TDD
-2. `@webroll/consensus` — hardest part, extensive Byzantine testing
-3. `@webroll/mempool` — straightforward, depends on core
-4. `@webroll/validator` — integration: wire core + consensus + mempool
-5. `@webroll/da` — Celestia client + local testing backend
-6. `@webroll/bridge` + `@webroll/contracts` — L1 interaction
-7. `@webroll/sdk` — developer-facing API
+1. `@raijin/core` — foundation, zero deps, TDD
+2. `@raijin/consensus` — hardest part, extensive Byzantine testing
+3. `@raijin/mempool` — straightforward, depends on core
+4. `@raijin/validator` — integration: wire core + consensus + mempool
+5. `@raijin/da` — Celestia client + local testing backend
+6. `@raijin/bridge` + `@raijin/contracts` — L1 interaction
+7. `@raijin/sdk` — developer-facing API
 8. `clawser-rollup-integration.js` — connect to Clawser's mesh
