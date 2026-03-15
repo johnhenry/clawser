@@ -18,7 +18,7 @@ globalThis.document = {
 globalThis.location = { search: '', hash: '', href: '' };
 globalThis.history = { replaceState() {} };
 try {
-  globalThis.navigator = { storage: { getDirectory: async () => ({}) }, locks: { request: async () => {} } };
+  globalThis.navigator = { storage: { getDirectory: async () => ({}) }, locks: { request: async (_name, optsOrCb, maybeCb) => { const cb = typeof optsOrCb === 'function' ? optsOrCb : maybeCb; if (cb) return cb({ name: _name }) } } };
 } catch {
   // navigator is a getter in Node — patch individual properties instead
   if (globalThis.navigator) {
@@ -30,7 +30,7 @@ try {
     }
     if (!globalThis.navigator.locks) {
       Object.defineProperty(globalThis.navigator, 'locks', {
-        value: { request: async () => {} },
+        value: { request: async (_name, optsOrCb, maybeCb) => { const cb = typeof optsOrCb === 'function' ? optsOrCb : maybeCb; if (cb) return cb({ name: _name }) } },
         configurable: true,
       });
     }

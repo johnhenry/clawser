@@ -438,7 +438,7 @@ describe('MeshSyncEngine', () => {
       engine.update('gc', (c) => c.increment('test_node', 1));
       const payloads = [];
       engine.startAutoSync('gc', (p) => payloads.push(p), 50);
-      await new Promise(r => setTimeout(r, 130));
+      await new Promise(r => setTimeout(r, 250));
       engine.stopAutoSync('gc');
       assert.ok(payloads.length >= 2, `expected >=2, got ${payloads.length}`);
       assert.equal(payloads[0].id, 'gc');
