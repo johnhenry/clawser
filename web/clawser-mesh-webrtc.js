@@ -1,4 +1,5 @@
 /**
+// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
  * clawser-mesh-webrtc.js -- WebRTC mesh transport.
  *
  * Provides WebRTC DataChannel-based P2P connections for the BrowserMesh.

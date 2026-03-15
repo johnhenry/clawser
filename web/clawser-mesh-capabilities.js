@@ -1,4 +1,5 @@
 /**
+// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
  * clawser-mesh-capabilities.js -- Capability Attenuation & WASM Sandbox.
  *
  * Implements the object-capability (ocap) model for BrowserMesh:

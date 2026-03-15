@@ -1,4 +1,5 @@
 /**
+// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
  * clawser-peer-escrow.js — Hold credits in escrow until consensus confirms delivery.
  *
  * Enables trustless compute marketplace, dispute resolution, and

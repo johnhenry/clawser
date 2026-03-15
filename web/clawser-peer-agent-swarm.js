@@ -1,4 +1,5 @@
 /**
+// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
  * clawser-peer-agent-swarm.js — Multi-agent coordination protocol.
  *
  * Agents share goals, decompose tasks, divide work, merge results,

@@ -1,4 +1,5 @@
 /**
+// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
  * clawser-peer-compute.js — Federated compute orchestration.
  *
  * Split large compute jobs across multiple peers (map/reduce pattern).

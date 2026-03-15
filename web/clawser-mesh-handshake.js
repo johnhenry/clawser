@@ -1,4 +1,5 @@
 /**
+// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
  * clawser-mesh-handshake.js -- Connection Handshake Protocol.
  *
  * Coordinates signaling, direct input exchange (QR + clipboard), and

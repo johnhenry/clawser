@@ -1,4 +1,5 @@
 /**
+// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
  * clawser-peer-timestamp.js — Distributed timestamp consensus.
  *
  * Peers propose timestamps, network agrees on canonical order via

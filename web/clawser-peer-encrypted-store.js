@@ -1,4 +1,5 @@
 /**
+// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
  * clawser-peer-encrypted-store.js -- Encrypt blobs before uploading to peers.
  *
  * Peers store opaque ciphertext — they cannot read content. Enables

@@ -1,4 +1,5 @@
 /**
+// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
  * Clawser Mesh Streams
  *
  * Multiplexed data streaming with credit-based backpressure.

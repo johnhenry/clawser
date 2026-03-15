@@ -1,4 +1,5 @@
 /**
+// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
  * clawser-peer-memory-sync.js — CRDT-backed agent memory replication.
  *
  * Replicate agent memory across the mesh using CRDTs. An agent's memory

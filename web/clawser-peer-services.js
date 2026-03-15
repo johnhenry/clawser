@@ -1,4 +1,5 @@
 /**
+// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
  * clawser-peer-services.js -- Service advertising and discovery for P2P mesh.
  *
  * Peers advertise capabilities (agent, terminal, files, compute, http-proxy, model)

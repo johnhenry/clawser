@@ -1,4 +1,5 @@
 /**
+// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
  * clawser-peer-routing.js -- Multi-hop message routing and server sharing.
  *
  * Routes messages across the mesh via intermediary peers when direct

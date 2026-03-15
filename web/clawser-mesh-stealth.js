@@ -1,4 +1,5 @@
 /**
+// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
  * clawser-mesh-stealth.js -- Stealth agent with erasure-coded state sharding.
  *
  * Provides state sharding across the DHT for agent stealth operations.

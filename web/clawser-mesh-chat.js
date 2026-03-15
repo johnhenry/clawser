@@ -1,4 +1,5 @@
 /**
+// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
  * clawser-mesh-chat.js -- CRDT-backed chat rooms for BrowserMesh.
  *
  * ChatMessage envelopes, ChatRoom with ORSet membership, LWWMap

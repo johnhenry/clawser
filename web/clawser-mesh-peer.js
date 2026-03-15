@@ -1,4 +1,5 @@
 /**
+// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
  * clawser-mesh-peer.js -- Peer Connection Manager.
  *
  * Discovers, connects to, and maintains connections with mesh peers.

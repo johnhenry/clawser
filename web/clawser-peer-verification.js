@@ -1,4 +1,5 @@
 /**
+// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
  * clawser-peer-verification.js — Verification quorum protocol.
  *
  * Run the same job on N peers, collect results, vote on correctness.

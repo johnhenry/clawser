@@ -1,4 +1,5 @@
 /**
+// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
  * clawser-peer-terminal.js -- Remote terminal access over peer sessions.
  *
  * Allows one peer to execute commands on another's virtual shell via

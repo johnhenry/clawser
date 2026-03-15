@@ -1,4 +1,5 @@
 /**
+// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
  * clawser-peer-files.js -- Remote file access over peer sessions.
  *
  * Provides browsing, reading, writing, and deleting files on a remote

@@ -1,4 +1,5 @@
 /**
+// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
  * clawser-peer-chat.js -- P2P chat over peer sessions.
  *
  * Provides direct chat between two peers on top of PeerSession, with

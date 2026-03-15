@@ -1,4 +1,5 @@
 /**
+// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
  * clawser-mesh-sw-routing.js -- ServiceWorker mesh:// fetch routing.
  *
  * Intercepts mesh:// protocol requests and *.mesh.local hostnames

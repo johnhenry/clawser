@@ -1,4 +1,5 @@
 /**
+// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
  * clawser-mesh-webtransport.js -- WebTransport transport bridge.
  *
  * Extends MeshTransport with WebTransport API support. Provides

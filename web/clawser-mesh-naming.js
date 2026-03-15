@@ -1,4 +1,5 @@
 /**
+// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
  * clawser-mesh-naming.js -- Decentralized name resolution for BrowserMesh.
  *
  * Human-friendly names (@alice, mesh://alice/path) mapped to identity

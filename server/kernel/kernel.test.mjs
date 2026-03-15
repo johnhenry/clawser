@@ -211,6 +211,132 @@ describe('ServerAgent', () => {
   })
 })
 
+// ─── ServerAgent LLM provider ───────────────────────────────────────
+
+describe('ServerAgent LLM provider', () => {
+  it('falls back to echo when no provider configured', async () => {
+    const agent = new ServerAgent({ name: 'echo-test' })
+    assert.equal(agent.provider, null)
+    const result = await agent.run('hello')
+    assert.ok(result.response.includes('hello'))
+    assert.equal(result.usage.input_tokens, 0)
+    // History should be empty in echo mode
+    assert.deepEqual(agent.history, [])
+  })
+
+  it('falls back to echo when provider set but no apiKey', async () => {
+    const agent = new ServerAgent({ name: 'no-key', provider: 'openai' })
+    assert.equal(agent.provider, 'openai')
+    const result = await agent.run('test')
+    assert.ok(result.response.includes('test'))
+    assert.deepEqual(agent.history, [])
+  })
+
+  it('accepts provider config and tracks history', async () => {
+    // We can't call a real API in tests, but we can verify the agent
+    // accepts the config and tracks history when provider+key are set.
+    // We stub fetch to simulate a response.
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = async (url, opts) => {
+      const body = JSON.parse(opts.body)
+      // Verify the request shape
+      assert.ok(body.messages.length >= 2) // system + user (via history)
+      assert.equal(body.model, 'gpt-4o-mini')
+      assert.equal(body.max_tokens, 1024)
+      assert.ok(opts.headers['Authorization'].startsWith('Bearer '))
+      return {
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: 'LLM says hi' } }],
+          usage: { prompt_tokens: 10, completion_tokens: 5 },
+        }),
+      }
+    }
+
+    try {
+      const agent = new ServerAgent({
+        name: 'llm-test',
+        provider: 'openai',
+        apiKey: 'test-key-123',
+      })
+      const result = await agent.run('hello from test')
+      assert.equal(result.response, 'LLM says hi')
+      assert.equal(result.usage.input_tokens, 10)
+      assert.equal(result.usage.output_tokens, 5)
+
+      // History should contain user + assistant
+      const history = agent.history
+      assert.equal(history.length, 2)
+      assert.equal(history[0].role, 'user')
+      assert.equal(history[0].content, 'hello from test')
+      assert.equal(history[1].role, 'assistant')
+      assert.equal(history[1].content, 'LLM says hi')
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('supports anthropic provider', async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = async (url, opts) => {
+      assert.ok(url.includes('anthropic'))
+      assert.equal(opts.headers['x-api-key'], 'ant-key')
+      assert.equal(opts.headers['anthropic-version'], '2023-06-01')
+      const body = JSON.parse(opts.body)
+      assert.equal(body.model, 'claude-sonnet-4-20250514')
+      assert.ok(body.system)
+      return {
+        ok: true,
+        json: async () => ({
+          content: [{ text: 'Claude responds' }],
+          usage: { input_tokens: 8, output_tokens: 3 },
+        }),
+      }
+    }
+
+    try {
+      const agent = new ServerAgent({
+        name: 'anthropic-test',
+        provider: 'anthropic',
+        apiKey: 'ant-key',
+      })
+      const result = await agent.run('hi claude')
+      assert.equal(result.response, 'Claude responds')
+      assert.equal(result.usage.input_tokens, 8)
+      assert.equal(result.usage.output_tokens, 3)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('uses custom model when specified', async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = async (_url, opts) => {
+      const body = JSON.parse(opts.body)
+      assert.equal(body.model, 'gpt-4o')
+      return {
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: 'ok' } }],
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
+        }),
+      }
+    }
+
+    try {
+      const agent = new ServerAgent({
+        name: 'model-test',
+        provider: 'openai',
+        apiKey: 'key',
+        model: 'gpt-4o',
+      })
+      await agent.run('test')
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+})
+
 // ─── PeerNodeServer ──────────────────────────────────────────────────
 
 describe('PeerNodeServer', () => {

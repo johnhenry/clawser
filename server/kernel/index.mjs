@@ -12,6 +12,9 @@
  *   DATA_DIR      — root directory for file storage (default ./data)
  *   AGENT_NAME    — name for the server agent (default 'server-agent')
  *   POD_LABEL     — human-readable label for this pod (default hostname)
+ *   LLM_PROVIDER  — 'openai' or 'anthropic' (omit for echo mode)
+ *   LLM_API_KEY   — API key for the configured provider
+ *   LLM_MODEL     — model name (default: gpt-4o-mini / claude-sonnet-4-20250514)
  */
 
 import { readFile, writeFile, mkdir, readdir, stat, unlink, access, realpath } from 'node:fs/promises'
@@ -280,18 +283,29 @@ class ServerAgent {
   #systemPrompt
   #memories
   #maxMemories
+  #provider
+  #apiKey
+  #model
+  #history
 
   /**
    * @param {object} opts
    * @param {string} opts.name
    * @param {string} [opts.systemPrompt]
    * @param {number} [opts.maxMemories]
+   * @param {string} [opts.provider]  — 'openai' or 'anthropic' (omit for echo mode)
+   * @param {string} [opts.apiKey]    — API key for the provider
+   * @param {string} [opts.model]     — model name override
    */
-  constructor({ name, systemPrompt, maxMemories }) {
+  constructor({ name, systemPrompt, maxMemories, provider, apiKey, model }) {
     this.#name = name
     this.#systemPrompt = systemPrompt ?? `You are ${name}, a server-side Clawser agent.`
     this.#memories = []
     this.#maxMemories = maxMemories ?? 1024
+    this.#provider = provider ?? null
+    this.#apiKey = apiKey ?? null
+    this.#model = model ?? null
+    this.#history = []
   }
 
   /** @returns {string} */
@@ -304,18 +318,110 @@ class ServerAgent {
     return this.#systemPrompt
   }
 
+  /** @returns {string|null} */
+  get provider() {
+    return this.#provider
+  }
+
+  /** @returns {Array<{ role: string, content: string }>} */
+  get history() {
+    return [...this.#history]
+  }
+
   /**
    * Run the agent with a message.
-   * Stub implementation — returns an echo response.
-   * In production, this would call an LLM provider.
+   * If a provider and API key are configured, calls the real LLM.
+   * Otherwise falls back to echo mode.
    *
    * @param {string} message
    * @returns {Promise<{ response: string, usage?: object }>}
    */
   async run(message) {
+    if (!this.#provider || !this.#apiKey) {
+      return {
+        response: `[${this.#name}] Received: ${message}`,
+        usage: { input_tokens: 0, output_tokens: 0 },
+      }
+    }
+
+    this.#history.push({ role: 'user', content: message })
+
+    const result = this.#provider === 'anthropic'
+      ? await this.#runAnthropic(message)
+      : await this.#runOpenAI(message)
+
+    this.#history.push({ role: 'assistant', content: result.response })
+    return result
+  }
+
+  /**
+   * Call the OpenAI-compatible chat completions API.
+   * @param {string} _message — already in #history
+   * @returns {Promise<{ response: string, usage: object }>}
+   */
+  async #runOpenAI(_message) {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.#apiKey}`,
+      },
+      body: JSON.stringify({
+        model: this.#model || 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: this.#systemPrompt },
+          ...this.#history,
+        ],
+        max_tokens: 1024,
+      }),
+    })
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(`OpenAI API error ${res.status}: ${text}`)
+    }
+    const data = await res.json()
+    const choice = data.choices?.[0]
     return {
-      response: `[${this.#name}] Received: ${message}`,
-      usage: { input_tokens: 0, output_tokens: 0 },
+      response: choice?.message?.content ?? '',
+      usage: {
+        input_tokens: data.usage?.prompt_tokens ?? 0,
+        output_tokens: data.usage?.completion_tokens ?? 0,
+      },
+    }
+  }
+
+  /**
+   * Call the Anthropic messages API.
+   * @param {string} _message — already in #history
+   * @returns {Promise<{ response: string, usage: object }>}
+   */
+  async #runAnthropic(_message) {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': this.#apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: this.#model || 'claude-sonnet-4-20250514',
+        system: this.#systemPrompt,
+        messages: this.#history,
+        max_tokens: 1024,
+      }),
+    })
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(`Anthropic API error ${res.status}: ${text}`)
+    }
+    const data = await res.json()
+    const content = data.content?.[0]?.text ?? ''
+    return {
+      response: content,
+      usage: {
+        input_tokens: data.usage?.input_tokens ?? 0,
+        output_tokens: data.usage?.output_tokens ?? 0,
+      },
     }
   }
 
@@ -402,13 +508,22 @@ class PeerNodeServer {
    * @param {string} [opts.agentName]     — name for the built-in agent
    * @param {string} [opts.serviceToken]  — auth token for remote service calls
    * @param {number} [opts.maxMemories]   — max memory entries for the agent
+   * @param {string} [opts.llmProvider]   — 'openai' or 'anthropic' (omit for echo mode)
+   * @param {string} [opts.llmApiKey]     — API key for the LLM provider
+   * @param {string} [opts.llmModel]      — model name override
    * @param {number} [opts.mdnsPort]      — port to advertise via mDNS (enables LAN discovery)
    * @param {(msg: string) => void} [opts.onLog]
    */
-  constructor({ identity, dataDir, signalingUrl, agentName, serviceToken, maxMemories, mdnsPort, onLog }) {
+  constructor({ identity, dataDir, signalingUrl, agentName, serviceToken, maxMemories, llmProvider, llmApiKey, llmModel, mdnsPort, onLog }) {
     this.#identity = identity
     this.#fileSystem = new ServerFileSystem(dataDir ?? './data')
-    this.#agent = new ServerAgent({ name: agentName ?? 'server-agent', maxMemories })
+    this.#agent = new ServerAgent({
+      name: agentName ?? 'server-agent',
+      maxMemories,
+      provider: llmProvider,
+      apiKey: llmApiKey,
+      model: llmModel,
+    })
     this.#signalingUrl = signalingUrl ?? null
     this.#serviceToken = serviceToken ?? webcrypto.randomUUID()
     this.#mdnsPort = mdnsPort ?? null
@@ -609,6 +724,9 @@ class PeerNodeServer {
  * @param {string} [opts.signalingUrl]      — signaling server WebSocket URL
  * @param {string} [opts.agentName]         — agent name
  * @param {string} [opts.label]             — pod label
+ * @param {string} [opts.llmProvider]       — 'openai' or 'anthropic'
+ * @param {string} [opts.llmApiKey]         — API key for the LLM provider
+ * @param {string} [opts.llmModel]          — model name override
  * @param {(msg: string) => void} [opts.onLog]
  * @returns {Promise<PeerNodeServer>}
  */
@@ -621,6 +739,9 @@ async function createServerKernel(opts = {}) {
     agentName: opts.agentName,
     serviceToken: opts.serviceToken,
     maxMemories: opts.maxMemories,
+    llmProvider: opts.llmProvider,
+    llmApiKey: opts.llmApiKey,
+    llmModel: opts.llmModel,
     mdnsPort: opts.mdnsPort,
     onLog: opts.onLog,
   })
@@ -638,6 +759,9 @@ if (isMain) {
     agentName: env.AGENT_NAME ?? 'server-agent',
     label: env.POD_LABEL,
     maxMemories: Number(env.MAX_MEMORIES) || undefined,
+    llmProvider: env.LLM_PROVIDER || undefined,
+    llmApiKey: env.LLM_API_KEY || undefined,
+    llmModel: env.LLM_MODEL || undefined,
     mdnsPort: Number(env.MDNS_PORT) || undefined,
     onLog: console.log,
   })

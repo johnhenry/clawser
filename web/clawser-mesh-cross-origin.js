@@ -1,4 +1,5 @@
 /**
+// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
  * clawser-mesh-cross-origin.js -- Cross-origin communication bridge.
  *
  * Enables mesh pods running in different browser contexts (iframes,

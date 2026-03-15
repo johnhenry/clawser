@@ -1,4 +1,5 @@
 /**
+// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
  * clawser-mesh-devtools.js -- Mesh DevTools Inspector.
  *
  * Provides diagnostic snapshot and health checking for the mesh subsystem.

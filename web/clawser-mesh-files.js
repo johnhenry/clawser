@@ -1,4 +1,5 @@
 /**
+// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
  * Clawser Mesh Files
  *
  * Content-addressed file transfer with SHA-256 chunking, progress tracking,

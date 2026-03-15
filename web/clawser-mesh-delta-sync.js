@@ -1,4 +1,5 @@
 /**
+// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
  * clawser-mesh-delta-sync.js -- Delta-Based Synchronization Protocol.
  *
  * Efficient state synchronization using delta (diff) encoding:

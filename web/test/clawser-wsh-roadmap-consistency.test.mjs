@@ -12,22 +12,6 @@ describe('wsh roadmap/implementation consistency', () => {
     assert.match(roadmap, /Rust CLI Status Matrix/);
   });
 
-  it('core wsh-cli commands no longer contain placeholder transport text', () => {
-    const files = [
-      'crates/wsh-cli/src/commands/connect.rs',
-      'crates/wsh-cli/src/commands/exec.rs',
-      'crates/wsh-cli/src/commands/scp.rs',
-      'crates/wsh-cli/src/commands/sessions.rs',
-      'crates/wsh-cli/src/commands/tools.rs',
-    ];
-
-    for (const rel of files) {
-      const content = readFileSync(resolve(ROOT, rel), 'utf8');
-      assert.equal(
-        content.includes('transport not yet implemented'),
-        false,
-        `${rel} still contains placeholder transport text`
-      );
-    }
-  });
+  // Removed: wsh-cli Rust source files were deleted in 7a2d7a5
+  // ("chore: remove legacy Rust crates and Cargo workspace")
 });
