@@ -396,11 +396,37 @@ Safe to delete: branches that were merged but not cleaned up.
 - [x] 11.5 Fix playwright.config.js testDir
 - [x] 11.2 Dead event names documented
 
-### Remaining (~24 items — batches 8, 10-12)
-Batch 8: Server infra (kernel agent, embed API)
-- [x] 6.2 Wire browser identity to sign signaling registration
+### Batch 8 (2026-03-14): Server infra
+- [x] 6.2 Wire browser identity to sign signaling registration (signFn)
 - [x] 6.4 Add kernel service to docker-compose.yml
-- [x] 6.5 Fly.toml multi-service — deferred (separate initiative)
-Batch 10: E2E test expansion (WebRTC→mesh, SWIM, PEX, mDNS)
-Batch 11: Test coverage (core modules, UI, packages, experimental modules)
-Batch 12: Planned features + ecosystem (scheduler overhaul, OPFS dirs, channels, npm package)
+- [x] 6.5 Fly.toml multi-service — DEFERRED (separate initiative)
+- [x] 3.6 MeshACL.updateEntry() for template changes
+- [x] 4.3 Fix panel container for renderMeshPanel
+
+### Batch 10 (2026-03-14): E2E test expansion
+- [x] 10.1 WebRTC-to-mesh subsystem E2E (5/7 passing — 2 genuine integration gaps found)
+- [x] 10.2 SWIM failure detection E2E (test created)
+- [ ] 10.3 PEX transitive discovery E2E — DEFERRED
+- [ ] 10.4 mDNS-to-browser E2E — DEFERRED
+
+### Batch 11 (2026-03-14): Test coverage
+- [x] 2.2 Agent core tests (49 tests)
+- [x] 2.2 Shell tests (38 tests)
+- [x] 2.2 Provider tests (28 tests)
+- Fast suite: 3728 → 3804 tests
+
+### Remaining (~15 items)
+- [ ] 1.1 Split workspace-lifecycle.js (large refactor)
+- [ ] 1.2 Break circular deps (3 chains)
+- [ ] 1.3 CDN version pinning + SRI hashes
+- [ ] 1.7 Event listener accumulation in vault dialog
+- [ ] 2.3 UI module tests (15 modules)
+- [ ] 2.4 Internal package tests (5 packages)
+- [ ] 4.4 EmbeddedPod.sendMessage() implementation
+- [ ] 5.1 Service Worker mesh routing integration
+- [ ] 5.6 WebRTC auto-negotiation via HandshakeCoordinator
+- [ ] 6.1 Kernel agent with real LLM provider
+- [ ] 7.1 Update stale LOC counts
+- [ ] 7.2 Consolidate hook pipeline docs
+- [ ] 8.1-8.6 Heynote planned features (scheduler, OPFS, tabs, etc.)
+- [ ] 9.1-9.5 Ecosystem (npm package, skills marketplace, channels, IPFS)
