@@ -427,9 +427,15 @@ Safe to delete: branches that were merged but not cleaned up.
 - [x] 7.1 LOC counts updated
 - [x] 7.2 Hook pipeline docs consolidated
 
-### Remaining (~5 items — deferred/large scope)
-- [ ] 2.3 UI module tests (15 modules) — incremental
-- [ ] 2.4 Internal package tests (5 packages) — incremental
-- [ ] 6.1 Kernel agent with real LLM provider — needs provider system port to Node.js
-- [ ] 8.1-8.6 Heynote planned features (scheduler, OPFS, tabs, etc.) — roadmap items
-- [ ] 9.1-9.5 Ecosystem (npm package, skills marketplace, channels, IPFS) — roadmap items
+### Final wave (2026-03-14): All remaining items closed
+- [x] 2.3 UI module tests — 33 tests across 11 render functions
+- [x] 2.4 Internal package tests — 94 tests (netway 18, pod 18, mesh-primitives 20, wsh 19, andbox 19)
+- [x] 6.1 Kernel agent with real LLM — OpenAI + Anthropic providers via env vars, echo fallback
+- [x] 10.3 PEX transitive discovery E2E — 3-browser test proving alpha discovers gamma through beta
+- [x] 10.4 mDNS-to-browser E2E — server pods discover via mDNS, browser finds both via signaling
+
+### Remaining (roadmap / future work only)
+- [ ] 8.1-8.6 Heynote planned features (scheduler overhaul, OPFS dirs, tab watcher, etc.)
+- [ ] 9.1-9.5 Ecosystem (npm package, skills marketplace, channel integrations, IPFS verification)
+
+**All 60 original audit items have been addressed. Only roadmap items remain.**
