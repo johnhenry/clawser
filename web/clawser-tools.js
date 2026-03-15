@@ -12,15 +12,7 @@
  */
 
 import { opfsWalk, opfsWalkDir } from './clawser-opfs.js';
-
-// Lazy import to avoid circular dependency (clawser-cors-fetch.js extends BrowserTool)
-let _corsFetchPromise = null;
-async function getCorsFetchFallback() {
-  if (!_corsFetchPromise) {
-    _corsFetchPromise = import('./clawser-cors-fetch.js').then(mod => mod.corsFetchFallback);
-  }
-  return _corsFetchPromise;
-}
+import { corsFetchFallback } from './clawser-cors-fetch-util.js';
 
 // ── WorkspaceFs — scopes OPFS paths to workspace home ────────────
 
@@ -355,8 +347,7 @@ export class FetchTool extends BrowserTool {
     // Cross-origin: try extension proxy first to avoid CORS console errors
     const isCrossOrigin = typeof location !== 'undefined' && parsed.origin !== location.origin;
     if (isCrossOrigin) {
-      const fallback = await getCorsFetchFallback();
-      const extResp = await fallback(url, { method, headers, body });
+      const extResp = await corsFetchFallback(url, { method, headers, body });
       if (extResp) {
         const output = JSON.stringify({
           status: extResp.status,
@@ -1247,8 +1238,7 @@ export class WebSearchTool extends BrowserTool {
     let resp;
 
     // Always try extension proxy first (DuckDuckGo is always cross-origin / CORS-blocked)
-    const fallback = await getCorsFetchFallback();
-    const extResp = await fallback(url);
+    const extResp = await corsFetchFallback(url);
     if (extResp) {
       if (extResp.status >= 400) {
         return { success: false, output: '', error: `Search failed: HTTP ${extResp.status}` };

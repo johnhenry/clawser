@@ -10,7 +10,7 @@ import { modal } from './clawser-modal.js';
 import { addMsg, addErrorMsg } from './clawser-ui-chat.js';
 import { OAUTH_PROVIDERS } from './clawser-oauth.js';
 import { checkQuota } from './clawser-tools.js';
-import { CostTracker } from './clawser-cost-tracker.js';
+import { getCostTracker, recordCostEvent } from './clawser-cost-events.js';
 import { renderBarChart, renderTimeSeriesChart, renderCostBreakdown } from './clawser-ui-charts.js';
 import { renderIdentityEditor } from './clawser-ui-identity-editor.js';
 import { loadAccounts, resolveAccountKey, SERVICES } from './clawser-accounts.js';
@@ -754,24 +754,8 @@ export function updateRemoteBadge(count) {
 
 // ── Dashboard panel (Batch 4) ────────────────────────────────────
 
-/** Get or create the CostTracker for the current workspace. */
-export function getCostTracker() {
-  const wsId = state.agent?.getWorkspace() || 'default';
-  if (!state._costTracker || state._costTracker._wsId !== wsId) {
-    state._costTracker = new CostTracker(wsId);
-    state._costTracker._wsId = wsId;
-  }
-  return state._costTracker;
-}
-
-/** Record a cost event from the chat flow.
- * @param {string} model - Model name
- * @param {object} usage - Usage object with input_tokens/output_tokens
- * @param {number} costCents - Cost in cents
- */
-export function recordCostEvent(model, usage, costCents) {
-  getCostTracker().recordCost(model, usage, costCents);
-}
+// getCostTracker and recordCostEvent imported from clawser-cost-events.js
+export { getCostTracker, recordCostEvent } from './clawser-cost-events.js';
 
 /** Refresh dashboard metrics display. */
 export function refreshDashboard() {

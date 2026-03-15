@@ -831,6 +831,78 @@ export async function initMeshSubsystem() {
       })
     }
 
+    // ── Wire SW mesh-fetch relay ──────────────────────────────────
+    // Listen for mesh-fetch messages from the Service Worker and route
+    // them through the MeshFetchRouter running in the main thread.
+    if (typeof navigator !== 'undefined' && navigator.serviceWorker && state.meshFetchRouter) {
+      const meshFetchListener = async (event) => {
+        if (event.data?.type !== 'mesh-fetch') return
+        const { port, pseudoRequest } = event.data
+        if (!port || !pseudoRequest) return
+
+        try {
+          // Reconstruct a Request-like object for MeshFetchRouter
+          const headerEntries = pseudoRequest.headers || []
+          const headersObj = {}
+          for (const [k, v] of headerEntries) headersObj[k] = v
+
+          const reqLike = {
+            url: pseudoRequest.url,
+            method: pseudoRequest.method || 'GET',
+            headers: {
+              forEach(cb) { for (const [k, v] of Object.entries(headersObj)) cb(v, k) },
+              entries() { return Object.entries(headersObj) },
+            },
+            async text() {
+              if (pseudoRequest.body instanceof ArrayBuffer) {
+                return new TextDecoder().decode(pseudoRequest.body)
+              }
+              return pseudoRequest.body != null ? String(pseudoRequest.body) : ''
+            },
+          }
+
+          const response = await state.meshFetchRouter.route(reqLike)
+          if (response) {
+            const body = typeof response._body !== 'undefined'
+              ? response._body
+              : await response.text?.() ?? ''
+            const resHeaders = []
+            if (response.headers) {
+              if (typeof response.headers.entries === 'function') {
+                for (const entry of response.headers.entries()) resHeaders.push(entry)
+              } else if (typeof response.headers.forEach === 'function') {
+                response.headers.forEach((v, k) => resHeaders.push([k, v]))
+              }
+            }
+            port.postMessage({
+              pseudoResponse: {
+                status: response.status || 200,
+                statusText: response.statusText || 'OK',
+                headers: resHeaders,
+                body,
+              },
+            })
+          } else {
+            port.postMessage({
+              pseudoResponse: {
+                status: 404,
+                statusText: 'Not Found',
+                headers: [['content-type', 'application/json']],
+                body: JSON.stringify({ error: 'No mesh route matched' }),
+              },
+            })
+          }
+        } catch (err) {
+          port.postMessage({ error: err.message || 'Mesh fetch handler error' })
+        }
+      }
+
+      navigator.serviceWorker.addEventListener('message', meshFetchListener)
+      state._meshFetchSwCleanup = () => {
+        navigator.serviceWorker.removeEventListener('message', meshFetchListener)
+      }
+    }
+
     console.log('[clawser] P2P mesh initialized via ClawserPod — podId:', state.pod.podId);
   } catch (err) {
     console.warn('[clawser] P2P mesh init failed (non-fatal):', err.message);
@@ -892,6 +964,10 @@ export async function initMeshSubsystem() {
     state.meshInspector = null;
     state.stealthAgent = null;
     state.meshFetchRouter = null;
+    if (state._meshFetchSwCleanup) {
+      try { state._meshFetchSwCleanup() } catch { /* best-effort */ }
+      state._meshFetchSwCleanup = null
+    }
     state.timestampAuthority = null;
     state.syncCoordinator = null;
   }

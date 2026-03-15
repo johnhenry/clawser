@@ -4,7 +4,31 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>clawser — browser agent workspace</title>
-  <!-- CDN imports: versions pinned for supply chain safety. SRI not yet supported in importmaps (spec proposal pending). -->
+  <!--
+    CDN dependency manifest — all versions pinned for supply-chain safety.
+    SRI integrity hashes are listed below for audit purposes.
+    Import maps do not yet support the "integrity" field in all browsers
+    (spec proposal: https://github.com/nicolo-ribaudo/tc39-proposal-import-maps-integrity).
+
+    Importmap entries (esm.sh / jsdelivr):
+      ai.matey.core@0.2.0        sha384-rcH1rE3eHhUV7kC8GB7zupiQ+xRSX18X04bSKiFF8zQwBS0jGFwyamfNLmekzQpr
+      ai.matey.frontend@0.2.0    sha384-d96CCZY7tgPtUHaZa0jv6xThoEYJtIz1VFolfNkE7aC4DtHwHW7vrYZBZHo1RoWl
+      ai.matey.backend@0.2.4     sha384-SWy6yjLF9Bh8It3S7y7zymtkyPbxNV1vVjeLGhLjboYblZS+MwzJsMjmP+42xNKn
+      ai.matey.backend.browser@0.2.0 sha384-b88N02YgLd7funVJCMfVadr9XjU550w8sXU5HQKCwmi32U47Wbn91heayog/gyvo
+      fflate@0.8.2               sha384-zEdXPh9HC7/USfWFshEo1vsl3HmkUqybtFBVgWM3/UIlbf8ceEl7EqwzRusoqqNi
+      html2canvas@1.4.1          sha384-SEf+9JtGmkLcVpq3znGj1TgWxx6jXDZoKOUn2/5r4yYwDPySuCX8uLF9ffSJIK9W
+
+    Dynamic imports (version-pinned in JS source):
+      marked@15.0.4              (clawser-ui-chat.js)
+      webtorrent@2.8.5           (clawser-peer-torrent.js)
+      helia@6.0.21               (clawser-peer-ipfs.js)
+      @xenova/transformers@2.17.2 (clawser-models.js, clawser-memory.js)
+      @mediapipe/tasks-vision@0.10.18 (clawser-models.js)
+      @mediapipe/tasks-text@0.10.18   (clawser-models.js)
+
+    To regenerate a hash:
+      curl -sL "<URL>" | openssl dgst -sha384 -binary | openssl base64 -A
+  -->
   <script type="importmap">
   {
     "imports": {

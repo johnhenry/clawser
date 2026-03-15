@@ -30,7 +30,7 @@ import { WebSocketTransport, TransportFactory } from './clawser-mesh-websocket.j
 import { WebRTCTransportAdapter, WebRTCAdapterFactory } from './clawser-mesh-webrtc.js'
 import { WebTransportBridge, WebTransportAdapterFactory } from './clawser-mesh-webtransport.js'
 // Track 2: Security & Auth
-import { HandshakeCoordinator } from './clawser-mesh-handshake.js'
+import { HandshakeCoordinator, SignalingClient } from './clawser-mesh-handshake.js'
 import { MeshACL } from './clawser-mesh-acl.js'
 import { CapabilityValidator } from './clawser-mesh-capabilities.js'
 import { CrossOriginBridge } from './clawser-mesh-cross-origin.js'
@@ -100,6 +100,7 @@ export class ClawserPod extends Pod {
   // Track 1: Transports
   #transportFactory = null
   // Track 2: Security
+  #signalingClient = null
   #handshakeCoordinator = null
   #meshACL = null
   #capabilityValidator = null
@@ -311,11 +312,26 @@ export class ClawserPod extends Pod {
     this.#serviceBrowser = new ServiceBrowser()
 
     // 11a. Security & Auth subsystems (Track 2)
+    // Create a SignalingClient when a relay/signaling URL is configured so
+    // that the HandshakeCoordinator can negotiate WebRTC connections.
+    if (opts.relayUrl) {
+      this.#signalingClient = new SignalingClient({
+        url: opts.relayUrl,
+        localPodId: podId,
+        onLog: (level, msg) => console.log(`[signaling] ${msg}`),
+      })
+    }
     this.#handshakeCoordinator = new HandshakeCoordinator({
       localPodId: podId,
-      signalingClient: null,
+      signalingClient: this.#signalingClient,
       transportFactory: this.#transportFactory,
     })
+    // Connect the signaling client to the server (non-blocking, non-fatal)
+    if (this.#signalingClient) {
+      this.#signalingClient.connect().catch((err) => {
+        console.warn('[clawser] Signaling client connection failed (non-fatal):', err.message)
+      })
+    }
     this.#meshACL = new MeshACL({ owner: podId })
     this.#capabilityValidator = new CapabilityValidator()
     this.#crossOriginBridge = new CrossOriginBridge({ localPodId: podId })
@@ -399,7 +415,25 @@ export class ClawserPod extends Pod {
           alias: record.metadata.wshFingerprint,
         })
       }
+
+      // Auto-negotiate a WebRTC connection when a new peer is discovered
+      if (this.#handshakeCoordinator && record.podId) {
+        this.#handshakeCoordinator.connectToPeer(record.podId).catch(() => {
+          // Connection may fail (no signaling, peer offline, etc.) — non-fatal
+        })
+      }
     })
+
+    // Accept inbound WebRTC connections negotiated via the signaling server
+    if (this.#handshakeCoordinator) {
+      this.#handshakeCoordinator.onIncomingConnection(async ({ remotePodId, offer }) => {
+        try {
+          await this.#handshakeCoordinator.acceptConnection(remotePodId, offer)
+        } catch {
+          // Inbound connection acceptance may fail — non-fatal
+        }
+      })
+    }
     this.#relayClient.onPeerAnnounce((peer) => {
       const descriptor = this.#remoteRuntimeRegistry?.ingestMeshRelayPeer(peer)
       if (!descriptor) return
@@ -682,6 +716,9 @@ export class ClawserPod extends Pod {
     if (this.#syncEngine) {
       try { this.#syncEngine.stopAllAutoSync() } catch { /* non-fatal */ }
     }
+    if (this.#signalingClient) {
+      try { this.#signalingClient.disconnect() } catch { /* non-fatal */ }
+    }
     if (this.#relayClient) {
       try { this.#relayClient.disconnect() } catch { /* non-fatal */ }
     }
@@ -719,6 +756,7 @@ export class ClawserPod extends Pod {
     // Track 1
     this.#transportFactory = null
     // Track 2
+    this.#signalingClient = null
     this.#handshakeCoordinator = null
     this.#meshACL = null
     this.#capabilityValidator = null

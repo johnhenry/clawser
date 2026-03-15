@@ -15,6 +15,7 @@ import { Pod } from './packages/pod/src/pod.mjs'
  */
 export class EmbeddedPod extends Pod {
   #config
+  #agent = null
 
   /**
    * @param {object} [config]
@@ -23,6 +24,7 @@ export class EmbeddedPod extends Pod {
    * @param {string} [config.model] - Default model
    * @param {object} [config.tools] - Tool configuration overrides
    * @param {object} [config.theme] - UI theme overrides
+   * @param {import('./clawser-agent.js').ClawserAgent} [config.agent] - Pre-configured agent instance
    */
   constructor(config = {}) {
     super()
@@ -34,9 +36,19 @@ export class EmbeddedPod extends Pod {
       theme: config.theme || {},
       ...config,
     }
+    if (config.agent) this.#agent = config.agent
   }
 
   get config() { return { ...this.#config } }
+
+  /** Get the attached agent (if any). */
+  get agent() { return this.#agent }
+
+  /**
+   * Attach or replace the agent instance.
+   * @param {import('./clawser-agent.js').ClawserAgent} agent
+   */
+  setAgent(agent) { this.#agent = agent }
 
   /**
    * Send a message to the agent.
@@ -45,8 +57,35 @@ export class EmbeddedPod extends Pod {
    * @returns {Promise<{ content: string, toolCalls?: Array }>}
    */
   async sendMessage(text, opts = {}) {
-    // In a real implementation, this would route to the agent
-    return { content: '', toolCalls: [] }
+    if (!this.#agent) {
+      throw new Error('No agent attached. Call setAgent(agent) or pass { agent } in config before sending messages.')
+    }
+
+    // 1. Add the user message to agent history
+    this.#agent.sendMessage(text, opts)
+
+    // Snapshot event log length so we can extract tool_call events from this run
+    const logBefore = this.#agent.getEventLog().query({ type: 'tool_call' }).length
+
+    // 2. Run the agent (handles tool call loops internally)
+    const result = await this.#agent.run()
+
+    // 3. Extract tool calls that occurred during this run from the event log
+    const allToolEvents = this.#agent.getEventLog().query({ type: 'tool_call' })
+    const newToolEvents = allToolEvents.slice(logBefore)
+    const toolCalls = newToolEvents.map(evt => ({
+      id: evt.data.call_id,
+      name: evt.data.name,
+      arguments: evt.data.arguments,
+    }))
+
+    // 4. Return normalized response
+    if (result.status === 1) {
+      return { content: result.data, toolCalls, usage: result.usage, model: result.model }
+    }
+
+    // Error or blocked
+    return { content: result.data || '', toolCalls, error: result.status < 0, usage: result.usage }
   }
 
   _onMessage(msg) {

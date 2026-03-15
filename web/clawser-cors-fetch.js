@@ -2,24 +2,14 @@
  * Clawser CORS-free Fetch Proxy
  *
  * Provides a BrowserTool that delegates fetch requests to the Chrome extension
- * background.js service worker, bypassing CORS restrictions. Also exports a
- * fallback function that FetchTool can use when direct fetch fails.
+ * background.js service worker, bypassing CORS restrictions.
+ *
+ * The standalone fallback function and client setter live in
+ * clawser-cors-fetch-util.js to avoid a circular dependency with clawser-tools.js.
  */
 
 import { BrowserTool } from './clawser-tools.js';
-
-// ── Singleton extension client reference ─────────────────────────
-// Lazily resolved — avoids circular imports with clawser-extension-tools.js.
-let _extClient = null;
-
-/**
- * Set the extension RPC client for corsFetchFallback to use.
- * Typically called once during app bootstrap.
- * @param {object} client - ExtensionRpcClient instance
- */
-export function setCorsFetchClient(client) {
-  _extClient = client;
-}
+export { setCorsFetchClient, corsFetchFallback } from './clawser-cors-fetch-util.js';
 
 // ── ExtCorsFetchTool ─────────────────────────────────────────────
 
@@ -72,27 +62,3 @@ export class ExtCorsFetchTool extends BrowserTool {
   }
 }
 
-// ── Fallback function for FetchTool ──────────────────────────────
-
-/**
- * Attempt a CORS-free fetch via the extension. Returns the response object
- * { status, headers, body } on success, or null if the extension is unavailable.
- *
- * @param {string} url
- * @param {object} [opts] - { method, headers, body }
- * @returns {Promise<{status: number, headers: object, body: string}|null>}
- */
-export async function corsFetchFallback(url, opts = {}) {
-  const client = _extClient;
-  if (!client || !client.connected) return null;
-  try {
-    return await client.call('cors_fetch', {
-      url,
-      method: opts.method || 'GET',
-      headers: opts.headers || {},
-      body: opts.body || undefined,
-    });
-  } catch {
-    return null;
-  }
-}

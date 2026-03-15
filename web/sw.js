@@ -2,6 +2,123 @@
 
 const CACHE_NAME = 'clawser-v2';
 
+// ── Mesh URL routing (mesh:// and *.mesh.local) ─────────────────
+// Inlined from clawser-mesh-sw-routing.js (SW can't use ES module imports)
+
+const MESH_PROTOCOL = 'mesh://';
+const MESH_LOCAL_SUFFIX = '.mesh.local';
+
+/**
+ * Parse a mesh URL into { podId, path } or null.
+ * Supports:
+ *   - mesh://podId/path
+ *   - https://podId.mesh.local/path
+ *   - http://podId.mesh.local/path
+ */
+function parseMeshUrl(urlStr) {
+  if (!urlStr || typeof urlStr !== 'string') return null;
+
+  if (urlStr.startsWith(MESH_PROTOCOL)) {
+    const rest = urlStr.slice(MESH_PROTOCOL.length);
+    if (!rest) return null;
+    const slashIdx = rest.indexOf('/');
+    let podId, path;
+    if (slashIdx === -1) {
+      podId = rest;
+      path = '/';
+    } else {
+      podId = rest.slice(0, slashIdx);
+      path = rest.slice(slashIdx) || '/';
+    }
+    if (!podId) return null;
+    return { podId, path };
+  }
+
+  const httpMatch = urlStr.match(/^https?:\/\/([^/?#]+)(\/[^?#]*)?/);
+  if (!httpMatch) return null;
+  const rawHost = httpMatch[1];
+  const lowerHost = rawHost.toLowerCase();
+  if (!lowerHost.endsWith(MESH_LOCAL_SUFFIX)) return null;
+  const podId = rawHost.slice(0, -MESH_LOCAL_SUFFIX.length);
+  if (!podId) return null;
+  const path = httpMatch[2] || '/';
+  return { podId, path };
+}
+
+/**
+ * Handle a mesh:// or *.mesh.local fetch by relaying to a client page.
+ * The client page runs the MeshFetchRouter with full mesh stack access.
+ */
+async function handleMeshFetch(parsed, request) {
+  const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: false });
+  if (clients.length === 0) {
+    return new Response(JSON.stringify({ error: 'No active Clawser client tab' }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const client = clients.find(c => c.visibilityState === 'visible') || clients[0];
+
+  const method = request.method;
+  const headers = [...request.headers.entries()];
+  let body = null;
+  if (!['GET', 'HEAD'].includes(method)) {
+    try { body = await request.arrayBuffer(); } catch { body = null; }
+  }
+
+  const pseudoRequest = {
+    url: request.url,
+    method,
+    headers,
+    podId: parsed.podId,
+    path: parsed.path,
+  };
+
+  const messageChannel = new MessageChannel();
+
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      messageChannel.port1.onmessage = null;
+      messageChannel.port1.close();
+      resolve(new Response(JSON.stringify({ error: 'Mesh handler timeout' }), {
+        status: 504,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+    }, 30000);
+
+    messageChannel.port1.onmessage = ({ data }) => {
+      clearTimeout(timeout);
+      messageChannel.port1.close();
+      if (data.error) {
+        resolve(new Response(JSON.stringify({ error: data.error }), {
+          status: 502,
+          headers: { 'Content-Type': 'application/json' },
+        }));
+        return;
+      }
+      const { pseudoResponse } = data;
+      resolve(new Response(pseudoResponse.body, {
+        status: pseudoResponse.status || 200,
+        statusText: pseudoResponse.statusText || 'OK',
+        headers: new Headers(pseudoResponse.headers || []),
+      }));
+    };
+
+    const transferables = [messageChannel.port2];
+    if (body) {
+      pseudoRequest.body = body;
+      transferables.push(body);
+    }
+
+    client.postMessage({
+      type: 'mesh-fetch',
+      port: messageChannel.port2,
+      pseudoRequest,
+    }, transferables);
+  });
+}
+
 // ── Virtual Server Subsystem (Phase 7) ──────────────────────────
 
 const SERVER_DB_NAME = 'clawser-server-routes';
@@ -495,6 +612,13 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
+
+  // ── Mesh URL intercept — mesh:// protocol and *.mesh.local hostnames ──
+  const meshParsed = parseMeshUrl(event.request.url);
+  if (meshParsed) {
+    event.respondWith(handleMeshFetch(meshParsed, event.request));
+    return;
+  }
 
   // ── Virtual server intercept (Phase 7) — runs before cache logic ──
   if (url.origin === location.origin) {
