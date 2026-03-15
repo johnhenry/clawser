@@ -210,6 +210,74 @@ AI assistant that maintains continuity across days and devices.
 
 ---
 
+## Deep Cuts: Biological Swarm Intelligence (from Kill Decision Round 2)
+
+These ideas came from the later chapters where the biological models are explored most
+deeply. They represent the most radical departure from conventional agent architecture.
+
+#### 26. Stigmergic Intelligence — The Pheromone Matrix
+Agents communicate by modifying shared state, not by sending messages. Like ants leaving
+pheromone trails: Agent A writes a weighted trace when it discovers a useful approach.
+Agent B encounters the trace later and follows it. Trails that lead to good outcomes
+get reinforced; unused trails decay over time. Built on DeltaLog with `decay` timestamps
+and `reinforcement` counters. A new `STIGMERGIC` task distribution strategy where agents
+self-organize by following weighted trails instead of receiving assigned tasks.
+
+#### 27. Superorganism Emergence — Leaderless Self-Organization
+Instead of the SwarmCoordinator assigning tasks through a leader, give each agent simple
+behavioral rules: "if you see an unassigned task matching your capabilities, claim it;
+if you see a failing task, assist; if idle, explore." Complex collective behavior emerges
+without any central orchestrator. Each agent evaluates local conditions (own load, nearby
+task state, peer health from SWIM) and acts independently.
+
+#### 28. Role-Differentiated Topology
+Not all peers are equal. Some become "nursery" nodes (spawning agents), some become
+"patrol" nodes (monitoring APIs), some become "highway" nodes (high-bandwidth relay).
+PeerNode carries a `role` field that evolves based on observed capabilities. GatewayDiscovery
+extended to discover role-specialized peers. Like weaver ant colonies with strategic
+nest placement — nursery nests, defensive nests, foraging nests.
+
+#### 29. Proportional Graduated Response
+Response intensity scales with threat severity. One peer suspect = normal fluctuation.
+Five peers suspect simultaneously = network partition or coordinated attack = immediate
+leader re-election and task redistribution. The *same* simple SWIM protocol produces
+different collective responses based on the *density* of failure signals — exactly like
+pheromone concentration driving different ant behaviors.
+
+#### 30. Counter-Swarm Behavioral Immunity
+You can't fight a decentralized system with a centralized one. Instead of perimeter
+defense (ACL, capability gates), add distributed anomaly detection: if a peer starts
+behaving unlike the colony (unusual request patterns, disproportionate resource
+consumption), the swarm collectively recognizes and isolates it — not through a central
+authority, but through each node independently detecting that something "smells wrong."
+Lightweight behavioral signatures in gossip protocol payloads.
+
+#### 31. Consensus Integrity Against Synthetic Personas
+Clawser's ConsensusManager must resist Sybil attacks where fake agents flood the swarm
+to shift collective decisions. Each agent's influence weighted by verified history (audit
+chain length, successful completions, peer vouching) rather than mere presence. Trust
+earned through contribution, not claimed through assertion.
+
+---
+
+## The Paradigm Shift
+
+The deepest insight from Kill Decision's biological models:
+
+Clawser's mesh currently uses its infrastructure (gossip, SWIM, delta-sync, DHT) for
+**mechanistic coordination** — explicit messages, assigned tasks, elected leaders. The
+biological model shows that the most resilient and adaptive behavior comes from:
+
+1. **Indirect coordination through shared environment** (stigmergy)
+2. **Simple local rules producing emergent global behavior** (superorganism)
+3. **Proportional response calibrated by signal density** (pheromone concentration)
+
+The shift from "SwarmCoordinator assigns tasks" to "agents navigate a shared pheromone
+matrix" is the conceptual leap these novels illuminate. It's the difference between
+an army (centralized command) and an ant colony (distributed intelligence).
+
+---
+
 ## What Clawser Already Has vs. What's New
 
 | Capability | Exists Today | New from Suarez |
