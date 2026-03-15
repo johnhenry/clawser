@@ -334,3 +334,128 @@ decisions that matter, and the system must make it structurally difficult to rem
 *"The economy must reward contribution, not extraction. Credits that represent real work
 — compute donated, knowledge shared, problems solved — create a flywheel of genuine
 value. Credits that represent intermediation create a parasite."*
+
+---
+
+## Round 3: Ethereum / L2 Integration
+
+### The Anchor/Mesh Split
+
+The unifying architectural insight: **speed in the mesh, truth on the chain.**
+
+- **Clawser's P2P mesh** handles all latency-sensitive operations (real-time credits,
+  trust scores, agent events, task coordination)
+- **Base L2** provides cheap settlement, identity anchoring, and governance (~$0.01-0.05/day)
+- **Ethereum L1** provides maximum immutability for rare high-value anchoring (Merkle
+  roots of audit chains, ENS registration)
+
+### 14 New Ideas (32-45)
+
+#### 32. Energy-Backed Stablecoin
+ERC-20 on Base L2 representing "compute joules" — 1 token = N watt-hours of verified
+compute contributed. Minting requires EAS attestation of real work. Burn to consume
+services. The Freedom™ "joule-backed currency" made real.
+
+#### 33. Scale of Themis — Power Distribution Index
+On-chain Gini coefficient measuring resource concentration across the mesh. Chainlink
+Keeper updates periodically. A tamper-proof inequality metric that prevents any single
+node from accumulating disproportionate power. From Freedom™'s warnings about neofeudalism.
+
+#### 34. Faction Membership Tokens
+ERC-1155 semi-fungible tokens representing guild/faction membership. Token-gated ACL
+scopes work across meshes — your "Fabricator Level 7" badge is portable and verifiable
+anywhere, not just in the mesh that issued it.
+
+#### 35. Progressive Credential NFTs
+Dynamic ERC-721 with mutable metadata that evolves as you level up. ERC-6551 token-bound
+accounts let your credential NFT hold sub-credentials. Your on-chain identity grows
+as your mesh reputation grows.
+
+#### 36. On-Chain Reputation via Attestations
+EAS (Ethereum Attestation Service) for peer endorsements weighted by attester level.
+The Graph subgraph aggregates attestations into queryable reputation scores. Portable
+across meshes — your reputation follows you.
+
+#### 37. Commandeering Protocol — Emergency Governance
+Governor contract with expedited 1-hour voting for crisis situations. Time-bounded
+powers that auto-expire. From Freedom™'s emergency resource requisition during attacks.
+On-chain ensures the emergency powers actually end when they should.
+
+#### 38. Blueprint Registry — Licensed Designs
+ERC-721 for design files + ERC-2981 royalty standard. IPFS stores the actual content,
+NFT serves as the license key. Fabricators pay royalties to designers automatically.
+The Freedom™ fabricator economy with built-in creator compensation.
+
+#### 39. Data Provenance — Merkle Root Anchoring
+Batch Clawser's EventLog into Merkle trees. Anchor the root hash to Ethereum L1
+periodically (daily or weekly). Anyone can verify that a specific event existed at a
+specific time by checking the Merkle proof against the on-chain root. From Kill Decision's
+"chemical taggants" for tracing data origin.
+
+#### 40. Social Recovery Wallet
+ERC-4337 account abstraction with Safe wallet guardians. Your mesh peers ARE your
+recovery contacts. M-of-N attestation restores access. No centralized account recovery
+needed. From Freedom™'s community-bound identity.
+
+#### 41. On-Chain Kill Switch Registry
+Smart contract mapping agent addresses to their authorized operators. Governor-controlled.
+Any authorized operator can invoke the kill switch, which Clawser's AutonomyController
+reads via ethers.js. From Kill Decision's accountability principle: the chain of
+authority is public and immutable.
+
+#### 42. Cross-Mesh Inequality Tracking
+Aggregator contract collecting Gini coefficients from multiple meshes. Surfaces systemic
+power concentration that individual meshes can't see. The "neofeudalism index" from
+Freedom™ — if any mesh is becoming an oligarchy, the data is public.
+
+#### 43. Dead Man Switch (Timed Revelations)
+Timelock contract with heartbeat requirement. If the owner stops checking in, the
+contract releases Shamir key shards to designated recipients. Unstoppable by design —
+once deployed, the switch WILL fire if the heartbeat stops. From Daemon's Sobol pattern,
+but with the transparency of on-chain execution.
+
+#### 44. Supply Chain Attestation
+Chained EAS attestations tracking data transformation steps. Each processing stage
+attests to what it received, what it did, and what it produced. Merkle tree of the
+full pipeline. Verifiable provenance for any output.
+
+#### 45. Liquidity Pool for Mesh Credits
+Uniswap V3 CLWSR/USDC pool on Base L2. Mesh credits become exchangeable for real
+currency. The Freedom™ "darknet credit exchange rate" made liquid and permissionless.
+
+### What Goes Where
+
+| Concept | On-Chain (L2) | In Mesh (Clawser) | Why Split? |
+|---------|--------------|-------------------|-----------|
+| Credits | Settlement batches | Real-time micropayments | Latency: mesh is instant |
+| Identity | DID anchor, ENS name | Session keys, Ed25519 | Persistence: chain is permanent |
+| Reputation | EAS attestations | Trust graph scores | Portability: chain crosses meshes |
+| Governance | DAO votes, proposals | Consensus manager | Finality: chain is immutable |
+| Audit | Merkle root anchors | Full EventLog JSONL | Cost: only hashes go on-chain |
+| Escrow | Smart contract hold | Job tracking, delivery | Enforcement: contract is trustless |
+| Credentials | Soulbound NFTs | Skill system, ACL | Verification: anyone can check |
+| Marketplace | Listing registry | Real-time negotiation | Discovery: chain is public |
+
+### What Should NOT Go On-Chain
+
+| Item | Reason |
+|------|--------|
+| Chat messages | Privacy — E2E encrypted in mesh |
+| Agent EventLog (full) | Cost — too much data |
+| Health monitoring | Latency — needs real-time |
+| SWIM membership | Speed — gossip is faster |
+| File transfers | Size — mesh handles streaming |
+| Tool executions | Privacy — contains user data |
+| Delta-sync state | Volume — continuous updates |
+| Pheromone matrix | Latency — stigmergy needs instant reads |
+
+### Gas Budget
+
+| Action | Frequency | Cost on Base L2 |
+|--------|-----------|----------------|
+| Daily audit root anchor | 1/day | ~$0.001 |
+| Reputation attestation | ~5/week | ~$0.005 |
+| Credit settlement batch | 1/day | ~$0.002 |
+| Governance vote | ~2/month | ~$0.001 |
+| Credential mint | Rare | ~$0.01 |
+| **Total** | | **~$0.01-0.05/day** |
