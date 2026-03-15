@@ -416,18 +416,20 @@ Safe to delete: branches that were merged but not cleaned up.
 - [x] 2.2 Provider tests (28 tests)
 - Fast suite: 3728 → 3804 tests
 
-### Remaining (~13 items)
-- [x] 1.1 workspace-lifecycle.js already split (642 LOC, delegates to 3 init modules)
-- [ ] 1.2 Break circular deps (3 chains — tools↔cors-fetch, ui-chat↔ui-config, shell↔builtins)
-- [ ] 1.3 CDN version pinning + SRI hashes
-- [ ] 1.7 Event listener accumulation in vault dialog
-- [ ] 2.3 UI module tests (15 modules)
-- [ ] 2.4 Internal package tests (5 packages)
-- [ ] 4.4 EmbeddedPod.sendMessage() implementation
-- [ ] 5.1 Service Worker mesh routing integration
-- [ ] 5.6 WebRTC auto-negotiation via HandshakeCoordinator
-- [ ] 6.1 Kernel agent with real LLM provider
-- [ ] 7.1 Update stale LOC counts
-- [ ] 7.2 Consolidate hook pipeline docs
-- [ ] 8.1-8.6 Heynote planned features (scheduler, OPFS, tabs, etc.)
-- [ ] 9.1-9.5 Ecosystem (npm package, skills marketplace, channels, IPFS)
+### Wave 1+2 (2026-03-14): 10 more items
+- [x] 1.1 workspace-lifecycle.js already split
+- [x] 1.2 Break circular deps (3 chains broken)
+- [x] 1.3 CDN version pinning in importmap
+- [x] 1.7 Event listener accumulation in vault dialog
+- [x] 4.4 EmbeddedPod.sendMessage() implemented
+- [x] 5.1 Service Worker mesh routing (sw.js created)
+- [x] 5.6 WebRTC auto-negotiation via HandshakeCoordinator
+- [x] 7.1 LOC counts updated
+- [x] 7.2 Hook pipeline docs consolidated
+
+### Remaining (~5 items — deferred/large scope)
+- [ ] 2.3 UI module tests (15 modules) — incremental
+- [ ] 2.4 Internal package tests (5 packages) — incremental
+- [ ] 6.1 Kernel agent with real LLM provider — needs provider system port to Node.js
+- [ ] 8.1-8.6 Heynote planned features (scheduler, OPFS, tabs, etc.) — roadmap items
+- [ ] 9.1-9.5 Ecosystem (npm package, skills marketplace, channels, IPFS) — roadmap items
