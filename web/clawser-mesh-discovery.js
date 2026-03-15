@@ -376,12 +376,16 @@ export class RelayStrategy extends DiscoveryStrategy {
   /** @type {Map<string, DiscoveryRecord>} */
   #peers = new Map();
 
+  /** @type {Function|null} */
+  #signFn;
+
   /**
    * @param {object} opts
    * @param {string} opts.relayUrl - URL of the relay/signaling server
    * @param {string} opts.podId    - Local pod identifier for registration
+   * @param {Function} [opts.signFn] - Optional async (podId) => { pubKey, signature }
    */
-  constructor({ relayUrl, podId }) {
+  constructor({ relayUrl, podId, signFn }) {
     super({ type: 'relay' });
     if (!relayUrl || typeof relayUrl !== 'string') {
       throw new Error('relayUrl is required and must be a non-empty string');
@@ -391,6 +395,7 @@ export class RelayStrategy extends DiscoveryStrategy {
     }
     this.#relayUrl = relayUrl;
     this.#podId = podId;
+    this.#signFn = signFn ?? null;
   }
 
   /** @type {WebSocket|null} */
@@ -472,9 +477,19 @@ export class RelayStrategy extends DiscoveryStrategy {
       this.#ws = ws;
 
       await new Promise((resolve, reject) => {
-        ws.onopen = () => {
-          ws.send(JSON.stringify({ type: 'register', podId: this.#podId }));
-          resolve();
+        ws.onopen = async () => {
+          try {
+            const regMsg = { type: 'register', podId: this.#podId };
+            if (this.#signFn) {
+              const { pubKey, signature } = await this.#signFn(this.#podId);
+              regMsg.pubKey = pubKey;
+              regMsg.signature = signature;
+            }
+            ws.send(JSON.stringify(regMsg));
+            resolve();
+          } catch (err) {
+            reject(err);
+          }
         };
         ws.onerror = () => reject(new Error('WebSocket connection failed'));
         setTimeout(() => reject(new Error('WebSocket connection timeout')), 10000);

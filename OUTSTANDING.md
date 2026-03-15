@@ -208,23 +208,23 @@ via signaling/PEX/mDNS.
 has 3 basic tools (echo, time, info). For the server pod to be useful, it needs
 a real LLM provider and the full tool registry.
 
-### 6.2 AUTH_MODE=authenticated Now Works But Untested in Production [MEDIUM]
-We implemented Ed25519 signature verification in the signaling server, but no
-browser client sends signatures during registration (they all use `authMode: 'open'`).
-Need to wire the browser-side identity system to sign registration messages.
+### 6.2 AUTH_MODE=authenticated Now Works But Untested in Production [DONE]
+RelayStrategy constructor now accepts optional `signFn`. When provided, registration
+messages include `pubKey` and `signature` fields for Ed25519 verification.
 
 ### 6.3 No Relay Server Auto-Connect [MEDIUM]
 The relay server (`server/relay/`) runs independently but no client automatically
 connects to it. The `MeshRelayClient` in the browser defaults to
 `wss://relay.browsermesh.local` which doesn't exist.
 
-### 6.4 Docker Compose Missing Kernel Service [LOW]
-`docker-compose.yml` defines signaling and relay but not the kernel service.
-Add a third service for the always-on server pod.
+### 6.4 Docker Compose Missing Kernel Service [DONE]
+Kernel service added to `docker-compose.yml` with proper build context, env vars
+(`AGENT_NAME`, `POD_LABEL`), volume mount, and `depends_on` signaling healthcheck.
 
-### 6.5 Fly.toml Only Covers Signaling [LOW]
-Deployment config exists only for the signaling server. Relay and kernel
-need their own deployment configs (or a combined multi-process setup).
+### 6.5 Fly.toml Only Covers Signaling [DEFERRED]
+Deployment config exists only for the signaling server. Multi-service Fly.io
+deployment (relay + kernel) is a separate initiative requiring process groups
+or multiple Fly apps.
 
 ---
 
@@ -380,4 +380,27 @@ Safe to delete: branches that were merged but not cleaned up.
 - [x] 3.3 SwarmCoordinator.cancelTask()
 - [x] 3.4 GatewayNode.revokeRoute()
 - [x] 3.5 HealthMonitor.getThresholds(), clearHeartbeat(), untrack()
-- Remaining: 44 items
+
+### Batch 5-7, 9 (2026-03-14): 20+ more items addressed
+- [x] 4.1 Wire peer:connect/disconnect to re-render mesh panel
+- [x] 4.2 Fix peer object shape (fingerprint → podId)
+- [x] 1.4 Global unhandledrejection handler
+- [x] 1.5 Timer leak in Promise.race
+- [x] 1.6 Reader lock in MCP SSE parser
+- [x] 5.4 Auto-wire PexStrategy in initMesh()
+- [x] 5.5 Wire SWIM into SwarmCoordinator
+- [x] 5.3 Auto-wire RelayStrategy with signaling URL from localStorage
+- [x] 7.3 Update CONTRIBUTING.md test instructions
+- [x] 7.5 Placeholder URLs
+- [x] 7.4 Document localStorage key prefix convention
+- [x] 11.5 Fix playwright.config.js testDir
+- [x] 11.2 Dead event names documented
+
+### Remaining (~24 items — batches 8, 10-12)
+Batch 8: Server infra (kernel agent, embed API)
+- [x] 6.2 Wire browser identity to sign signaling registration
+- [x] 6.4 Add kernel service to docker-compose.yml
+- [x] 6.5 Fly.toml multi-service — deferred (separate initiative)
+Batch 10: E2E test expansion (WebRTC→mesh, SWIM, PEX, mDNS)
+Batch 11: Test coverage (core modules, UI, packages, experimental modules)
+Batch 12: Planned features + ecosystem (scheduler overhaul, OPFS dirs, channels, npm package)

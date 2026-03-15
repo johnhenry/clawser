@@ -1,4 +1,5 @@
 /**
+// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
  * clawser-mesh-acl.js -- Remote access control for BrowserMesh.
  *
  * ScopeTemplate bundles, roster management, invitation tokens, and
@@ -402,6 +403,19 @@ export class MeshACL {
   }
 
   // ── Revocation ─────────────────────────────────────────────────────
+
+  /**
+   * Update an existing roster entry with a new template.
+   * @param {string} identity
+   * @param {string} templateName
+   * @returns {RosterEntry|null}
+   */
+  updateEntry(identity, templateName) {
+    if (!this._roster.has(identity)) return null;
+    this._engine.revokeAll(identity);
+    this._roster.delete(identity);
+    return this.addEntry(identity, templateName);
+  }
 
   /**
    * Revoke all access for an identity and remove from roster.
