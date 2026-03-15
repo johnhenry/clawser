@@ -1,270 +1,182 @@
 # Clawser — Outstanding Work
 
-> Generated 2026-03-14 from a full audit of source code, tests, documentation,
-> Heynote plans (72 blocks), extracted conversations, E2E testing sessions,
-> and functional completeness analysis across 625+ source files.
->
-> **Status: All 60 original items addressed. Only roadmap features remain.**
+> Fresh audit generated 2026-03-14 from source code scan (625+ files),
+> functional completeness analysis, documentation review, Heynote plans
+> (72 blocks), E2E testing sessions, and consistency checks.
 
 ---
 
-## How to Read This Document
+## Status Tags
 
-Items are organized by category, then ranked by impact within each category.
-Each item has a status tag:
-
-- **DONE** — completed and verified
-- **DEFERRED** — intentionally postponed (separate initiative)
-- **ROADMAP** — new feature development, not a bug or gap
-
----
-
-## 1. Architecture & Code Quality
-
-### 1.1 God Module: workspace-lifecycle.js [DONE]
-Split into 642 LOC orchestrator delegating to 3 init modules.
-
-### 1.2 Circular Dependencies (3 chains) [DONE]
-Extracted `clawser-cors-fetch-util.js` and `clawser-cost-events.js` to break
-tools↔cors-fetch and ui-chat↔ui-config cycles. shell↔builtins was not circular.
-
-### 1.3 CDN Supply Chain Risk [DONE]
-All 12 CDN dependencies pinned to specific versions. SRI hashes documented in
-index.html importmap comment block.
-
-### 1.4 No Global `unhandledrejection` Handler [DONE]
-Added in `clawser-app.js` startup, logs to `state.ringBufferLog`.
-
-### 1.5 Timer Leak in Promise.race [DONE]
-Already fixed — timer stored in `let` and cleared in `finally` block.
-
-### 1.6 Reader Lock Risk in MCP SSE Parser [DONE]
-Already fixed — `try/finally` with `reader.releaseLock()`.
-
-### 1.7 Event Listener Accumulation [DONE]
-Vault dialog uses AbortController — both submit and cancel listeners cleaned up.
+- **BUG** — broken behavior that needs fixing
+- **GAP** — missing feature or incomplete implementation
+- **POLISH** — quality improvement, not blocking
+- **ROADMAP** — new feature development for future phases
+- **NICE** — nice-to-have, low priority
 
 ---
 
-## 2. Testing
+## 1. Bugs
 
-### 2.1 Unit Tests Not Run in CI [DONE]
-CI workflow already includes `npm test` step before Playwright.
+### 1.1 Agent #runAbort not cleared after successful run [BUG]
+`clawser-agent.js` — `run()` sets `this.#runAbort = new AbortController()` at the
+start but never clears it on the success path. After a normal run completes,
+`isRunning` returns `true` and `cancel()` aborts a stale controller. Must add
+`this.#runAbort = null` before every `return` in `run()` and `runStream()`.
 
-### 2.2 Core Modules Without Tests [DONE]
-Added 115 tests: agent core (49), shell (38), providers (28).
+### 1.2 Three pre-existing test failures [BUG]
+- `MeshACL.prototype.grant` — scaffolding test expects `grant()`/`revoke()` methods
+  that don't exist (only `addEntry()`/`revokeAll()`)
+- `ClawserEmbed.emit()` — test expects event emitter but `EmbeddedPod` has no `emit()`
+- `MountableFs preset round-trip` — `exportPresets()` → `importPresets()` loses
+  `source` and `metadata` fields
 
-### 2.3 All 15 UI Modules Untested [DONE]
-Added 33 tests across 11 render functions (mesh, transfers, swarms, diff, etc.).
+### 1.3 Conversation delete missing [BUG]
+`clawser-conversations.js` has `loadConversations()`, `updateConversationMeta()`,
+`generateConvId()` but no `deleteConversation()`. OPFS conversation files cannot
+be cleaned up.
 
-### 2.4 Internal Packages Without Tests [DONE]
-Added 94 tests: netway (18), pod (18), mesh-primitives (20), wsh (19), andbox (19).
-
-### 2.5 50+ Mesh/Peer Modules Are Write-Once Scaffolding [DONE]
-Proven end-to-end via E2E testing across 3 browsers + 2 server pods.
-
----
-
-## 3. Missing API Counterparts (Functional Completeness)
-
-### 3.1 ClawserAgent — No Cancel, No Memory/Goal Removal [DONE]
-Added `cancel()` with AbortController, `removeGoal()`, `updateGoal()`.
-Memory already had `agent_memory_forget` tool.
-
-### 3.2 PeerNodeServer — No `unregisterService()` [DONE]
-Added `unregisterService(name)`.
-
-### 3.3 SwarmCoordinator — No Task Cancellation [DONE]
-Added `cancelTask(taskId)`.
-
-### 3.4 GatewayNode — No Route Revocation [DONE]
-Added `revokeRoute(fromPodId, toPodId)`.
-
-### 3.5 HealthMonitor — Write-Only Configuration [DONE]
-Added `getThresholds()`, `clearHeartbeat(podId)`, `untrack(podId)`.
-
-### 3.6 MeshACL — No Granular Revocation [DONE]
-Added `updateEntry(identity, templateName)`.
-
-### 3.7 MeshChat — Irreversible Moderation [DEFERRED]
-Low priority — redaction is intentionally permanent by design (CRDT semantics).
-
-### 3.8 StorageDeleteTool Not Registered [DONE]
-Already registered in `createDefaultRegistry()`.
+### 1.4 E2E file transfer dispatch format mismatch [BUG]
+`p2p-mesh-subsystems.test.mjs` — 2 of 7 tests fail because `fileTransfer.dispatch()`
+doesn't accept the envelope format sent via WebRTC `{ _mesh: 'file-transfer', payload }`.
+The dispatch method expects a different message shape.
 
 ---
 
-## 4. UI & Visual Issues
+## 2. Gaps
 
-### 4.1 Mesh Panel Shows "0 Peers" When Peers Are Connected [DONE]
-Wired `peer:connect`/`peer:disconnect` to trigger `refreshMeshWorkspacePanel()`.
+### 2.1 Shell has no tab completion [GAP]
+No autocomplete for commands or file paths. History command exists and works,
+but interactive completion would significantly improve the terminal experience.
 
-### 4.2 Mesh Panel Peer Object Shape Mismatch [DONE]
-`renderMeshPanel()` now uses `p.podId || p.fingerprint`.
+### 2.2 No vault recovery mechanism [GAP]
+If the passphrase is forgotten, all vault data (API keys, OAuth tokens) is
+permanently lost. No recovery codes, security questions, or backup export.
 
-### 4.3 Ghost HTML from renderMeshPanel Injection [DONE]
-Extracted shared `refreshMeshWorkspacePanel()` targeting `$('meshContainer')`.
+### 2.3 DID resolution is MVP only [GAP]
+`toDID()` uses simplified `did:key:z<podId>` format instead of proper base58btc
+multicodec encoding per the W3C DID spec. Sufficient for internal use but won't
+interop with external DID systems.
 
-### 4.4 EmbeddedPod API Stubbed [DONE]
-`sendMessage()` routes to agent `run()`, extracts tool calls from event log.
+### 2.4 Conversation export/import missing [GAP]
+No way to export a conversation to JSON/file or import one from another workspace
+or external source.
 
----
+### 2.5 transformResponse hook never invoked [GAP]
+The `transformResponse` hook point is defined in `HOOK_POINTS` and documented,
+but the agent never calls `this.#hooks.run('transformResponse', ...)`. Any hooks
+registered at this point are dead code.
 
-## 5. Unintegrated Subsystems
-
-### 5.1 Service Worker Mesh Routing [DONE]
-Created `sw.js` with `mesh://` URL interception via inlined `parseMeshUrl()`.
-Client-side relay via MessageChannel in `clawser-workspace-init-mesh.js`.
-
-### 5.2 All 38 EXPERIMENTAL Modules [DONE]
-Proven via E2E testing. Many auto-wired into pod initialization.
-
-### 5.3 RelayStrategy Wiring Not Automatic [DONE]
-`initMesh()` reads `localStorage.getItem('clawser_signaling_url')` and passes as `relayUrl`.
-
-### 5.4 PEX Strategy Not Auto-Wired [DONE]
-`PexStrategy` created and added to DiscoveryManager in `initMesh()`.
-
-### 5.5 SWIM Protocol Not Wired into Pod [DONE]
-`SwimMembership` created and passed to SwarmCoordinator in `initMesh()`.
-
-### 5.6 WebRTC Transport Not Auto-Negotiated [DONE]
-`SignalingClient` created when `relayUrl` provided. `onPeerDiscovered` triggers
-`handshakeCoordinator.connectToPeer()`. Incoming connections auto-accepted.
+### 2.6 Relay server auto-connect not functional [GAP]
+`MeshRelayClient` defaults to `wss://relay.browsermesh.local` which doesn't exist.
+The relay URL is configurable via localStorage but there's no UI to set it and
+no default that points to a real server.
 
 ---
 
-## 6. Server Infrastructure
+## 3. Polish
 
-### 6.1 Kernel Agent Is a Stub [DONE]
-ServerAgent now supports OpenAI + Anthropic via `LLM_PROVIDER`, `LLM_API_KEY`,
-`LLM_MODEL` env vars. Echo fallback without keys. History tracking for multi-turn.
+### 3.1 41 silent catch blocks [POLISH]
+41 bare `catch {}` or `catch { /* ignore */ }` blocks across the codebase that
+swallow errors without logging. Most critical in `clawser-agent.js` (6 blocks)
+and `clawser-browser-auto.js` (4 completely empty blocks). Should add minimal
+logging: `catch (e) { this.#log?.('warn', e.message) }`.
 
-### 6.2 AUTH_MODE=authenticated [DONE]
-RelayStrategy accepts `signFn` for Ed25519 signed registration.
+### 3.2 6 unhandled promise chains [POLISH]
+`.then()` without `.catch()` in: `clawser-mesh-cross-origin.js:399`,
+`clawser-mesh-websocket.js:750`, `clawser-mesh-webtransport.js:81`,
+`clawser-peer-agent-swarm.js:563`, `clawser-peer-verification.js:354`,
+`clawser-shell.js:1804`.
 
-### 6.3 No Relay Server Auto-Connect [DONE]
-Relay URL configurable via `localStorage.getItem('clawser_signaling_url')`.
+### 3.3 README LOC count understated [POLISH]
+README.md claims "~65K LOC" but actual is ~120K LOC across all web/ modules
+and internal packages.
 
-### 6.4 Docker Compose Missing Kernel Service [DONE]
-Kernel service added with signaling dependency, volume mount, env vars.
+### 3.4 CLAUDE.md test file count stale [POLISH]
+Claims 236 test files but actual is 249+. Minor undercount.
 
-### 6.5 Fly.toml Only Covers Signaling [DEFERRED]
-Multi-service Fly.io deployment is a separate initiative.
+### 3.5 38 modules still marked EXPERIMENTAL [POLISH]
+All mesh/peer modules have `STATUS: EXPERIMENTAL` headers despite many being
+proven via E2E testing and wired into the pod lifecycle. Consider updating
+status to `INTEGRATED` for the ones that are auto-wired (ACL, chat, files,
+gateway, handshake, streams, transport, WebRTC, WebSocket, health, session,
+routing, services, etc.).
 
----
+### 3.6 MeshChat moderation is irreversible [POLISH]
+`redactMessage()` has no undo. By CRDT design this is intentional, but a
+`deleteMessage()` alternative or moderation log would improve usability.
 
-## 7. Documentation
-
-### 7.1 Stale LOC Counts [DONE]
-All ARCHITECTURE.md counts verified — within 2% of actual. No updates needed.
-
-### 7.2 Hook Pipeline Documented Three Ways [DONE]
-All three sources (ARCHITECTURE.md, agent JSDoc, CLAUDE.md) are consistent.
-Note: `transformResponse` hook point defined but never invoked by agent.
-
-### 7.3 CONTRIBUTING.md References Obsolete Test System [DONE]
-Updated with `node:test` + `run-tests.mjs` instructions and group commands.
-
-### 7.4 localStorage Key Prefix Inconsistency [DONE]
-Documented in `clawser-state.js` — all keys use `clawser_` (underscore).
-
-### 7.5 Placeholder URLs [DONE]
-Replaced with `johnhenry`.
+### 3.7 Console.log in production [POLISH]
+4 `console.log` statements in `clawser-app.js` and 2 in `clawser-pod.js`
+that should use the structured logging system instead.
 
 ---
 
-## 8. Planned But Not Started (from Heynote) [ROADMAP]
+## 4. Roadmap (from Heynote Plans)
 
-### 8.1 Scheduler Overhaul (Block 61) [ROADMAP]
-Merge Agent Scheduler into RoutineEngine, add `cron` CLI command. ~560 LOC.
+### 4.1 Scheduler Overhaul (Block 61) [ROADMAP]
+Merge Agent Scheduler into RoutineEngine, add `cron` CLI command, Dashboard
+scheduler section, register 3 missing tools. ~560 LOC, ~120 tests.
 
-### 8.2 Read-Only Internal OPFS Directories (Block 53) [ROADMAP]
-Write-protect `.agents`, `.checkpoints`, `.skills`, `.conversations`. ~60 LOC.
+### 4.2 Read-Only Internal OPFS Directories (Block 53) [ROADMAP]
+Write-protect `.agents`, `.checkpoints`, `.skills`, `.conversations` through
+shell and file tools. ~60 LOC.
 
-### 8.3 Tab Watcher Extension Plugin (Block 70) [ROADMAP]
-TabWatcherPlugin with site profiles. ~610 LOC.
+### 4.3 Tab Watcher Extension Plugin (Block 70) [ROADMAP]
+TabWatcherPlugin with site profiles (Slack/Gmail/Discord), MutationObserver
+DOM polling, 3 `ext_watch_*` tools. ~610 LOC.
 
-### 8.4 Audit Remediation (Block 71) [ROADMAP]
-Most items already addressed in this session. Remainder is incremental.
+### 4.4 P2P Scenario Completion (Block 66) [ROADMAP]
+8 protocol gaps for 19 user stories: verification quorum, distributed timestamps,
+escrow contracts, agent swarm, encrypted blobs, memory sync, federated compute.
+~3,070 LOC, ~111 tests.
 
-### 8.5 P2P Scenario Completion (Block 66) [ROADMAP]
-8 protocol gaps for 19 user stories. ~3,070 LOC.
+### 4.5 Agent → Account → Provider Simplification (Block 52) [ROADMAP]
+Wire AgentDefinition to require accountId, update UI agent editor. ~245 LOC.
 
-### 8.6 Agent → Account → Provider Wiring Simplification (Block 52) [ROADMAP]
-~245 LOC.
-
----
-
-## 9. Ecosystem & External Connections [ROADMAP]
-
-### 9.1 No Published npm Package [ROADMAP]
-EmbeddedPod API now works (4.4 done). Needs packaging + publish.
-
-### 9.2 No Skills Marketplace Backend [ROADMAP]
-Needs hosted backend for agentskills.io.
-
-### 9.3 Channel Integrations Are Scaffolding [ROADMAP]
-12 channel modules need real API credentials + OAuth flows.
-
-### 9.4 IoT Bridge [ROADMAP]
-Experimental/unverified.
-
-### 9.5 IPFS Integration [ROADMAP]
-CDN URL may need verification (like WebTorrent fix).
+### 4.6 BrowserMesh Package Ecosystem (Phase 10) [ROADMAP]
+9 npm packages: `@browsermesh/runtime`, `client`, `server`, `storage`, `compute`,
+`manifest`, `schema`, `admission`, `cli`. Specs exist in `docs/browsermesh/specs/`.
 
 ---
 
-## 10. E2E Test Coverage
+## 5. Ecosystem & External
 
-### 10.1 WebRTC-to-Mesh Subsystem E2E [DONE]
-7 tests (5 passing, 2 found genuine integration gaps in dispatch format).
+### 5.1 No published npm package [NICE]
+EmbeddedPod API works but isn't packaged for npm. Would enable third-party embedding.
 
-### 10.2 SWIM Failure Detection E2E [DONE]
-Test created with short intervals for peer disconnect detection.
+### 5.2 No skills marketplace backend [NICE]
+UI exists for browsing/installing skills but no hosted registry at agentskills.io.
 
-### 10.3 PEX Transitive Discovery E2E [DONE]
-3-browser test — alpha discovers gamma through beta's PEX exchange only.
+### 5.3 Channel integrations need real credentials [NICE]
+8 channel modules (Discord, Slack, Telegram, IRC, Matrix, Email, TabWatch, Relay)
+are implemented but untested with real API credentials/OAuth flows.
 
-### 10.4 mDNS-to-Browser E2E [DONE]
-Server pods discover via mDNS → register with signaling → browser finds both.
+### 5.4 Browser extension not published [NICE]
+Extension exists (v0.1.0, Chrome MV3) with 32 tools but not on Chrome Web Store.
 
----
+### 5.5 IPFS CDN URL unverified [NICE]
+`clawser-peer-ipfs.js` uses Helia CDN URL that may be stale (like the WebTorrent
+URL we fixed). Needs verification.
 
-## 11. Dead Code & Cleanup
-
-### 11.1 `broadcastPeerList()` Is Dead Code [DONE]
-Removed from signaling server.
-
-### 11.2 Dead Event Names [DONE]
-Documented. `on('return ')` is not a typo — it's `new Function('return ' + body)`.
-
-### 11.3 Legacy Rust Crates [DONE]
-Empty directories only (files removed in commit 7a2d7a5). Zero bytes.
-
-### 11.4 5 Stale Merged Branches [DONE]
-No stale branches exist — only `main`.
-
-### 11.5 playwright.config.js References Nonexistent Directory [DONE]
-Updated `testDir` to `./web/test`.
+### 5.6 IoT Bridge experimental [NICE]
+`clawser-iot-bridge.js` exists but is unverified/untested in real scenarios.
 
 ---
 
 ## Summary
 
-| Category | Total | Done | Remaining |
-|----------|-------|------|-----------|
-| Architecture & Code Quality | 7 | 7 | 0 |
-| Testing | 5 | 5 | 0 |
-| Missing API Counterparts | 8 | 7 | 1 deferred |
-| UI & Visual | 4 | 4 | 0 |
-| Unintegrated Subsystems | 6 | 6 | 0 |
-| Server Infrastructure | 5 | 4 | 1 deferred |
-| Documentation | 5 | 5 | 0 |
-| Planned (Heynote) | 6 | 0 | 6 roadmap |
-| Ecosystem | 5 | 0 | 5 roadmap |
-| E2E Coverage | 4 | 4 | 0 |
-| Dead Code & Cleanup | 5 | 5 | 0 |
-| **Total** | **60** | **47 done + 2 deferred** | **11 roadmap** |
+| Category | Count | Severity |
+|----------|-------|----------|
+| Bugs | 4 | Fix soon |
+| Gaps | 6 | Address when relevant |
+| Polish | 7 | Incremental improvement |
+| Roadmap | 6 | Future phases |
+| Ecosystem | 6 | Nice-to-have |
+| **Total** | **29** | |
 
-**All bugs, gaps, and quality issues resolved. Only new feature development remains.**
+**Critical action items:**
+1. Fix `#runAbort` cleanup in agent (1.1) — breaks isRunning/cancel state
+2. Fix 3 pre-existing test failures (1.2) — grant/revoke, emit, preset fields
+3. Add `deleteConversation()` (1.3) — data cleanup gap
+4. Fix file transfer dispatch format (1.4) — E2E integration mismatch
