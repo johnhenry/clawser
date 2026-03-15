@@ -459,3 +459,49 @@ currency. The Freedom™ "darknet credit exchange rate" made liquid and permissi
 | Governance vote | ~2/month | ~$0.001 |
 | Credential mint | Rare | ~$0.01 |
 | **Total** | | **~$0.01-0.05/day** |
+
+---
+
+## Off-Chain Payment Channels: State of the Art
+
+### Raiden Network — Not Recommended
+Raiden (Ethereum's Lightning Network) is **stalled**. Last major release: Jan 2022.
+Python-based main client abandoned. The `raiden-ts` light client is browser-compatible
+but beta quality with minimal adoption. Channel liquidity chicken-and-egg problem
+remains unsolved. Too risky for production.
+
+### Celer AgentPay — Best Fit
+Celer Network's AgentPay is **designed exactly for agent-to-agent payments** with
+"millisecond settlement, minimum costs." Active development, production-ready,
+browser SDK available, ERC-20 + L2 support. The sweet spot for Clawser's mesh economy.
+
+### Alternatives Evaluated
+
+| Solution | Speed | Cost/tx | Browser? | Status | Best For |
+|----------|-------|---------|----------|--------|----------|
+| **Celer AgentPay** | Instant | ~$0 | Yes | Active | Agent micropayments |
+| **Nitro Protocol** | Instant | ~$0 | Partial | Active | Generalized state channels |
+| **Connext** | Sub-second | ~$0.01-0.10 | Yes | Active | Cross-chain bridges |
+| **Raiden Light Client** | Instant | ~$0 | Yes (beta) | Stalled | Not recommended |
+| **Base L2 direct** | ~2s | ~$0.01-0.05 | Yes | Production | Simple, low-frequency |
+| **ERC-4337 Paymaster** | ~5-60s | Sponsored | Yes | Production | Gasless casual payments |
+
+### Recommended Architecture: Three-Layer Payments
+
+```
+Layer 1: In-Memory CreditLedger (current)
+  → Instant, zero cost, trusted same-session peers
+  → Used for: real-time micro-accounting within a mesh session
+
+Layer 2: Celer AgentPay State Channels
+  → Instant, near-zero cost, cryptographic guarantees
+  → Used for: settlement between untrusted peers, cross-session balances
+
+Layer 3: Base L2 Smart Contracts
+  → ~2s, ~$0.01, permanent and auditable
+  → Used for: final settlement, governance, credential minting
+```
+
+This maps directly to Suarez's economy: instant darknet credit transfers within the
+community (Layer 1), cryptographically guaranteed exchange with outsiders (Layer 2),
+and permanent on-chain record for governance and identity (Layer 3).
