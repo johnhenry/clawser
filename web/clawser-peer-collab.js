@@ -1,11 +1,12 @@
 /**
+// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
  * clawser-peer-collab.js -- Real-time collaborative editing via Yjs CRDT.
  *
  * YjsAdapter: wraps Yjs Doc with shared types and sync primitives.
  * AwarenessState: cursor/selection presence (custom, no Yjs awareness dep).
  * CollabSession: ties YjsAdapter + AwarenessState to a PeerSession.
  *
- * Yjs loaded via CDN: https://cdn.jsdelivr.net/npm/yjs/+esm
+ * Yjs loaded via CDN: https://cdn.jsdelivr.net/npm/yjs@13.6.30/+esm
  *
  * No browser-only imports at module level.
  *
