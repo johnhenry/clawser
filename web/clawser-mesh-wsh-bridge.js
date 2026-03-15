@@ -1,5 +1,5 @@
 /**
-// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
+// STATUS: INTEGRATED — wired into ClawserPod lifecycle, proven via E2E testing
  * clawser-mesh-wsh-bridge.js -- Bridge between WshKeyStore and MeshIdentityManager.
  *
  * WshKeyStore uses hex-encoded SHA-256 fingerprints.

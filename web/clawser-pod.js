@@ -318,7 +318,7 @@ export class ClawserPod extends Pod {
       this.#signalingClient = new SignalingClient({
         url: opts.relayUrl,
         localPodId: podId,
-        onLog: (level, msg) => console.log(`[signaling] ${msg}`),
+        onLog: opts.onLog || (() => {}),
       })
     }
     this.#handshakeCoordinator = new HandshakeCoordinator({
@@ -474,7 +474,7 @@ export class ClawserPod extends Pod {
     })
 
     // 23. Communication & Files (Track 3)
-    this.#meshChat = new MeshChat({ identity: { fingerprint: podId }, onLog: (m) => console.log(`[mesh-chat] ${m}`) })
+    this.#meshChat = new MeshChat({ identity: { fingerprint: podId }, onLog: opts.onLog ? (m) => opts.onLog('debug', `[mesh-chat] ${m}`) : (() => {}) })
     this.#gatewayNode = new GatewayNode(podId)
     this.#gatewayDiscovery = new GatewayDiscovery(podId)
     this.#torrentManager = new TorrentManager()

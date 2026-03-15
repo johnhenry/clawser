@@ -1,5 +1,5 @@
 /**
-// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
+// STATUS: INTEGRATED — wired into ClawserPod lifecycle, proven via E2E testing
  * Clawser Mesh Streams
  *
  * Multiplexed data streaming with credit-based backpressure.

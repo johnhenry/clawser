@@ -1,5 +1,5 @@
 /**
-// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
+// STATUS: INTEGRATED — wired into ClawserPod lifecycle, proven via E2E testing
  * clawser-mesh-devtools.js -- Mesh DevTools Inspector.
  *
  * Provides diagnostic snapshot and health checking for the mesh subsystem.

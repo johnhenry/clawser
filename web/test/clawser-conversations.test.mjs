@@ -12,6 +12,7 @@ import {
   generateConvId,
   loadConversations,
   updateConversationMeta,
+  deleteConversation,
 } from '../clawser-conversations.js';
 
 // ── generateConvId ──────────────────────────────────────────────
@@ -43,6 +44,20 @@ describe('loadConversations', () => {
   it('returns empty array when no conversations exist', async () => {
     const convs = await loadConversations('nonexistent_ws');
     assert.deepEqual(convs, []);
+  });
+});
+
+// ── deleteConversation ──────────────────────────────────────────
+
+describe('deleteConversation', () => {
+  it('returns false when workspace does not exist', async () => {
+    const result = await deleteConversation('nonexistent_ws', 'conv1');
+    assert.equal(result, false);
+  });
+
+  it('returns false for missing conversation in missing workspace', async () => {
+    const result = await deleteConversation('no_ws', 'no_conv');
+    assert.equal(result, false);
   });
 });
 

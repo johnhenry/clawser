@@ -1,5 +1,5 @@
 /**
-// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
+// STATUS: INTEGRATED — wired into ClawserPod lifecycle, proven via E2E testing
  * clawser-mesh-cross-origin.js -- Cross-origin communication bridge.
  *
  * Enables mesh pods running in different browser contexts (iframes,
@@ -399,7 +399,7 @@ export class CrossOriginBridge {
         result.then(
           (val) => this.#sendResponse(source, peer, requestId, val, null),
           (err) => this.#sendResponse(source, peer, requestId, null, err.message),
-        )
+        ).catch(() => {})
       } else {
         this.#sendResponse(source, peer, requestId, result, null)
       }

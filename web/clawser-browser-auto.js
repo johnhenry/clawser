@@ -51,9 +51,7 @@ export function getInteractiveElements(doc) {
         enabled: !el.disabled,
       });
     }
-  } catch {
-    // DOM access may fail
-  }
+  } catch (e) { /* best-effort: DOM access may fail */ }
 
   return elements;
 }
@@ -112,7 +110,7 @@ export function getFormFields(doc) {
         required: !!el.required,
       });
     }
-  } catch {}
+  } catch (e) { /* best-effort: form field extraction */ }
 
   return fields;
 }
@@ -134,7 +132,7 @@ export function getLinks(doc) {
         href: a.href || a.getAttribute?.('href') || '',
       });
     }
-  } catch {}
+  } catch (e) { /* best-effort: link extraction */ }
 
   return links;
 }
@@ -194,7 +192,7 @@ export function resolveElement(doc, opts = {}) {
     try {
       const el = doc.querySelector?.(opts.selector);
       if (el) return { element: el, strategy: SELECTOR_STRATEGIES.CSS };
-    } catch {}
+    } catch (e) { /* best-effort: CSS selector resolution */ }
   }
 
   // 4. Coordinates (no DOM element, but recognized strategy)

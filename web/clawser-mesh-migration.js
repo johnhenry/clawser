@@ -1,5 +1,5 @@
 /**
-// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
+// STATUS: INTEGRATED — wired into ClawserPod lifecycle, proven via E2E testing
  * clawser-mesh-migration.js -- Pod State Migration Between Peers.
  *
  * Manages checkpointing, transferring, verifying, and activating pod state

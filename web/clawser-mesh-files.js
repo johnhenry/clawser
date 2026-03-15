@@ -1,5 +1,5 @@
 /**
-// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
+// STATUS: INTEGRATED — wired into ClawserPod lifecycle, proven via E2E testing
  * Clawser Mesh Files
  *
  * Content-addressed file transfer with SHA-256 chunking, progress tracking,
@@ -548,7 +548,14 @@ export class MeshFileTransfer {
    * @param {object} msg
    */
   dispatch(msg) {
-    if (!msg || !msg.p) return;
+    if (!msg) return;
+
+    // Accept envelope format { _mesh: 'file-transfer', payload: {t, p} }
+    if (msg._mesh && msg.payload) {
+      msg = msg.payload;
+    }
+
+    if (!msg.p) return;
 
     switch (msg.t) {
       case MESH_TYPE.FILE_OFFER: {

@@ -1,5 +1,5 @@
 /**
-// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
+// STATUS: INTEGRATED — wired into ClawserPod lifecycle, proven via E2E testing
  * clawser-peer-compute.js — Federated compute orchestration.
  *
  * Split large compute jobs across multiple peers (map/reduce pattern).

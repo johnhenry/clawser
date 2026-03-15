@@ -1,5 +1,5 @@
 /**
-// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
+// STATUS: INTEGRATED — wired into ClawserPod lifecycle, proven via E2E testing
  * clawser-peer-agent-swarm.js — Multi-agent coordination protocol.
  *
  * Agents share goals, decompose tasks, divide work, merge results,
@@ -563,7 +563,7 @@ export class AgentSwarmCoordinator {
       promise.then(
         (val) => { clearTimeout(timer); resolve(val) },
         (err) => { clearTimeout(timer); reject(err) },
-      )
+      ).catch(() => {})
     })
   }
 }

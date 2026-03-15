@@ -711,6 +711,31 @@ describe('MeshFileTransfer dispatch', () => {
     ft.dispatch(undefined);
     ft.dispatch({});
   });
+
+  it('accepts envelope format { _mesh, payload }', () => {
+    let received = null;
+    const ft = new MeshFileTransfer();
+    ft.onOffer(offer => { received = offer; });
+
+    ft.dispatch({
+      _mesh: 'file-transfer',
+      payload: {
+        t: MESH_TYPE.FILE_OFFER,
+        p: {
+          transferId: 'env_xfer',
+          sender: 'alice',
+          recipient: 'bob',
+          files: [{ name: 'env.txt', size: 99 }],
+          totalSize: 99,
+          expires: Date.now() + 60000,
+        },
+      },
+    });
+
+    assert.ok(received, 'onOffer should fire from envelope format');
+    assert.equal(received.transferId, 'env_xfer');
+    assert.ok(ft.getOffer('env_xfer'));
+  });
 });
 
 // ---------------------------------------------------------------------------

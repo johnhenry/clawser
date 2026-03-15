@@ -1,5 +1,5 @@
 /**
-// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
+// STATUS: INTEGRATED — wired into ClawserPod lifecycle, proven via E2E testing
  * clawser-peer-session.js -- Authenticated peer session management.
  *
  * Manages authenticated sessions between mesh peers, providing message

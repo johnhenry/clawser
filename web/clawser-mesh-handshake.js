@@ -1,5 +1,5 @@
 /**
-// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
+// STATUS: INTEGRATED — wired into ClawserPod lifecycle, proven via E2E testing
  * clawser-mesh-handshake.js -- Connection Handshake Protocol.
  *
  * Coordinates signaling, direct input exchange (QR + clipboard), and

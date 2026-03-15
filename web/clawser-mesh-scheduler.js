@@ -1,5 +1,5 @@
 /**
-// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
+// STATUS: INTEGRATED — wired into ClawserPod lifecycle, proven via E2E testing
  * clawser-mesh-scheduler.js -- Mesh-aware task scheduling for BrowserMesh.
  *
  * Distributes tasks across mesh peers using configurable scheduling policies

@@ -135,6 +135,28 @@ describe('ClawserAgent — cancel / isRunning', () => {
   })
 })
 
+// ── isRunning after run() ────────────────────────────────────────
+
+describe('ClawserAgent — isRunning cleared after run()', () => {
+  it('isRunning is false after a successful run()', async () => {
+    const agent = await createTestAgent()
+    agent.setSystemPrompt('You are a test agent.')
+    agent.sendMessage('hello')
+    const result = await agent.run()
+    assert.equal(result.status, 1, 'run should succeed')
+    assert.equal(agent.isRunning, false, 'isRunning must be false after run completes')
+  })
+
+  it('isRunning is false after runStream() completes', async () => {
+    const agent = await createTestAgent()
+    agent.setSystemPrompt('You are a test agent.')
+    agent.sendMessage('hello')
+    // Exhaust the async generator
+    for await (const _chunk of agent.runStream()) { /* consume */ }
+    assert.equal(agent.isRunning, false, 'isRunning must be false after runStream completes')
+  })
+})
+
 // ── pause / resume ────────────────────────────────────────────────
 
 describe('ClawserAgent — isPaused / pauseAgent / resumeAgent', () => {

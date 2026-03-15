@@ -627,7 +627,8 @@ export async function initMeshSubsystem() {
     }
 
     // Layer mesh networking on top of the pod
-    const relayUrl = localStorage.getItem('clawser_signaling_url') || undefined
+    const relayUrl = localStorage.getItem('clawser_signaling_url')
+      || (typeof location !== 'undefined' && location.protocol === 'https:' ? `wss://${location.hostname}:8787` : undefined)
     const result = await state.pod.initMesh({ relayUrl });
     state.peerNode = result.peerNode;
     state.swarmCoordinator = result.swarmCoordinator;

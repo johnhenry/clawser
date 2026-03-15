@@ -441,6 +441,7 @@ export class MeshIdentityManager {
    * @param {string} podId
    * @returns {string}
    */
+  // TODO: upgrade to proper base58btc multicodec encoding per W3C DID spec
   toDID(podId) {
     const entry = this.#identities.get(podId);
     if (!entry) throw new Error(`Unknown identity: ${podId}`);

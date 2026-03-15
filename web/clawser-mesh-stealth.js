@@ -1,5 +1,5 @@
 /**
-// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
+// STATUS: INTEGRATED — wired into ClawserPod lifecycle, proven via E2E testing
  * clawser-mesh-stealth.js -- Stealth agent with erasure-coded state sharding.
  *
  * Provides state sharding across the DHT for agent stealth operations.

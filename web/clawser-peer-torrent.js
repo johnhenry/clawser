@@ -1,5 +1,5 @@
 /**
-// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
+// STATUS: INTEGRATED — wired into ClawserPod lifecycle, proven via E2E testing
  * clawser-peer-torrent.js -- WebTorrent integration for P2P file distribution.
  *
  * CDN-loads webtorrent browser bundle for swarm-based file sharing.

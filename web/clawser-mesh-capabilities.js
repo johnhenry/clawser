@@ -1,5 +1,5 @@
 /**
-// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
+// STATUS: INTEGRATED — wired into ClawserPod lifecycle, proven via E2E testing
  * clawser-mesh-capabilities.js -- Capability Attenuation & WASM Sandbox.
  *
  * Implements the object-capability (ocap) model for BrowserMesh:

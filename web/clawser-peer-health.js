@@ -1,5 +1,5 @@
 /**
-// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
+// STATUS: INTEGRATED — wired into ClawserPod lifecycle, proven via E2E testing
  * clawser-peer-health.js — Automatic health monitoring with self-healing.
  *
  * Watches heartbeats, detects failures, triggers workload migration.

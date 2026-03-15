@@ -1,5 +1,5 @@
 /**
-// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
+// STATUS: INTEGRATED — wired into ClawserPod lifecycle, proven via E2E testing
  * clawser-peer-routing.js -- Multi-hop message routing and server sharing.
  *
  * Routes messages across the mesh via intermediary peers when direct

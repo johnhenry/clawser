@@ -55,7 +55,7 @@ All source files are in `web/` and follow the naming pattern `clawser-{domain}.j
 ### Test Runner
 
 ```bash
-# Run everything (236 test files)
+# Run everything (249+ test files)
 npm test
 
 # Fast feedback loop (core + channels, 97 files)

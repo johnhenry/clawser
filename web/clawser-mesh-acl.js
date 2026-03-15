@@ -1,5 +1,5 @@
 /**
-// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
+// STATUS: INTEGRATED — wired into ClawserPod lifecycle, proven via E2E testing
  * clawser-mesh-acl.js -- Remote access control for BrowserMesh.
  *
  * ScopeTemplate bundles, roster management, invitation tokens, and
@@ -416,6 +416,12 @@ export class MeshACL {
     this._roster.delete(identity);
     return this.addEntry(identity, templateName);
   }
+
+  /** Convenience alias for {@link addEntry}. */
+  grant(identity, templateName, opts) { return this.addEntry(identity, templateName, opts) }
+
+  /** Convenience alias for {@link revokeAll}. */
+  revoke(identity) { return this.revokeAll(identity) }
 
   /**
    * Revoke all access for an identity and remove from roster.

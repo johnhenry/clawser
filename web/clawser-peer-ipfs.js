@@ -1,5 +1,5 @@
 /**
-// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
+// STATUS: INTEGRATED — wired into ClawserPod lifecycle, proven via E2E testing
  * clawser-peer-ipfs.js -- Optional Helia/IPFS integration for content-addressed storage.
  *
  * Feature-flagged -- disabled by default. CDN-loads Helia when enabled.

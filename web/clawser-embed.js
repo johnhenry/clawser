@@ -16,6 +16,7 @@ import { Pod } from './packages/pod/src/pod.mjs'
 export class EmbeddedPod extends Pod {
   #config
   #agent = null
+  #listeners = new Map()
 
   /**
    * @param {object} [config]
@@ -86,6 +87,35 @@ export class EmbeddedPod extends Pod {
 
     // Error or blocked
     return { content: result.data || '', toolCalls, error: result.status < 0, usage: result.usage }
+  }
+
+  /**
+   * Register an event listener.
+   * @param {string} event
+   * @param {Function} fn
+   */
+  on(event, fn) {
+    const s = this.#listeners.get(event) || new Set()
+    s.add(fn)
+    this.#listeners.set(event, s)
+  }
+
+  /**
+   * Remove an event listener.
+   * @param {string} event
+   * @param {Function} fn
+   */
+  off(event, fn) {
+    this.#listeners.get(event)?.delete(fn)
+  }
+
+  /**
+   * Emit an event to all registered listeners.
+   * @param {string} event
+   * @param {...any} args
+   */
+  emit(event, ...args) {
+    for (const fn of this.#listeners.get(event) || []) fn(...args)
   }
 
   _onMessage(msg) {

@@ -1,5 +1,5 @@
 /**
-// STATUS: EXPERIMENTAL — complete implementation, not yet integrated into main application
+// STATUS: INTEGRATED — wired into ClawserPod lifecycle, proven via E2E testing
  * clawser-mesh-chat.js -- CRDT-backed chat rooms for BrowserMesh.
  *
  * ChatMessage envelopes, ChatRoom with ORSet membership, LWWMap
@@ -263,6 +263,7 @@ export class ChatRoom {
 
   /**
    * Redact a message. Only creator can moderate.
+   * // Note: redaction is permanent by CRDT design. See OUTSTANDING.md 3.6 for discussion.
    * @param {string} messageId
    * @param {string} moderator - Fingerprint of the moderator
    * @returns {boolean}

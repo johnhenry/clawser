@@ -364,6 +364,7 @@ export class MountableFs extends WorkspaceFs {
     for (const p of presets) {
       if (p && typeof p === 'object' && typeof p.path === 'string') {
         valid.push({
+          ...p,
           path: p.path,
           name: p.name || p.path.split('/').pop(),
           kind: p.kind || 'directory',

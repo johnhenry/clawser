@@ -316,7 +316,7 @@ Clawser is built as a set of ES modules with no bundler, no build step, and no n
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for a detailed breakdown.
 
-## Module Map (~148 modules, ~65K LOC)
+## Module Map (~148 modules, ~120K LOC)
 
 ### Core Agent
 | Module | LOC | Purpose |
@@ -487,7 +487,7 @@ No build step required. Edit JS files in `web/` and reload the browser.
 
 **Running tests:**
 ```bash
-npm test              # All 236 test files
+npm test              # All 249+ test files
 npm run test:fast     # Core + channels (97 files)
 npm run test:core     # Agent, tools, providers, shell (89 files)
 npm run test:mesh     # Mesh networking (31 files)

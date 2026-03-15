@@ -857,6 +857,7 @@ export class CommandRegistry {
  * @param {object} [opts] - { stdin, fs }
  * @returns {Promise<{stdout: string, stderr: string, exitCode: number}>}
  */
+// TODO: tab completion for commands and file paths
 export async function execute(node, state, registry, opts = {}) {
   if (!node) return { stdout: '', stderr: '', exitCode: 0 };
 

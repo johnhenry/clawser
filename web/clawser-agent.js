@@ -1681,6 +1681,7 @@ export class ClawserAgent {
     const limitsCheck = this.#autonomy.checkLimits();
     if (limitsCheck.blocked) {
       this.#eventLog.append('autonomy_blocked', { reason: limitsCheck.reason, limitType: limitsCheck.limitType }, 'system');
+      this.#runAbort = null;
       return { status: -1, data: limitsCheck.reason, limitType: limitsCheck.limitType, resetTime: limitsCheck.resetTime };
     }
 
@@ -1689,6 +1690,7 @@ export class ClawserAgent {
     if (lastUserMsg) {
       const inbound = await this.#hooks.run('beforeInbound', { message: lastUserMsg.content });
       if (inbound.blocked) {
+        this.#runAbort = null;
         return { status: -1, data: `Blocked: ${inbound.reason}` };
       }
       if (inbound.ctx.message !== lastUserMsg.content) {
@@ -1759,13 +1761,18 @@ export class ClawserAgent {
           if (lastUserMsg) {
             const outbound = await this.#hooks.run('beforeOutbound', { content: cachedContent, model: cached.model, usage: cached.usage });
             if (outbound.blocked) {
+              this.#runAbort = null;
               return { status: -1, data: `Blocked: ${outbound.reason}` };
             }
             if (outbound.ctx.content !== cachedContent) cachedContent = outbound.ctx.content;
           }
+          // Hook: transformResponse (cache hit path)
+          const cachedTransformed = await this.#hooks.run('transformResponse', { response: cachedContent });
+          if (cachedTransformed.ctx.response !== cachedContent) cachedContent = cachedTransformed.ctx.response;
           this.#history.push({ role: 'assistant', content: cachedContent });
           this.#eventLog.append('agent_message', { content: cachedContent }, 'agent');
           this.#metrics?.observe('agent.run_duration_ms', Date.now() - _runStart);
+          this.#runAbort = null;
           return { status: 1, data: cachedContent, usage: cached.usage, model: cached.model, cached: true };
         }
       }
@@ -1806,6 +1813,7 @@ export class ClawserAgent {
         this.#metrics?.increment('agent.errors');
         this.#metrics?.observe('agent.run_duration_ms', Date.now() - _runStart);
         this.#logEvent(3, 'agent', `Provider error: ${e.message}`, { error: e.message });
+        this.#runAbort = null;
         return { status: -1, data: `Provider error: ${e.message}` };
       }
 
@@ -1867,14 +1875,19 @@ export class ClawserAgent {
           if (lastUserMsg) {
             const outbound = await this.#hooks.run('beforeOutbound', { content: safeContent, model: codexResult.model, usage: codexResult.usage });
             if (outbound.blocked) {
+              this.#runAbort = null;
               return { status: -1, data: `Blocked: ${outbound.reason}` };
             }
             if (outbound.ctx.content !== safeContent) safeContent = outbound.ctx.content;
           }
+          // Hook: transformResponse (codex path)
+          const codexTransformed = await this.#hooks.run('transformResponse', { response: safeContent });
+          if (codexTransformed.ctx.response !== safeContent) safeContent = codexTransformed.ctx.response;
           // Push the summarized response to history and record event
           this.#history.push({ role: 'assistant', content: safeContent });
           this.#eventLog.append('agent_message', { content: safeContent }, 'agent');
           this.#metrics?.observe('agent.run_duration_ms', Date.now() - _runStart);
+          this.#runAbort = null;
           return { status: 1, data: safeContent };
         }
       }
@@ -1899,10 +1912,14 @@ export class ClawserAgent {
         if (lastUserMsg) {
           const outbound = await this.#hooks.run('beforeOutbound', { content: safeContent, model: response.model, usage: response.usage });
           if (outbound.blocked) {
+            this.#runAbort = null;
             return { status: -1, data: `Blocked: ${outbound.reason}` };
           }
           if (outbound.ctx.content !== safeContent) safeContent = outbound.ctx.content;
         }
+        // Hook: transformResponse (plain text path)
+        const plainTransformed = await this.#hooks.run('transformResponse', { response: safeContent });
+        if (plainTransformed.ctx.response !== safeContent) safeContent = plainTransformed.ctx.response;
         // Store in response cache (use safe content so cache hits don't leak secrets)
         if (this.#responseCache && cacheKey) {
           this.#responseCache.set(cacheKey, { ...response, content: safeContent }, response.model);
@@ -1910,6 +1927,7 @@ export class ClawserAgent {
         this.#history.push({ role: 'assistant', content: safeContent });
         this.#eventLog.append('agent_message', { content: safeContent }, 'agent');
         this.#metrics?.observe('agent.run_duration_ms', Date.now() - _runStart);
+        this.#runAbort = null;
         return { status: 1, data: safeContent, usage: response.usage, model: response.model };
       }
 
@@ -1982,6 +2000,7 @@ export class ClawserAgent {
       continue;
     }
 
+    this.#runAbort = null;
     return { status: -1, data: 'max iterations reached' };
   }
 
@@ -1996,6 +2015,7 @@ export class ClawserAgent {
   async *runStream(options = {}) {
     if (this.#destroyed) throw new Error('Agent has been destroyed');
     if (this.#paused) { yield { type: 'error', error: 'Agent is paused (cost runaway).' }; return; }
+    this.#runAbort = new AbortController();
     this.#metrics?.increment('agent.runs');
     const _runStart = Date.now();
 
@@ -2008,6 +2028,7 @@ export class ClawserAgent {
     if (limitsCheck.blocked) {
       this.#eventLog.append('autonomy_blocked', { reason: limitsCheck.reason, limitType: limitsCheck.limitType }, 'system');
       yield { type: 'error', error: limitsCheck.reason, limitType: limitsCheck.limitType, resetTime: limitsCheck.resetTime };
+      this.#runAbort = null;
       return;
     }
 
@@ -2017,6 +2038,7 @@ export class ClawserAgent {
       const inbound = await this.#hooks.run('beforeInbound', { message: lastUserMsg.content });
       if (inbound.blocked) {
         yield { type: 'error', error: `Blocked: ${inbound.reason}` };
+        this.#runAbort = null;
         return;
       }
       if (inbound.ctx.message !== lastUserMsg.content) {
@@ -2087,6 +2109,7 @@ export class ClawserAgent {
             const outbound = await this.#hooks.run('beforeOutbound', { content: cachedContent, model: cached.model, usage: cached.usage });
             if (outbound.blocked) {
               yield { type: 'error', error: `Blocked: ${outbound.reason}` };
+              this.#runAbort = null;
               return;
             }
             if (outbound.ctx.content !== cachedContent) cachedContent = outbound.ctx.content;
@@ -2096,6 +2119,7 @@ export class ClawserAgent {
           this.#metrics?.observe('agent.run_duration_ms', Date.now() - _runStart);
           yield { type: 'text', text: cachedContent };
           yield { type: 'done', response: { ...cached, content: cachedContent } };
+          this.#runAbort = null;
           return;
         }
       }
@@ -2140,6 +2164,7 @@ export class ClawserAgent {
           this.#metrics?.observe('agent.run_duration_ms', Date.now() - _runStart);
           this.#logEvent(3, 'agent', `Non-streaming fallback error: ${fallbackErr.message}`, { error: fallbackErr.message });
           yield { type: 'error', error: fallbackErr.message };
+          this.#runAbort = null;
           return;
         }
 
@@ -2193,6 +2218,7 @@ export class ClawserAgent {
               const outbound = await this.#hooks.run('beforeOutbound', { content: safeContent, model: codexResult.model, usage: codexResult.usage });
               if (outbound.blocked) {
                 yield { type: 'error', error: `Blocked: ${outbound.reason}` };
+                this.#runAbort = null;
                 return;
               }
               if (outbound.ctx.content !== safeContent) safeContent = outbound.ctx.content;
@@ -2202,6 +2228,7 @@ export class ClawserAgent {
             this.#metrics?.observe('agent.run_duration_ms', Date.now() - _runStart);
             yield { type: 'text', text: safeContent };
             yield { type: 'done', response: { ...codexResult, content: safeContent } };
+            this.#runAbort = null;
             return;
           }
         }
@@ -2226,6 +2253,7 @@ export class ClawserAgent {
             const outbound = await this.#hooks.run('beforeOutbound', { content: safeContent, model: response.model, usage: response.usage });
             if (outbound.blocked) {
               yield { type: 'error', error: `Blocked: ${outbound.reason}` };
+              this.#runAbort = null;
               return;
             }
             if (outbound.ctx.content !== safeContent) safeContent = outbound.ctx.content;
@@ -2238,6 +2266,7 @@ export class ClawserAgent {
           this.#metrics?.observe('agent.run_duration_ms', Date.now() - _runStart);
           yield { type: 'text', text: safeContent };
           yield { type: 'done', response: { ...response, content: safeContent } };
+          this.#runAbort = null;
           return;
         }
 
@@ -2304,6 +2333,7 @@ export class ClawserAgent {
             fullContent = chunk.response.content || fullContent;
             fullToolCalls = chunk.response.tool_calls || [];
           } else if (chunk.type === 'error') {
+            this.#runAbort = null;
             return;
           }
         }
@@ -2337,6 +2367,7 @@ export class ClawserAgent {
           this.#metrics?.observe('agent.run_duration_ms', Date.now() - _runStart);
           this.#logEvent(3, 'agent', `Stream error: ${streamErr.message}`, { error: streamErr.message });
           yield { type: 'error', error: `Stream error: ${streamErr.message}` };
+          this.#runAbort = null;
           return;
         }
       }
@@ -2395,6 +2426,7 @@ export class ClawserAgent {
             const outbound = await this.#hooks.run('beforeOutbound', { content: safeContent, model: codexResult.model, usage: codexResult.usage });
             if (outbound.blocked) {
               yield { type: 'error', error: `Blocked: ${outbound.reason}` };
+              this.#runAbort = null;
               return;
             }
             if (outbound.ctx.content !== safeContent) safeContent = outbound.ctx.content;
@@ -2404,6 +2436,7 @@ export class ClawserAgent {
           this.#metrics?.observe('agent.run_duration_ms', Date.now() - _runStart);
           yield { type: 'text', text: safeContent };
           yield { type: 'done', response: { ...codexResult, content: safeContent } };
+          this.#runAbort = null;
           return;
         }
       }
@@ -2428,6 +2461,7 @@ export class ClawserAgent {
           const outbound = await this.#hooks.run('beforeOutbound', { content: safeContent, model: fullResponse.model, usage: fullResponse.usage });
           if (outbound.blocked) {
             yield { type: 'error', error: `Blocked: ${outbound.reason}` };
+            this.#runAbort = null;
             return;
           }
           if (outbound.ctx.content !== safeContent) safeContent = outbound.ctx.content;
@@ -2442,6 +2476,7 @@ export class ClawserAgent {
           // Content was modified by safety — yield the safe version
           yield { type: 'safety_redacted', text: safeContent };
         }
+        this.#runAbort = null;
         return;
       }
 
@@ -2503,6 +2538,7 @@ export class ClawserAgent {
     this.#metrics?.increment('agent.errors');
     this.#metrics?.observe('agent.run_duration_ms', Date.now() - _runStart);
     yield { type: 'error', error: 'max iterations reached' };
+    this.#runAbort = null;
   }
 
   // ── Context Compaction ─────────────────────────────────────

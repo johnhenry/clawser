@@ -248,6 +248,7 @@ export class SecretVault {
   /**
    * @param {MemoryVaultStorage|OPFSVaultStorage} storage - Storage backend
    */
+  // TODO: vault recovery codes — export encrypted backup key on creation
   constructor(storage) {
     this.#storage = storage;
   }
