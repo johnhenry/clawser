@@ -1,6 +1,7 @@
 /**
- * Local re-export of andbox for browser use.
- * Maps `import { createSandbox } from './packages-andbox.js'` to the local package.
+ * Re-export of andbox.
+ * In development: resolves via node_modules (npm install andbox).
+ * In browser: resolves via import map (esm.sh/andbox).
  */
 export {
   createSandbox,
@@ -15,4 +16,4 @@ export {
   DEFAULT_TIMEOUT_MS,
   DEFAULT_LIMITS,
   DEFAULT_CAPABILITY_LIMITS,
-} from './packages/andbox/src/index.mjs';
+} from 'andbox';
