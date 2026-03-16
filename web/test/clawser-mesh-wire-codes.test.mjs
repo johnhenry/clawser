@@ -9,7 +9,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { MESH_TYPE } from '../packages/mesh-primitives/src/constants.mjs'
+import { MESH_TYPE } from '../packages-mesh-primitives.js'
 import { SWARM_JOIN, SWARM_LEAVE, SWARM_HEARTBEAT, SWARM_TASK_ASSIGN } from '../clawser-mesh-swarm.js'
 import { AUDIT_ENTRY, AUDIT_CHAIN_QUERY, AUDIT_CHAIN_RESPONSE } from '../clawser-mesh-audit.js'
 import { RESOURCE_ADVERTISE, RESOURCE_DISCOVER, RESOURCE_DISCOVER_RESPONSE, COMPUTE_REQUEST, COMPUTE_RESULT, COMPUTE_PROGRESS } from '../clawser-mesh-resources.js'

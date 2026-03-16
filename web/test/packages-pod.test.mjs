@@ -16,7 +16,7 @@ import {
   createRpcRequest, createRpcResponse,
   InjectedPod,
   installPodRuntime, createRuntime, createClient, createServer,
-} from '../packages/pod/src/index.mjs'
+} from '../packages-pod.js'
 
 // ── 1. Exports exist ───────────────────────────────────────────────────
 

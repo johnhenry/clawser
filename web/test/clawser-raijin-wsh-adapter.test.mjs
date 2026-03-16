@@ -1,6 +1,6 @@
 import { describe, it, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { cborEncode, cborDecode } from '../packages/wsh/src/cbor.mjs'
+import { cborEncode, cborDecode } from '../packages-wsh.js'
 import {
   WshPBFTTransport,
   SessionKeyMapping,

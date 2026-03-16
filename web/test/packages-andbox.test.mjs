@@ -15,7 +15,7 @@ import {
   makeDeferred, makeAbortError, makeTimeoutError,
   DEFAULT_TIMEOUT_MS, DEFAULT_LIMITS, DEFAULT_CAPABILITY_LIMITS,
   makeWorkerSource,
-} from '../packages/andbox/src/index.mjs'
+} from '../packages-andbox.js'
 
 // ── 1. Exports exist ───────────────────────────────────────────────────
 

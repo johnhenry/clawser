@@ -14,7 +14,7 @@ import {
   sessionData,
   termDiff,
   termSync,
-} from '../packages/wsh/src/index.mjs';
+} from '../packages-wsh.js';
 
 class MockTransport extends WshTransport {
   sent = [];

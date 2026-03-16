@@ -9,7 +9,7 @@ import {
   reverseAccept,
   reverseReject,
   sessionData,
-} from '../packages/wsh/src/index.mjs';
+} from '../packages-wsh.js';
 
 describe('wsh reverse handshake protocol', () => {
   it('openOk includes data mode and capabilities', () => {

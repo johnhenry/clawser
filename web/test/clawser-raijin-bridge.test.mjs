@@ -1,6 +1,6 @@
 import { describe, it, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { MESH_TYPE } from '../packages/mesh-primitives/src/constants.mjs'
+import { MESH_TYPE } from '../packages-mesh-primitives.js'
 import {
   ClawserTransportAdapter,
   PodKeyMapping,
@@ -19,7 +19,7 @@ import {
 import {
   createLocalChannelPair,
   TestMesh,
-} from '../packages/mesh-primitives/src/test-transport.mjs'
+} from '../packages-mesh-primitives.js'
 
 // ---------------------------------------------------------------------------
 // Helpers

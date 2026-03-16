@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { MSG, sessionLink, sessionUnlink } from '../packages/wsh/src/messages.gen.mjs';
+import { MSG, sessionLink, sessionUnlink } from '../packages-wsh.js';
 
 describe('wsh cross-session linking', () => {
   it('sessionLink constructs correct message', () => {
@@ -25,7 +25,7 @@ describe('wsh cross-session linking', () => {
   });
 
   it('WshClient has link/unlink methods', async () => {
-    const { WshClient } = await import('../packages/wsh/src/client.mjs');
+    const { WshClient } = await import('../packages-wsh.js');
     const client = new WshClient();
     assert.equal(typeof client.linkSession, 'function');
     assert.equal(typeof client.unlinkSession, 'function');

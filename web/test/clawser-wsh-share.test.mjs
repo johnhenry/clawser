@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { MSG, shareSession, shareRevoke } from '../packages/wsh/src/messages.gen.mjs';
+import { MSG, shareSession, shareRevoke } from '../packages-wsh.js';
 
 describe('wsh session sharing', () => {
   it('shareSession constructs correct message', () => {
@@ -24,7 +24,7 @@ describe('wsh session sharing', () => {
   });
 
   it('WshClient has share methods', async () => {
-    const { WshClient } = await import('../packages/wsh/src/client.mjs');
+    const { WshClient } = await import('../packages-wsh.js');
     const client = new WshClient();
     assert.equal(typeof client.shareSession, 'function');
     assert.equal(typeof client.revokeShare, 'function');

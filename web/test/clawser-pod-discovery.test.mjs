@@ -1,8 +1,8 @@
 // Run with: node --import ./web/test/_setup-globals.mjs --test web/test/clawser-pod-discovery.test.mjs
 import { describe, it, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { Pod } from '../packages/pod/src/pod.mjs'
-import { POD_HELLO, POD_HELLO_ACK, POD_GOODBYE } from '../packages/pod/src/messages.mjs'
+import { Pod } from '../packages-pod.js'
+import { POD_HELLO, POD_HELLO_ACK, POD_GOODBYE } from '../packages-pod.js'
 
 // Simulated BroadcastChannel that connects all instances on the same name
 const channels = new Map()

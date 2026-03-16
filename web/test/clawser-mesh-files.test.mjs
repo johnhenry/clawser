@@ -10,7 +10,7 @@ import {
   TransferState,
   MeshFileTransfer,
 } from '../clawser-mesh-files.js';
-import { MESH_TYPE } from '../packages/mesh-primitives/src/constants.mjs';
+import { MESH_TYPE } from '../packages-mesh-primitives.js';
 
 // ---------------------------------------------------------------------------
 // Constants

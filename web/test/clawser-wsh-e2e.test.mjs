@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { MSG, keyExchange, encryptedFrame } from '../packages/wsh/src/messages.gen.mjs';
+import { MSG, keyExchange, encryptedFrame } from '../packages-wsh.js';
 
 describe('wsh E2E encryption', () => {
   it('keyExchange constructs correct message', () => {
@@ -23,19 +23,19 @@ describe('wsh E2E encryption', () => {
   });
 
   it('WshClient has initiateE2E method', async () => {
-    const { WshClient } = await import('../packages/wsh/src/client.mjs');
+    const { WshClient } = await import('../packages-wsh.js');
     const client = new WshClient();
     assert.equal(typeof client.initiateE2E, 'function');
   });
 
   it('WshClient has onKeyExchange callback', async () => {
-    const { WshClient } = await import('../packages/wsh/src/client.mjs');
+    const { WshClient } = await import('../packages-wsh.js');
     const client = new WshClient();
     assert.equal(client.onKeyExchange, null);
   });
 
   it('initiateE2E throws when not authenticated', async () => {
-    const { WshClient } = await import('../packages/wsh/src/client.mjs');
+    const { WshClient } = await import('../packages-wsh.js');
     const client = new WshClient();
     await assert.rejects(() => client.initiateE2E('sess-1'), /not authenticated|disconnected/i);
   });

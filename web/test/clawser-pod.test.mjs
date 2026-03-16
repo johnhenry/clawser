@@ -1,8 +1,8 @@
 // Run with: node --import ./web/test/_setup-globals.mjs --test web/test/clawser-pod.test.mjs
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { Pod } from '../packages/pod/src/pod.mjs'
-import { PodIdentity } from '../packages/mesh-primitives/src/identity.mjs'
+import { Pod } from '../packages-pod.js'
+import { PodIdentity } from '../packages-mesh-primitives.js'
 import { ClawserPod } from '../clawser-pod.js'
 import { getVirtualNetwork, resetNetwayToolsForTests } from '../clawser-netway-tools.js'
 

@@ -1,12 +1,12 @@
 // Run with: node --import ./web/test/_setup-globals.mjs --test web/test/clawser-pod-messaging.test.mjs
 import { describe, it, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { Pod } from '../packages/pod/src/pod.mjs'
-import { POD_MESSAGE } from '../packages/pod/src/messages.mjs'
+import { Pod } from '../packages-pod.js'
+import { POD_MESSAGE } from '../packages-pod.js'
 import {
   createHello, createHelloAck, createGoodbye, createMessage,
   createRpcRequest, createRpcResponse,
-} from '../packages/pod/src/messages.mjs'
+} from '../packages-pod.js'
 
 // Simulated BroadcastChannel
 const channels = new Map()

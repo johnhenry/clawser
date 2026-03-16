@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { MSG, policyEval, policyResult, policyUpdate } from '../packages/wsh/src/messages.gen.mjs';
+import { MSG, policyEval, policyResult, policyUpdate } from '../packages-wsh.js';
 
 describe('wsh policy engine', () => {
   it('policyEval constructs correct message', () => {
@@ -30,14 +30,14 @@ describe('wsh policy engine', () => {
   });
 
   it('WshClient has policy methods', async () => {
-    const { WshClient } = await import('../packages/wsh/src/client.mjs');
+    const { WshClient } = await import('../packages-wsh.js');
     const client = new WshClient();
     assert.equal(typeof client.evaluatePolicy, 'function');
     assert.equal(typeof client.updatePolicy, 'function');
   });
 
   it('POLICY_EVAL is relay-forwardable', async () => {
-    const { WshClient } = await import('../packages/wsh/src/client.mjs');
+    const { WshClient } = await import('../packages-wsh.js');
     const client = new WshClient();
     assert.ok(client._isRelayForwardable(MSG.POLICY_EVAL));
   });

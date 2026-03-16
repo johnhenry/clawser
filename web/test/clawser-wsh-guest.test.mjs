@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { MSG, guestInvite, guestJoin, guestRevoke } from '../packages/wsh/src/messages.gen.mjs';
+import { MSG, guestInvite, guestJoin, guestRevoke } from '../packages-wsh.js';
 
 describe('wsh guest sessions', () => {
   it('guestInvite constructs correct message', () => {
@@ -26,7 +26,7 @@ describe('wsh guest sessions', () => {
   });
 
   it('WshClient has guest methods', async () => {
-    const { WshClient } = await import('../packages/wsh/src/client.mjs');
+    const { WshClient } = await import('../packages-wsh.js');
     const client = new WshClient();
     assert.equal(typeof client.inviteGuest, 'function');
     assert.equal(typeof client.joinAsGuest, 'function');
@@ -34,7 +34,7 @@ describe('wsh guest sessions', () => {
   });
 
   it('GUEST_JOIN is relay-forwardable', async () => {
-    const { WshClient } = await import('../packages/wsh/src/client.mjs');
+    const { WshClient } = await import('../packages-wsh.js');
     const client = new WshClient();
     assert.ok(client._isRelayForwardable(MSG.GUEST_JOIN));
     assert.ok(client._isRelayForwardable(MSG.GUEST_REVOKE));

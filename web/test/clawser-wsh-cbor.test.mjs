@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { cborDecode } from '../packages/wsh/src/index.mjs';
+import { cborDecode } from '../packages-wsh.js';
 
 describe('wsh cbor decoder', () => {
   it('decodes indefinite-length maps from Rust encoders', () => {

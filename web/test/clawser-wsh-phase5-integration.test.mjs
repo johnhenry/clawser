@@ -6,7 +6,7 @@ describe('Phase 5 integration — all exports, methods, tools, relay types', () 
   // ── All message constructors exported ──────────────────────────────
 
   it('all Phase 5.7 message constructors are exported', async () => {
-    const mod = await import('../packages/wsh/src/index.mjs');
+    const mod = await import('../packages-wsh.js');
     const expected = [
       // Session extended
       'clipboard', 'recordingExport', 'commandJournal', 'metricsRequest',
@@ -67,7 +67,7 @@ describe('Phase 5 integration — all exports, methods, tools, relay types', () 
   // ── Client methods exist ──────────────────────────────────────────
 
   it('WshClient has all Phase 5.7 methods', async () => {
-    const { WshClient } = await import('../packages/wsh/src/client.mjs');
+    const { WshClient } = await import('../packages-wsh.js');
     const client = new WshClient();
     const methods = [
       // Unit 2: Suspend/Restart
@@ -102,7 +102,7 @@ describe('Phase 5 integration — all exports, methods, tools, relay types', () 
   // ── Client callbacks exist ────────────────────────────────────────
 
   it('WshClient has all Phase 5.7 callbacks', async () => {
-    const { WshClient } = await import('../packages/wsh/src/client.mjs');
+    const { WshClient } = await import('../packages-wsh.js');
     const client = new WshClient();
     // These should be null by default
     assert.equal(client.onRateWarning, null);
@@ -113,8 +113,8 @@ describe('Phase 5 integration — all exports, methods, tools, relay types', () 
   // ── Relay-forwardable types ───────────────────────────────────────
 
   it('all Phase 5.7 relay-forwardable types are registered', async () => {
-    const { WshClient } = await import('../packages/wsh/src/client.mjs');
-    const { MSG } = await import('../packages/wsh/src/messages.gen.mjs');
+    const { WshClient } = await import('../packages-wsh.js');
+    const { MSG } = await import('../packages-wsh.js');
     const client = new WshClient();
 
     // Original types

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { MSG, fileOp, fileResult, fileChunk } from '../packages/wsh/src/messages.gen.mjs';
+import { MSG, fileOp, fileResult, fileChunk } from '../packages-wsh.js';
 
 describe('wsh structured file channel', () => {
   it('fileOp constructs correct message', () => {
@@ -39,7 +39,7 @@ describe('wsh structured file channel', () => {
   });
 
   it('WshClient has file operation methods', async () => {
-    const { WshClient } = await import('../packages/wsh/src/client.mjs');
+    const { WshClient } = await import('../packages-wsh.js');
     const client = new WshClient();
     assert.equal(typeof client.fileOperation, 'function');
     assert.equal(typeof client.fileStat, 'function');
@@ -52,7 +52,7 @@ describe('wsh structured file channel', () => {
   });
 
   it('FILE_OP is relay-forwardable', async () => {
-    const { WshClient } = await import('../packages/wsh/src/client.mjs');
+    const { WshClient } = await import('../packages-wsh.js');
     const client = new WshClient();
     assert.ok(client._isRelayForwardable(MSG.FILE_OP));
   });

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { MSG, rateControl, rateWarning } from '../packages/wsh/src/messages.gen.mjs';
+import { MSG, rateControl, rateWarning } from '../packages-wsh.js';
 
 describe('wsh rate control', () => {
   it('rateControl constructs correct message', () => {
@@ -25,13 +25,13 @@ describe('wsh rate control', () => {
   });
 
   it('WshClient has setRateControl method', async () => {
-    const { WshClient } = await import('../packages/wsh/src/client.mjs');
+    const { WshClient } = await import('../packages-wsh.js');
     const client = new WshClient();
     assert.equal(typeof client.setRateControl, 'function');
   });
 
   it('WshClient has onRateWarning callback', async () => {
-    const { WshClient } = await import('../packages/wsh/src/client.mjs');
+    const { WshClient } = await import('../packages-wsh.js');
     const client = new WshClient();
     assert.equal(client.onRateWarning, null);
     client.onRateWarning = () => {};

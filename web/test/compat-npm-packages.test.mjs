@@ -15,11 +15,11 @@ import assert from 'node:assert/strict'
 
 // ── Local imports (current) ─────────────────────────────────────────
 
-import * as localPrimitives from '../packages/mesh-primitives/src/index.mjs'
-import * as localNetway from '../packages/netway/src/index.mjs'
-import * as localPod from '../packages/pod/src/index.mjs'
-import * as localWsh from '../packages/wsh/src/index.mjs'
-import * as localAndbox from '../packages/andbox/src/index.mjs'
+import * as localPrimitives from '../packages-mesh-primitives.js'
+import * as localNetway from '../packages-netway.js'
+import * as localPod from '../packages-pod.js'
+import * as localWsh from '../packages-wsh.js'
+import * as localAndbox from '../packages-andbox.js'
 
 // ── npm imports (published) ─────────────────────────────────────────
 

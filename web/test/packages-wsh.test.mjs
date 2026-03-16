@@ -31,7 +31,7 @@ import {
   SessionRecorder, SessionPlayer,
   // MCP bridge
   WshMcpBridge,
-} from '../packages/wsh/src/index.mjs'
+} from '../packages-wsh.js'
 
 // ── 1. Exports exist ───────────────────────────────────────────────────
 

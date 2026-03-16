@@ -1,13 +1,13 @@
 // Run with: node --import ./web/test/_setup-globals.mjs --test web/test/clawser-pod-runtime.test.mjs
 import { describe, it, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { PodIdentity } from '../packages/mesh-primitives/src/identity.mjs'
+import { PodIdentity } from '../packages-mesh-primitives.js'
 import {
   installPodRuntime,
   createRuntime,
   createClient,
   createServer,
-} from '../packages/pod/src/runtime.mjs'
+} from '../packages-pod.js'
 
 // Stub BroadcastChannel for Node
 class StubBroadcastChannel {

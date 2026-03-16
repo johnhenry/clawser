@@ -56,7 +56,7 @@ const EXPECTED_CONSTRUCTORS = [
 
 describe('wsh exports', () => {
   it('all message constructors are exported from index.mjs', async () => {
-    const mod = await import('../packages/wsh/src/index.mjs');
+    const mod = await import('../packages-wsh.js');
     for (const name of EXPECTED_CONSTRUCTORS) {
       assert.equal(typeof mod[name], 'function', `Missing export: ${name}`);
     }
@@ -70,7 +70,7 @@ describe('wsh exports', () => {
   });
 
   it('MSG constant has all expected opcodes', async () => {
-    const { MSG } = await import('../packages/wsh/src/index.mjs');
+    const { MSG } = await import('../packages-wsh.js');
     const expected = [
       'HELLO', 'SERVER_HELLO', 'CHALLENGE', 'AUTH_METHODS', 'AUTH', 'AUTH_OK', 'AUTH_FAIL',
       'OPEN', 'OPEN_OK', 'OPEN_FAIL', 'RESIZE', 'SIGNAL', 'EXIT', 'CLOSE',
@@ -102,7 +102,7 @@ describe('wsh exports', () => {
   });
 
   it('each constructor returns an object with the correct type field', async () => {
-    const mod = await import('../packages/wsh/src/index.mjs');
+    const mod = await import('../packages-wsh.js');
     const { MSG } = mod;
 
     // Spot-check a selection of constructors

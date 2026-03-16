@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { MSG, compressBegin, compressAck } from '../packages/wsh/src/messages.gen.mjs';
+import { MSG, compressBegin, compressAck } from '../packages-wsh.js';
 
 describe('wsh compression negotiation', () => {
   it('compressBegin constructs correct message', () => {
@@ -28,7 +28,7 @@ describe('wsh compression negotiation', () => {
   });
 
   it('WshClient has negotiateCompression method', async () => {
-    const { WshClient } = await import('../packages/wsh/src/client.mjs');
+    const { WshClient } = await import('../packages-wsh.js');
     const client = new WshClient();
     assert.equal(typeof client.negotiateCompression, 'function');
   });

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { detectPodKind } from '../packages/pod/src/detect-kind.mjs'
+import { detectPodKind } from '../packages-pod.js'
 
 describe('detectPodKind', () => {
   it('returns "window" for a standard top-level window', () => {

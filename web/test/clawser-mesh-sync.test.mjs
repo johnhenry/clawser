@@ -5,7 +5,7 @@ import { SyncDocument, MeshSyncEngine, InMemorySyncStorage, CRDT_TYPES } from '.
 
 import {
   VectorClock, LWWRegister, GCounter, PNCounter, ORSet, RGA, LWWMap,
-} from '../packages/mesh-primitives/src/index.mjs';
+} from '../packages-mesh-primitives.js';
 
 // ── 1. CRDT_TYPES ────────────────────────────────────────────────────────────
 

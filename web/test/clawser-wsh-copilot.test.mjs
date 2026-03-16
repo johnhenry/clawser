@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { MSG, copilotAttach, copilotSuggest, copilotDetach } from '../packages/wsh/src/messages.gen.mjs';
+import { MSG, copilotAttach, copilotSuggest, copilotDetach } from '../packages-wsh.js';
 
 describe('wsh copilot mode', () => {
   it('copilotAttach constructs correct message', () => {
@@ -27,7 +27,7 @@ describe('wsh copilot mode', () => {
   });
 
   it('WshClient has copilot methods', async () => {
-    const { WshClient } = await import('../packages/wsh/src/client.mjs');
+    const { WshClient } = await import('../packages-wsh.js');
     const client = new WshClient();
     assert.equal(typeof client.copilotAttach, 'function');
     assert.equal(typeof client.copilotSuggest, 'function');
@@ -35,14 +35,14 @@ describe('wsh copilot mode', () => {
   });
 
   it('COPILOT_ATTACH and COPILOT_DETACH are relay-forwardable', async () => {
-    const { WshClient } = await import('../packages/wsh/src/client.mjs');
+    const { WshClient } = await import('../packages-wsh.js');
     const client = new WshClient();
     assert.ok(client._isRelayForwardable(MSG.COPILOT_ATTACH));
     assert.ok(client._isRelayForwardable(MSG.COPILOT_DETACH));
   });
 
   it('WshClient has onCopilotSuggest callback', async () => {
-    const { WshClient } = await import('../packages/wsh/src/client.mjs');
+    const { WshClient } = await import('../packages-wsh.js');
     const client = new WshClient();
     assert.equal(client.onCopilotSuggest, null);
   });

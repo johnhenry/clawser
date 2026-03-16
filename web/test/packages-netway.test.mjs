@@ -21,7 +21,7 @@ import {
   ServiceBackend, ChaosBackendWrapper, FsServiceBackend,
   // Network
   VirtualNetwork, ScopedNetwork,
-} from '../packages/netway/src/index.mjs'
+} from '../packages-netway.js'
 
 // ── 1. Exports exist ───────────────────────────────────────────────────
 
