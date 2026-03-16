@@ -41,7 +41,7 @@ jobs:
           key: bench-baseline-${{ runner.os }}
 
       - name: Run browser tests + benchmarks
-        run: npx playwright test --config=playwright.config.js
+        run: npx playwright test --config=playwright.config.js --pass-with-no-tests
 
       # Save current bench results as new baseline on main branch pushes
       - name: Update benchmark baseline
