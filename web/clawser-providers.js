@@ -762,10 +762,22 @@ export class ChromeAIProvider extends LLMProvider {
   #preparePrompt(request) {
     const messages = request.messages || [];
     const systemMsg = messages.find(m => m.role === 'system');
-    const systemContent = systemMsg?.content || 'You are a helpful assistant.';
-    const baseSystem = systemContent.split('\n\nYou have browser tools')[0];
-    if (this.#sessions.size > 0 && this.#lastSystemPrompt !== baseSystem) this.resetSession();
-    this.#lastSystemPrompt = baseSystem;
+    const fullSystem = systemMsg?.content || 'You are a helpful assistant.';
+    // Chrome AI (Gemini Nano) has a limited context window (~4K-6K tokens).
+    // The full system prompt includes tool specs, memories, goals, and skills
+    // which can easily exceed this. Strip tool/memory sections and cap length.
+    let systemContent = fullSystem;
+    const toolIdx = systemContent.indexOf('\n\nYou have browser tools');
+    if (toolIdx !== -1) {
+      systemContent = systemContent.slice(0, toolIdx);
+    }
+    // Hard cap to leave room for conversation
+    const MAX_SYSTEM_CHARS = 4000;
+    if (systemContent.length > MAX_SYSTEM_CHARS) {
+      systemContent = systemContent.slice(0, MAX_SYSTEM_CHARS) + '\n...(truncated for local model)';
+    }
+    if (this.#sessions.size > 0 && this.#lastSystemPrompt !== systemContent) this.resetSession();
+    this.#lastSystemPrompt = systemContent;
     const conversationMsgs = messages.filter(m => m.role !== 'system');
     const lastUser = [...conversationMsgs].reverse().find(m => m.role === 'user');
     return { systemContent, conversationMsgs, lastUser };
