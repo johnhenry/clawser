@@ -21,3 +21,12 @@ export { matchResourcePattern, Permission, AccessGrant, ACLEngine, generateGrant
 
 // CRDTs
 export { VectorClock, LWWRegister, GCounter, PNCounter, ORSet, RGA, LWWMap } from "./crdt.mjs";
+
+// Test transport
+export {
+  DeterministicRNG,
+  LocalChannel,
+  createLocalChannelPair,
+  TestMesh,
+  TESTMESH_LIMITS,
+} from "./test-transport.mjs";

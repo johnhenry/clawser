@@ -24,11 +24,11 @@ describe('MESH_TYPE', () => {
     assert.equal(typeof MESH_TYPE.PONG, 'number');
   });
 
-  it('values are in reserved range 0xA0-0xBF', () => {
+  it('values are in allocated range 0xA0-0xF5', () => {
     for (const [name, code] of Object.entries(MESH_TYPE)) {
       assert.ok(
-        code >= 0xa0 && code <= 0xbf,
-        `${name} (0x${code.toString(16)}) is outside reserved range`
+        code >= 0xa0 && code <= 0xf5,
+        `${name} (0x${code.toString(16)}) is outside allocated range`
       );
     }
   });

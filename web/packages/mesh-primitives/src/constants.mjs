@@ -191,6 +191,28 @@ export const MESH_TYPE = Object.freeze({
   CONSENSUS_CLOSE: 0xeb,
   /** Broadcast final results of a closed proposal */
   CONSENSUS_RESULT: 0xec,
+
+  // ── PBFT consensus (0xED–0xEF, 0xF4–0xF5) ────────────────────────
+  /** PBFT pre-prepare (leader block proposal) */
+  PBFT_PRE_PREPARE: 0xed,
+  /** PBFT prepare (validator acknowledgement) */
+  PBFT_PREPARE: 0xee,
+  /** PBFT commit (validator commit with signature) */
+  PBFT_COMMIT: 0xef,
+  /** PBFT view change (leader rotation request) */
+  PBFT_VIEW_CHANGE: 0xf4,
+  /** PBFT new view (view change confirmation) */
+  PBFT_NEW_VIEW: 0xf5,
+
+  // ── SWIM membership (0xF0–0xF3) ──────────────────────────────────
+  /** SWIM ping (failure detection) */
+  SWIM_PING: 0xf0,
+  /** SWIM ping-req (indirect probe) */
+  SWIM_PING_REQ: 0xf1,
+  /** SWIM ack (ping response) */
+  SWIM_ACK: 0xf2,
+  /** SWIM membership update (join/leave/suspect/faulty) */
+  SWIM_MEMBERSHIP: 0xf3,
 });
 
 /**
