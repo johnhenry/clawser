@@ -31,4 +31,4 @@ export {
 
   // Network
   VirtualNetwork, ScopedNetwork,
-} from './packages/netway/src/index.mjs';
+} from 'browsermesh-netway';
