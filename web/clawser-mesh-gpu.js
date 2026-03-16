@@ -16,7 +16,7 @@
  *   node --import ./web/test/_setup-globals.mjs --test web/test/clawser-mesh-gpu.test.mjs
  */
 
-import { MESH_TYPE } from './packages/mesh-primitives/src/constants.mjs'
+import { MESH_TYPE } from './packages-mesh-primitives.js'
 
 // ---------------------------------------------------------------------------
 // Wire Constants — imported from canonical registry

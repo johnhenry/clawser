@@ -16,7 +16,7 @@ import {
   derivePodId,
   encodeBase64url,
   decodeBase64url,
-} from './packages/mesh-primitives/src/index.mjs';
+} from './packages-mesh-primitives.js';
 
 // ---------------------------------------------------------------------------
 // Hex <-> Base64url conversion helpers

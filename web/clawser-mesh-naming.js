@@ -12,7 +12,7 @@
  *   node --import ./web/test/_setup-globals.mjs --test web/test/clawser-mesh-naming.test.mjs
  */
 
-import { MESH_TYPE } from './packages/mesh-primitives/src/index.mjs';
+import { MESH_TYPE } from './packages-mesh-primitives.js';
 
 // ---------------------------------------------------------------------------
 // Constants

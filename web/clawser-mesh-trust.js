@@ -18,7 +18,7 @@ import {
   createTrustEdge,
   computeTransitiveTrust,
   TRUST_CATEGORIES,
-} from './packages/mesh-primitives/src/index.mjs';
+} from './packages-mesh-primitives.js';
 
 // Re-export primitives for consumers
 export { TRUST_CATEGORIES, createTrustEdge, computeTransitiveTrust };

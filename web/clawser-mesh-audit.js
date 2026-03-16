@@ -11,8 +11,8 @@
  *   node --import ./web/test/_setup-globals.mjs --test web/test/clawser-mesh-audit.test.mjs
  */
 
-import { encodeBase64url, decodeBase64url } from './packages/mesh-primitives/src/index.mjs';
-import { MESH_TYPE } from './packages/mesh-primitives/src/constants.mjs';
+import { encodeBase64url, decodeBase64url } from './packages-mesh-primitives.js';
+import { MESH_TYPE } from './packages-mesh-primitives.js';
 
 // Re-export for consumers
 export { encodeBase64url, decodeBase64url };

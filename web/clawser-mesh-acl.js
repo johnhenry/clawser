@@ -18,7 +18,7 @@ import {
   Permission,
   generateGrantId,
   matchScope,
-} from './packages/mesh-primitives/src/index.mjs';
+} from './packages-mesh-primitives.js';
 
 // ---------------------------------------------------------------------------
 // ScopeTemplate

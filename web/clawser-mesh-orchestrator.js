@@ -16,7 +16,7 @@ const BrowserTool = globalThis.BrowserTool || class {
   constructor() {}
 }
 
-import { MESH_TYPE } from './packages/mesh-primitives/src/constants.mjs'
+import { MESH_TYPE } from './packages-mesh-primitives.js'
 import { ComputeRequest, ResourceDescriptor, ResourceScorer } from './clawser-mesh-resources.js'
 
 // ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@
  *   node --import ./web/test/_setup-globals.mjs --test web/test/clawser-mesh-keyring.test.mjs
  */
 
-import { encodeBase64url, decodeBase64url } from './packages/mesh-primitives/src/index.mjs';
+import { encodeBase64url, decodeBase64url } from './packages-mesh-primitives.js';
 
 // Re-export for consumers
 export { encodeBase64url, decodeBase64url };

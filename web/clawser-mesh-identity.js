@@ -17,7 +17,7 @@ import {
   derivePodId,
   encodeBase64url,
   decodeBase64url,
-} from './packages/mesh-primitives/src/index.mjs';
+} from './packages-mesh-primitives.js';
 
 // Re-export primitives used by consumers
 export { PodIdentity, derivePodId, encodeBase64url, decodeBase64url };

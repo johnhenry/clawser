@@ -11,7 +11,7 @@
 
 import {
   VectorClock, LWWRegister, GCounter, PNCounter, ORSet, RGA, LWWMap,
-} from './packages/mesh-primitives/src/index.mjs';
+} from './packages-mesh-primitives.js';
 
 /** @type {readonly string[]} Supported CRDT type identifiers. */
 const CRDT_TYPES = Object.freeze([

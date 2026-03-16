@@ -13,7 +13,7 @@
 // Wire Constants — imported from canonical registry
 // ---------------------------------------------------------------------------
 
-import { MESH_TYPE } from './packages/mesh-primitives/src/constants.mjs'
+import { MESH_TYPE } from './packages-mesh-primitives.js'
 
 export const SWARM_JOIN = MESH_TYPE.SWARM_JOIN
 export const SWARM_LEAVE = MESH_TYPE.SWARM_LEAVE

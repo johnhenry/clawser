@@ -14,7 +14,7 @@
 import {
   ORSet,
   LWWMap,
-} from './packages/mesh-primitives/src/index.mjs';
+} from './packages-mesh-primitives.js';
 
 // ---------------------------------------------------------------------------
 // Constants

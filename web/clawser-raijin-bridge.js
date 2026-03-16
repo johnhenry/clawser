@@ -15,7 +15,7 @@
  *   node --import ./web/test/_setup-globals.mjs --test web/test/clawser-raijin-bridge.test.mjs
  */
 
-import { MESH_TYPE } from './packages/mesh-primitives/src/constants.mjs'
+import { MESH_TYPE } from './packages-mesh-primitives.js'
 
 // ---------------------------------------------------------------------------
 // PBFT message type → wire code mapping

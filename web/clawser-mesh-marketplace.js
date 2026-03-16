@@ -11,7 +11,7 @@
  *   node --import ./web/test/_setup-globals.mjs --test web/test/clawser-mesh-marketplace.test.mjs
  */
 
-import { MESH_TYPE } from './packages/mesh-primitives/src/constants.mjs';
+import { MESH_TYPE } from './packages-mesh-primitives.js';
 
 // ---------------------------------------------------------------------------
 // Wire constants (re-exported from canonical registry)

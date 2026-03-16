@@ -8,7 +8,7 @@
  * @module clawser-mesh-files
  */
 
-import { MESH_TYPE, MESH_ERROR } from './packages/mesh-primitives/src/constants.mjs';
+import { MESH_TYPE, MESH_ERROR } from './packages-mesh-primitives.js';
 
 // ── Constants ────────────────────────────────────────────────────────
 
