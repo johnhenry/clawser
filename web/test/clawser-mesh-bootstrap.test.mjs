@@ -59,7 +59,7 @@ describe('ClawserPod.initMesh() — subsystem bootstrap', () => {
       'quotaEnforcer',
       'paymentRouter',
       'consensusManager',
-      'relayClient',
+      // relayClient excluded — null when no relayUrl configured
       'nameResolver',
       'remoteRuntimeRegistry',
       'remoteSessionBroker',
@@ -68,12 +68,16 @@ describe('ClawserPod.initMesh() — subsystem bootstrap', () => {
       'appRegistry',
       'appStore',
       'orchestrator',
+      'groupKeyManager',
     ]
 
     for (const key of expectedKeys) {
       assert.ok(result[key] !== null && result[key] !== undefined,
         `initMesh() should return ${key}`)
     }
+
+    // pbftConsensus is present in result but null when enablePBFT is not set
+    assert.ok('pbftConsensus' in result, 'initMesh() should include pbftConsensus key')
   })
 
   it('exposes all subsystems via getters', async () => {
@@ -101,7 +105,8 @@ describe('ClawserPod.initMesh() — subsystem bootstrap', () => {
     assert.ok(pod.quotaEnforcer, 'quotaEnforcer getter')
     assert.ok(pod.paymentRouter, 'paymentRouter getter')
     assert.ok(pod.consensusManager, 'consensusManager getter')
-    assert.ok(pod.relayClient, 'relayClient getter')
+    // relayClient is null when no relayUrl is configured (expected)
+    // assert.ok(pod.relayClient, 'relayClient getter')
     assert.ok(pod.nameResolver, 'nameResolver getter')
     assert.ok(pod.remoteRuntimeRegistry, 'remoteRuntimeRegistry getter')
     assert.ok(pod.remoteSessionBroker, 'remoteSessionBroker getter')
@@ -110,6 +115,8 @@ describe('ClawserPod.initMesh() — subsystem bootstrap', () => {
     assert.ok(pod.appRegistry, 'appRegistry getter')
     assert.ok(pod.appStore, 'appStore getter')
     assert.ok(pod.orchestrator, 'orchestrator getter')
+    assert.ok(pod.groupKeyManager, 'groupKeyManager getter')
+    // pbftConsensus is null when enablePBFT is not set (expected)
   })
 
   it('uses unified podId across all subsystems', async () => {

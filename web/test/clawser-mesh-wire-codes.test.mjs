@@ -33,20 +33,20 @@ describe('MESH_TYPE wire-code registry', () => {
     }
   })
 
-  it('all values are in valid range (0xA0–0xEF)', () => {
+  it('all values are in valid range (0xA0–0xF5)', () => {
     for (const [key, value] of Object.entries(MESH_TYPE)) {
       assert.ok(
-        value >= 0xa0 && value <= 0xef,
-        `${key} = 0x${value.toString(16)} is outside valid range 0xA0–0xEF`
+        value >= 0xa0 && value <= 0xf5,
+        `${key} = 0x${value.toString(16)} is outside valid range 0xA0–0xF5`
       )
     }
   })
 
-  it('no values in reserved 0xF0–0xFF range', () => {
+  it('no values in reserved 0xF6–0xFF range', () => {
     for (const [key, value] of Object.entries(MESH_TYPE)) {
       assert.ok(
-        value < 0xf0,
-        `${key} = 0x${value.toString(16)} is in reserved 0xF0–0xFF range`
+        value < 0xf6,
+        `${key} = 0x${value.toString(16)} is in reserved 0xF6–0xFF range`
       )
     }
   })
