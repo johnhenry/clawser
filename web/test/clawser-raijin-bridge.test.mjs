@@ -235,6 +235,53 @@ describe('PBFT payload round-trip', () => {
     assert.deepEqual(decoded.digest, msg.digest)
   })
 
+  it('round-trips pre-prepare with transactions containing bigint/Uint8Array fields', () => {
+    const tx = {
+      from: makeKey(1),
+      nonce: 42n,
+      to: makeKey(2),
+      value: 1000000n,
+      data: new Uint8Array([0x01, 0x02, 0x03]),
+      signature: new Uint8Array(64).fill(0xdd),
+      chainId: 1n,
+    }
+    const msg = {
+      type: 'pre-prepare',
+      view: 0n,
+      sequence: 1n,
+      block: {
+        header: {
+          number: 5n,
+          parentHash: new Uint8Array(32).fill(0x11),
+          stateRoot: new Uint8Array(32).fill(0x22),
+          txRoot: new Uint8Array(32).fill(0x33),
+          receiptRoot: new Uint8Array(32).fill(0x44),
+          timestamp: 1700000000000,
+          proposer: makeKey(0),
+        },
+        transactions: [tx],
+        signatures: [new Uint8Array(64).fill(0xee)],
+      },
+      digest: new Uint8Array(32).fill(0xff),
+    }
+
+    const payload = encodePBFTPayload(msg)
+    const decoded = decodePBFTPayload(0xed, payload)
+
+    assert.equal(decoded.block.header.number, 5n)
+    assert.equal(decoded.block.transactions.length, 1)
+    const decodedTx = decoded.block.transactions[0]
+    assert.deepEqual(decodedTx.from, makeKey(1))
+    assert.equal(decodedTx.nonce, 42n)
+    assert.deepEqual(decodedTx.to, makeKey(2))
+    assert.equal(decodedTx.value, 1000000n)
+    assert.deepEqual(decodedTx.data, new Uint8Array([0x01, 0x02, 0x03]))
+    assert.deepEqual(decodedTx.signature, new Uint8Array(64).fill(0xdd))
+    assert.equal(decodedTx.chainId, 1n)
+    assert.equal(decoded.block.signatures.length, 1)
+    assert.deepEqual(decoded.block.signatures[0], new Uint8Array(64).fill(0xee))
+  })
+
   it('round-trips prepare message', () => {
     const msg = {
       type: 'prepare',

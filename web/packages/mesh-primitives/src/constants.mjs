@@ -3,7 +3,10 @@
  * Ranges:
  *   0xA0–0xBF  Core mesh protocol (identity, ACL, chat, streams, naming, files, keepalive)
  *   0xC0–0xEC  Extended subsystems (swarm, audit, resources, quotas, payments, GPU, orchestration, marketplace, apps, consensus)
- *   0xF0–0xFF  Reserved (internal / future)
+ *   0xED–0xEF  PBFT consensus (pre-prepare, prepare, commit)
+ *   0xF0–0xF3  SWIM membership (ping, ping-req, ack, membership)
+ *   0xF4–0xF5  PBFT consensus continued (view-change, new-view)
+ *   0xF6–0xFF  Reserved (internal / future)
  *
  * @enum {number}
  */
