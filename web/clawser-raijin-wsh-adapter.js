@@ -17,6 +17,7 @@ import {
   wireCodeToPbftType,
   _encodeValue,
   _decodeValue,
+  _hexFromBytes,
 } from './clawser-raijin-bridge.js'
 
 // ---------------------------------------------------------------------------
@@ -87,9 +88,7 @@ export class SessionKeyMapping {
   }
 }
 
-function hexFromBytes(bytes) {
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
-}
+const hexFromBytes = _hexFromBytes
 
 // ---------------------------------------------------------------------------
 // WshPBFTTransport — raijin NetworkTransport over wsh sessions

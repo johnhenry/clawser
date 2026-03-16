@@ -360,3 +360,4 @@ export function wireCodeToPbftType(code) {
 export { PBFT_TYPE_TO_CODE, PBFT_CODE_TO_TYPE }
 export { encodeValue as _encodeValue, decodeValue as _decodeValue }
 export { uint8ToBase64url as _uint8ToBase64url, base64urlToUint8 as _base64urlToUint8 }
+export { hexFromBytes as _hexFromBytes }
