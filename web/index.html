@@ -73,6 +73,16 @@
         <div id="homeWsList"></div>
       </section>
 
+      <!-- Browser Control Extension -->
+      <section class="home-section" id="homeExtensionBanner" style="display:none">
+        <div class="extension-promo">
+          <h2>Browser Control</h2>
+          <p>Install the extension to give your agent real browser superpowers &mdash; tabs, screenshots, DOM, input automation.</p>
+          <a href="https://chromewebstore.google.com/detail/clawser-browser-control/dljchbfodafekojicopaboiegophjcbc"
+             target="_blank" rel="noopener" class="btn-sm extension-install-btn">Install Extension</a>
+        </div>
+      </section>
+
       <!-- Global Accounts -->
       <section class="home-section">
         <h2>Accounts</h2>
@@ -538,6 +548,22 @@
             <div class="state-card"><div class="val" id="stMemory">-</div><div class="lbl">Memory</div></div>
             <div class="state-card"><div class="val" id="stGoals">-</div><div class="lbl">Goals</div></div>
             <div class="state-card"><div class="val" id="stJobs">-</div><div class="lbl">Jobs</div></div>
+          </div>
+        </div>
+
+        <!-- Browser Control Extension -->
+        <div class="config-group config-toggle" id="extensionToggle" aria-expanded="false" aria-controls="extensionSection">
+          <label class="config-toggle">Browser Control Extension <span id="extensionArrow" class="config-arrow">&#x25B6;</span></label>
+        </div>
+        <div id="extensionSection" class="config-section-hidden">
+          <div class="config-group">
+            <span id="extensionStatus" class="extension-status">Checking...</span>
+          </div>
+          <div class="config-group">
+            <a href="https://chromewebstore.google.com/detail/clawser-browser-control/dljchbfodafekojicopaboiegophjcbc"
+               target="_blank" rel="noopener" class="btn-sm">Chrome Web Store</a>
+            <a href="https://github.com/johnhenry/clawser-browser-control"
+               target="_blank" rel="noopener" class="btn-sm btn-surface2">Source Code</a>
           </div>
         </div>
 

@@ -181,10 +181,13 @@ export function initExtensionBadge() {
   client.onStatusChange = (connected) => {
     console.log('[clawser-ext] status change:', connected ? 'connected' : 'disconnected');
     updateExtensionBadge(connected);
+    updateExtensionUI();
   };
   // Set initial state
   console.log('[clawser-ext] badge init, connected:', client.connected);
   updateExtensionBadge(client.connected);
+  updateExtensionUI();
+  initExtensionSettingsPanel();
 
   // Expose diagnostic on window for debugging
   if (typeof window !== 'undefined') {
@@ -193,6 +196,74 @@ export function initExtensionBadge() {
       version: client.version,
       capabilities: client.capabilities,
       badge: document.getElementById('extensionBadge')?.className || 'not found',
+    });
+  }
+}
+
+/**
+ * Update all extension UI elements based on connection status.
+ * Covers: home banner (placement 1), settings panel (placement 2),
+ * and the header badge.
+ */
+export function updateExtensionUI() {
+  const client = getExtensionClient();
+  const connected = client.connected;
+
+  // 1. Home banner — show only when extension is NOT installed
+  const banner = typeof document !== 'undefined' && document.getElementById('homeExtensionBanner');
+  if (banner) {
+    banner.style.display = connected ? 'none' : '';
+  }
+
+  // 2. Settings panel status
+  const status = typeof document !== 'undefined' && document.getElementById('extensionStatus');
+  if (status) {
+    if (connected) {
+      status.textContent = `Connected (v${client.version || '?'})`;
+      status.className = 'extension-status connected';
+    } else {
+      status.textContent = 'Not detected — install the extension for browser control';
+      status.className = 'extension-status disconnected';
+    }
+  }
+}
+
+/**
+ * Show an inline prompt when a browser tool is used without the extension.
+ * Returns true if the extension is available, false if the prompt was shown.
+ *
+ * @param {function} addMsg - Chat message function `(role, text) => void`
+ * @returns {boolean}
+ */
+export function checkExtensionOrPrompt(addMsg) {
+  const client = getExtensionClient();
+  if (client.connected) return true;
+  if (typeof addMsg === 'function') {
+    addMsg('system',
+      'Browser control requires the Clawser extension. ' +
+      '<a href="https://chromewebstore.google.com/detail/clawser-browser-control/dljchbfodafekojicopaboiegophjcbc" ' +
+      'target="_blank" rel="noopener">Install from Chrome Web Store</a>'
+    );
+  }
+  return false;
+}
+
+/**
+ * Wire the extension settings panel toggle.
+ * Call once at workspace init.
+ */
+export function initExtensionSettingsPanel() {
+  if (typeof document === 'undefined') return;
+  const toggle = document.getElementById('extensionToggle');
+  const section = document.getElementById('extensionSection');
+  const arrow = document.getElementById('extensionArrow');
+  if (toggle && section) {
+    toggle.addEventListener('click', () => {
+      const expanded = toggle.getAttribute('aria-expanded') === 'true';
+      toggle.setAttribute('aria-expanded', String(!expanded));
+      section.className = expanded ? 'config-section-hidden' : 'config-section';
+      if (arrow) arrow.textContent = expanded ? '\u25B6' : '\u25BC';
+      if (!expanded) updateExtensionUI();
     });
   }
 }
