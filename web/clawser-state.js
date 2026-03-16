@@ -22,6 +22,11 @@ export const DEFAULTS = Object.freeze({
   cacheMaxEntries: 500,
   cacheTtlMs: 1_800_000,     // 30 minutes
   maxFileWriteSize: 10_485_760, // 10 MB
+  // Mesh server URLs — override via localStorage keys:
+  //   clawser_signaling_url, clawser_relay_url
+  // Set to null to disable (mesh will use BroadcastChannel only).
+  signalingUrl: 'wss://browsermesh-signaling.fly.dev',
+  relayUrl: 'wss://browsermesh-relay.fly.dev',
 });
 
 // ── Debug logging (Gap 7.5) ─────────────────────────────────────

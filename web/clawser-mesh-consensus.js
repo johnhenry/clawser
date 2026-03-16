@@ -457,6 +457,9 @@ export class ConsensusManager {
   /** @type {number} */
   #maxProposals;
 
+  /** @type {function|null} */
+  #broadcastFn = null;
+
   /**
    * @param {object} [opts]
    * @param {number} [opts.maxProposals=1000] - Maximum active proposals
@@ -609,5 +612,103 @@ export class ConsensusManager {
    */
   get size() {
     return this.#tallies.size;
+  }
+
+  /**
+   * Wire the ConsensusManager to a mesh transport layer.
+   *
+   * Outbound: proposals, votes, close, and result messages are sent via
+   * `broadcastFn(type, payload)`.
+   *
+   * Inbound: messages are received via `subscribeFn(type, handler)` where
+   * handler receives `(payload, fromPodId)`.
+   *
+   * @param {function} broadcastFn - `(wireType: number, payload: object) => void`
+   * @param {function} subscribeFn - `(wireType: number, handler: (payload, fromPodId) => void) => void`
+   */
+  wireTransport(broadcastFn, subscribeFn) {
+    if (typeof broadcastFn !== 'function' || typeof subscribeFn !== 'function') {
+      throw new Error('broadcastFn and subscribeFn must be functions');
+    }
+
+    this.#broadcastFn = broadcastFn;
+
+    // Inbound: receive proposals
+    subscribeFn(CONSENSUS_PROPOSE, (payload, fromPodId) => {
+      try {
+        const proposal = Proposal.fromJSON(payload);
+        const tally = new Tally(proposal);
+        this.#tallies.set(proposal.proposalId, tally);
+      } catch { /* ignore malformed proposals */ }
+    });
+
+    // Inbound: receive votes
+    subscribeFn(CONSENSUS_VOTE, (payload, fromPodId) => {
+      try {
+        const { proposalId, choice, weight } = payload;
+        this.vote(proposalId, fromPodId, choice, weight ?? 1);
+      } catch { /* ignore invalid votes */ }
+    });
+
+    // Inbound: receive close requests
+    subscribeFn(CONSENSUS_CLOSE, (payload, fromPodId) => {
+      try {
+        this.closeProposal(payload.proposalId);
+      } catch { /* ignore invalid close */ }
+    });
+
+    // Inbound: receive results (informational, for sync)
+    subscribeFn(CONSENSUS_RESULT, (payload, fromPodId) => {
+      // Results are informational — remote peers can use them to update UI
+      // No action needed on the ConsensusManager side
+    });
+  }
+
+  /**
+   * Broadcast a proposal over the transport.
+   *
+   * @param {Proposal} proposal
+   */
+  broadcastProposal(proposal) {
+    if (this.#broadcastFn) {
+      this.#broadcastFn(CONSENSUS_PROPOSE, proposal.toJSON());
+    }
+  }
+
+  /**
+   * Broadcast a vote over the transport.
+   *
+   * @param {string} proposalId
+   * @param {string} voterPodId
+   * @param {string} choice
+   * @param {number} [weight=1]
+   */
+  broadcastVote(proposalId, voterPodId, choice, weight = 1) {
+    if (this.#broadcastFn) {
+      this.#broadcastFn(CONSENSUS_VOTE, { proposalId, voterPodId, choice, weight });
+    }
+  }
+
+  /**
+   * Broadcast a close request over the transport.
+   *
+   * @param {string} proposalId
+   */
+  broadcastClose(proposalId) {
+    if (this.#broadcastFn) {
+      this.#broadcastFn(CONSENSUS_CLOSE, { proposalId });
+    }
+  }
+
+  /**
+   * Broadcast a result over the transport.
+   *
+   * @param {string} proposalId
+   * @param {object} result
+   */
+  broadcastResult(proposalId, result) {
+    if (this.#broadcastFn) {
+      this.#broadcastFn(CONSENSUS_RESULT, { proposalId, ...result });
+    }
   }
 }

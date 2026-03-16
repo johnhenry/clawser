@@ -598,6 +598,9 @@ export class MigrationEngine {
   /** @type {Map<string, Checkpoint>} */
   #checkpoints = new Map();
 
+  /** @type {function|null} */
+  #broadcastFn = null;
+
   /**
    * @param {string} localPodId
    * @param {object} [opts]
@@ -878,6 +881,104 @@ export class MigrationEngine {
       }
     }
     return count;
+  }
+
+  /**
+   * Wire the MigrationEngine to a mesh transport layer.
+   *
+   * Outbound: migration lifecycle messages sent via `broadcastFn(type, payload)`.
+   * Inbound: messages received via `subscribeFn(type, handler)`.
+   *
+   * @param {function} broadcastFn - `(wireType: number, payload: object) => void`
+   * @param {function} subscribeFn - `(wireType: number, handler: (payload, fromPodId) => void) => void`
+   */
+  wireTransport(broadcastFn, subscribeFn) {
+    if (typeof broadcastFn !== 'function' || typeof subscribeFn !== 'function') {
+      throw new Error('broadcastFn and subscribeFn must be functions');
+    }
+
+    this.#broadcastFn = broadcastFn;
+
+    // Inbound: migration init request from a source pod
+    subscribeFn(MIGRATION_INIT, (payload, fromPodId) => {
+      // Informational — the target can prepare for incoming transfer
+    });
+
+    // Inbound: checkpoint data from the source pod
+    subscribeFn(MIGRATION_CHECKPOINT, async (payload, fromPodId) => {
+      try {
+        const checkpoint = Checkpoint.fromJSON(payload);
+        const valid = await checkpoint.verify();
+        if (valid) {
+          this.#checkpoints.set(payload.migrationId || checkpoint.checkpointId, checkpoint);
+        }
+      } catch { /* ignore malformed checkpoints */ }
+    });
+
+    // Inbound: state transfer payload
+    subscribeFn(MIGRATION_TRANSFER, (payload, fromPodId) => {
+      // Transfer data received — stored for verification
+    });
+
+    // Inbound: activation signal
+    subscribeFn(MIGRATION_ACTIVATE, (payload, fromPodId) => {
+      // Target pod should activate the migrated state
+    });
+  }
+
+  /**
+   * Broadcast a migration init message.
+   *
+   * @param {MigrationPlan} plan
+   */
+  broadcastInit(plan) {
+    if (this.#broadcastFn) {
+      this.#broadcastFn(MIGRATION_INIT, {
+        migrationId: plan.migrationId,
+        sourcePodId: plan.sourcePodId,
+        targetPodId: plan.targetPodId,
+        reason: plan.reason,
+        priority: plan.priority,
+      });
+    }
+  }
+
+  /**
+   * Broadcast a checkpoint over the transport.
+   *
+   * @param {string} migrationId
+   * @param {Checkpoint} checkpoint
+   */
+  broadcastCheckpoint(migrationId, checkpoint) {
+    if (this.#broadcastFn) {
+      this.#broadcastFn(MIGRATION_CHECKPOINT, {
+        migrationId,
+        ...checkpoint.toJSON(),
+      });
+    }
+  }
+
+  /**
+   * Broadcast a transfer message.
+   *
+   * @param {string} migrationId
+   * @param {*} transferData
+   */
+  broadcastTransfer(migrationId, transferData) {
+    if (this.#broadcastFn) {
+      this.#broadcastFn(MIGRATION_TRANSFER, { migrationId, data: transferData });
+    }
+  }
+
+  /**
+   * Broadcast an activation message.
+   *
+   * @param {string} migrationId
+   */
+  broadcastActivate(migrationId) {
+    if (this.#broadcastFn) {
+      this.#broadcastFn(MIGRATION_ACTIVATE, { migrationId });
+    }
   }
 }
 

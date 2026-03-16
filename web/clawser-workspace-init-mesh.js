@@ -9,7 +9,7 @@
  *   - VirtualTerminalManager + BrowserVmConsoleRegistry lifecycle
  *   - ChannelGateway creation helper
  */
-import { $, state } from './clawser-state.js';
+import { $, state, DEFAULTS } from './clawser-state.js';
 import { modal } from './clawser-modal.js';
 import { getActiveWorkspaceId } from './clawser-workspaces.js';
 import { isPanelRendered } from './clawser-router.js';
@@ -627,8 +627,14 @@ export async function initMeshSubsystem() {
     }
 
     // Layer mesh networking on top of the pod
-    const relayUrl = localStorage.getItem('clawser_signaling_url')
-      || (typeof location !== 'undefined' && location.protocol === 'https:' ? `wss://${location.hostname}:8787` : undefined)
+    // Resolve mesh server URLs: localStorage override → DEFAULTS → undefined
+    const signalingUrl = localStorage.getItem('clawser_signaling_url')
+      || DEFAULTS.signalingUrl
+      || undefined
+    const relayUrl = localStorage.getItem('clawser_relay_url')
+      || DEFAULTS.relayUrl
+      || signalingUrl  // fall back to signaling URL if relay not separately configured
+      || undefined
     const result = await state.pod.initMesh({ relayUrl });
     state.peerNode = result.peerNode;
     state.swarmCoordinator = result.swarmCoordinator;

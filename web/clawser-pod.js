@@ -19,7 +19,7 @@ import { ResourceRegistry } from './clawser-mesh-resources.js'
 import { Marketplace } from './clawser-mesh-marketplace.js'
 import { QuotaManager, QuotaEnforcer } from './clawser-mesh-quotas.js'
 import { PaymentRouter } from './clawser-mesh-payments.js'
-import { ConsensusManager } from './clawser-mesh-consensus.js'
+import { ConsensusManager, CONSENSUS_PROPOSE, CONSENSUS_VOTE, CONSENSUS_CLOSE, CONSENSUS_RESULT } from './clawser-mesh-consensus.js'
 import { MeshRelayClient } from './clawser-mesh-relay.js'
 import { MeshNameResolver } from './clawser-mesh-naming.js'
 import { AppRegistry, AppStore } from './clawser-mesh-apps.js'
@@ -48,7 +48,7 @@ import { MeshScheduler } from './clawser-mesh-scheduler.js'
 // Track 5: Ops & Resilience
 import { HealthMonitor } from './clawser-peer-health.js'
 import { MeshInspector } from './clawser-mesh-devtools.js'
-import { MigrationEngine } from './clawser-mesh-migration.js'
+import { MigrationEngine, MIGRATION_INIT, MIGRATION_CHECKPOINT, MIGRATION_TRANSFER, MIGRATION_ACTIVATE } from './clawser-mesh-migration.js'
 import { SessionManager } from './clawser-peer-session.js'
 import { TimestampAuthority } from './clawser-peer-timestamp.js'
 import { StealthAgent } from './clawser-mesh-stealth.js'
@@ -59,7 +59,8 @@ import { SyncCoordinator } from './clawser-mesh-delta-sync.js'
 import { AgentMemorySync } from './clawser-peer-memory-sync.js'
 import { EscrowManager } from './clawser-peer-escrow.js'
 import { DhtNode } from './clawser-mesh-dht.js'
-import { CreditLedger } from './clawser-mesh-payments.js'
+import { CreditLedger, PAYMENT_OPEN, PAYMENT_UPDATE, PAYMENT_CLOSE, ESCROW_CREATE } from './clawser-mesh-payments.js'
+import { GroupKeyManager } from './clawser-mesh-group-keys.js'
 import { RemoteRuntimeRegistry } from './clawser-remote-runtime-registry.js'
 import { RemoteSessionBroker } from './clawser-remote-session-broker.js'
 import { RemoteRuntimePolicyAdapter } from './clawser-remote-runtime-policy.js'
@@ -131,6 +132,8 @@ export class ClawserPod extends Pod {
   #escrowManager = null
   #dhtNode = null
   #creditLedger = null
+  #groupKeyManager = null
+  #pbftConsensus = null
 
   get peerNode() { return this.#peerNode }
   get swarmCoordinator() { return this.#swarmCoordinator }
@@ -193,6 +196,8 @@ export class ClawserPod extends Pod {
   get escrowManager() { return this.#escrowManager }
   get dhtNode() { return this.#dhtNode }
   get creditLedger() { return this.#creditLedger }
+  get groupKeyManager() { return this.#groupKeyManager }
+  get pbftConsensus() { return this.#pbftConsensus }
 
   /**
    * Initialize the full mesh subsystem on top of the Pod's identity.
@@ -362,11 +367,92 @@ export class ClawserPod extends Pod {
     // 17. ConsensusManager — voting and consensus protocols
     this.#consensusManager = new ConsensusManager()
 
+    // 17a. Wire ConsensusManager transport (0xA8/0xA9/0xEB/0xEC)
+    {
+      const broadcastFn = (type, payload) => {
+        this.#peerNode?.broadcast?.({ type, payload, from: podId })
+      }
+      const subscribeFn = (type, handler) => {
+        this.#peerNode?.on?.(`mesh:${type}`, (msg) => {
+          handler(msg.payload, msg.from)
+        })
+      }
+      this.#consensusManager.wireTransport(broadcastFn, subscribeFn)
+    }
+
+    // 17b. PBFT consensus (opt-in via opts.enablePBFT)
+    if (opts.enablePBFT) {
+      try {
+        const { PBFTConsensus } = await import('raijin-consensus')
+        const { ValidatorSet } = await import('raijin-consensus')
+
+        const validators = new ValidatorSet()
+        for (const v of (opts.pbftValidators || [])) {
+          validators.add(v)
+        }
+
+        // Transport adapter: maps PBFT messages to mesh wire types
+        const { MESH_TYPE } = await import('./packages-mesh-primitives.js')
+        const pbftTransport = {
+          broadcast: (msg) => {
+            const wireType = {
+              'pre-prepare': MESH_TYPE.PBFT_PRE_PREPARE,
+              'prepare': MESH_TYPE.PBFT_PREPARE,
+              'commit': MESH_TYPE.PBFT_COMMIT,
+              'view-change': MESH_TYPE.PBFT_VIEW_CHANGE,
+              'new-view': MESH_TYPE.PBFT_NEW_VIEW,
+            }[msg.type]
+            if (wireType) {
+              this.#peerNode?.broadcast?.({ type: wireType, payload: msg, from: podId })
+            }
+          },
+          send: (to, msg) => {
+            // Unicast to specific validator
+            this.#peerNode?.send?.(to, msg)
+          },
+          onMessage: (handler) => {
+            for (const t of [
+              MESH_TYPE.PBFT_PRE_PREPARE,
+              MESH_TYPE.PBFT_PREPARE,
+              MESH_TYPE.PBFT_COMMIT,
+              MESH_TYPE.PBFT_VIEW_CHANGE,
+              MESH_TYPE.PBFT_NEW_VIEW,
+            ]) {
+              this.#peerNode?.on?.(`mesh:${t}`, (msg) => {
+                handler(msg.from, msg.payload)
+              })
+            }
+          },
+        }
+
+        // Timer adapter: uses real setTimeout
+        const pbftTimer = {
+          set: (ms, cb) => setTimeout(cb, ms),
+          clear: (handle) => clearTimeout(handle),
+        }
+
+        this.#pbftConsensus = new PBFTConsensus({
+          identity: opts.pbftIdentity || new Uint8Array(32),
+          validators,
+          transport: pbftTransport,
+          timer: pbftTimer,
+          stateMachine: opts.pbftStateMachine || { applyBlock: async () => [] },
+          blockTime: opts.pbftBlockTime || 2000,
+          sign: opts.pbftSign || (async (data) => new Uint8Array(64)),
+        })
+      } catch {
+        // raijin-consensus not available — PBFT disabled
+        if (opts.onLog) opts.onLog('warn', '[mesh] PBFT consensus unavailable — raijin-consensus not installed')
+      }
+    }
+
     // 18. MeshRelayClient — relay transport (does NOT auto-connect)
-    this.#relayClient = new MeshRelayClient({
-      relayUrl: opts.relayUrl || 'wss://relay.browsermesh.local',
-      identity: { fingerprint: podId },
-    })
+    if (opts.relayUrl) {
+      this.#relayClient = new MeshRelayClient({
+        relayUrl: opts.relayUrl,
+        identity: { fingerprint: podId },
+      })
+    }
 
     // 19. MeshNameResolver — mesh name resolution
     this.#nameResolver = new MeshNameResolver()
@@ -434,7 +520,7 @@ export class ClawserPod extends Pod {
         }
       })
     }
-    this.#relayClient.onPeerAnnounce((peer) => {
+    this.#relayClient?.onPeerAnnounce((peer) => {
       const descriptor = this.#remoteRuntimeRegistry?.ingestMeshRelayPeer(peer)
       if (!descriptor) return
       if (peer.username) {
@@ -486,7 +572,20 @@ export class ClawserPod extends Pod {
     // 24a. DHT node — used by stealth, DHT tools, and verification
     this.#dhtNode = new DhtNode({ localId: podId })
 
-    // 24b. Credit ledger — from PaymentRouter's internal ledger
+    // 24b. Wire PaymentRouter transport (0xD0-0xD3)
+    {
+      const broadcastFn = (type, payload) => {
+        this.#peerNode?.broadcast?.({ type, payload, from: podId })
+      }
+      const subscribeFn = (type, handler) => {
+        this.#peerNode?.on?.(`mesh:${type}`, (msg) => {
+          handler(msg.payload, msg.from)
+        })
+      }
+      this.#paymentRouter.wireTransport(broadcastFn, subscribeFn)
+    }
+
+    // 24c. Credit ledger — from PaymentRouter's internal ledger
     this.#creditLedger = this.#paymentRouter.getLedger()
 
     // 24c. Escrow manager — uses credit ledger
@@ -532,7 +631,34 @@ export class ClawserPod extends Pod {
     this.#meshRouter = new MeshRouter({ localPodId: podId })
     this.#migrationEngine = new MigrationEngine(podId)
 
-    // 25a. HealthMonitor — monitors session health
+    // 25-a. Wire MigrationEngine transport (0xA4-0xA7)
+    {
+      const broadcastFn = (type, payload) => {
+        this.#peerNode?.broadcast?.({ type, payload, from: podId })
+      }
+      const subscribeFn = (type, handler) => {
+        this.#peerNode?.on?.(`mesh:${type}`, (msg) => {
+          handler(msg.payload, msg.from)
+        })
+      }
+      this.#migrationEngine.wireTransport(broadcastFn, subscribeFn)
+    }
+
+    // 25-b. GroupKeyManager — symmetric group encryption
+    this.#groupKeyManager = new GroupKeyManager({ localPodId: podId, groupId: `${podId}:default` })
+    {
+      const broadcastFn = (type, payload) => {
+        this.#peerNode?.broadcast?.({ type, payload, from: podId })
+      }
+      const subscribeFn = (type, handler) => {
+        this.#peerNode?.on?.(`mesh:${type}`, (msg) => {
+          handler(msg.payload, msg.from)
+        })
+      }
+      this.#groupKeyManager.wireTransport(broadcastFn, subscribeFn)
+    }
+
+    // 25c. HealthMonitor — monitors session health
     this.#healthMonitor = new HealthMonitor({
       sessions: this.#sessionManager,
       trust: this.#registry,
@@ -690,6 +816,8 @@ export class ClawserPod extends Pod {
       meshFetchRouter: this.#meshFetchRouter,
       timestampAuthority: this.#timestampAuthority,
       syncCoordinator: this.#syncCoordinator,
+      groupKeyManager: this.#groupKeyManager,
+      pbftConsensus: this.#pbftConsensus,
     }
   }
 
@@ -787,6 +915,11 @@ export class ClawserPod extends Pod {
     this.#escrowManager = null
     this.#dhtNode = null
     this.#creditLedger = null
+    this.#groupKeyManager = null
+    if (this.#pbftConsensus) {
+      try { this.#pbftConsensus.stop() } catch { /* non-fatal */ }
+    }
+    this.#pbftConsensus = null
     await super.shutdown(opts)
   }
 }

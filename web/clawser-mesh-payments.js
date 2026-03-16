@@ -677,6 +677,9 @@ export class PaymentRouter {
   /** @type {EscrowManager} */
   #escrow;
 
+  /** @type {function|null} */
+  #broadcastFn = null;
+
   /**
    * @param {string} localPodId
    */
@@ -754,5 +757,106 @@ export class PaymentRouter {
    */
   getEscrow() {
     return this.#escrow;
+  }
+
+  /**
+   * Wire the PaymentRouter to a mesh transport layer.
+   *
+   * Outbound: channel open/update/close and escrow messages sent via
+   * `broadcastFn(type, payload)`.
+   *
+   * Inbound: messages received via `subscribeFn(type, handler)`.
+   *
+   * @param {function} broadcastFn - `(wireType: number, payload: object) => void`
+   * @param {function} subscribeFn - `(wireType: number, handler: (payload, fromPodId) => void) => void`
+   */
+  wireTransport(broadcastFn, subscribeFn) {
+    if (typeof broadcastFn !== 'function' || typeof subscribeFn !== 'function') {
+      throw new Error('broadcastFn and subscribeFn must be functions');
+    }
+
+    this.#broadcastFn = broadcastFn;
+
+    // Inbound: channel open request
+    subscribeFn(PAYMENT_OPEN, (payload, fromPodId) => {
+      try {
+        const { remotePodId, capacity } = payload;
+        if (remotePodId === this.#localPodId) {
+          // Remote peer wants to open a channel with us
+          this.openChannel(fromPodId, capacity);
+        }
+      } catch { /* ignore duplicate or invalid opens */ }
+    });
+
+    // Inbound: channel payment update
+    subscribeFn(PAYMENT_UPDATE, (payload, fromPodId) => {
+      try {
+        const ch = this.#channels.get(fromPodId);
+        if (ch) {
+          ch.receive(payload);
+        }
+      } catch { /* ignore invalid updates */ }
+    });
+
+    // Inbound: channel close
+    subscribeFn(PAYMENT_CLOSE, (payload, fromPodId) => {
+      try {
+        this.closeChannel(fromPodId);
+      } catch { /* ignore invalid close */ }
+    });
+
+    // Inbound: escrow creation
+    subscribeFn(ESCROW_CREATE, (payload, fromPodId) => {
+      try {
+        const { payeePodId, amount, conditions } = payload;
+        this.#escrow.create(fromPodId, payeePodId, amount, conditions);
+      } catch { /* ignore invalid escrow */ }
+    });
+  }
+
+  /**
+   * Broadcast a channel open over the transport.
+   *
+   * @param {string} remotePodId
+   * @param {number} [capacity]
+   */
+  broadcastOpen(remotePodId, capacity) {
+    if (this.#broadcastFn) {
+      this.#broadcastFn(PAYMENT_OPEN, { remotePodId, capacity });
+    }
+  }
+
+  /**
+   * Broadcast a payment update over the transport.
+   *
+   * @param {PaymentUpdate} update
+   */
+  broadcastUpdate(update) {
+    if (this.#broadcastFn) {
+      this.#broadcastFn(PAYMENT_UPDATE, update);
+    }
+  }
+
+  /**
+   * Broadcast a channel close over the transport.
+   *
+   * @param {string} remotePodId
+   * @param {ChannelSettlement} settlement
+   */
+  broadcastClose(remotePodId, settlement) {
+    if (this.#broadcastFn) {
+      this.#broadcastFn(PAYMENT_CLOSE, { remotePodId, ...settlement });
+    }
+  }
+
+  /**
+   * Broadcast an escrow creation over the transport.
+   *
+   * @param {object} escrow
+   */
+  broadcastEscrow(escrow) {
+    if (this.#broadcastFn) {
+      this.#broadcastFn(ESCROW_CREATE, escrow);
+    }
   }
 }
