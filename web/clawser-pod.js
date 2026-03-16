@@ -3,7 +3,7 @@
 // Extends Pod with mesh networking (PeerNode, SwarmCoordinator, etc.)
 // Used by clawser-workspace-lifecycle.js to initialize the mesh subsystem.
 
-import { Pod } from './packages/pod/src/pod.mjs'
+import { Pod } from './packages-pod.js'
 import { MeshIdentityManager } from './clawser-mesh-identity.js'
 import { IdentityWallet } from './clawser-identity-wallet.js'
 import { PeerRegistry } from './clawser-peer-registry.js'

@@ -27,4 +27,4 @@ export {
   createRuntime,
   createClient,
   createServer,
-} from './packages/pod/src/index.mjs';
+} from 'browsermesh-pod';

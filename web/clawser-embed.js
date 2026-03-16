@@ -4,7 +4,7 @@
 // Extends Pod with container rendering, messaging, and lazy agent init.
 // Re-exports as ClawserEmbed for backward compatibility.
 
-import { Pod } from './packages/pod/src/pod.mjs'
+import { Pod } from './packages-pod.js'
 
 // ── EmbeddedPod ────────────────────────────────────────────────
 

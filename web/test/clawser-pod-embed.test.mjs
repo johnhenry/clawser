@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 globalThis.BrowserTool = class { constructor() {} }
 
 import { EmbeddedPod, ClawserEmbed } from '../clawser-embed.js'
-import { Pod } from '../packages/pod/src/pod.mjs'
+import { Pod } from '../packages-pod.js'
 
 class StubBroadcastChannel {
   constructor() { this.onmessage = null }
