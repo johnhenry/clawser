@@ -63,4 +63,4 @@ export {
 
   // MCP bridge
   WshMcpBridge,
-} from './packages/wsh/src/index.mjs';
+} from 'wsh-upon-star';

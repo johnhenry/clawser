@@ -10,7 +10,7 @@
  *   node --import ./web/test/_setup-globals.mjs --test web/test/clawser-raijin-wsh-adapter.test.mjs
  */
 
-import { cborEncode, cborDecode } from './packages/wsh/src/cbor.mjs'
+import { cborEncode, cborDecode } from './packages-wsh.js'
 import {
   PBFT_WIRE_CODES,
   pbftTypeToWireCode,
