@@ -528,7 +528,13 @@ export async function initWorkspace(wsId, convId) {
       }
     }
     const providerSelect = $('providerSelect');
-    $('providerLabel').textContent = providerSelect.options[providerSelect.selectedIndex]?.textContent || providerSelect.value;
+    // If an active agent was restored, keep its styled label; otherwise use dropdown text
+    const activeAgent = state.agentStorage ? await state.agentStorage.getActive() : null;
+    if (activeAgent) {
+      updateAgentLabel(activeAgent);
+    } else {
+      $('providerLabel').textContent = providerSelect.options[providerSelect.selectedIndex]?.textContent || providerSelect.value;
+    }
 
     // ── Eager renders: config sections (apply runtime settings) ──
     renderAutonomySection();
