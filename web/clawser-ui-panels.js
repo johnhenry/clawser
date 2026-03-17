@@ -1239,6 +1239,26 @@ function renderAgentPickerDropdown(agents, activeId, accts = []) {
       await state.agent.applyAgent(agent);
       state.agentStorage.setActive(agent.id);
       updateAgentLabel(agent);
+
+      // Sync the provider dropdown to match the agent's provider
+      const providerSelect = $('providerSelect');
+      if (providerSelect && agent.accountId) {
+        const acctValue = `acct_${agent.accountId}`;
+        if ([...providerSelect.options].some(o => o.value === acctValue)) {
+          providerSelect.value = acctValue;
+        }
+      } else if (providerSelect && agent.provider) {
+        if ([...providerSelect.options].some(o => o.value === agent.provider)) {
+          providerSelect.value = agent.provider;
+        }
+      }
+
+      // Persist the selection
+      try {
+        const { saveConfig } = await import('./clawser-accounts.js');
+        saveConfig();
+      } catch { /* non-fatal */ }
+
       closeAgentPicker();
     });
   });

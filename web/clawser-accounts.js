@@ -383,12 +383,31 @@ export async function rebuildProviderDropdown() {
   }
 }
 
-/** Initialize provider dropdown and account list, auto-selecting Chrome AI if available. */
+/** Initialize provider dropdown and account list.
+ * Restores the previously selected provider from saved config.
+ * Falls back to Chrome AI if available, then Echo.
+ */
 export async function setupProviders() {
   await rebuildProviderDropdown();
   renderAccountList();
 
-  // Auto-select Chrome AI if available
+  // Try to restore saved provider selection first
+  const wsId = state.agent?.getWorkspace?.();
+  if (wsId) {
+    try {
+      const raw = localStorage.getItem(lsKey.config(wsId));
+      const config = raw ? JSON.parse(raw) : null;
+      if (config?.selectedProvider) {
+        const validValues = [...$('providerSelect').options].map(o => o.value);
+        if (validValues.includes(config.selectedProvider)) {
+          $('providerSelect').value = config.selectedProvider;
+          return;
+        }
+      }
+    } catch { /* ignore parse errors */ }
+  }
+
+  // Fallback: auto-select Chrome AI if available
   const available = await state.providers.listWithAvailability();
   const chromeAi = available.find(p => p.name === 'chrome-ai' && p.available);
   if (chromeAi) {
