@@ -83,6 +83,70 @@ All planned package extractions are complete. The internal `web/packages/*` dire
 
 ---
 
+## Future Work
+
+### Phase 11: BrowserMesh Production Readiness
+
+Items partially complete or planned for the mesh networking layer:
+
+#### Peer Type Taxonomy
+- [ ] Canonical peer type system — distinguish `chat`, `runtime`, `host-shell`, `vm-compute` peers
+- [ ] Peer type advertised in discovery records and visible in UI
+- [ ] Routing policies based on peer type (e.g., compute jobs only go to `vm-compute` peers)
+
+#### Remote Peers as Deployment Targets
+- [ ] Remote peers become first-class deployment targets (push code/skills to a peer)
+- [ ] Remote filesystems treated as mountable runtime surfaces
+- [ ] Mesh-native file sync between pods (beyond CRDT state sync)
+
+#### Transport Hardening
+- [ ] WebRTC data channel reliability — reconnection, ICE restart, TURN fallback
+- [ ] WebTransport production path (currently bridged, not end-to-end)
+- [ ] Transport quality metrics (latency, packet loss) exposed to routing layer
+
+#### Group Encryption & Key Management
+- [ ] Per-member key envelope encryption (currently metadata-only distribution)
+- [ ] Key rotation audit trail
+- [ ] Integrate with mesh ACL for group membership changes
+
+#### Consensus & Payments Production
+- [ ] PBFT consensus end-to-end with real validator sets (currently opt-in stub)
+- [ ] Payment channel settlement on close (currently local-only accounting)
+- [ ] Escrow timeout enforcement via scheduler
+
+#### Observability
+- [ ] Mesh health dashboard — peer latency, message throughput, connection status
+- [ ] Distributed tracing across mesh hops
+- [ ] Alert rules for peer disconnection, consensus timeout, payment disputes
+
+### Phase 12: Ecosystem & Integrations
+
+#### WebMCP + BrowserMCP (partially complete)
+- [x] Basic WebMCP discovery (`ext_webmcp_discover`)
+- [x] Deep WebMCP integration — auto-register discovered tools
+- [x] Cross-tab tool invocation
+- [ ] Native messaging for system tools (extension + local binary)
+- [ ] BrowserMCP spec alignment as it evolves
+
+#### Daemon Mode (partially complete)
+- [x] BroadcastChannel tab coordination
+- [x] Background task execution
+- [ ] Service Worker persistent daemon (survives all tabs closing)
+- [ ] Wake-on-message from relay/signaling server
+- [ ] Scheduled task execution in daemon mode
+
+#### Kernel Extraction
+- [ ] Extract `web/packages/kernel/` to standalone npm package (`browsermesh-kernel`)
+- [ ] Kernel integration adapter becomes an npm dependency like other packages
+- [ ] Kernel tenants usable from ServerPod (Node.js) — unified resource model
+
+#### Mobile & Cross-Platform
+- [ ] PWA install flow refinement for mobile browsers
+- [ ] Touch-optimized UI for mesh peer management
+- [ ] iOS Safari compatibility audit (WebRTC, BroadcastChannel, OPFS)
+
+---
+
 ## Initiative: Guest-Native `wsh-server` In Browser Linux Guests (Model B)
 
 Priority: separate, high-complexity follow-on initiative, not a prerequisite for BrowserMesh.
