@@ -400,25 +400,44 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for a detailed breakdown.
 
 ### Packages
 
-Most internal packages have been extracted to npm and are loaded via CDN import map. Only `kernel/` remains as a local package in `web/packages/`.
+Clawser is built on a modular ecosystem of npm packages loaded via CDN import map. Only `kernel/` remains as a local package in `web/packages/`.
+
+**AI Layer — [ai.matey](https://github.com/johnhenry/ai.matey)**
+
+| Package | Purpose |
+|---------|---------|
+| [`ai.matey`](https://www.npmjs.com/package/ai.matey) | Universal AI adapter — Bridge pattern, 38+ LLM backends, streaming, tool calling |
+| [`ai.matey.core`](https://www.npmjs.com/package/ai.matey.core) | Core types, interfaces, and adapter base classes |
+| [`ai.matey.frontend`](https://www.npmjs.com/package/ai.matey.frontend) | Frontend-optimized builds (browser-safe imports) |
+| [`ai.matey.backend`](https://www.npmjs.com/package/ai.matey.backend) | Backend adapters (OpenAI, Anthropic, Groq, Together, Fireworks, Mistral, etc.) |
+| [`ai.matey.backend.browser`](https://www.npmjs.com/package/ai.matey.backend.browser) | Browser-native adapters (Chrome AI / Gemini Nano, WebLLM) |
+| [`ai-matey-middleware-andbox`](https://www.npmjs.com/package/ai-matey-middleware-andbox) | Middleware for LLM code extraction → andbox execution |
+
+**Mesh Networking — BrowserMesh**
+
+| Package | Purpose |
+|---------|---------|
+| [`browsermesh-pod`](https://www.npmjs.com/package/browsermesh-pod) | Pod base class — 6-phase boot, pluggable transport/discovery, messaging |
+| [`browsermesh-primitives`](https://www.npmjs.com/package/browsermesh-primitives) | Wire format, Ed25519 identity, CRDTs, capabilities, trust, ACL |
+| [`browsermesh-netway`](https://www.npmjs.com/package/browsermesh-netway) | Virtual networking — TCP-like streams, UDP datagrams, policy engine |
+
+**Runtime**
 
 | Package | Source | Purpose |
 |---------|--------|---------|
-| [`kernel`](web/packages/kernel/) | Local (`web/packages/kernel/`) | Browser microkernel — resource table, byte streams, IPC, capabilities, tenants |
-| [`browsermesh-pod`](https://www.npmjs.com/package/browsermesh-pod) | npm (CDN) | Pod base class — 6-phase boot, discovery, messaging, PBFT integration |
-| [`browsermesh-primitives`](https://www.npmjs.com/package/browsermesh-primitives) | npm (CDN) | Mesh networking primitives — identity, transport, sync, consensus |
-| [`browsermesh-netway`](https://www.npmjs.com/package/browsermesh-netway) | npm (CDN) | Network layer — pluggable transport/discovery adapters, group keys |
-| [`wsh-upon-star`](https://www.npmjs.com/package/wsh-upon-star) | npm (CDN) | Web Shell — remote command execution over WebTransport/WebSocket with Ed25519 auth |
-| [`andbox`](https://www.npmjs.com/package/andbox) | npm (CDN) | Worker-based sandboxed JS runtime — RPC capabilities, import maps, timeouts |
-| [`ai-matey-middleware-andbox`](https://www.npmjs.com/package/ai-matey-middleware-andbox) | npm (CDN) | ai.matey middleware for LLM code extraction → andbox execution |
+| [`kernel`](web/packages/kernel/) | Local | Browser microkernel — resource table, byte streams, IPC, capabilities, tenants |
+| [`wsh-upon-star`](https://www.npmjs.com/package/wsh-upon-star) | npm | Web Shell — remote command execution with Ed25519 auth |
+| [`andbox`](https://www.npmjs.com/package/andbox) | npm | Worker-based sandboxed JS runtime with RPC capabilities |
 
 ### Related Repositories
 
 | Repository | Description |
 |------------|-------------|
+| [ai.matey](https://github.com/johnhenry/ai.matey) | Universal AI adapter monorepo — 22 packages, 38+ LLM backends |
 | [browsermesh-servers](https://github.com/johnhenry/browsermesh-servers) | Signaling and relay servers (deployed at `wss://browsermesh-signaling.fly.dev` and `wss://browsermesh-relay.fly.dev`) |
 | [clawser-browser-control](https://github.com/johnhenry/clawser-browser-control) | Chrome extension for browser automation ([Chrome Web Store](https://chromewebstore.google.com/detail/clawser-browser-control/dljchbfodafekojicopaboiegophjcbc)) |
 | [browsermesh-integration-tests](https://github.com/johnhenry/browsermesh-integration-tests) | Integration tests and example apps |
+| [raijin](https://github.com/johnhenry/raijin) | PBFT consensus engine — validator, mempool, block production |
 
 ## Tool Categories
 

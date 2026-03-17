@@ -416,20 +416,37 @@ index.html
 
 ## External Dependencies
 
-Clawser has no npm dependencies. All external code is loaded via CDN at runtime:
+Clawser has no npm build dependencies. All external code is loaded via CDN import map at runtime:
+
+**AI Layer — [ai.matey](https://github.com/johnhenry/ai.matey) (core dependency)**
+
+| Package | Purpose |
+|---------|---------|
+| `ai.matey.core` | Core types, adapter interfaces, bridge pattern |
+| `ai.matey.frontend` | Browser-optimized LLM adapter bundle |
+| `ai.matey.backend` | Server-side adapters (OpenAI, Anthropic, Groq, etc.) |
+| `ai.matey.backend.browser` | Browser-native adapters (Chrome AI / Gemini Nano) |
+| `ai-matey-middleware-andbox` | LLM code extraction → andbox sandboxed execution |
+
+ai.matey provides the Tier 3 provider system — when `clawser-providers.js` encounters a provider not in its built-in registry, it lazy-loads the ai.matey backend adapter from CDN. This gives clawser access to 24+ LLM backends without bundling any of them.
+
+**Mesh & Runtime**
 
 | Dependency | Source | Purpose |
 |------------|--------|---------|
-| andbox | npm (`andbox@0.1.1`) via CDN | Worker-based sandboxed JS execution |
-| wsh-upon-star | npm (`wsh-upon-star@0.1.1`) via CDN | Web Shell — remote command execution over WebTransport/WebSocket |
-| browsermesh-pod | npm (`browsermesh-pod@0.2.0`) via CDN | Pod base class — 6-phase boot, discovery, messaging |
-| browsermesh-primitives | npm (`browsermesh-primitives@0.1.1`) via CDN | Mesh networking primitives — identity, transport, sync, consensus |
-| browsermesh-netway | npm (`browsermesh-netway@0.1.1`) via CDN | Network layer — pluggable transport/discovery adapters |
-| ai-matey-middleware-andbox | npm (`ai-matey-middleware-andbox@0.1.1`) via CDN | ai.matey middleware for LLM code extraction → andbox execution |
-| vimble | esm.sh | Legacy sandboxed JS code execution |
-| ai.matey | esm.sh | Universal LLM adapter (Tier 3 providers) |
-| html2canvas | CDN | Screenshot tool |
-| fflate | esm.sh | ZIP import/export for skills |
+| `browsermesh-pod` | npm via CDN | Pod base class — 6-phase boot, pluggable transport/discovery |
+| `browsermesh-primitives` | npm via CDN | Wire format, Ed25519 identity, CRDTs, capabilities, trust, ACL |
+| `browsermesh-netway` | npm via CDN | Virtual networking — streams, datagrams, policy |
+| `wsh-upon-star` | npm via CDN | Web Shell — remote command execution with Ed25519 auth |
+| `andbox` | npm via CDN | Worker-based sandboxed JS runtime with RPC |
+
+**Utilities**
+
+| Dependency | Source | Purpose |
+|------------|--------|---------|
+| `vimble` | esm.sh | Legacy sandboxed JS code execution |
+| `html2canvas` | CDN | Screenshot tool |
+| `fflate` | esm.sh | ZIP import/export for skills |
 
 ## Security Model
 
