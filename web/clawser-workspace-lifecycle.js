@@ -380,7 +380,16 @@ export async function initWorkspace(wsId, convId) {
     state.agent.setAccountResolver(async (accountId) => {
       const { loadAccounts, resolveAccountKey } = await import('./clawser-accounts.js');
       const accts = loadAccounts();
-      const acct = accts.find(a => a.id === accountId);
+
+      // Support "service:<provider>" lookup to auto-match by service type
+      let acct;
+      if (accountId.startsWith('service:')) {
+        const service = accountId.slice(8);
+        acct = accts.find(a => a.service === service && a.apiKey);
+      } else {
+        acct = accts.find(a => a.id === accountId);
+      }
+
       if (!acct) return { apiKey: '', baseUrl: '', service: '', model: '' };
       const apiKey = await resolveAccountKey(acct);
       return { apiKey, baseUrl: acct.baseUrl || '', service: acct.service, model: acct.model };

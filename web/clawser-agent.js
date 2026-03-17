@@ -772,6 +772,7 @@ export class ClawserAgent {
   #fallbackExecutor = null;
   /** @type {((accountId: string) => Promise<{apiKey: string, baseUrl: string}>)|null} */
   #accountResolver = null;
+  #agentCredentialWarning = null;
   /** @type {import('./clawser-self-repair.js').SelfRepairEngine|null} */
   #selfRepairEngine = null;
   /** @type {import('./clawser-undo.js').UndoManager|null} */
@@ -1191,24 +1192,52 @@ export class ClawserAgent {
    */
   async applyAgent(agentDef) {
     this.#activeAgent = agentDef;
+    this.#agentCredentialWarning = null;
 
     // Derive provider from account if accountId is set
+    let credentialsResolved = false;
     if (agentDef.accountId && this.#accountResolver) {
       try {
         const { apiKey, baseUrl, service, model } = await this.#accountResolver(agentDef.accountId);
-        if (service) this.#activeProvider = service;   // provider FROM account
-        if (apiKey) this.#apiKey = apiKey;
+        if (service) this.#activeProvider = service;
+        if (apiKey) { this.#apiKey = apiKey; credentialsResolved = true; }
         if (baseUrl) this.#providerBaseUrl = baseUrl;
-        if (model && !agentDef.model) this.#model = model;  // account model as default
-      } catch (_) { /* resolver failed — keep current credentials */ }
+        if (model && !agentDef.model) this.#model = model;
+      } catch (_) {
+        // Account was deleted or resolver failed
+        this.#agentCredentialWarning = `Account "${agentDef.accountId}" not found. Add an API key in Settings.`;
+      }
     }
 
-    // Legacy fallback: use agent.provider if no accountId
-    if (!agentDef.accountId && agentDef.provider) {
+    // No accountId — try to auto-match an account by service type
+    if (!agentDef.accountId && agentDef.provider && this.#accountResolver) {
+      const noKeyProviders = ['echo', 'chrome-ai', 'ollama', 'lmstudio'];
+      if (!noKeyProviders.includes(agentDef.provider)) {
+        // This agent needs an API key — try to find a matching account
+        try {
+          const { apiKey, baseUrl, service, model } = await this.#accountResolver(`service:${agentDef.provider}`);
+          if (apiKey) {
+            if (service) this.#activeProvider = service;
+            this.#apiKey = apiKey;
+            if (baseUrl) this.#providerBaseUrl = baseUrl;
+            if (model && !agentDef.model) this.#model = model;
+            credentialsResolved = true;
+          }
+        } catch (_) { /* no matching account */ }
+
+        if (!credentialsResolved) {
+          this.#agentCredentialWarning =
+            `"${agentDef.name}" needs a ${agentDef.provider} API key. Add one in Settings → Accounts.`;
+        }
+      }
+    }
+
+    // Direct provider assignment for no-key providers
+    if (!credentialsResolved && agentDef.provider) {
       this.#activeProvider = agentDef.provider;
     }
 
-    if (agentDef.model) this.#model = agentDef.model;  // agent model overrides account
+    if (agentDef.model) this.#model = agentDef.model;
 
     // Set system prompt
     if (agentDef.systemPrompt) this.setSystemPrompt(agentDef.systemPrompt);
@@ -1218,6 +1247,9 @@ export class ClawserAgent {
       this.#config.maxToolIterations = agentDef.maxTurnsPerRun;
     }
   }
+
+  /** @returns {string|null} Warning about missing credentials for the active agent */
+  get agentCredentialWarning() { return this.#agentCredentialWarning; }
 
   /**
    * Set the maximum tool call iterations per run (Gap 11.3).
@@ -1747,6 +1779,14 @@ export class ClawserAgent {
       if (!this.#providers) throw new Error('No provider available');
       const provider = this.#providers.get(this.#activeProvider);
       if (!provider) throw new Error(`Provider not found: ${this.#activeProvider}`);
+
+      // Pre-flight: check if this provider needs an API key and we don't have one
+      if (provider.requiresApiKey && !this.#apiKey) {
+        throw new Error(
+          `No API key configured for ${this.#activeProvider}. ` +
+          `Add an account in Settings → Accounts, or switch to a different agent.`
+        );
+      }
 
       // Response cache lookup (skip on first iteration when tools may be pending)
       let cacheKey = null;

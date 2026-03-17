@@ -1259,6 +1259,13 @@ function renderAgentPickerDropdown(agents, activeId, accts = []) {
         saveConfig();
       } catch { /* non-fatal */ }
 
+      // Show credential warning if agent needs an API key
+      const warning = state.agent.agentCredentialWarning;
+      if (warning) {
+        const { addMsg } = await import('./clawser-ui-chat.js').catch(() => ({}));
+        if (addMsg) addMsg('system', warning);
+      }
+
       closeAgentPicker();
     });
   });
