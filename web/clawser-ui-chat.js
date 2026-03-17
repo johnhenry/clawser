@@ -1000,7 +1000,16 @@ export function addIntentBadge(intent) {
  * @param {Map<string,string>} activeSkillPrompts - Map of skill name → activation prompt body
  * @returns {string} Complete system prompt with all dynamic sections appended
  */
-export function buildDynamicSystemPrompt(basePrompt, memories, goals, skillMetadata, activeSkillPrompts) {
+/**
+ * @param {string} basePrompt
+ * @param {Array<{key:string,content:string}>} memories
+ * @param {Array<{id:string,description:string,status:string}>} goals
+ * @param {string} skillMetadata
+ * @param {Map<string,string>} activeSkillPrompts
+ * @param {object} [opts]
+ * @param {Array<{provider:string,name:string}>} [opts.oauthConnections]
+ */
+export function buildDynamicSystemPrompt(basePrompt, memories, goals, skillMetadata, activeSkillPrompts, opts = {}) {
   const parts = [basePrompt];
 
   if (memories.length > 0) {
@@ -1012,6 +1021,13 @@ export function buildDynamicSystemPrompt(basePrompt, memories, goals, skillMetad
   if (activeGoals.length > 0) {
     const goalLines = activeGoals.map(g => `- (${g.id}) ${g.description}`).join('\n');
     parts.push(`\nYour current goals:\n${goalLines}\nWork toward these goals when relevant. Use the agent_goal_update tool to mark goals completed or failed.`);
+  }
+
+  // Connected OAuth services
+  const conns = opts.oauthConnections || [];
+  if (conns.length > 0) {
+    const connLines = conns.map(c => `- ${c.name} (${c.provider})`).join('\n');
+    parts.push(`\nYou have authenticated access to these services via OAuth:\n${connLines}\nUse the oauth_api tool to make authenticated API requests to these services. For example: oauth_api({ provider: "github", method: "GET", path: "/user/repos" })`);
   }
 
   if (skillMetadata) parts.push(skillMetadata);
@@ -1118,7 +1134,8 @@ export async function sendMessage() {
     const agentState = state.agent.getState();
     const goals = agentState.goals || [];
     const skillMeta = state.skillRegistry.buildMetadataPrompt();
-    state.agent.setSystemPrompt(buildDynamicSystemPrompt(basePrompt, memories, goals, skillMeta, state.activeSkillPrompts));
+    const oauthConnections = state.oauthManager?.listConnections() || [];
+    state.agent.setSystemPrompt(buildDynamicSystemPrompt(basePrompt, memories, goals, skillMeta, state.activeSkillPrompts, { oauthConnections }));
 
     // Auto-compact context if getting large
     const estTokens = state.agent.estimateHistoryTokens();
