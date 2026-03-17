@@ -1,7 +1,7 @@
 # Clawser — Outstanding Work
 
 > Fresh audit generated 2026-03-14 from deep source code verification,
-> 7127-test full suite run (0 failures), and cross-reference of all
+> 7,127-test full suite run (0 failures, 253 test files), and cross-reference of all
 > Heynote plans against actual implementation.
 
 ---
@@ -47,14 +47,14 @@ but the audit agents didn't look deep enough. This document reflects verified re
 - [ ] **4.3** Tab Watcher Extension Plugin (Block 70) — ~610 LOC
 - [ ] **4.4** P2P Scenario Completion (Block 66) — ~3,070 LOC
 - [ ] **4.5** Agent→Account→Provider Simplification (Block 52) — ~245 LOC
-- [ ] **4.6** BrowserMesh Package Ecosystem (Phase 10) — 9 npm packages
+- [x] **4.6** BrowserMesh Package Ecosystem (Phase 10) — extraction complete, 9 npm packages published (browsermesh-primitives@0.1.1, browsermesh-netway@0.1.1, browsermesh-pod@0.2.0, wsh-upon-star@0.1.1, andbox@0.1.1, plus 4 more)
 
 ### Ecosystem [NICE-TO-HAVE]
 
 - [ ] **5.1** Publish npm embed package
 - [ ] **5.2** Skills marketplace backend (agentskills.io)
 - [ ] **5.3** Channel integrations with real API credentials
-- [ ] **5.4** Chrome Web Store extension publication
+- [ ] **5.4** Chrome Web Store extension publication — extension code moved to `clawser-browser-control` repo
 - [ ] **5.5** Verify IPFS Helia CDN URL freshness
 - [ ] **5.6** Verify IoT bridge with real hardware
 
@@ -67,6 +67,6 @@ but the audit agents didn't look deep enough. This document reflects verified re
 | Verified false positives | 8 | Features already existed |
 | Bugs | 0 | All fixed, 7127 tests pass |
 | Code quality TODOs | 5 | Nice-to-have, documented in source |
-| Roadmap features | 6 | Future development phases |
+| Roadmap features | 5 | Future development phases (4.6 complete) |
 | Ecosystem | 6 | External publishing/verification |
-| **Total remaining** | **17** | **0 bugs, 5 polish, 12 future work** |
+| **Total remaining** | **16** | **0 bugs, 5 polish, 11 future work** |

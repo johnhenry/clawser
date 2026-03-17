@@ -86,7 +86,7 @@ A micro-operating-system inside the browser whose primary process is an AI agent
 6. 38+ LLM backends available with zero configuration
 7. Memory footprint under 64MB for core runtime
 8. P2P mesh connects agents across browser instances
-9. 1680+ tests passing across all subsystems
+9. 7,127+ tests passing across all subsystems
 
 ---
 
@@ -181,7 +181,7 @@ index.html (SPA entry point)
 | Main Thread | UI rendering, agent orchestration | clawser-app.js, clawser-ui-*.js |
 | Service Worker | Background execution, daemon mode, cache | sw.js |
 | Shared Worker | Multi-tab coordination, single brain | shared-worker.js |
-| Worker Sandbox | Isolated code execution (Codex/andbox) | packages/andbox/ |
+| Worker Sandbox | Isolated code execution (Codex/andbox) | andbox (npm package) |
 
 ---
 
@@ -393,8 +393,8 @@ Virtual HTTP servers within the browser:
 
 ### 5.13 Sandbox System (`clawser-sandbox.js` — 614 LOC)
 
-WASM/Worker tool sandbox:
-- Tier-based isolation (none, worker, wasm)
+Worker-based tool sandbox:
+- Tier-based isolation (none, worker)
 - Capability gates per sandbox
 - Fuel metering for compute limits
 - Dynamic tool creation via ToolBuilder
@@ -754,14 +754,14 @@ Three-stage defense:
 ### 12.1 Test Infrastructure
 
 - **Framework**: `node:test` with `node:assert/strict`
-- **Test Files**: 142+ files in `web/test/`
-- **Total Tests**: 1,680+ individual test cases
+- **Test Files**: 253 files in `web/test/`
+- **Total Tests**: 7,127+ individual test cases
 - **Global Stubs**: `_setup-globals.mjs` provides localStorage, document, navigator, BroadcastChannel
 
 ### 12.2 Test Groups
 
 ```bash
-npm test              # All 142 files
+npm test              # All 253 files
 npm run test:fast     # Core + channels (97 files)
 npm run test:core     # Agent, tools, providers, shell, etc. (89 files)
 npm run test:mesh     # All mesh networking (31 files)
@@ -836,11 +836,8 @@ web/
 ├── shared-worker.js    # SharedWorker
 ├── manifest.json       # PWA manifest
 ├── styles/             # CSS
-├── packages/           # npm packages (kernel, netway, andbox, wsh)
-│   ├── kernel/
-│   ├── netway/
-│   ├── andbox/
-│   └── wsh/
+├── packages/           # local packages
+│   └── kernel/         # browser microkernel (only local package; netway, andbox, wsh published to npm)
 └── test/               # Test files
     ├── _setup-globals.mjs
     ├── run-tests.mjs
@@ -932,7 +929,7 @@ All loaded via CDN (zero npm runtime deps):
 - Parallel tool execution
 - Session idle timeout
 - Config UI for new settings
-- 1,680+ tests across all subsystems
+- 7,127+ tests across all subsystems
 
 ---
 
@@ -978,7 +975,7 @@ All loaded via CDN (zero npm runtime deps):
 
 - Server-side execution (agent runs in-browser only)
 - Native mobile app (PWA is the mobile strategy)
-- npm package distribution of the full agent (only kernel/netway/andbox are packages)
+- npm package distribution of the full agent (kernel is local; netway, andbox, wsh, pod, and primitives are published npm packages: browsermesh-primitives, browsermesh-netway, browsermesh-pod, wsh-upon-star, andbox)
 - Database-backed persistence (browser storage APIs only)
 - Real-time collaboration editing (mesh sync is eventual consistency)
 - End-to-end encryption of mesh traffic (transport-level TLS only)

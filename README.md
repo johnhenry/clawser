@@ -3,6 +3,7 @@
 Browser-native AI agent workspace with tools, memory, and goals.
 
 **Live demo:** https://johnhenry.github.io/clawser/
+**Browser extension:** [Clawser Browser Control](https://chromewebstore.google.com/detail/clawser-browser-control/dljchbfodafekojicopaboiegophjcbc) (Chrome Web Store)
 
 Clawser is a pure JavaScript agent platform that runs entirely in the browser. It provides a complete agent runtime with persistent memory, goal tracking, scheduled tasks, ~100 tools, and support for 38+ LLM backends — all without a server.
 
@@ -397,13 +398,27 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for a detailed breakdown.
 | `clawser-pod.js` | ClawserPod — Pod base class + mesh networking (PeerNode, SwarmCoordinator) |
 | `clawser-embed.js` | EmbeddedPod — embeddable pod for external apps (backward-compat: ClawserEmbed) |
 
-### Internal Packages (`web/packages/`)
-| Package | Purpose |
-|---------|---------|
-| [`pod`](web/packages/pod/) | Pod base class — 6-phase boot (identity, discovery, messaging), zero Clawser deps, extended by ClawserPod/InjectedPod/EmbeddedPod |
-| [`andbox`](web/packages/andbox/) | Worker-based sandboxed JS runtime — RPC capabilities, import maps, capability gating, timeouts |
-| [`wsh`](web/packages/wsh/) | Web Shell — browser-native remote command execution over WebTransport/WebSocket with Ed25519 auth, CBOR protocol, 33 message types |
-| [`ai-matey-middleware-andbox`](web/packages/ai-matey-middleware-andbox/) | ai.matey middleware for LLM code extraction → andbox execution |
+### Packages
+
+Most internal packages have been extracted to npm and are loaded via CDN import map. Only `kernel/` remains as a local package in `web/packages/`.
+
+| Package | Source | Purpose |
+|---------|--------|---------|
+| [`kernel`](web/packages/kernel/) | Local (`web/packages/kernel/`) | Browser microkernel — resource table, byte streams, IPC, capabilities, tenants |
+| [`browsermesh-pod`](https://www.npmjs.com/package/browsermesh-pod) | npm (CDN) | Pod base class — 6-phase boot, discovery, messaging, PBFT integration |
+| [`browsermesh-primitives`](https://www.npmjs.com/package/browsermesh-primitives) | npm (CDN) | Mesh networking primitives — identity, transport, sync, consensus |
+| [`browsermesh-netway`](https://www.npmjs.com/package/browsermesh-netway) | npm (CDN) | Network layer — pluggable transport/discovery adapters, group keys |
+| [`wsh-upon-star`](https://www.npmjs.com/package/wsh-upon-star) | npm (CDN) | Web Shell — remote command execution over WebTransport/WebSocket with Ed25519 auth |
+| [`andbox`](https://www.npmjs.com/package/andbox) | npm (CDN) | Worker-based sandboxed JS runtime — RPC capabilities, import maps, timeouts |
+| [`ai-matey-middleware-andbox`](https://www.npmjs.com/package/ai-matey-middleware-andbox) | npm (CDN) | ai.matey middleware for LLM code extraction → andbox execution |
+
+### Related Repositories
+
+| Repository | Description |
+|------------|-------------|
+| [browsermesh-servers](https://github.com/johnhenry/browsermesh-servers) | Signaling and relay servers (deployed at `wss://browsermesh-signaling.fly.dev` and `wss://browsermesh-relay.fly.dev`) |
+| [clawser-browser-control](https://github.com/johnhenry/clawser-browser-control) | Chrome extension for browser automation ([Chrome Web Store](https://chromewebstore.google.com/detail/clawser-browser-control/dljchbfodafekojicopaboiegophjcbc)) |
+| [browsermesh-integration-tests](https://github.com/johnhenry/browsermesh-integration-tests) | Integration tests and example apps |
 
 ## Tool Categories
 
@@ -479,7 +494,7 @@ Schedule tasks with three types:
 
 ## Project Status
 
-Clawser is in **beta**. All major subsystems are implemented: core agent, ~100 tools, 38+ providers, mesh networking (31 modules), 7 channel adapters, microkernel, hardware support, vision/multimodal, parallel tool execution, cost management (daily + monthly limits + CostLedger), and session idle timeout. See [ROADMAP.md](ROADMAP.md) for planned work and [GAPS.md](GAPS.md) for known issues.
+Clawser is in **beta**. All major subsystems are implemented: core agent, ~100 tools, 38+ providers, mesh networking (via npm packages), 7 channel adapters, microkernel, hardware support, vision/multimodal, parallel tool execution, cost management (daily + monthly limits + CostLedger), and session idle timeout. See [ROADMAP.md](ROADMAP.md) for planned work.
 
 ## Development
 
@@ -487,18 +502,17 @@ No build step required. Edit JS files in `web/` and reload the browser.
 
 **Running tests:**
 ```bash
-npm test              # All 249+ test files
-npm run test:fast     # Core + channels (97 files)
-npm run test:core     # Agent, tools, providers, shell (89 files)
-npm run test:mesh     # Mesh networking (31 files)
+npm test              # All 253 test files
+npm run test:fast     # Core + channels
+npm run test:core     # Agent, tools, providers, shell
+npm run test:mesh     # Mesh networking
 npm run test:changed  # Only files with git changes
 ```
 
+**Requirements:** Node.js >= 24
+
 **Running benchmarks:**
 Open `web/bench.html` for micro-benchmarks (Codex extraction, EventLog, provider lookups, memory compaction).
-
-**Rust reference crates:**
-The `crates/` directory contains the original Rust/WASM core, kept as architectural reference. It is not used at runtime.
 
 ## Tutorials
 
@@ -525,7 +539,6 @@ Step-by-step guides to get productive with Clawser — see the [full tutorial in
 | [ROADMAP.md](ROADMAP.md) | Development roadmap and version history |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Development setup, code style, adding tools/providers |
 | [SECURITY.md](SECURITY.md) | Permission model, autonomy levels, XSS prevention, storage |
-| [GAPS.md](GAPS.md) | Known gaps with action plans |
 | [docs/API.md](docs/API.md) | Public API reference for core modules |
 | [docs/CLI.md](docs/CLI.md) | CLI subcommands and shell builtins |
 | [docs/MODULES.md](docs/MODULES.md) | Feature module manifest |

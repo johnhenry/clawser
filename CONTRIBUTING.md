@@ -25,11 +25,12 @@ That's it. There is no `npm install`, no bundler, no transpiler.
 
 ## Development Setup
 
+- **Node.js**: 24+ required (for running tests)
 - **Runtime**: Modern browser with ES module support
 - **Build step**: None. All source files are ES modules loaded directly by the browser.
 - **Dependencies**: Zero npm dependencies. External libraries (vimble, ai.matey, html2canvas, fflate) are loaded via CDN at runtime.
 - **Storage**: OPFS (Origin Private File System) for persistence, localStorage for configuration
-- **Testing**: `npm test` runs 236 test files via `node:test` (see Testing section below)
+- **Testing**: `npm test` runs 253 test files via `node:test` (see Testing section below)
 
 ## Code Style
 
