@@ -229,7 +229,111 @@ state.routineEngine = new RoutineEngine({
   },
 });
 
-state.oauthManager = new OAuthManager({ vault: state.vault });
+state.oauthManager = new OAuthManager({
+  vault: state.vault,
+  redirectUri: `${location.origin}/oauth-callback.html`,
+  onLog: (msg) => console.log('[oauth]', msg),
+
+  // Popup handler: open auth URL in a popup, wait for callback message
+  openPopupFn: (url) => new Promise((resolve, reject) => {
+    const popup = window.open(url, 'clawser_oauth', 'width=600,height=700,popup=yes');
+    if (!popup) { reject(new Error('Popup blocked — allow popups for this site.')); return; }
+
+    const timeout = setTimeout(() => {
+      window.removeEventListener('message', handler);
+      reject(new Error('OAuth timeout — popup was closed or took too long.'));
+    }, 120_000);
+
+    function handler(event) {
+      if (event.data?.type !== '__clawser_oauth_callback__') return;
+      clearTimeout(timeout);
+      window.removeEventListener('message', handler);
+      if (event.data.error) { reject(new Error(`OAuth error: ${event.data.error}`)); return; }
+      resolve({ code: event.data.code, state: event.data.state });
+    }
+    window.addEventListener('message', handler);
+
+    // Also poll in case postMessage fails (popup on different origin)
+    const pollInterval = setInterval(() => {
+      try { if (popup.closed) { clearInterval(pollInterval); clearTimeout(timeout); window.removeEventListener('message', handler); reject(new Error('OAuth popup closed by user.')); } } catch { /* cross-origin — ignore */ }
+    }, 500);
+  }),
+
+  // Token exchange: POST code to provider's token endpoint
+  exchangeCodeFn: async (provider, code, clientConfig) => {
+    const { OAUTH_PROVIDERS } = await import('./clawser-oauth.js');
+    const config = OAUTH_PROVIDERS[provider];
+    if (!config) throw new Error(`Unknown provider: ${provider}`);
+
+    const body = new URLSearchParams({
+      client_id: clientConfig.clientId,
+      client_secret: clientConfig.clientSecret || '',
+      code,
+      grant_type: 'authorization_code',
+      redirect_uri: `${location.origin}/oauth-callback.html`,
+    });
+
+    // Try direct fetch first
+    try {
+      const resp = await fetch(config.tokenUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+        body,
+      });
+      if (resp.ok) {
+        const tokens = await resp.json();
+        if (tokens.expires_in) tokens.expires_at = Date.now() + tokens.expires_in * 1000;
+        return tokens;
+      }
+    } catch { /* CORS blocked — try extension fallback */ }
+
+    // Fallback: use Chrome extension CORS-free fetch if available
+    try {
+      const { getExtensionClient } = await import('./clawser-extension-tools.js');
+      const client = getExtensionClient();
+      if (client.connected) {
+        const resp = await client.call('ext_fetch', {
+          url: config.tokenUrl,
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+          body: body.toString(),
+        });
+        if (resp?.success) {
+          const tokens = JSON.parse(resp.output);
+          if (tokens.expires_in) tokens.expires_at = Date.now() + tokens.expires_in * 1000;
+          return tokens;
+        }
+      }
+    } catch { /* extension not available */ }
+
+    throw new Error(`Token exchange failed for ${provider}. Some providers block browser CORS — install the Clawser extension for CORS-free requests.`);
+  },
+
+  // Token refresh
+  refreshTokenFn: async (provider, refreshToken, clientConfig) => {
+    const { OAUTH_PROVIDERS } = await import('./clawser-oauth.js');
+    const config = OAUTH_PROVIDERS[provider];
+    if (!config) throw new Error(`Unknown provider: ${provider}`);
+
+    const body = new URLSearchParams({
+      client_id: clientConfig.clientId,
+      client_secret: clientConfig.clientSecret || '',
+      refresh_token: refreshToken,
+      grant_type: 'refresh_token',
+    });
+
+    const resp = await fetch(config.tokenUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+      body,
+    });
+    if (!resp.ok) throw new Error(`Token refresh failed: ${resp.status}`);
+    const tokens = await resp.json();
+    if (tokens.expires_in) tokens.expires_at = Date.now() + tokens.expires_in * 1000;
+    tokens.refresh_token = tokens.refresh_token || refreshToken;
+    return tokens;
+  },
+});
 
 // ── Feature module singletons ────────────────────────────────────
 const _onLog = (level, msg) => console.log(`[clawser] ${msg}`);

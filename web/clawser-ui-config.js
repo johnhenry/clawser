@@ -552,9 +552,11 @@ export function renderOAuthSection() {
           await state.oauthManager.disconnect(key);
           addMsg('system', `Disconnected from ${prov.name}.`);
         } else {
-          const clientId = await modal.prompt(`${prov.name} Client ID:`);
+          const clientId = await modal.prompt(`${prov.name} OAuth Client ID:`);
           if (!clientId) return;
-          await state.oauthManager.authenticate(key, clientId);
+          const clientSecret = await modal.prompt(`${prov.name} Client Secret (leave empty for public clients):`);
+          state.oauthManager.setClientConfig(key, clientId, clientSecret || undefined);
+          await state.oauthManager.connect(key);
           addMsg('system', `Connected to ${prov.name}.`);
         }
         renderOAuthSection();
