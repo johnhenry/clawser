@@ -1,20 +1,15 @@
 FROM nginx:alpine
 
-COPY web/ /usr/share/nginx/html/web/
+COPY web/ /usr/share/nginx/html/
 
-# Simple nginx config for SPA with proper MIME types
 RUN cat > /etc/nginx/conf.d/default.conf <<'CONF'
 server {
     listen 80;
     server_name _;
     root /usr/share/nginx/html;
 
-    location = / {
-        return 301 /web/;
-    }
-
-    location /web/ {
-        try_files $uri $uri/ /web/index.html;
+    location / {
+        try_files $uri $uri/ /index.html;
         add_header Cache-Control "no-cache, must-revalidate";
     }
 
@@ -23,7 +18,6 @@ server {
         add_header Cache-Control "public, immutable";
     }
 
-    # Proper MIME for ES modules
     types {
         application/javascript js mjs;
     }
