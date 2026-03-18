@@ -9,6 +9,10 @@ server {
     server_name _;
     root /usr/share/nginx/html;
 
+    location = / {
+        return 301 /web/;
+    }
+
     location /web/ {
         try_files $uri $uri/ /web/index.html;
         add_header Cache-Control "no-cache, must-revalidate";
