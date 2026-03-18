@@ -13,13 +13,14 @@ server {
         add_header Cache-Control "no-cache, must-revalidate";
     }
 
-    location ~* \.(js|css|svg|png|ico|json)$ {
-        expires 1h;
-        add_header Cache-Control "public, immutable";
+    include /etc/nginx/mime.types;
+    types {
+        application/javascript mjs;
     }
 
-    types {
-        application/javascript js mjs;
+    location ~* \.(js|mjs|css|svg|png|ico|json)$ {
+        expires 1h;
+        add_header Cache-Control "public, immutable";
     }
 }
 CONF
