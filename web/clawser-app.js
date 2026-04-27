@@ -55,9 +55,13 @@ import { addEvent } from './clawser-ui-chat.js';
 import { executeRoutineAction } from './clawser-routine-runtime.js';
 
 // Extracted modules
-import { createShellSession } from './clawser-workspace-lifecycle.js';
+import { createShellSession, setKernelIntegration } from './clawser-workspace-lifecycle.js';
 import { handleRoute } from './clawser-route-handler.js';
 import { initHomeListeners } from './clawser-home-views.js';
+
+// Kernel integration (Phase 12 — Steps 23-30)
+import { Kernel } from './packages-kernel.js';
+import { KernelIntegration } from './clawser-kernel-integration.js';
 
 // ── Migrate localStorage keys to versioned format (Gap 13.3) ────
 migrateLocalStorageKeys();
@@ -196,6 +200,17 @@ globalThis.addEventListener('unhandledrejection', (event) => {
     state.ringBufferLog.push({ level: 'error', type: 'unhandled_rejection', message: msg, timestamp: Date.now() })
   }
 });
+
+// ── Kernel boot (Phase 12 — activates Steps 23-30) ─────────────
+// The Kernel provides: tenant isolation, service registry, tracing,
+// ByteStream pipes, IPC MessagePorts, Clock/RNG, and SignalController.
+// KernelIntegration is the adapter that wires these into Clawser subsystems.
+state.kernel = new Kernel();
+const _kernelIntegration = new KernelIntegration(state.kernel);
+setKernelIntegration(_kernelIntegration);
+// Wire kernel to MCP manager so MCP servers register as svc:// services (Step 25)
+state.mcpManager._kernelIntegration = _kernelIntegration;
+console.log('[clawser] Kernel initialized — integration active');
 
 state.checkpointIDB = new CheckpointIndexedDB();
 state.daemonController = new DaemonController({
@@ -521,10 +536,11 @@ export async function shutdown() {
       await quiet(() => state.mcpManager.removeServer(name));
     }
   }
-  // Close kernel integration
+  // Close kernel integration, then kernel itself
   const { getKernelIntegration } = await import('./clawser-workspace-lifecycle.js');
   const ki = getKernelIntegration();
   if (ki) await quiet(() => ki.close());
+  if (state.kernel) await quiet(() => state.kernel.close());
 
   emit('shutdown'); // emitted for future extension hooks
 }
