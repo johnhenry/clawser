@@ -395,12 +395,14 @@ export class ProfileCostLedger {
  * @type {Array<[RegExp, string, boolean]>}
  */
 const ERROR_RULES = [
-  [/\b429\b|rate.limit/i,                                    'rate_limit', true],
-  [/\b5\d{2}\b|server.error/i,                               'server',     true],
+  [/\b429\b|rate.limit/i,                                    'rate_limit',      true],
+  [/\b5\d{2}\b|server.error/i,                               'server',          true],
   [/\b401\b|\b403\b|unauthorized|forbidden|auth.*invalid|invalid.*auth|invalid.*key|invalid.*token/i, 'auth', false],
-  [/cors|blocked by cors|cross-origin/i,                     'cors',       false],
-  [/network|fetch|ECONNREFUSED|timeout|abort/i,               'network',    true],
-  [/\b400\b|\binvalid\b|malformed/i,                          'client',     false],
+  [/cors|blocked by cors|cross-origin/i,                     'cors',            false],
+  [/timeout|timed?\s*out|ETIMEDOUT|abort/i,                  'timeout',         true],
+  [/network|fetch|ECONNREFUSED/i,                            'network',         true],
+  [/content.filter|content.policy|moderation|safety.filter|flagged.*content|refused.*content|content.*blocked/i, 'content_filter', false],
+  [/\b400\b|\binvalid\b|malformed/i,                          'client',         false],
 ];
 
 /**
@@ -408,7 +410,7 @@ const ERROR_RULES = [
  * Uses a priority table — first matching rule wins. Auth rules are checked
  * before client rules so "invalid token" classifies as auth, not client.
  * @param {Error|string} err
- * @returns {{ category: 'rate_limit'|'server'|'auth'|'cors'|'network'|'client'|'unknown', retryable: boolean, message: string }}
+ * @returns {{ category: 'rate_limit'|'server'|'auth'|'cors'|'timeout'|'network'|'content_filter'|'client'|'unknown', retryable: boolean, message: string }}
  */
 export function classifyError(err) {
   const msg = typeof err === 'string' ? err : err?.message || String(err);

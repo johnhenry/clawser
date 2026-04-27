@@ -594,7 +594,8 @@ export async function expandGlobs(token, fs, cwd) {
   }
 
   try {
-    const entries = await fs.listDir(cwd || '/');
+    // Pass showDotfiles so globs like .* can match internal/hidden directories
+    const entries = await fs.listDir(cwd || '/', { showDotfiles: true });
     const matches = entries
       .map(e => e.name)
       .filter(name => regex.test(name))
@@ -621,7 +622,7 @@ async function expandRecursiveGlob(pattern, fs, cwd) {
     const isLast = partIndex === parts.length - 1;
 
     try {
-      const entries = await fs.listDir(dir);
+      const entries = await fs.listDir(dir, { showDotfiles: true });
 
       if (part === '**') {
         // Match zero or more directories
@@ -704,7 +705,7 @@ async function expandNegationGlob(token, fs, cwd) {
   const positiveGlob = prefix + '*' + suffix;
 
   try {
-    const entries = await fs.listDir(cwd || '/');
+    const entries = await fs.listDir(cwd || '/', { showDotfiles: true });
     const negRegex = new RegExp('^' + negPattern.replace(/\*/g, '.*').replace(/\?/g, '.') + '$');
     const suffixRegex = suffix ? new RegExp(suffix.replace(/[.+^${}()|\\[\]]/g, '\\$&') + '$') : null;
 
@@ -1172,10 +1173,11 @@ export class MemoryFs {
     this.#files.set(norm, content);
   }
 
-  async listDir(path) {
+  async listDir(path, { showDotfiles = false } = {}) {
     const norm = normalizePath(path);
     if (!this.#dirs.has(norm) && norm !== '/') throw new Error(`ENOENT: ${norm}`);
     const prefix = norm === '/' ? '/' : norm + '/';
+    const isRoot = (norm === '/');
     const entries = [];
     const seen = new Set();
 
@@ -1185,6 +1187,8 @@ export class MemoryFs {
         const rest = fp.slice(prefix.length);
         const name = rest.split('/')[0];
         if (!seen.has(name)) {
+          // Filter internal dirs at root when showDotfiles is false
+          if (isRoot && !showDotfiles && WorkspaceFs.INTERNAL_DIRS.has(name)) continue;
           seen.add(name);
           // Is it a direct child file or a directory?
           if (!rest.includes('/')) {
@@ -1202,6 +1206,7 @@ export class MemoryFs {
         const rest = dp.slice(prefix.length);
         const name = rest.split('/')[0];
         if (!seen.has(name)) {
+          if (isRoot && !showDotfiles && WorkspaceFs.INTERNAL_DIRS.has(name)) continue;
           seen.add(name);
           entries.push({ name, kind: 'directory' });
         }
@@ -1299,9 +1304,10 @@ export function registerBuiltins(registry) {
       if (stat && stat.kind !== 'directory') {
         return { stdout: '', stderr: `cd: ${target}: Not a directory`, exitCode: 1 };
       }
-      // Always verify via listDir for non-root paths (stat can be stale/cached)
-      if (resolved !== '/') {
-        await fs.listDir(resolved);
+      // stat returned a directory — trust it. Only fall back to listDir
+      // if stat returned null (not found) to confirm via enumeration.
+      if (!stat && resolved !== '/') {
+        await fs.listDir(resolved, { showDotfiles: true });
       }
     } catch {
       return { stdout: '', stderr: `cd: ${target}: No such directory`, exitCode: 1 };

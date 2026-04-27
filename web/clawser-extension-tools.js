@@ -1236,6 +1236,44 @@ export function createExtensionBridge(rpc) {
     try {
       const result = await client.call(extAction, params);
       if (result?.error) return { success: false, output: '', error: result.error };
+
+      // Screenshot actions: store to OPFS to avoid context overflow
+      if (extAction === 'screenshot' && result?.dataUrl) {
+        const dataUrl = result.dataUrl;
+        const fmt = result.format || params.format || 'png';
+        const sizeBytes = dataUrl.length;
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
+        const filename = `bridge-screenshot-${ts}.${fmt}`;
+        const opfsPath = `${SCREENSHOT_DIR}/${filename}`;
+        try {
+          const { dir, name } = await opfsWalk(opfsPath, { create: true });
+          const fh = await dir.getFileHandle(name, { create: true });
+          const writable = await fh.createWritable();
+          await writable.write(dataUrl);
+          await writable.close();
+          return {
+            success: true,
+            output: JSON.stringify({
+              stored: true,
+              path: opfsPath,
+              format: fmt,
+              sizeBytes,
+              note: `Screenshot saved to OPFS at "${opfsPath}" (${(sizeBytes / 1024).toFixed(0)} KB). Use browser_read or cat to retrieve if needed.`,
+            }),
+          };
+        } catch (storeErr) {
+          return {
+            success: true,
+            output: JSON.stringify({
+              stored: false,
+              format: fmt,
+              sizeBytes,
+              note: `Screenshot captured (${(sizeBytes / 1024).toFixed(0)} KB) but OPFS storage failed: ${storeErr.message}. Data URL not included to prevent context overflow.`,
+            }),
+          };
+        }
+      }
+
       let output = typeof result === 'string' ? result : JSON.stringify(result);
       if (output.length > MAX_TOOL_OUTPUT) {
         output = output.slice(0, MAX_TOOL_OUTPUT) + '\n... (truncated — output exceeded 100KB limit)';
