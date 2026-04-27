@@ -1,0 +1,46 @@
+# Workspace Management
+
+Isolated workspaces with per-workspace config, tools, and file systems.
+
+---
+
+### Workspace Lifecycle
+
+**Status:** ✅ Implemented
+
+Create, switch, import, and export workspaces. Each workspace has isolated OPFS storage, conversation history, tool permissions, agent definitions, and config. Lazy panel rendering defers non-essential DOM until first navigation.
+
+**Source files:**
+
+- `web/clawser-workspace-lifecycle.js`
+- `web/clawser-state.js`
+
+---
+
+### Workspace Config
+
+**Status:** ✅ Implemented
+
+Per-workspace settings — autonomy level, model overrides, cache TTL, cost caps, and tool permissions. Config sections render eagerly since they affect runtime behavior on load.
+
+**Source files:**
+
+- `web/clawser-state.js`
+
+---
+
+### Import/Export
+
+**Status:** ✅ Implemented
+
+Export workspaces as JSON bundles including config, conversations, memories, and agent definitions. Import from bundle to create a new workspace or merge into existing.
+
+**Source files:**
+
+- `web/clawser-workspace-lifecycle.js`
+
+---
+
+---
+
+[← Getting Started](./getting-started.md) | [Index](./index.md) | [Core →](./core.md)

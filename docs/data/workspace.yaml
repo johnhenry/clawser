@@ -1,0 +1,173 @@
+# Clawser Workspace — Workspaces, persistence, conversations, vault, migration
+# Source of truth for the workspace and persistence subsystem
+
+- name: Workspace Management
+  status: implemented
+  description: >
+    Multi-workspace system with isolated state per workspace. Each workspace has
+    its own memory, goals, skills, configurations, conversations, and tool permissions.
+    Workspaces persisted to localStorage with LRU timestamps. OPFS directories
+    per workspace at clawser_workspaces/{wsId}/.
+  files:
+    - web/clawser-workspaces.js
+    - web/clawser-workspaces.d.ts
+  api:
+    - loadWorkspaces
+    - saveWorkspaces
+    - getActiveWorkspaceId
+    - setActiveWorkspaceId
+    - ensureDefaultWorkspace
+    - createWorkspace
+    - renameWorkspace
+    - deleteWorkspace
+    - getWorkspaceName
+    - touchWorkspace
+    - WS_KEY
+    - WS_ACTIVE_KEY
+  category: workspaces
+  since: "1.0.0"
+  see_also:
+    - Workspace Lifecycle
+
+- name: Workspace Lifecycle
+  status: implemented
+  description: >
+    Workspace initialization, switching, and teardown. Sets up kernel integration,
+    creates shell sessions, and restores state on workspace switch.
+  files:
+    - web/clawser-workspace-lifecycle.js
+    - web/clawser-workspace-lifecycle.d.ts
+    - web/clawser-workspace-init-ui.js
+    - web/clawser-workspace-init-tools.js
+    - web/clawser-workspace-init-mesh.js
+  api:
+    - switchWorkspace
+    - initWorkspace
+    - createShellSession
+    - setKernelIntegration
+    - getKernelIntegration
+  category: lifecycle
+  since: "1.0.0"
+
+- name: OPFS Persistence
+  status: implemented
+  description: >
+    Primary persistence layer using the Origin Private File System. Stores event logs
+    (JSONL), memory state, skill files, conversation data, and checkpoints. Per-workspace
+    directories with isolated storage.
+  files:
+    - web/clawser-agent.js
+  api:
+    - persistCheckpoint
+    - restoreCheckpoint
+    - persistConversation
+    - restoreConversation
+    - persistMemories
+    - restoreMemories
+    - persistConfig
+    - restoreConfig
+  category: persistence
+  notes: >
+    OPFS directories: clawser_skills/ (global), clawser_workspaces/{wsId}/ (per-workspace).
+    Performance target: less than 100ms startup.
+  since: "1.0.0"
+
+- name: localStorage Persistence
+  status: implemented
+  description: >
+    Secondary persistence for workspace list, active workspace ID, tool permissions,
+    conversation metadata, and application configuration. Faster than OPFS for
+    small key-value data.
+  files:
+    - web/clawser-workspaces.js
+    - web/clawser-state.js
+  api:
+    - loadWorkspaces
+    - saveWorkspaces
+  category: persistence
+  since: "1.0.0"
+
+- name: IndexedDB Persistence
+  status: implemented
+  description: >
+    Tertiary persistence for checkpoint indexing, server route definitions,
+    and terminal session state. Used when structured queries are needed.
+  files:
+    - web/clawser-checkpoint-idb.js
+    - web/clawser-terminal-session-store.js
+  api:
+    - CheckpointIDB
+    - TerminalSessionStore
+  category: persistence
+  since: "1.5.0"
+
+- name: Conversations
+  status: implemented
+  description: >
+    Conversation management with create, load, switch, fork, replay, and export.
+    Conversations are event-sourced via the EventLog. Metadata (id, name, created,
+    lastUsed) stored per-workspace. Full JSONL serialization for portability.
+  files:
+    - web/clawser-conversations.js
+    - web/clawser-conversations.d.ts
+  api:
+    - loadConversations
+    - updateConversationMeta
+    - generateConvId
+    - ConversationMeta
+  category: conversations
+  since: "1.0.0"
+
+- name: Checkpoint/Restore
+  status: implemented
+  description: >
+    Binary checkpoint format for full agent state serialization. Checkpoint captures
+    conversation history, memory state, goal state, scheduler jobs, and configuration.
+    Three-level fallback hierarchy: v2 directory-based, v1 file-based, localStorage.
+  files:
+    - web/clawser-agent.js
+    - web/clawser-daemon.js
+  api:
+    - checkpoint
+    - restore
+    - getCheckpointJSON
+  category: checkpoint
+  notes: Performance target under 64MB memory usage.
+  since: "1.0.0"
+  see_also:
+    - CheckpointManager
+
+- name: Filesystem Mounting
+  status: implemented
+  description: >
+    Mount local filesystem directories into the agent's OPFS namespace using the
+    File System Access API. Supports persisting mount handles across sessions,
+    directory picking, and file picking.
+  files:
+    - web/clawser-mount.js
+    - web/clawser-mount.d.ts
+  api:
+    - MountableFs
+    - persistHandle
+    - restoreHandle
+    - removePersistedHandle
+    - listPersistedMounts
+    - isFileSystemAccessSupported
+    - pickDirectory
+    - pickFile
+    - MountListTool
+    - MountResolveTool
+  category: mount
+  since: "1.0.0"
+
+- name: Filesystem Observer
+  status: implemented
+  description: >
+    Watches for changes in mounted filesystem directories and triggers events
+    when files are created, modified, or deleted.
+  files:
+    - web/clawser-fs-observer.js
+  api:
+    - FsObserver
+  category: observer
+  since: "1.5.0"

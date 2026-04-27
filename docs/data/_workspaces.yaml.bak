@@ -1,0 +1,31 @@
+title: Workspace Management
+slug: workspaces
+description: Isolated workspaces with per-workspace config, tools, and file systems.
+order: 14
+features:
+  - name: Workspace Lifecycle
+    status: implemented
+    description: >
+      Create, switch, import, and export workspaces. Each workspace has isolated OPFS
+      storage, conversation history, tool permissions, agent definitions, and config.
+      Lazy panel rendering defers non-essential DOM until first navigation.
+    source_files:
+      - web/clawser-workspace-lifecycle.js
+      - web/clawser-state.js
+
+  - name: Workspace Config
+    status: implemented
+    description: >
+      Per-workspace settings — autonomy level, model overrides, cache TTL, cost caps,
+      and tool permissions. Config sections render eagerly since they affect runtime
+      behavior on load.
+    source_files:
+      - web/clawser-state.js
+
+  - name: Import/Export
+    status: implemented
+    description: >
+      Export workspaces as JSON bundles including config, conversations, memories, and
+      agent definitions. Import from bundle to create a new workspace or merge into existing.
+    source_files:
+      - web/clawser-workspace-lifecycle.js

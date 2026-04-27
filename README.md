@@ -568,6 +568,7 @@ Step-by-step guides to get productive with Clawser — see the [full tutorial in
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Static server, Docker, and production setup |
 | [docs/WSH-INTO-CLAWSER.md](docs/WSH-INTO-CLAWSER.md) | Reverse-connect setup and current status for reaching a live Clawser tab via `wsh` |
 | [docs/tutorials/](docs/tutorials/README.md) | 10 step-by-step tutorials with screenshots |
+| [guide/index.md](guide/index.md) | Comprehensive feature guide — 549 features across 19 sections |
 
 ## `.reference/` Directory
 
