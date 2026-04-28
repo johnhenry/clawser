@@ -939,6 +939,14 @@
 
 <!-- Vault Passphrase Modal -->
 <dialog id="vaultModal" class="vault-modal">
+  <button id="vaultSettingsGear" class="vault-gear" type="button" title="Settings" aria-label="Vault settings">&#9881;</button>
+  <div id="vaultSettingsPanel" class="vault-settings-panel" style="display:none">
+    <button id="vaultExportBtn" class="vault-settings-btn" type="button">Export vault backup</button>
+    <button id="vaultImportBtn" class="vault-settings-btn" type="button">Import vault backup</button>
+    <input id="vaultImportInput" type="file" accept=".json" style="display:none">
+    <hr class="vault-settings-hr">
+    <button id="vaultResetBtn" class="vault-settings-btn vault-settings-danger" type="button">Reset all data</button>
+  </div>
   <form method="dialog" class="vault-form">
     <h3 id="vaultModalTitle">Unlock Vault</h3>
     <p id="vaultModalDesc">Enter your passphrase to unlock the vault.</p>

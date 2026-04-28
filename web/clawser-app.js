@@ -58,6 +58,7 @@ import { executeRoutineAction } from './clawser-routine-runtime.js';
 import { createShellSession, setKernelIntegration } from './clawser-workspace-lifecycle.js';
 import { handleRoute } from './clawser-route-handler.js';
 import { initHomeListeners } from './clawser-home-views.js';
+import { initVaultSettings, checkResetParam } from './clawser-vault-settings.js';
 
 // Kernel integration (Phase 12 — Steps 23-30)
 import { Kernel } from './packages-kernel.js';
@@ -556,6 +557,12 @@ initHomeListeners();
 
 // Unlock vault before any workspace/account initialization
 (async () => {
+  // Handle ?reset=true URL parameter before anything renders
+  await checkResetParam();
+
+  // Wire up vault settings gear icon
+  initVaultSettings();
+
   if (state.vault && state.vault.isLocked && !state.demoMode) {
     await showVaultModal(state.vault);
     // After unlock, migrate any plaintext account keys to vault
