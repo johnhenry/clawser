@@ -255,6 +255,10 @@ export class TabCoordinator {
   #onMessage;
   #heartbeatInterval = null;
   #heartbeatMs;
+  /** @type {import('./clawser-kernel-integration.js').KernelIntegration|null} */
+  #kernelIntegration;
+  /** @type {[object, object]|null} Kernel MessagePort pair [tabPort, daemonPort] */
+  #kernelPorts;
 
   /**
    * @param {object} [opts]
@@ -262,13 +266,25 @@ export class TabCoordinator {
    * @param {object} [opts.channel] - BroadcastChannel-like object (for testing)
    * @param {number} [opts.heartbeatMs=5000]
    * @param {Function} [opts.onMessage] - (msg) callback for non-system messages
+   * @param {import('./clawser-kernel-integration.js').KernelIntegration} [opts.kernelIntegration] - Kernel integration for MessagePort IPC
    */
   constructor(opts = {}) {
     this.#tabId = `tab_${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 4)}`;
     this.#heartbeatMs = opts.heartbeatMs ?? 5000;
     this.#onMessage = opts.onMessage || null;
+    this.#kernelIntegration = opts.kernelIntegration || null;
+    this.#kernelPorts = null;
 
-    if (opts.channel) {
+    // Step 28: Use kernel MessagePorts for tab↔daemon IPC when available
+    if (this.#kernelIntegration) {
+      this.#kernelPorts = this.#kernelIntegration.createDaemonChannel();
+    }
+
+    if (this.#kernelPorts) {
+      // Use kernel MessagePort pair — tabPort for this coordinator
+      const [tabPort] = this.#kernelPorts;
+      this.#channel = tabPort;
+    } else if (opts.channel) {
       this.#channel = opts.channel;
     } else if (typeof BroadcastChannel !== 'undefined') {
       this.#channel = new BroadcastChannel(opts.channelName || 'clawser-tabs');
@@ -279,6 +295,9 @@ export class TabCoordinator {
 
     this.#channel.onmessage = (event) => this.#handleMessage(event.data || event);
   }
+
+  /** The kernel MessagePort pair, if kernel is active. */
+  get kernelPorts() { return this.#kernelPorts; }
 
   get tabId() { return this.#tabId; }
   get tabCount() { return this.#tabs.size + 1; } // +1 for self
@@ -393,6 +412,8 @@ export class DaemonController {
   #autoCheckpointInterval = null;
   #autoCheckpointMs;
   #getStateFn;
+  /** @type {import('./clawser-kernel-integration.js').KernelIntegration|null} */
+  #kernelIntegration;
 
   /**
    * @param {object} [opts]
@@ -401,14 +422,19 @@ export class DaemonController {
    * @param {TabCoordinator} [opts.coordinator]
    * @param {number} [opts.autoCheckpointMs=60000] - Auto-checkpoint interval
    * @param {Function} [opts.getStateFn] - () => serializable state
+   * @param {import('./clawser-kernel-integration.js').KernelIntegration} [opts.kernelIntegration] - Kernel integration for MessagePort IPC
    */
   constructor(opts = {}) {
     this.#state = opts.state || new DaemonState();
     this.#checkpoints = opts.checkpoints || new CheckpointManager();
+    this.#kernelIntegration = opts.kernelIntegration || null;
     this.#coordinator = opts.coordinator || null;
     this.#autoCheckpointMs = opts.autoCheckpointMs ?? 60000;
     this.#getStateFn = opts.getStateFn || null;
   }
+
+  /** Kernel integration instance. */
+  get kernelIntegration() { return this.#kernelIntegration; }
 
   /**
    * Start the daemon.

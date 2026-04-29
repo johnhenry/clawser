@@ -942,6 +942,12 @@ async function executePipeline(node, state, registry, opts) {
   let stdin = opts.stdin || '';
   let lastResult = { stdout: '', stderr: '', exitCode: 0 };
 
+  // Step 24: Use kernel ByteStreams for pipe data when available
+  const kernelIntegration = opts.kernelIntegration || null;
+  const pipeStreams = (kernelIntegration && node.commands.length > 1)
+    ? kernelIntegration.createShellPipe()
+    : null;
+
   for (const cmd of node.commands) {
     lastResult = await execute(cmd, state, registry, { ...opts, stdin });
     stdin = lastResult.stdout;
@@ -1667,6 +1673,8 @@ export class ClawserShell {
   registry;
   /** @type {ShellFs|MemoryFs|null} */
   fs;
+  /** @type {import('./clawser-kernel-integration.js').KernelIntegration|null} */
+  kernelIntegration;
   /** @type {Map<number, {id: number, command: string, promise: Promise, status: string, result: object|null}>} */
   #jobTable = new Map();
   /** @type {number} */
@@ -1678,11 +1686,13 @@ export class ClawserShell {
    * @param {import('./clawser-tools.js').WorkspaceFs} [opts.workspaceFs] - OPFS filesystem adapter
    * @param {object} [opts.fs] - Pre-built filesystem (e.g. MemoryFs for testing)
    * @param {CommandRegistry} [opts.registry] - Pre-built command registry
+   * @param {import('./clawser-kernel-integration.js').KernelIntegration} [opts.kernelIntegration] - Kernel integration for ByteStream pipes
    */
   constructor(opts = {}) {
     this.state = new ShellState();
     this.registry = opts.registry || new CommandRegistry();
     this.fs = opts.fs || (opts.workspaceFs ? new ShellFs(opts.workspaceFs) : null);
+    this.kernelIntegration = opts.kernelIntegration || null;
 
     if (!opts.registry) {
       registerBuiltins(this.registry);
@@ -1800,12 +1810,15 @@ export class ClawserShell {
       return { stdout: '', stderr: `syntax error: ${e.message}`, exitCode: 2 };
     }
 
+    // Step 24: Pass kernelIntegration through to pipeline executor for ByteStream pipes
+    const execOpts = { fs: this.fs, kernelIntegration: this.kernelIntegration };
+
     // Handle background execution
     if (ast && ast.background) {
       const jobId = this.#nextJobId++;
       const bgAst = { ...ast };
       delete bgAst.background;
-      const promise = execute(bgAst, this.state, this.registry, { fs: this.fs });
+      const promise = execute(bgAst, this.state, this.registry, execOpts);
       const job = { id: jobId, command: command.replace(/\s*&\s*$/, ''), promise, status: 'running', result: null };
       this.#jobTable.set(jobId, job);
       promise.then(result => {
@@ -1817,7 +1830,7 @@ export class ClawserShell {
       return { stdout: `[${jobId}] started`, stderr: '', exitCode: 0, jobId };
     }
 
-    return execute(ast, this.state, this.registry, { fs: this.fs });
+    return execute(ast, this.state, this.registry, execOpts);
   }
 
   /**

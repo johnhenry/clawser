@@ -530,7 +530,7 @@ export class WasmSandbox {
  * Unified manager for sandbox lifecycle.
  */
 export class SandboxManager {
-  /** @type {Map<string, { sandbox: WorkerSandbox|WasmSandbox, tier: number, gate: CapabilityGate }>} */
+  /** @type {Map<string, { sandbox: WorkerSandbox|WasmSandbox, tier: number, gate: CapabilityGate, tenantId?: string }>} */
   #sandboxes = new Map();
 
   /** @type {Function|null} */
@@ -542,16 +542,21 @@ export class SandboxManager {
   /** @type {Function|null} WASM evaluator */
   #wasmEvalFn;
 
+  /** @type {import('./clawser-kernel-integration.js').KernelIntegration|null} */
+  #kernelIntegration;
+
   /**
    * @param {object} [opts]
    * @param {Function} [opts.onLog]
    * @param {Function} [opts.createWorkerFn]
    * @param {Function} [opts.wasmEvalFn]
+   * @param {import('./clawser-kernel-integration.js').KernelIntegration} [opts.kernelIntegration] - Kernel integration for tenant runtime
    */
   constructor(opts = {}) {
     this.#onLog = opts.onLog || null;
     this.#createWorkerFn = opts.createWorkerFn || null;
     this.#wasmEvalFn = opts.wasmEvalFn || null;
+    this.#kernelIntegration = opts.kernelIntegration || null;
   }
 
   /** Number of active sandboxes. */
@@ -577,6 +582,13 @@ export class SandboxManager {
       throw new Error(`Capabilities ${validation.denied.join(', ')} not available at tier ${tier}`);
     }
 
+    // Step 27: Create a kernel tenant for this sandbox when available
+    let tenantInfo = null;
+    if (this.#kernelIntegration) {
+      const wsId = opts.workspaceId || 'default';
+      tenantInfo = this.#kernelIntegration.createSandboxTenant(wsId, opts.kernelCaps);
+    }
+
     let sandbox;
     if (tier === SANDBOX_TIERS.WASM) {
       sandbox = new WasmSandbox({
@@ -591,9 +603,14 @@ export class SandboxManager {
       });
     }
 
-    this.#sandboxes.set(name, { sandbox, tier, gate });
-    this.#log(`Created ${tier === SANDBOX_TIERS.WASM ? 'WASM' : 'Worker'} sandbox: ${name}`);
-    return { sandbox, gate };
+    const entry = { sandbox, tier, gate };
+    if (tenantInfo) {
+      entry.tenantId = tenantInfo.tenantId;
+      entry.serializedCaps = tenantInfo.serializedCaps;
+    }
+    this.#sandboxes.set(name, entry);
+    this.#log(`Created ${tier === SANDBOX_TIERS.WASM ? 'WASM' : 'Worker'} sandbox: ${name}${tenantInfo ? ` (kernel tenant: ${tenantInfo.tenantId})` : ''}`);
+    return { sandbox, gate, tenantId: tenantInfo?.tenantId || null };
   }
 
   /**

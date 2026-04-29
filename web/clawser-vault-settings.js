@@ -5,8 +5,7 @@
  * functionality accessible via a gear icon on the vault modal.
  *
  * @example
- *   import { initVaultSettings, checkResetParam } from './clawser-vault-settings.js';
- *   await checkResetParam();        // handle ?reset=true before UI renders
+ *   import { initVaultSettings } from './clawser-vault-settings.js';
  *   initVaultSettings();            // wire up gear icon + panel
  */
 
@@ -147,23 +146,6 @@ const importVaultBackup = async (file) => {
     location.reload();
   } catch (err) {
     await modal.alert(`Import failed: ${err.message}`);
-  }
-};
-
-// ── URL parameter support ───────────────────────────────────────
-
-/**
- * If the URL contains ?reset=true, trigger the reset flow immediately.
- * Call this before the vault modal renders so it works even when the UI is broken.
- */
-export const checkResetParam = async () => {
-  const params = new URLSearchParams(location.search);
-  if (params.get('reset') === 'true') {
-    // Remove param from URL so it doesn't fire again after reload
-    params.delete('reset');
-    const qs = params.toString();
-    history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
-    await confirmAndReset();
   }
 };
 
