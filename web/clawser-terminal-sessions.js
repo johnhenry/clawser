@@ -396,6 +396,9 @@ export class TerminalSessionManager {
   get events() { return this.#store.events; }
   get dirty() { return this.#store.dirty; }
 
+  /** Return a shallow clone of the current event array (safe for mutation). */
+  cloneEvents() { return this.#store.cloneEvents(); }
+
   // ── Export ───────────────────────────────────────────────────
 
   exportAsScript() {

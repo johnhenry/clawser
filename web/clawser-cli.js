@@ -122,12 +122,14 @@ Usage:
   clawser session rename <name>  Rename current session
   clawser session delete <name>  Delete a session
   clawser session fork [name]    Fork current session
-  clawser session export [fmt]   Export session (--script|--markdown|--json)
+  clawser session export [fmt]   Export session (--script|--markdown|--json|--html)
   clawser session save           Persist current session
 
 Flags:
   -p, --print TEXT              Prompt text for one-shot mode
   -m, --model NAME              Model override
+  -j, --json                    Emit machine-readable JSONL output
+  --output json|text            Output format (--output json is alias for --json)
   --system TEXT                  System prompt override
   --no-stream                   Disable streaming
   --continue                    Continue previous conversation
@@ -159,6 +161,64 @@ export const CLAWSER_SUBCOMMAND_META = [
   { name: 'session', description: 'Manage terminal sessions', usage: 'clawser session [list|new|switch|rename|delete|fork|export|save]' },
 ];
 
+// ── JSON Output Helpers ────────────────────────────────────────
+
+/**
+ * Wrap structured data as a successful JSON output envelope.
+ *
+ * @param {object} data - The payload
+ * @param {string} command - The command string that produced this output
+ * @returns {{ stdout: string, stderr: string, exitCode: number }}
+ *
+ * @example
+ *   jsonOut({ model: 'claude-sonnet-4-20250514' }, 'clawser model')
+ *   // => { stdout: '{"ok":true,"command":"clawser model","data":{"model":"claude-sonnet-4-20250514"}}\n', ... }
+ */
+export const jsonOut = (data, command) => ({
+  stdout: JSON.stringify({ ok: true, command, data }) + '\n',
+  stderr: '',
+  exitCode: 0,
+});
+
+/**
+ * Wrap an error as a JSON output envelope.
+ *
+ * @param {{ code: string, message: string }} error - Error details
+ * @param {string} command - The command string that produced this error
+ * @returns {{ stdout: string, stderr: string, exitCode: number }}
+ *
+ * @example
+ *   jsonErr({ code: 'NO_AGENT', message: 'No agent available' }, 'clawser status')
+ */
+export const jsonErr = (error, command) => ({
+  stdout: JSON.stringify({ ok: false, command, error }) + '\n',
+  stderr: '',
+  exitCode: 1,
+});
+
+/**
+ * Emit a single JSONL line for streaming output.
+ *
+ * @param {string} type - Line type (message, tool_call, tool_result, error, status)
+ * @param {object} fields - Additional fields to include
+ * @returns {string} A single JSON line with trailing newline
+ *
+ * @example
+ *   jsonLine('status', { state: 'thinking' })
+ *   // => '{"type":"status","state":"thinking","timestamp":"2026-04-29T..."}\n'
+ */
+export const jsonLine = (type, fields = {}) =>
+  JSON.stringify({ type, ...fields, timestamp: new Date().toISOString() }) + '\n';
+
+/**
+ * Resolve whether JSON mode is active from parsed flags.
+ *
+ * @param {object} flags - Parsed flag object
+ * @returns {boolean}
+ */
+export const isJsonMode = (flags) =>
+  flags.json === true || flags.output === 'json';
+
 // ── Command Registration ────────────────────────────────────────
 
 /**
@@ -174,7 +234,9 @@ export function registerClawserCli(registry, getAgent, getShell) {
     p: 'print',
     m: 'model',
     s: 'system',
-    // Value-consuming flags (not boolean): system, tools, max-turns
+    j: 'json',
+    json: true,
+    // Value-consuming flags (not boolean): system, tools, max-turns, output
     // are absent from the spec so parseFlags treats them as value-consuming
     // Boolean flags (no value):
     'no-stream': true,
@@ -184,24 +246,37 @@ export function registerClawserCli(registry, getAgent, getShell) {
 
   // ── One-shot prompt helper ──────────────────────────────────
 
-  async function oneShot(prompt) {
+  async function oneShot(prompt, json = false) {
     const agent = getAgent();
     if (!agent) {
+      if (json) return jsonErr({ code: 'NO_AGENT', message: 'No agent available' }, 'clawser');
       return { stdout: '', stderr: 'No agent available', exitCode: 1 };
     }
     try {
       agent.sendMessage(prompt);
       const resp = await agent.run();
       const text = resp?.content || resp?.text || '(no response)';
+      if (json) {
+        let stdout = jsonLine('status', { state: 'thinking' });
+        stdout += jsonLine('message', { role: 'assistant', content: text });
+        stdout += jsonLine('status', { state: 'done' });
+        return { stdout, stderr: '', exitCode: 0 };
+      }
       return { stdout: text + '\n', stderr: '', exitCode: 0 };
     } catch (e) {
+      if (json) return jsonErr({ code: 'AGENT_ERROR', message: e.message }, 'clawser');
       return { stdout: '', stderr: `Agent error: ${e.message}`, exitCode: 1 };
     }
   }
 
   // ── Subcommand: chat ────────────────────────────────────────
 
-  function cmdChat() {
+  function cmdChat(json = false) {
+    if (json) {
+      const result = jsonOut({ mode: 'chat' }, 'clawser chat');
+      result.__enterAgentMode = true;
+      return result;
+    }
     return {
       stdout: 'Entering agent chat mode.\n',
       stderr: '',
@@ -212,7 +287,12 @@ export function registerClawserCli(registry, getAgent, getShell) {
 
   // ── Subcommand: exit ────────────────────────────────────────
 
-  function cmdExit() {
+  function cmdExit(json = false) {
+    if (json) {
+      const result = jsonOut({ mode: 'exit' }, 'clawser exit');
+      result.__exitAgentMode = true;
+      return result;
+    }
     return {
       stdout: 'Exiting agent mode.\n',
       stderr: '',
@@ -223,20 +303,22 @@ export function registerClawserCli(registry, getAgent, getShell) {
 
   // ── Subcommand: do ──────────────────────────────────────────
 
-  async function cmdDo(subArgs) {
+  async function cmdDo(subArgs, json = false) {
     const task = subArgs.join(' ').trim();
     if (!task) {
+      if (json) return jsonErr({ code: 'MISSING_TASK', message: 'No task description provided' }, 'clawser do');
       return { stdout: '', stderr: 'Usage: clawser do "task description"', exitCode: 1 };
     }
     const prompt = `Please complete this task using available tools: ${task}`;
-    return oneShot(prompt);
+    return oneShot(prompt, json);
   }
 
   // ── Subcommand: config ──────────────────────────────────────
 
-  function cmdConfig(subArgs) {
+  function cmdConfig(subArgs, json = false) {
     const agent = getAgent();
     if (!agent) {
+      if (json) return jsonErr({ code: 'NO_AGENT', message: 'No agent available' }, 'clawser config');
       return { stdout: '', stderr: 'No agent available', exitCode: 1 };
     }
 
@@ -248,21 +330,25 @@ export function registerClawserCli(registry, getAgent, getShell) {
       switch (key) {
         case 'model':
           agent.setModel(value);
+          if (json) return jsonOut({ key: 'model', value }, 'clawser config set');
           return { stdout: `Model set to: ${value}\n`, stderr: '', exitCode: 0 };
         case 'max_tokens':
         case 'max-tokens': {
           const n = parseInt(value, 10);
           if (isNaN(n) || n <= 0) {
+            if (json) return jsonErr({ code: 'INVALID_VALUE', message: 'Invalid max_tokens value' }, 'clawser config set');
             return { stdout: '', stderr: 'Invalid max_tokens value', exitCode: 1 };
           }
-          // max_tokens is part of request options, not agent config — note for user
+          if (json) return jsonOut({ key: 'max_tokens', value: n }, 'clawser config set');
           return { stdout: `max_tokens noted: ${n} (applied at request time)\n`, stderr: '', exitCode: 0 };
         }
         case 'system_prompt':
         case 'system':
           agent.setSystemPrompt(value);
+          if (json) return jsonOut({ key: 'system_prompt', value, length: value.length }, 'clawser config set');
           return { stdout: `System prompt updated (${value.length} chars)\n`, stderr: '', exitCode: 0 };
         default:
+          if (json) return jsonErr({ code: 'UNKNOWN_KEY', message: `Unknown config key: ${key}` }, 'clawser config set');
           return { stdout: '', stderr: `Unknown config key: ${key}\nValid keys: model, max_tokens, system_prompt`, exitCode: 1 };
       }
     }
@@ -270,6 +356,14 @@ export function registerClawserCli(registry, getAgent, getShell) {
     // clawser config (show)
     const state = agent.getState();
     const model = agent.getModel() || '(provider default)';
+    if (json) {
+      return jsonOut({
+        model,
+        tool_count: state.tool_count ?? null,
+        max_iterations: state.maxToolIterations ?? 20,
+        history_len: state.history_len ?? 0,
+      }, 'clawser config');
+    }
     const lines = [
       `Model:          ${model}`,
       `Provider:       (use 'clawser status' for full state)`,
@@ -282,14 +376,25 @@ export function registerClawserCli(registry, getAgent, getShell) {
 
   // ── Subcommand: status ──────────────────────────────────────
 
-  function cmdStatus() {
+  function cmdStatus(json = false) {
     const agent = getAgent();
     if (!agent) {
+      if (json) return jsonErr({ code: 'NO_AGENT', message: 'No agent available' }, 'clawser status');
       return { stdout: '', stderr: 'No agent available', exitCode: 1 };
     }
 
     const state = agent.getState();
     const model = agent.getModel() || '(provider default)';
+    if (json) {
+      return jsonOut({
+        model,
+        state: state.agent_state || 'Idle',
+        history_len: state.history_len ?? 0,
+        memory_count: state.memory_count ?? 0,
+        goals: state.goals?.length ?? 0,
+        scheduler_jobs: state.scheduler_jobs ?? 0,
+      }, 'clawser status');
+    }
     const lines = [
       'Agent Status',
       '────────────',
@@ -305,18 +410,24 @@ export function registerClawserCli(registry, getAgent, getShell) {
 
   // ── Subcommand: history ─────────────────────────────────────
 
-  function cmdHistory() {
+  function cmdHistory(json = false) {
     const agent = getAgent();
     if (!agent) {
+      if (json) return jsonErr({ code: 'NO_AGENT', message: 'No agent available' }, 'clawser history');
       return { stdout: '', stderr: 'No agent available', exitCode: 1 };
     }
 
     const eventLog = agent.getEventLog();
     if (!eventLog || !eventLog.events || eventLog.events.length === 0) {
+      if (json) return jsonOut({ events: [] }, 'clawser history');
       return { stdout: 'No history.\n', stderr: '', exitCode: 0 };
     }
 
     const events = eventLog.events;
+    if (json) {
+      return jsonOut({ events }, 'clawser history');
+    }
+
     const lines = events.slice(-30).map(evt => {
       const time = new Date(evt.timestamp).toLocaleTimeString();
       const preview = evt.data?.content
@@ -331,43 +442,45 @@ export function registerClawserCli(registry, getAgent, getShell) {
 
   // ── Subcommand: clear ───────────────────────────────────────
 
-  async function cmdClear() {
+  async function cmdClear(json = false) {
     const agent = getAgent();
     if (!agent) {
+      if (json) return jsonErr({ code: 'NO_AGENT', message: 'No agent available' }, 'clawser clear');
       return { stdout: '', stderr: 'No agent available', exitCode: 1 };
     }
 
     await agent.reinit({});
+    if (json) return jsonOut({ cleared: true }, 'clawser clear');
     return { stdout: 'Conversation cleared.\n', stderr: '', exitCode: 0 };
   }
 
   // ── Subcommand: tools ───────────────────────────────────────
 
-  function cmdTools() {
+  function cmdTools(json = false) {
     const agent = getAgent();
     if (!agent) {
+      if (json) return jsonErr({ code: 'NO_AGENT', message: 'No agent available' }, 'clawser tools');
       return { stdout: 'No agent available. Cannot list tools.\n', stderr: '', exitCode: 1 };
     }
 
     const checkpoint = agent.getCheckpointJSON();
-    // Tool specs are registered on the agent; get them from checkpoint or direct access
-    // We walk through the checkpoint or use the state to determine count
     const state = agent.getState();
     const toolCount = state.tool_count ?? 0;
 
-    // Try to get specs via executeToolDirect enumeration — but the simplest path
-    // is that the agent exposes #toolSpecs indirectly. Since we don't have a
-    // public getToolSpecs(), we look at what's available.
-    // The agent stores tool specs internally. We can get names from the checkpoint
-    // or from the shell's command registry as a fallback.
     const shell = getShell();
-    const lines = [];
+    const shellCommands = shell ? shell.registry.names().sort() : [];
 
-    // If we have shell commands, list them as available tools
+    if (json) {
+      return jsonOut({
+        shell_commands: shellCommands,
+        agent_tools: toolCount,
+      }, 'clawser tools');
+    }
+
+    const lines = [];
     if (shell) {
-      const cmds = shell.registry.names().sort();
-      lines.push(`Shell commands (${cmds.length}):`);
-      for (const name of cmds) {
+      lines.push(`Shell commands (${shellCommands.length}):`);
+      for (const name of shellCommands) {
         lines.push(`  ${name}`);
       }
     }
@@ -380,36 +493,40 @@ export function registerClawserCli(registry, getAgent, getShell) {
 
   // ── Subcommand: model ───────────────────────────────────────
 
-  function cmdModel(subArgs) {
+  function cmdModel(subArgs, json = false) {
     const agent = getAgent();
     if (!agent) {
+      if (json) return jsonErr({ code: 'NO_AGENT', message: 'No agent available' }, 'clawser model');
       return { stdout: '', stderr: 'No agent available', exitCode: 1 };
     }
 
     if (subArgs.length === 0) {
       const model = agent.getModel() || '(provider default)';
+      if (json) return jsonOut({ model }, 'clawser model');
       return { stdout: `Current model: ${model}\n`, stderr: '', exitCode: 0 };
     }
 
     const newModel = subArgs.join(' ').trim();
     agent.setModel(newModel);
+    if (json) return jsonOut({ model: newModel }, 'clawser model');
     return { stdout: `Model set to: ${newModel}\n`, stderr: '', exitCode: 0 };
   }
 
   // ── Subcommand: cost ────────────────────────────────────────
 
-  function cmdCost() {
+  function cmdCost(json = false) {
     const agent = getAgent();
     if (!agent) {
+      if (json) return jsonErr({ code: 'NO_AGENT', message: 'No agent available' }, 'clawser cost');
       return { stdout: '', stderr: 'No agent available', exitCode: 1 };
     }
 
-    // Cost is tracked by the autonomy controller
     const autonomy = agent.autonomy;
     if (autonomy) {
       const aState = autonomy.stats;
       const costCents = aState.costTodayCents ?? 0;
       const costDollars = (costCents / 100).toFixed(4);
+      if (json) return jsonOut({ cost_cents: costCents, cost_dollars: parseFloat(costDollars) }, 'clawser cost');
       return {
         stdout: `Session cost: $${costDollars} (${costCents} cents today)\n`,
         stderr: '',
@@ -417,30 +534,35 @@ export function registerClawserCli(registry, getAgent, getShell) {
       };
     }
 
+    if (json) return jsonOut({ cost_cents: 0, cost_dollars: 0 }, 'clawser cost');
     return { stdout: 'Cost tracking not available.\n', stderr: '', exitCode: 0 };
   }
 
   // ── Subcommand: compact ─────────────────────────────────────
 
-  async function cmdCompact() {
+  async function cmdCompact(json = false) {
     const agent = getAgent();
     if (!agent) {
+      if (json) return jsonErr({ code: 'NO_AGENT', message: 'No agent available' }, 'clawser compact');
       return { stdout: '', stderr: 'No agent available', exitCode: 1 };
     }
 
     try {
       await agent.compactContext();
+      if (json) return jsonOut({ compacted: true }, 'clawser compact');
       return { stdout: 'Context compacted successfully.\n', stderr: '', exitCode: 0 };
     } catch (e) {
+      if (json) return jsonErr({ code: 'COMPACT_FAILED', message: e.message }, 'clawser compact');
       return { stdout: '', stderr: `Compaction failed: ${e.message}`, exitCode: 1 };
     }
   }
 
   // ── Subcommand: memory ──────────────────────────────────────
 
-  function cmdMemory(subArgs) {
+  function cmdMemory(subArgs, json = false) {
     const agent = getAgent();
     if (!agent) {
+      if (json) return jsonErr({ code: 'NO_AGENT', message: 'No agent available' }, 'clawser memory');
       return { stdout: '', stderr: 'No agent available', exitCode: 1 };
     }
 
@@ -450,8 +572,11 @@ export function registerClawserCli(registry, getAgent, getShell) {
     if (!sub || sub === 'list') {
       const entries = agent.memoryRecall('');
       if (!entries || entries.length === 0) {
+        if (json) return jsonOut({ memories: [] }, 'clawser memory list');
         return { stdout: 'No memories stored.\n', stderr: '', exitCode: 0 };
       }
+
+      if (json) return jsonOut({ memories: entries }, 'clawser memory list');
 
       const lines = entries.map(e =>
         `  [${e.category || 'core'}] ${e.key}: ${(e.content || '').slice(0, 80)}`
@@ -466,14 +591,17 @@ export function registerClawserCli(registry, getAgent, getShell) {
     // clawser memory add KEY VALUE
     if (sub === 'add') {
       if (subArgs.length < 3) {
+        if (json) return jsonErr({ code: 'MISSING_ARGS', message: 'Usage: clawser memory add KEY VALUE' }, 'clawser memory add');
         return { stdout: '', stderr: 'Usage: clawser memory add KEY VALUE', exitCode: 1 };
       }
       const key = subArgs[1];
       const content = subArgs.slice(2).join(' ');
       try {
         const id = agent.memoryStore({ key, content, category: 'user' });
+        if (json) return jsonOut({ key, id }, 'clawser memory add');
         return { stdout: `Memory added: ${key} (id: ${id})\n`, stderr: '', exitCode: 0 };
       } catch (e) {
+        if (json) return jsonErr({ code: 'STORE_FAILED', message: e.message }, 'clawser memory add');
         return { stdout: '', stderr: `Failed to add memory: ${e.message}`, exitCode: 1 };
       }
     }
@@ -481,36 +609,45 @@ export function registerClawserCli(registry, getAgent, getShell) {
     // clawser memory remove KEY
     if (sub === 'remove' || sub === 'rm' || sub === 'delete') {
       if (subArgs.length < 2) {
+        if (json) return jsonErr({ code: 'MISSING_ARGS', message: 'Usage: clawser memory remove KEY' }, 'clawser memory remove');
         return { stdout: '', stderr: 'Usage: clawser memory remove KEY', exitCode: 1 };
       }
       const key = subArgs[1];
-      // Find by key first, then delete by ID
       const entries = agent.memoryRecall('');
       const match = entries.find(e => e.key === key || e.id === key);
       if (!match) {
+        if (json) return jsonErr({ code: 'NOT_FOUND', message: `Memory not found: ${key}` }, 'clawser memory remove');
         return { stdout: '', stderr: `Memory not found: ${key}`, exitCode: 1 };
       }
       const removed = agent.memoryForget(match.id);
       if (removed) {
+        if (json) return jsonOut({ key, removed: true }, 'clawser memory remove');
         return { stdout: `Memory removed: ${key}\n`, stderr: '', exitCode: 0 };
       }
+      if (json) return jsonErr({ code: 'REMOVE_FAILED', message: `Failed to remove memory: ${key}` }, 'clawser memory remove');
       return { stdout: '', stderr: `Failed to remove memory: ${key}`, exitCode: 1 };
     }
 
+    if (json) return jsonErr({ code: 'UNKNOWN_SUBCOMMAND', message: `Unknown memory subcommand: ${sub}` }, 'clawser memory');
     return { stdout: '', stderr: `Unknown memory subcommand: ${sub}\nUsage: clawser memory [list|add|remove]`, exitCode: 1 };
   }
 
   // ── Subcommand: mcp ─────────────────────────────────────────
 
-  function cmdMcp() {
+  function cmdMcp(json = false) {
     const agent = getAgent();
     if (!agent) {
+      if (json) return jsonErr({ code: 'NO_AGENT', message: 'No agent available' }, 'clawser mcp');
       return { stdout: '', stderr: 'No agent available', exitCode: 1 };
     }
 
-    // MCP info is not directly exposed via a public getter on the agent.
-    // We report what we can infer from the agent state.
     const state = agent.getState();
+    if (json) {
+      return jsonOut({
+        agent_state: state.agent_state || 'Idle',
+        total_tools: state.tool_count ?? null,
+      }, 'clawser mcp');
+    }
     const lines = [
       'MCP Status',
       '──────────',
@@ -524,10 +661,11 @@ export function registerClawserCli(registry, getAgent, getShell) {
 
   // ── Subcommand: session ────────────────────────────────────
 
-  async function cmdSession(subArgs) {
+  async function cmdSession(subArgs, json = false) {
     const { state: appState } = await import('./clawser-state.js');
     const ts = appState.terminalSessions;
     if (!ts) {
+      if (json) return jsonErr({ code: 'NO_SESSIONS', message: 'Terminal sessions not available' }, 'clawser session');
       return { stdout: '', stderr: 'Terminal sessions not available', exitCode: 1 };
     }
 
@@ -536,6 +674,7 @@ export function registerClawserCli(registry, getAgent, getShell) {
     // clawser session (no args) or clawser session list
     if (!sub || sub === 'list') {
       const sessions = ts.list();
+      if (json) return jsonOut({ sessions, active: ts.activeId }, 'clawser session');
       if (sessions.length === 0) {
         return { stdout: 'No terminal sessions.\n', stderr: '', exitCode: 0 };
       }
@@ -551,6 +690,7 @@ export function registerClawserCli(registry, getAgent, getShell) {
     if (sub === 'new' || sub === 'create') {
       const name = subArgs.slice(1).join(' ').trim() || undefined;
       const meta = await ts.create(name);
+      if (json) return jsonOut({ name: meta.name, id: meta.id }, 'clawser session new');
       return { stdout: `Created session: ${meta.name} (${meta.id})\n`, stderr: '', exitCode: 0, __clearTerminal: true };
     }
 
@@ -558,14 +698,17 @@ export function registerClawserCli(registry, getAgent, getShell) {
     if (sub === 'switch') {
       const target = subArgs.slice(1).join(' ').trim();
       if (!target) {
+        if (json) return jsonErr({ code: 'MISSING_TARGET', message: 'No session target provided' }, 'clawser session switch');
         return { stdout: '', stderr: 'Usage: clawser session switch <name-or-id>', exitCode: 1 };
       }
       const sessions = ts.list();
       const match = sessions.find(s => s.id === target || s.name.toLowerCase() === target.toLowerCase());
       if (!match) {
+        if (json) return jsonErr({ code: 'NOT_FOUND', message: `Session not found: ${target}` }, 'clawser session switch');
         return { stdout: '', stderr: `Session not found: ${target}`, exitCode: 1 };
       }
       await ts.switchTo(match.id);
+      if (json) return jsonOut({ name: match.name, id: match.id }, 'clawser session switch');
       return { stdout: `Switched to session: ${match.name}\n`, stderr: '', exitCode: 0 };
     }
 
@@ -573,12 +716,15 @@ export function registerClawserCli(registry, getAgent, getShell) {
     if (sub === 'rename') {
       const newName = subArgs.slice(1).join(' ').trim();
       if (!newName) {
+        if (json) return jsonErr({ code: 'MISSING_NAME', message: 'No name provided' }, 'clawser session rename');
         return { stdout: '', stderr: 'Usage: clawser session rename <new-name>', exitCode: 1 };
       }
       if (!ts.activeId) {
+        if (json) return jsonErr({ code: 'NO_ACTIVE', message: 'No active session' }, 'clawser session rename');
         return { stdout: '', stderr: 'No active session', exitCode: 1 };
       }
       ts.rename(ts.activeId, newName);
+      if (json) return jsonOut({ name: newName, id: ts.activeId }, 'clawser session rename');
       return { stdout: `Session renamed to: ${newName}\n`, stderr: '', exitCode: 0 };
     }
 
@@ -586,14 +732,17 @@ export function registerClawserCli(registry, getAgent, getShell) {
     if (sub === 'delete' || sub === 'rm') {
       const target = subArgs.slice(1).join(' ').trim();
       if (!target) {
+        if (json) return jsonErr({ code: 'MISSING_TARGET', message: 'No session target provided' }, 'clawser session delete');
         return { stdout: '', stderr: 'Usage: clawser session delete <name-or-id>', exitCode: 1 };
       }
       const sessions = ts.list();
       const match = sessions.find(s => s.id === target || s.name.toLowerCase() === target.toLowerCase());
       if (!match) {
+        if (json) return jsonErr({ code: 'NOT_FOUND', message: `Session not found: ${target}` }, 'clawser session delete');
         return { stdout: '', stderr: `Session not found: ${target}`, exitCode: 1 };
       }
       await ts.delete(match.id);
+      if (json) return jsonOut({ name: match.name, id: match.id, deleted: true }, 'clawser session delete');
       return { stdout: `Deleted session: ${match.name}\n`, stderr: '', exitCode: 0 };
     }
 
@@ -601,47 +750,84 @@ export function registerClawserCli(registry, getAgent, getShell) {
     if (sub === 'fork') {
       const name = subArgs.slice(1).join(' ').trim() || undefined;
       const meta = await ts.fork(name);
+      if (json) return jsonOut({ name: meta.name, id: meta.id }, 'clawser session fork');
       return { stdout: `Forked session: ${meta.name} (${meta.id})\n`, stderr: '', exitCode: 0 };
     }
 
-    // clawser session export [--script|--markdown|--json|--jsonl]
+    // clawser session export [--script|--markdown|--json|--jsonl|--html]
     if (sub === 'export') {
       const format = subArgs[1] || '--script';
       let content, ext;
-      switch (format) {
-        case '--script':
-        case '-s':
-          content = ts.exportAsScript();
-          ext = 'sh';
-          break;
-        case '--markdown':
-        case '--md':
-        case '-m':
-          content = ts.exportAsMarkdown();
-          ext = 'md';
-          break;
-        case '--json':
-          content = ts.exportAsLog('json');
-          ext = 'json';
-          break;
-        case '--jsonl':
-          content = ts.exportAsLog('jsonl');
-          ext = 'jsonl';
-          break;
-        default:
-          content = ts.exportAsLog('text');
-          ext = 'log';
-          break;
+
+      // Rich export formats (markdown conversation, HTML standalone, JSON envelope)
+      // use the new clawser-session-export module for sanitization + formatting.
+      if (format === '--html' || format === '-h'
+        || format === '--rich-markdown' || format === '--rich-md'
+        || format === '--rich-json') {
+        const { exportSessionAsHTML, exportSessionAsMarkdown, exportSessionAsJSON } =
+          await import('./clawser-session-export.js');
+        const events = ts.cloneEvents();
+        const agent = getAgent();
+        const model = agent?.getState()?.model || 'unknown';
+        const title = ts.activeName || 'Clawser Session';
+        const exportOpts = { title, model };
+
+        switch (format) {
+          case '--html':
+          case '-h':
+            content = exportSessionAsHTML(events, exportOpts);
+            ext = 'html';
+            break;
+          case '--rich-markdown':
+          case '--rich-md':
+            content = exportSessionAsMarkdown(events, exportOpts);
+            ext = 'md';
+            break;
+          case '--rich-json':
+            content = exportSessionAsJSON(events, exportOpts);
+            ext = 'json';
+            break;
+        }
+      } else {
+        // Legacy export formats (simple script, text log, basic markdown)
+        switch (format) {
+          case '--script':
+          case '-s':
+            content = ts.exportAsScript();
+            ext = 'sh';
+            break;
+          case '--markdown':
+          case '--md':
+          case '-m':
+            content = ts.exportAsMarkdown();
+            ext = 'md';
+            break;
+          case '--json':
+            content = ts.exportAsLog('json');
+            ext = 'json';
+            break;
+          case '--jsonl':
+            content = ts.exportAsLog('jsonl');
+            ext = 'jsonl';
+            break;
+          default:
+            content = ts.exportAsLog('text');
+            ext = 'log';
+            break;
+        }
       }
+      if (json) return jsonOut({ format: ext, content }, 'clawser session export');
       return { stdout: content + '\n', stderr: '', exitCode: 0 };
     }
 
     // clawser session save
     if (sub === 'save') {
       await ts.persist();
+      if (json) return jsonOut({ saved: true }, 'clawser session save');
       return { stdout: 'Session saved.\n', stderr: '', exitCode: 0 };
     }
 
+    if (json) return jsonErr({ code: 'UNKNOWN_SUBCOMMAND', message: `Unknown session subcommand: ${sub}` }, 'clawser session');
     return { stdout: '', stderr: `Unknown session subcommand: ${sub}\nUsage: clawser session [list|new|switch|rename|delete|fork|export|save]`, exitCode: 1 };
   }
 
@@ -653,39 +839,50 @@ export function registerClawserCli(registry, getAgent, getShell) {
       return { stdout: HELP_TEXT, stderr: '', exitCode: 0 };
     }
 
+    // Pre-parse flags to detect --json / -j / --output json across all invocations.
+    const { flags: preFlags } = parseFlags(args, FLAG_SPEC);
+    const json = isJsonMode(preFlags);
+
     const subcmd = args[0];
-    const subArgs = args.slice(1);
+
+    // Build clean subArgs with json-related flags stripped
+    const cleanSubArgs = [];
+    for (let i = 1; i < args.length; i++) {
+      if (args[i] === '--json' || args[i] === '-j') continue;
+      if (args[i] === '--output' && (args[i + 1] === 'json' || args[i + 1] === 'text')) { i++; continue; }
+      cleanSubArgs.push(args[i]);
+    }
 
     // Dispatch known subcommands
     switch (subcmd) {
       case 'chat':
-        return cmdChat();
+        return cmdChat(json);
       case 'exit':
-        return cmdExit();
+        return cmdExit(json);
       case 'do':
-        return cmdDo(subArgs);
+        return cmdDo(cleanSubArgs, json);
       case 'config':
-        return cmdConfig(subArgs);
+        return cmdConfig(cleanSubArgs, json);
       case 'status':
-        return cmdStatus();
+        return cmdStatus(json);
       case 'history':
-        return cmdHistory();
+        return cmdHistory(json);
       case 'clear':
-        return cmdClear();
+        return cmdClear(json);
       case 'tools':
-        return cmdTools();
+        return cmdTools(json);
       case 'model':
-        return cmdModel(subArgs);
+        return cmdModel(cleanSubArgs, json);
       case 'cost':
-        return cmdCost();
+        return cmdCost(json);
       case 'compact':
-        return cmdCompact();
+        return cmdCompact(json);
       case 'memory':
-        return cmdMemory(subArgs);
+        return cmdMemory(cleanSubArgs, json);
       case 'mcp':
-        return cmdMcp();
+        return cmdMcp(json);
       case 'session':
-        return cmdSession(subArgs);
+        return cmdSession(cleanSubArgs, json);
       case 'help':
       case '--help':
       case '-h':
@@ -697,6 +894,7 @@ export function registerClawserCli(registry, getAgent, getShell) {
     // Not a known subcommand — check for flags
     if (subcmd.startsWith('-')) {
       const { flags, positional } = parseFlags(args, FLAG_SPEC);
+      const flagJson = isJsonMode(flags);
 
       // -p "prompt" or --print "prompt"
       if (flags.print) {
@@ -704,6 +902,7 @@ export function registerClawserCli(registry, getAgent, getShell) {
           ? flags.print
           : positional.join(' ');
         if (!prompt) {
+          if (flagJson) return jsonErr({ code: 'MISSING_PROMPT', message: 'No prompt provided for -p flag' }, 'clawser');
           return { stdout: '', stderr: 'No prompt provided for -p flag', exitCode: 1 };
         }
 
@@ -714,21 +913,33 @@ export function registerClawserCli(registry, getAgent, getShell) {
           if (flags.system) agent.setSystemPrompt(flags.system);
         }
 
-        return oneShot(prompt);
+        return oneShot(prompt, flagJson);
       }
 
       // -m "model" by itself — set model
       if (flags.model && !flags.print) {
-        return cmdModel([flags.model]);
+        return cmdModel([flags.model], flagJson);
+      }
+
+      // If the only flag is --json with no subcommand, show help
+      if (flagJson && !flags.print && !flags.model) {
+        return { stdout: HELP_TEXT, stderr: '', exitCode: 0 };
       }
 
       return { stdout: '', stderr: `Unknown flag: ${subcmd}\nRun 'clawser help' for usage.`, exitCode: 1 };
     }
 
     // Not a subcommand and not a flag — treat entire args as a prompt
-    const prompt = args.join(' ').trim();
+    // Filter out --json/-j/--output from the prompt text
+    const promptArgs = args.filter((a, i) => {
+      if (a === '--json' || a === '-j') return false;
+      if (a === '--output' && (args[i + 1] === 'json' || args[i + 1] === 'text')) return false;
+      if ((args[i - 1] === '--output') && (a === 'json' || a === 'text')) return false;
+      return true;
+    });
+    const prompt = promptArgs.join(' ').trim();
     if (prompt) {
-      return oneShot(prompt);
+      return oneShot(prompt, json);
     }
 
     return { stdout: HELP_TEXT, stderr: '', exitCode: 0 };

@@ -20,6 +20,7 @@ import { navigate } from './clawser-router.js';
 import { SkillParser, SkillStorage, SKILL_TEMPLATES, simpleDiff, validateRequirements } from './clawser-skills.js';
 import { createItemBar, _relativeTime } from './clawser-item-bar.js';
 import { CLAWSER_SUBCOMMAND_META } from './clawser-cli.js';
+import { createAdapter, detectAdapterType } from './clawser-terminal-adapter.mjs';
 
 // ── Re-exports from extracted modules ──────────────────────────
 export { refreshFiles, mountLocalFolder, renderMountList } from './clawser-ui-files.js';
@@ -506,13 +507,141 @@ export async function searchSkillRegistry(query) {
 const terminalHistory = [];
 let termHistoryIdx = -1;
 
-/** Append output to terminal. */
+/** Append output to terminal via the active adapter (or direct DOM fallback). */
 export function terminalAppend(html) {
-  const el = $('terminalOutput');
-  if (!el) return;
-  el.insertAdjacentHTML('beforeend', html);
-  el.scrollTop = el.scrollHeight;
+  const adapter = state.terminalAdapter;
+  if (!adapter) {
+    // Fallback: direct DOM manipulation (pre-migration compatibility)
+    const el = $('terminalOutput');
+    if (!el) return;
+    el.insertAdjacentHTML('beforeend', html);
+    el.scrollTop = el.scrollHeight;
+    return;
+  }
+
+  if (adapter.type() === 'custom-dom') {
+    adapter.appendHTML(html);
+  } else {
+    // wterm: strip HTML tags, write plain text
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    const text = tmp.textContent || '';
+    if (text) adapter.write(text + '\r\n');
+  }
 }
+
+/**
+ * Terminal renderer config defaults.
+ * @type {{ mode: 'auto'|'custom-dom'|'wterm', fontSize: number, scrollback: number }}
+ */
+const DEFAULT_RENDERER_CONFIG = { mode: 'auto', fontSize: 11, scrollback: 1000 };
+
+/**
+ * Read terminal renderer config from localStorage.
+ *
+ * @param {string} wsId — workspace ID
+ * @returns {{ mode: string, fontSize: number, scrollback: number }}
+ *
+ * @example
+ * ```js
+ * const cfg = getTerminalRendererConfig('ws_abc');
+ * // => { mode: 'auto', fontSize: 11, scrollback: 1000 }
+ * ```
+ */
+export const getTerminalRendererConfig = (wsId) => {
+  const raw = localStorage.getItem(lsKey.terminalRenderer(wsId));
+  if (!raw) return { ...DEFAULT_RENDERER_CONFIG };
+  try {
+    return { ...DEFAULT_RENDERER_CONFIG, ...JSON.parse(raw) };
+  } catch {
+    return { ...DEFAULT_RENDERER_CONFIG };
+  }
+};
+
+/**
+ * Save terminal renderer config to localStorage.
+ *
+ * @param {string} wsId
+ * @param {{ mode?: string, fontSize?: number, scrollback?: number }} config
+ */
+export const saveTerminalRendererConfig = (wsId, config) => {
+  localStorage.setItem(lsKey.terminalRenderer(wsId), JSON.stringify(config));
+};
+
+/**
+ * Resolve which adapter type to use for a given session context.
+ *
+ * @param {Object} sessionContext — { kind, isRemote, shellBackend }
+ * @param {string} wsId — workspace ID
+ * @returns {'custom-dom'|'wterm'}
+ *
+ * @example
+ * ```js
+ * const type = resolveAdapterForSession({ kind: 'pty', isRemote: true }, 'ws_abc');
+ * // With mode='auto': returns 'wterm'
+ * ```
+ */
+export const resolveAdapterForSession = (sessionContext, wsId) => {
+  const config = getTerminalRendererConfig(wsId);
+  if (config.mode === 'custom-dom') return 'custom-dom';
+  if (config.mode === 'wterm') return 'wterm';
+  // Auto mode
+  return detectAdapterType(sessionContext);
+};
+
+/**
+ * Initialize or swap the terminal adapter for the current session.
+ *
+ * @param {Object} [sessionContext={ kind: 'local' }] — session metadata
+ * @returns {Promise<void>}
+ *
+ * @example
+ * ```js
+ * await initTerminalAdapter({ kind: 'local', isRemote: false });
+ * ```
+ */
+export const initTerminalAdapter = async (sessionContext = { kind: 'local' }) => {
+  const wsId = getActiveWorkspaceId();
+  const adapterType = resolveAdapterForSession(sessionContext, wsId);
+  const config = getTerminalRendererConfig(wsId);
+
+  // Destroy existing adapter if type changed
+  if (state.terminalAdapter && state.terminalAdapter.type() !== adapterType) {
+    state.terminalAdapter.destroy();
+    state.terminalAdapter = null;
+  }
+
+  // Create new adapter if needed
+  if (!state.terminalAdapter) {
+    const container = $('terminalOutput');
+    if (!container) return;
+
+    const adapter = createAdapter(adapterType, {
+      theme: document.documentElement.classList.contains('light') ? 'light' : 'dark',
+      fontSize: config.fontSize,
+      scrollback: config.scrollback,
+      fontFamily: "'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',monospace",
+    });
+
+    try {
+      await adapter.init(container);
+    } catch (err) {
+      console.warn(`[clawser] ${adapterType} adapter failed, falling back to custom-dom:`, err);
+      const fallback = createAdapter('custom-dom', { fontSize: config.fontSize });
+      await fallback.init(container);
+      state.terminalAdapter = fallback;
+      return;
+    }
+
+    state.terminalAdapter = adapter;
+
+    // Hide input row when wterm is active (it handles its own keyboard input)
+    const inputRow = document.querySelector('.terminal-input-row');
+    if (inputRow) {
+      inputRow.style.display = adapter.type() === 'wterm' ? 'none' : '';
+    }
+  }
+};
 
 /** Track terminal agent mode state */
 let _terminalAgentMode = false;
@@ -785,6 +914,9 @@ export function renderTerminalSessionBar() {
     exportFormats: [
       { label: 'Export as script', fn: () => ts.exportAsScript(), filename: `${ts.activeName || 'session'}.sh`, mime: 'text/x-shellscript' },
       { label: 'Export as log', fn: () => ts.exportAsLog('text'), filename: `${ts.activeName || 'session'}.log`, mime: 'text/plain' },
+      { label: 'Export as HTML', fn: async () => { const { exportSessionAsHTML } = await import('./clawser-session-export.js'); return exportSessionAsHTML(ts.cloneEvents(), { title: ts.activeName || 'Clawser Session' }); }, filename: `${ts.activeName || 'session'}.html`, mime: 'text/html' },
+      { label: 'Export as Markdown', fn: async () => { const { exportSessionAsMarkdown } = await import('./clawser-session-export.js'); return exportSessionAsMarkdown(ts.cloneEvents(), { title: ts.activeName || 'Clawser Session' }); }, filename: `${ts.activeName || 'session'}.md`, mime: 'text/markdown' },
+      { label: 'Export as JSON', fn: async () => { const { exportSessionAsJSON } = await import('./clawser-session-export.js'); return exportSessionAsJSON(ts.cloneEvents(), { title: ts.activeName || 'Clawser Session' }); }, filename: `${ts.activeName || 'session'}.json`, mime: 'application/json' },
     ],
     renderMeta: (item) => {
       const ago = _relativeTime(item.lastUsed);
