@@ -9,8 +9,6 @@
  *   initVaultSettings();            // wire up gear icon + panel
  */
 
-import { modal } from './clawser-modal.js';
-
 // ── Reset all data ──────────────────────────────────────────────
 
 /**
@@ -72,9 +70,8 @@ const resetAllData = async () => {
  * @returns {Promise<void>}
  */
 export const confirmAndReset = async () => {
-  const ok = await modal.confirm(
-    'This will permanently erase all stored data including API keys, conversations, memory, and files. This cannot be undone. Continue?',
-    { title: 'Reset all data', okLabel: 'Reset', danger: true }
+  const ok = window.confirm(
+    'Reset all data?\n\nThis will permanently erase all stored data including API keys, conversations, memory, and files. This cannot be undone.'
   );
   if (ok) await resetAllData();
 };
@@ -92,7 +89,7 @@ const exportVaultBackup = async () => {
     try {
       vaultDir = await root.getDirectoryHandle('clawser_vault');
     } catch {
-      await modal.alert('No vault data found to export.');
+      window.alert('No vault data found to export.');
       return;
     }
 
@@ -113,7 +110,7 @@ const exportVaultBackup = async () => {
     a.click();
     URL.revokeObjectURL(url);
   } catch (err) {
-    await modal.alert(`Export failed: ${err.message}`);
+    window.alert(`Export failed: ${err.message}`);
   }
 };
 
@@ -142,10 +139,10 @@ const importVaultBackup = async (file) => {
       await writable.close();
     }
 
-    await modal.alert(`Imported ${Object.keys(backup.entries).length} vault entries. Reload to use.`);
+    window.alert(`Imported ${Object.keys(backup.entries).length} vault entries. Reload to use.`);
     location.reload();
   } catch (err) {
-    await modal.alert(`Import failed: ${err.message}`);
+    window.alert(`Import failed: ${err.message}`);
   }
 };
 
