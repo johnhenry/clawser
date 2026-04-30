@@ -88,6 +88,7 @@ export const lsKey = {
   peripherals:   wsId => `clawser_${LS_VERSION}_peripherals_${wsId}`,
   showDotfiles:  wsId => `clawser_${LS_VERSION}_show_dotfiles_${wsId}`,
   modelConfig:   wsId => `clawser_${LS_VERSION}_model_config_${wsId}`,
+  terminalRenderer: wsId => `clawser_${LS_VERSION}_terminal_renderer_${wsId}`,
 };
 
 /**
@@ -226,6 +227,7 @@ export const state = {
     agentStorage: null,
     remoteMountManager: null,
     vmConsoleRegistry: null,
+    terminalAdapter: null,
   },
 
   /** Per-conversation session state */
@@ -258,7 +260,7 @@ export const state = {
 for (const [ns, fields] of [
   ['ui', ['isSending', 'currentRoute', 'switchingViaRouter', 'slashSelectedIdx', 'pendingImportBlob', 'cmdSelectedSpec']],
   ['services', ['agent', 'providers', 'browserTools', 'mcpManager', 'vault', 'workspaceFs', 'responseCache', 'shell', 'skillRegistry', 'intentRouter', 'inputSanitizer', 'toolCallValidator', 'safetyPipeline', 'providerHealth', 'modelRouter', 'stuckDetector', 'selfRepairEngine', 'undoManager', 'heartbeatRunner', 'authProfileManager', 'metricsCollector', 'ringBufferLog', 'daemonController', 'routineEngine', 'oauthManager', 'identityManager', 'peerNode', 'swarmCoordinator', 'modelManager', 'pod', 'discoveryManager', 'transportNegotiator', 'auditChain', 'streamMultiplexer', 'fileTransfer', 'serviceDirectory', 'serviceAdvertiser', 'serviceBrowser', 'syncEngine', 'checkpointIDB', 'resourceRegistry', 'meshMarketplace', 'quotaManager', 'quotaEnforcer', 'paymentRouter', 'consensusManager', 'relayClient', 'nameResolver', 'appRegistry', 'appStore', 'orchestrator', 'remoteRuntimeRegistry', 'remoteSessionBroker']],
-  ['features', ['toolBuilder', 'channelManager', 'delegateManager', 'gitBehavior', 'gitMemory', 'automationManager', 'sandboxManager', 'peripheralManager', 'pairingManager', 'goalManager', 'skillRegistryClient', 'terminalSessions', 'agentStorage', 'remoteMountManager', 'vmConsoleRegistry']],
+  ['features', ['toolBuilder', 'channelManager', 'delegateManager', 'gitBehavior', 'gitMemory', 'automationManager', 'sandboxManager', 'peripheralManager', 'pairingManager', 'goalManager', 'skillRegistryClient', 'terminalSessions', 'agentStorage', 'remoteMountManager', 'vmConsoleRegistry', 'terminalAdapter']],
   ['session', ['sessionCost', 'activeConversationId', 'activeConversationName', 'activeSkillPrompts', 'toolCallLog', 'eventLog', 'eventCount', 'pendingInlineTools']],
 ]) {
   for (const field of fields) {
