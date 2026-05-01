@@ -5,6 +5,7 @@ import { registerSchedulerCli } from './clawser-scheduler-cli.js';
 import { registerModelCli } from './clawser-model-cli.js';
 import { registerSnapshotCli } from './clawser-snapshot-cli.js';
 import { ClawserShell } from './clawser-shell.js';
+import { registerChmodBuiltin } from './clawser-permissions.js';
 
 /**
  * Create a shell configured with Clawser's workspace CLI commands.
@@ -17,6 +18,9 @@ import { ClawserShell } from './clawser-shell.js';
  * @param {object} [opts.fs]
  * @param {string} [opts.wsId] - Workspace ID for system path resolution
  * @param {boolean} [opts.sourceRc=true]
+ * @param {import('./clawser-proc.js').ProcFileHandler} [opts.procHandler] - /proc virtual file handler
+ * @param {import('./clawser-fs-devices.mjs').DeviceFileHandler} [opts.deviceHandler] - /dev device handler
+ * @param {import('./clawser-permissions.js').PermissionManager} [opts.permissions] - Permission manager
  * @param {() => unknown} [opts.getAgent]
  * @param {() => unknown} [opts.getRoutineEngine]
  * @param {() => unknown} [opts.getModelManager]
@@ -28,16 +32,31 @@ export async function createConfiguredShell({
   fs,
   wsId,
   sourceRc = true,
+  procHandler,
+  deviceHandler,
+  permissions,
   getAgent = () => null,
   getRoutineEngine = () => null,
   getModelManager = () => null,
   getSkillRegistry = () => null,
 } = {}) {
-  const shell = new ClawserShell({ workspaceFs, fs, wsId });
+  const shell = new ClawserShell({ workspaceFs, fs, wsId, procHandler, deviceHandler, permissions });
+
+  // Set clsh environment variables
+  shell.state.env.set('SHELL', 'clsh');
+  shell.state.env.set('CLSH_VERSION', '1.0');
+
+  // Register chmod builtin if permissions manager is available
+  if (permissions) {
+    registerChmodBuiltin(shell.registry, permissions);
+  }
 
   if (sourceRc) {
     await shell.source('/.clawserrc');
   }
+
+  // Source system and user profiles
+  await shell.sourceProfiles();
 
   const getShell = () => shell;
   registerClawserCli(shell.registry, getAgent, getShell);

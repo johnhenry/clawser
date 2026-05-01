@@ -27,6 +27,12 @@ import { SkillMarketplace } from './clawser-marketplace.js';
 import { createConfiguredShell } from './clawser-shell-factory.js';
 import { SkillHotReloader } from './clawser-skill-hot-reload.js';
 
+// Runtime FS (Phase 3-6 wiring)
+import { initRuntimeFs, initDeviceFs } from './clawser-runtime.js';
+import { PermissionManager } from './clawser-permissions.js';
+import { FileWatcher } from './clawser-file-watcher.mjs';
+import { ReactiveConfigStore } from './clawser-reactive-config.mjs';
+
 // Fallback chain
 import { FallbackChain, FallbackExecutor } from './clawser-fallback.js';
 
@@ -82,13 +88,65 @@ export { syncRoutinesToIDB };
 // ── Shell session management ─────────────────────────────────────
 /** Create a fresh shell session for the current workspace. Sources .clawserrc and registers CLI. */
 export async function createShellSession() {
+  // Initialize PermissionManager and load manifest from OPFS
+  const permissions = new PermissionManager();
+  try {
+    if (state.workspaceFs) {
+      await permissions.load(state.workspaceFs);
+    }
+  } catch (e) { console.warn('[clawser] permission manifest load failed:', e.message); }
+
+  // Initialize ProcFileHandler with runtime context
+  const procHandler = initRuntimeFs({
+    toolRegistry: state.browserTools,
+    costTracker: state.agent?.costTracker,
+    memory: state.agent?.memory,
+    daemonState: state.daemonController,
+    wsId: state.agent?.getWorkspace?.() || 'default',
+    permissions,
+    initTime: performance.now(),
+  });
+
+  // Initialize DeviceFileHandler with provider/channel context
+  const deviceHandler = initDeviceFs({
+    providerRegistry: state.providers,
+    channelManager: state.channelManager,
+  });
+
+  // Store handlers on state for external access
+  state.procHandler = procHandler;
+  state.deviceHandler = deviceHandler;
+  state.permissions = permissions;
+
   state.shell = await createConfiguredShell({
     workspaceFs: state.workspaceFs,
+    wsId: state.agent?.getWorkspace?.() || 'default',
+    procHandler,
+    deviceHandler,
+    permissions,
     getAgent: () => state.agent,
     getRoutineEngine: () => state.routineEngine,
     getModelManager: () => state.modelManager,
     getSkillRegistry: () => state.skillRegistry,
   });
+
+  // Initialize FileWatcher + ReactiveConfigStore for live config reload
+  try {
+    if (state.shell?.fs) {
+      const watcher = new FileWatcher(state.shell.fs, { intervalMs: 3000 });
+      const configStore = new ReactiveConfigStore(watcher, state.shell.fs);
+      // Register autonomy config domain
+      configStore.register('autonomy', '~/.config/clawser/autonomy.json', {
+        apply: (config) => {
+          if (state.agent?.updateAutonomy) state.agent.updateAutonomy(config);
+        },
+      });
+      watcher.start();
+      state.fileWatcher = watcher;
+      state.reactiveConfigStore = configStore;
+    }
+  } catch (e) { console.warn('[clawser] reactive config init failed:', e.message); }
+
   // Update terminal session manager's shell reference
   if (state.terminalSessions) {
     state.terminalSessions.setShell(state.shell);
@@ -150,6 +208,13 @@ export async function cleanupWorkspace() {
   // Stop skill hot-reload
   if (state.skillHotReloader) {
     state.skillHotReloader.stop();
+  }
+
+  // Stop file watcher (reactive config)
+  if (state.fileWatcher) {
+    try { state.fileWatcher.stop(); } catch { /* best-effort */ }
+    state.fileWatcher = null;
+    state.reactiveConfigStore = null;
   }
 
   // Deactivate all skills
