@@ -12,6 +12,7 @@
 import { $, state, lsKey, setSending, setConversation, resetConversationState, on, emit } from './clawser-state.js';
 import { modal } from './clawser-modal.js';
 import { loadWorkspaces, setActiveWorkspaceId, getActiveWorkspaceId, ensureDefaultWorkspace, getWorkspaceName, touchWorkspace } from './clawser-workspaces.js';
+import { ensureDirectoryStructure, writeDefaultConfigs } from './clawser-fs-bootstrap.mjs';
 import { loadConversations } from './clawser-conversations.js';
 import { saveConfig, applyRestoredConfig, rebuildProviderDropdown, setupProviders } from './clawser-accounts.js';
 import { updateRouteHash, PANELS, resetRenderedPanels, isPanelRendered } from './clawser-router.js';
@@ -337,6 +338,11 @@ export async function initWorkspace(wsId, convId) {
 
   try {
     ensureDefaultWorkspace();
+    // Phase 0: ensure OPFS dirs + default configs for this workspace
+    try {
+      await ensureDirectoryStructure(wsId);
+      await writeDefaultConfigs(wsId);
+    } catch (e) { console.warn('[clawser] workspace OPFS bootstrap failed:', e); }
     const activeWsId = wsId;
     const wsName = getWorkspaceName(activeWsId);
     $('workspaceName').textContent = wsName;

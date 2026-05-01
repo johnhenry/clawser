@@ -23,7 +23,7 @@ export class WorkspaceFs {
   getWorkspace() { return this.#wsId; }
 
   /** Absolute OPFS path to the workspace home directory */
-  get homePath() { return `clawser_workspaces/${this.#wsId}`; }
+  get homePath() { return `clawser/workspaces/${this.#wsId}`; }
 
   /**
    * Resolve a user-facing path to an absolute OPFS path under workspace home.
@@ -742,8 +742,8 @@ export class FsDeleteTool extends BrowserTool {
     if (parts.length === 0) {
       return { success: false, output: '', error: 'Cannot delete workspace root directory' };
     }
-    // Prevent deleting the workspace home itself (e.g., "clawser_workspaces/default")
-    if (parts.length <= 2 && parts[0] === 'clawser_workspaces') {
+    // Prevent deleting the workspace home itself (e.g., "clawser/workspaces/default")
+    if (parts[0] === 'clawser' && parts[1] === 'workspaces' && parts.length <= 3) {
       return { success: false, output: '', error: 'Cannot delete workspace home directory' };
     }
     const { dir, name } = await opfsWalk(resolved);

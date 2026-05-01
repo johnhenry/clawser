@@ -14,6 +14,7 @@
  */
 import { $, state, lsKey, on, emit, migrateLocalStorageKeys, configCache } from './clawser-state.js';
 import { ensureDefaultWorkspace } from './clawser-workspaces.js';
+import { bootstrapFilesystem } from './clawser-fs-bootstrap.mjs';
 import { initAccountListeners } from './clawser-accounts.js';
 import { initRouterListeners } from './clawser-router.js';
 import { initChatListeners } from './clawser-ui-chat.js';
@@ -583,6 +584,14 @@ initHomeListeners();
   }
 
   ensureDefaultWorkspace();
+
+  // Phase 0: bootstrap OPFS directory structure + default configs
+  try {
+    await bootstrapFilesystem();
+  } catch (e) {
+    console.warn('[clawser] filesystem bootstrap failed (OPFS may be unavailable):', e);
+  }
+
   handleRoute();
 
   // ── Background execution: register periodicSync (Tier 3 fallback) ──

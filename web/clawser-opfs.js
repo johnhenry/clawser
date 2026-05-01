@@ -1,17 +1,75 @@
 /**
- * clawser-opfs.js — Shared OPFS path-walking utilities
+ * clawser-opfs.js — Shared OPFS path-walking utilities + virtual path resolution
  *
  * Extracts the common "split path, walk directory handles" pattern
  * used by tools, shell, server, and app modules into a single place.
  *
+ * Phase 0 adds:
+ *  - CLAWSER_ROOT namespace constant
+ *  - resolveVirtualPath() — maps Unix-conventional virtual paths to OPFS paths
+ *  - withLock() — Web Locks wrapper for safe concurrent OPFS writes
+ *
  * @module clawser-opfs
  */
+
+// ── OPFS namespace ─────────────────────────────────────────────────
+
+/**
+ * Top-level OPFS directory that namespaces all clawser data.
+ * All resolved OPFS paths start with this prefix.
+ *
+ * @example
+ * // Global config lives at:
+ * `${CLAWSER_ROOT}/etc/clawser/motd`  // → "clawser/etc/clawser/motd"
+ *
+ * // Workspace files live at:
+ * `${CLAWSER_ROOT}/workspaces/default/file.txt`
+ */
+export const CLAWSER_ROOT = 'clawser';
+
+/**
+ * Map a Unix-conventional virtual path to a concrete OPFS path.
+ *
+ * Global system paths (`/etc/`, `/var/`, `/run/`, `/dev/`, `/proc/`, `/sys/`, `/tmp/`)
+ * are prefixed with CLAWSER_ROOT directly. Tilde (`~/`) expands to the workspace
+ * home directory. All other paths are treated as workspace-relative.
+ *
+ * @param {string} virtualPath - Unix-style path (e.g. "/etc/clawser/motd", "~/file.txt", "docs/readme.md")
+ * @param {string} wsId - Active workspace ID
+ * @returns {string} OPFS-relative path (no leading slash)
+ *
+ * @example
+ * resolveVirtualPath('/etc/clawser/motd', 'default')
+ * // → "clawser/etc/clawser/motd"
+ *
+ * @example
+ * resolveVirtualPath('~/notes.md', 'ws_abc')
+ * // → "clawser/workspaces/ws_abc/notes.md"
+ *
+ * @example
+ * resolveVirtualPath('docs/readme.md', 'default')
+ * // → "clawser/workspaces/default/docs/readme.md"
+ */
+export const resolveVirtualPath = (virtualPath, wsId) => {
+  if (virtualPath.startsWith('/etc/'))  return `${CLAWSER_ROOT}${virtualPath}`;
+  if (virtualPath.startsWith('/var/'))  return `${CLAWSER_ROOT}${virtualPath}`;
+  if (virtualPath.startsWith('/run/'))  return `${CLAWSER_ROOT}${virtualPath}`;
+  if (virtualPath.startsWith('/dev/'))  return `${CLAWSER_ROOT}${virtualPath}`;
+  if (virtualPath.startsWith('/proc/')) return `${CLAWSER_ROOT}${virtualPath}`;
+  if (virtualPath.startsWith('/sys/'))  return `${CLAWSER_ROOT}${virtualPath}`;
+  if (virtualPath.startsWith('/tmp/'))  return `${CLAWSER_ROOT}${virtualPath}`;
+  if (virtualPath.startsWith('~/'))     return `${CLAWSER_ROOT}/workspaces/${wsId}/${virtualPath.slice(2)}`;
+  // Workspace-relative paths (strip leading / if present)
+  return `${CLAWSER_ROOT}/workspaces/${wsId}/${virtualPath.replace(/^\//, '')}`;
+};
+
+// ── Path walking ───────────────────────────────────────────────────
 
 /**
  * Walk an OPFS path and return the parent directory handle + filename.
  * Useful for file operations (read, write, delete).
  *
- * @param {string} path - Slash-delimited OPFS path (e.g. "clawser_workspaces/default/file.txt")
+ * @param {string} path - Slash-delimited OPFS path (e.g. "clawser/workspaces/default/file.txt")
  * @param {object} [opts]
  * @param {boolean} [opts.create=false] - Create intermediate directories if missing
  * @returns {Promise<{dir: FileSystemDirectoryHandle, name: string}>}
@@ -30,7 +88,7 @@ export async function opfsWalk(path, opts = {}) {
  * Walk an OPFS path and return the directory handle at the end.
  * Useful for listing or traversing directories.
  *
- * @param {string} path - Slash-delimited OPFS path (e.g. "clawser_workspaces/default/docs")
+ * @param {string} path - Slash-delimited OPFS path (e.g. "clawser/workspaces/default/docs")
  * @param {object} [opts]
  * @param {boolean} [opts.create=false] - Create intermediate directories if missing
  * @returns {Promise<FileSystemDirectoryHandle>}
@@ -44,3 +102,33 @@ export async function opfsWalkDir(path, opts = {}) {
   }
   return dir;
 }
+
+// ── Web Locks wrapper ──────────────────────────────────────────────
+
+/**
+ * Acquire a Web Lock before running an async callback.
+ * Prevents multi-tab race conditions on OPFS config writes.
+ *
+ * Falls back to executing `fn` directly if the Web Locks API is unavailable
+ * (e.g. in Node test environments or older browsers).
+ *
+ * @param {string} lockName - Lock resource name (e.g. "clawser:config:autonomy.json")
+ * @param {() => Promise<T>} fn - Async function to run while holding the lock
+ * @returns {Promise<T>} Result of `fn`
+ *
+ * @example
+ * await withLock('clawser:config:autonomy.json', async () => {
+ *   const { dir, name } = await opfsWalk(path, { create: true });
+ *   const fh = await dir.getFileHandle(name, { create: true });
+ *   const w = await fh.createWritable();
+ *   await w.write(JSON.stringify(config));
+ *   await w.close();
+ * });
+ */
+export const withLock = async (lockName, fn) => {
+  if (typeof navigator !== 'undefined' && navigator.locks) {
+    return navigator.locks.request(lockName, fn);
+  }
+  // No Web Locks available — execute without locking
+  return fn();
+};

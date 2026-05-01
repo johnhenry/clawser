@@ -87,10 +87,17 @@ export async function deleteWorkspace(id) {
   s.removeItem(`clawser_log_${id}`);
   try {
     const root = await navigator.storage.getDirectory();
+    // New slash-based namespace
+    try {
+      const clawserRoot = await root.getDirectoryHandle('clawser');
+      const wsRoot = await clawserRoot.getDirectoryHandle('workspaces');
+      await wsRoot.removeEntry(id, { recursive: true });
+    } catch (e) { console.debug('[clawser] OPFS workspace cleanup:', e); }
+    // Legacy underscore-separated namespace (migration compat)
     try {
       const base = await root.getDirectoryHandle('clawser_workspaces');
       await base.removeEntry(id, { recursive: true });
-    } catch (e) { console.debug('[clawser] OPFS workspace cleanup:', e); }
+    } catch (e) { /* old structure may not exist */ }
     try {
       const dir = await root.getDirectoryHandle('clawser_checkpoints');
       await dir.removeEntry(id, { recursive: true });
