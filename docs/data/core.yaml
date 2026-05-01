@@ -503,3 +503,127 @@
   since: "1.0.0"
   see_also:
     - Workspace Management
+
+# ─── NEW CORE FEATURES ─────────────────────���─────────────────────────
+
+- name: CLI JSON Output Mode
+  status: implemented
+  description: >
+    Machine-readable JSON output mode for the clawser CLI. All subcommands
+    support --json flag that emits structured JSON instead of human-readable
+    text. Enables scripting and integration with external tools.
+  files:
+    - web/clawser-cli.js
+  category: cli
+  since: "2.1.0"
+  see_also:
+    - Clawser CLI
+
+- name: CLI RPC Mode
+  status: implemented
+  description: >
+    JSON-RPC interface for the clawser CLI. Accepts tool calls over stdin/stdout
+    or via WebSocket, enabling external programs to drive the agent
+    programmatically. Supports all registered tools and returns structured
+    results.
+  files:
+    - web/clawser-rpc.mjs
+    - web/clawser-cli.js
+  api:
+    - RpcServer
+  category: cli
+  notes: >
+    Can be exposed over a tunneled port via WISP transport for remote
+    programmatic access.
+  since: "2.1.0"
+  see_also:
+    - WISP Transport
+
+- name: Session Branching
+  status: implemented
+  description: >
+    Fork a terminal session at any point in its history, creating a new branch
+    that shares the parent's history up to the fork point but diverges from
+    there. Enables exploring alternative command sequences without losing
+    the original session.
+  files:
+    - web/clawser-terminal-sessions.js
+  category: sessions
+  since: "2.1.0"
+  see_also:
+    - Terminal Sessions
+
+- name: Session Export
+  status: implemented
+  description: >
+    Export terminal sessions in three formats: Markdown (readable), HTML
+    (self-contained with syntax highlighting), and JSON (machine-readable).
+    Includes automatic credential stripping for safe sharing — API keys,
+    bearer tokens, and other secrets are redacted before export.
+  files:
+    - web/clawser-session-export.js
+  api:
+    - exportSessionMarkdown
+    - exportSessionHTML
+    - exportSessionJSON
+    - SECRET_PATTERNS
+  category: sessions
+  notes: Sanitizes Anthropic, OpenAI, GitHub, Slack, and AWS credentials.
+  since: "2.1.0"
+  see_also:
+    - Terminal Sessions
+
+- name: Hot-Reload Extensions
+  status: implemented
+  description: >
+    File watcher that automatically re-discovers and re-activates skills when
+    their source files change. Browser mode polls OPFS modification timestamps;
+    Node.js/CLI mode uses native fs.watch. No restart required to pick up
+    skill changes.
+  files:
+    - web/clawser-skill-hot-reload.js
+  api:
+    - SkillHotReloader
+  category: skills
+  since: "2.1.0"
+  see_also:
+    - Skills
+
+- name: Embedded Linux Guest (v86 Proof of Concept)
+  status: implemented
+  description: >
+    Proof-of-concept embedding a v86 WASM x86 Linux guest as a real terminal
+    option. Loads v86 WASM + BIOS + Linux image from CDN, exposes a
+    serial-console interface for sending commands and receiving output.
+    AI shell handles agent commands; real Linux binaries execute in the guest.
+  files:
+    - web/clawser-v86-guest.mjs
+    - web/clawser-v86-demo.html
+  api:
+    - LinuxGuest
+  category: terminal
+  notes: >
+    v86 is BSD-2-Clause. Demo page at clawser-v86-demo.html. Foundation for
+    future full guest integration.
+  since: "2.1.0"
+
+- name: Guest Mount Points
+  status: implemented
+  description: >
+    Mount v86 guest filesystem into the clawser virtual filesystem at /mnt/guest/.
+    Shell commands on guest paths delegate to the guest OS via serial commands
+    (ls, cat, stat). Uses MountableFs.mountAdapter() to hook into the VirtualFs
+    layer.
+  files:
+    - web/clawser-fs-guest-mount.mjs
+  api:
+    - mountGuest
+    - umountGuest
+    - GuestFsAdapter
+  category: mount
+  notes: >
+    Phase 9 of Unix filesystem architecture. Requires a running v86 guest.
+  since: "2.1.0"
+  see_also:
+    - Embedded Linux Guest (v86 Proof of Concept)
+    - Guest Filesystem Panel

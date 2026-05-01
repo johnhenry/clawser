@@ -444,6 +444,45 @@
   category: remote
   since: "2.0.0"
 
+- name: FsUiSync
+  status: implemented
+  description: >
+    Bidirectional synchronization between OPFS config files and UI state.
+    Editing a config file in the shell updates the corresponding UI panel
+    in real time; changing a setting in the UI writes back to the config file.
+    Built on ReactiveConfigStore's subscribe/apply callbacks.
+  files:
+    - web/clawser-fs-ui-sync.mjs
+  api:
+    - FsUiSync
+    - registerSyncBinding
+  category: ui-component
+  notes: >
+    Bridges the gap between the Unix filesystem model and the graphical settings UI.
+    Covers autonomy, provider, model, and notification preferences.
+  since: "2.1.0"
+  see_also:
+    - Config File Reactivity
+
+- name: Guest Filesystem Panel
+  status: implemented
+  description: >
+    Visual file browser panel for the embedded v86 Linux guest filesystem.
+    Browse, upload, and download files between OPFS and the guest. Extends
+    the existing Files panel with a guest mount tab.
+  files:
+    - web/clawser-fs-guest-mount.mjs
+  api:
+    - mountGuest
+    - umountGuest
+  category: panel
+  notes: >
+    Companion feature to the v86 proof of concept. Shell commands on /mnt/guest/
+    paths delegate to the guest OS via serial commands.
+  since: "2.1.0"
+  see_also:
+    - Embedded Linux Guest (v86)
+
 - name: wterm Migration
   status: planned
   description: >

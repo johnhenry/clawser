@@ -584,6 +584,62 @@ Remote UI integration for controlling Clawser from external interfaces.
 
 ---
 
+### FsUiSync
+
+**Status:** ✅ Implemented · **Category:** ui-component · **Since:** v2.1.0
+
+Bidirectional synchronization between OPFS config files and UI state. Editing a config file in the shell updates the corresponding UI panel in real time; changing a setting in the UI writes back to the config file. Built on ReactiveConfigStore's subscribe/apply callbacks.
+
+**Source files:**
+
+- `web/clawser-fs-ui-sync.mjs`
+
+**API surface:**
+
+- `FsUiSync`
+- `registerSyncBinding`
+
+> **Note:** Bridges the gap between the Unix filesystem model and the graphical settings UI. Covers autonomy, provider, model, and notification preferences.
+
+**See also:**
+
+- Config File Reactivity
+
+---
+
+### Guest Filesystem Panel
+
+**Status:** ✅ Implemented · **Category:** panel · **Since:** v2.1.0
+
+Visual file browser panel for the embedded v86 Linux guest filesystem. Browse, upload, and download files between OPFS and the guest. Extends the existing Files panel with a guest mount tab.
+
+**Source files:**
+
+- `web/clawser-fs-guest-mount.mjs`
+
+**API surface:**
+
+- `mountGuest`
+- `umountGuest`
+
+> **Note:** Companion feature to the v86 proof of concept. Shell commands on /mnt/guest/ paths delegate to the guest OS via serial commands.
+
+**See also:**
+
+- Embedded Linux Guest (v86)
+
+---
+
+### wterm Migration
+
+**Status:** 📋 Planned
+
+Replace xterm.js with wterm DOM-native terminal renderer for better browser integration, accessibility, and smaller bundle size.
+
+> **Note:** https://wterm.dev/ — Vercel Labs project, ~12KB WASM, Apache-2.0
+
+---
+
 ---
 
 [← Channels](./channels.md) | [Index](./index.md) | [Daemon →](./daemon.md)

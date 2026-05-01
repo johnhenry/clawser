@@ -208,6 +208,200 @@ Watches for changes in mounted filesystem directories and triggers events when f
 
 ---
 
+### Unix Filesystem Architecture
+
+**Status:** ✅ Implemented · **Category:** filesystem · **Since:** v2.1.0
+
+Ten-phase Unix filesystem architecture (Phases 0–9) layered on top of OPFS. Canonical directory tree with /etc, /var, /run, /dev, /proc, /home, /tmp, and /mnt namespaces. First-boot bootstrap creates the full hierarchy and writes default config files. Provides the foundation for config reactivity, device files, virtual filesystems, and the profile system.
+
+**Source files:**
+
+- `web/clawser-fs-bootstrap.mjs`
+
+**API surface:**
+
+- `GLOBAL_DIRS`
+- `PER_WS_DIRS`
+- `DEFAULT_FILES`
+- `bootstrapFilesystem`
+
+> **Note:** Phase 0 (bootstrap), Phase 1 (config reactivity), Phase 2 (/proc), Phase 3 (/run), Phase 4 (chmod), Phase 5 (device files), Phase 6 (clsh), Phase 7 (.env loading), Phase 8 (motd + profile), Phase 9 (guest mounts).
+
+**See also:**
+
+- OPFS Persistence
+
+---
+
+### Config File Reactivity
+
+**Status:** ✅ Implemented · **Category:** filesystem · **Since:** v2.1.0
+
+Reactive config store backed by OPFS file watching. FileWatcher polls for changes to config files; ReactiveConfigStore provides subscribe/unsubscribe API with validation and apply callbacks. Editing a config file in the shell automatically propagates changes to the running agent. Uses Web Locks for safe concurrent writes.
+
+**Source files:**
+
+- `web/clawser-reactive-config.mjs`
+
+**API surface:**
+
+- `ReactiveConfigStore`
+- `FileWatcher`
+
+> **Note:** Phase 1 of Unix filesystem architecture. Watches files like ~/.config/clawser/autonomy.json and applies changes in real time.
+
+**See also:**
+
+- Unix Filesystem Architecture
+
+---
+
+### /proc Virtual Filesystem
+
+**Status:** ✅ Implemented · **Category:** filesystem · **Since:** v2.1.0
+
+Read-only virtual filesystem at /proc/clawser/ that exposes live runtime state as files. Includes agent status, memory stats, active goals, provider info, mesh peers, and kernel tenant data. Files are generated on read from current application state.
+
+**Source files:**
+
+- `web/clawser-proc.js`
+
+**API surface:**
+
+- `ProcFs`
+
+> **Note:** Phase 2 of Unix filesystem architecture. cat /proc/clawser/status returns live agent state as JSON.
+
+---
+
+### /run Virtual Filesystem
+
+**Status:** ✅ Implemented · **Category:** filesystem · **Since:** v2.1.0
+
+Runtime state directory at /run/clawser/ for ephemeral data that does not survive restarts. Stores PID files, tab registration, active lock files, and transient session data. Cleared on bootstrap.
+
+**Source files:**
+
+- `web/clawser-fs-bootstrap.mjs`
+
+> **Note:** Phase 3 of Unix filesystem architecture.
+
+---
+
+### Chmod Permissions Layer
+
+**Status:** ✅ Implemented · **Category:** filesystem · **Since:** v2.1.0
+
+Virtual Unix-like permission system for the clawser filesystem. Stores owner-mode permissions (read/write/execute) in a manifest persisted to OPFS. chmod builtin sets permissions; ls -l displays them. Enforced on file operations via PermissionManager.
+
+**Source files:**
+
+- `web/clawser-permissions.js`
+
+**API surface:**
+
+- `PermissionManager`
+- `checkPermission`
+- `setPermission`
+
+> **Note:** Phase 4 of Unix filesystem architecture. Numeric modes simplified to owner-only (e.g. 644 → rw-).
+
+---
+
+### Device Files
+
+**Status:** ✅ Implemented · **Category:** filesystem · **Since:** v2.1.0
+
+Read/write device file layer at /dev/clawser/. Writing to a device triggers an action; reading returns the result. Sub-trees for providers (/dev/clawser/providers/), channels (/dev/clawser/channels/), hardware (/dev/clawser/hardware/), and mesh peers (/dev/clawser/mesh/peers/).
+
+**Source files:**
+
+- `web/clawser-fs-devices.mjs`
+
+**API surface:**
+
+- `DeviceFileHandler`
+
+> **Note:** Phase 5 of Unix filesystem architecture. echo "hello" > /dev/clawser/channels/slack sends a message via the Slack channel adapter.
+
+---
+
+### .env File Loading
+
+**Status:** ✅ Implemented · **Category:** filesystem · **Since:** v2.1.0
+
+Automatic loading of .env files from the workspace root into shell environment variables on workspace init. Supports comments and KEY=VALUE syntax.
+
+**Source files:**
+
+- `web/clawser-fs-bootstrap.mjs`
+
+> **Note:** Phase 7 of Unix filesystem architecture.
+
+---
+
+### Motd and Profile Scripts
+
+**Status:** ✅ Implemented · **Category:** filesystem · **Since:** v2.1.0
+
+Message of the day (/etc/clawser/motd) displayed on shell startup. Profile scripts (/etc/clawser/profile and ~/.clshrc) sourced on shell init for setting aliases, environment variables, and custom functions.
+
+**Source files:**
+
+- `web/clawser-fs-bootstrap.mjs`
+- `web/clawser-shell.js`
+
+> **Note:** Phase 8 of Unix filesystem architecture.
+
+**See also:**
+
+- Source Builtin and Profile System
+
+---
+
+### Web Locks for OPFS Concurrency
+
+**Status:** ✅ Implemented · **Category:** filesystem · **Since:** v2.1.0
+
+Uses the Web Locks API to coordinate concurrent OPFS access across tabs and workers. Prevents data corruption from simultaneous writes to config files, event logs, and checkpoint data.
+
+**Source files:**
+
+- `web/clawser-reactive-config.mjs`
+- `web/clawser-fs-bootstrap.mjs`
+
+> **Note:** Integrated into ReactiveConfigStore and bootstrap writes.
+
+---
+
+### Disposable Mode
+
+**Status:** ✅ Implemented · **Category:** workspaces · **Since:** v2.1.0
+
+Ephemeral workspace mode where nothing persists after tab close. No OPFS writes, no localStorage, no IndexedDB. For demos, sensitive work, or guest access.
+
+**Source files:**
+
+- `web/clawser-fs-bootstrap.mjs`
+
+> **Note:** Inspired by Linux on Tab's 'close tab, everything gone' privacy model.
+
+---
+
+### Atomic Workspace Snapshots
+
+**Status:** ✅ Implemented · **Category:** checkpoint · **Since:** v2.1.0
+
+Save and restore the complete workspace state (shell history, filesystem, memory, agent state, goals, scheduler) as a single atomic blob in IndexedDB. Instant boot to exact previous state.
+
+**Source files:**
+
+- `web/clawser-fs-bootstrap.mjs`
+
+> **Note:** Extends existing checkpoint system to be comprehensive and atomic.
+
+---
+
 ---
 
 [← Safety](./safety.md) | [Index](./index.md) | [Agents →](./agents.md)

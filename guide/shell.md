@@ -871,6 +871,124 @@ First-class terminal session management. Multiple named sessions with history, f
 
 ---
 
+### If/Else/Fi Conditionals
+
+**Status:** ✅ Implemented · **Category:** shell-language · **Since:** v2.1.0
+
+Full if/then/elif/else/fi conditional syntax in the shell language. Supports nested conditionals, test expressions, and compound conditions with && and ||. Multi-line input detected via isIncomplete() for interactive entry.
+
+**Source files:**
+
+- `web/clawser-shell.js`
+
+**See also:**
+
+- Shell Interpreter
+
+---
+
+### While/For Loops
+
+**Status:** ✅ Implemented · **Category:** shell-language · **Since:** v2.1.0
+
+Loop constructs: while/do/done and for/in/do/done. While loops evaluate a condition each iteration. For loops iterate over word lists with variable binding. Both support break and continue. Nested loops supported.
+
+**Source files:**
+
+- `web/clawser-shell.js`
+
+**See also:**
+
+- Shell Interpreter
+
+---
+
+### Function Definitions
+
+**Status:** ✅ Implemented · **Category:** shell-language · **Since:** v2.1.0
+
+Shell function definitions via fn() { body } syntax. Functions are stored in ShellState and invoked as regular commands. Supports positional parameters, local variables, and return values within function scope.
+
+**Source files:**
+
+- `web/clawser-shell.js`
+
+**See also:**
+
+- Shell Interpreter
+
+---
+
+### Source Builtin and Profile System
+
+**Status:** ✅ Implemented · **Category:** shell-language · **Since:** v2.1.0
+
+The source (.) builtin executes shell scripts in the current environment. Powers the profile system: /etc/clawser/profile runs on shell init for global defaults, ~/.clshrc runs per-user customizations. Enables reusable shell libraries and configuration scripts.
+
+**Source files:**
+
+- `web/clawser-shell.js`
+- `web/clawser-fs-bootstrap.mjs`
+
+**See also:**
+
+- Shell Interpreter
+
+---
+
+### Positional Parameters
+
+**Status:** ✅ Implemented · **Category:** shell-language · **Since:** v2.1.0
+
+Positional parameter expansion for shell functions and sourced scripts. Supports $1 through $9 for individual arguments, $@ for all arguments as separate words, and $# for the argument count.
+
+**Source files:**
+
+- `web/clawser-shell.js`
+
+**See also:**
+
+- Function Definitions
+- Variable Substitution
+
+---
+
+### local
+
+**Status:** ✅ Implemented · **Category:** builtin-scripting · **Since:** v2.1.0
+
+Declare function-local variables that do not leak into the parent scope. Restores previous values on function return.
+
+**Source files:**
+
+- `web/clawser-shell.js`
+
+---
+
+### return
+
+**Status:** ✅ Implemented · **Category:** builtin-scripting · **Since:** v2.1.0
+
+Return from a shell function with an optional exit code. Sets $? to the specified value (default 0).
+
+**Source files:**
+
+- `web/clawser-shell.js`
+
+---
+
+### Clsh Identity
+
+**Status:** ✅ Implemented · **Category:** shell-language · **Since:** v2.1.0
+
+The shell identifies itself as clsh (Clawser Shell). $SHELL is set to "clsh" and $CLSH_VERSION reports the current version. Distinguishes clawser's shell from bash/zsh in scripts and profile conditionals.
+
+**Source files:**
+
+- `web/clawser-shell.js`
+
+---
+
 ---
 
 [← Providers](./providers.md) | [Index](./index.md) | [Memory →](./memory.md)

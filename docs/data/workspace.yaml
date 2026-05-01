@@ -172,61 +172,178 @@
   category: observer
   since: "1.5.0"
 
+# ─── UNIX FILESYSTEM ARCHITECTURE ─────────────────────────────────────
+
+- name: Unix Filesystem Architecture
+  status: implemented
+  description: >
+    Ten-phase Unix filesystem architecture (Phases 0–9) layered on top of OPFS.
+    Canonical directory tree with /etc, /var, /run, /dev, /proc, /home, /tmp, and
+    /mnt namespaces. First-boot bootstrap creates the full hierarchy and writes
+    default config files. Provides the foundation for config reactivity, device
+    files, virtual filesystems, and the profile system.
+  files:
+    - web/clawser-fs-bootstrap.mjs
+  api:
+    - GLOBAL_DIRS
+    - PER_WS_DIRS
+    - DEFAULT_FILES
+    - bootstrapFilesystem
+  category: filesystem
+  notes: >
+    Phase 0 (bootstrap), Phase 1 (config reactivity), Phase 2 (/proc),
+    Phase 3 (/run), Phase 4 (chmod), Phase 5 (device files), Phase 6 (clsh),
+    Phase 7 (.env loading), Phase 8 (motd + profile), Phase 9 (guest mounts).
+  since: "2.1.0"
+  see_also:
+    - OPFS Persistence
+
+- name: Config File Reactivity
+  status: implemented
+  description: >
+    Reactive config store backed by OPFS file watching. FileWatcher polls for
+    changes to config files; ReactiveConfigStore provides subscribe/unsubscribe
+    API with validation and apply callbacks. Editing a config file in the shell
+    automatically propagates changes to the running agent. Uses Web Locks for
+    safe concurrent writes.
+  files:
+    - web/clawser-reactive-config.mjs
+  api:
+    - ReactiveConfigStore
+    - FileWatcher
+  category: filesystem
+  notes: >
+    Phase 1 of Unix filesystem architecture. Watches files like
+    ~/.config/clawser/autonomy.json and applies changes in real time.
+  since: "2.1.0"
+  see_also:
+    - Unix Filesystem Architecture
+
+- name: /proc Virtual Filesystem
+  status: implemented
+  description: >
+    Read-only virtual filesystem at /proc/clawser/ that exposes live runtime
+    state as files. Includes agent status, memory stats, active goals, provider
+    info, mesh peers, and kernel tenant data. Files are generated on read from
+    current application state.
+  files:
+    - web/clawser-proc.js
+  api:
+    - ProcFs
+  category: filesystem
+  notes: >
+    Phase 2 of Unix filesystem architecture. cat /proc/clawser/status returns
+    live agent state as JSON.
+  since: "2.1.0"
+
+- name: /run Virtual Filesystem
+  status: implemented
+  description: >
+    Runtime state directory at /run/clawser/ for ephemeral data that does not
+    survive restarts. Stores PID files, tab registration, active lock files,
+    and transient session data. Cleared on bootstrap.
+  files:
+    - web/clawser-fs-bootstrap.mjs
+  category: filesystem
+  notes: Phase 3 of Unix filesystem architecture.
+  since: "2.1.0"
+
+- name: Chmod Permissions Layer
+  status: implemented
+  description: >
+    Virtual Unix-like permission system for the clawser filesystem. Stores
+    owner-mode permissions (read/write/execute) in a manifest persisted to OPFS.
+    chmod builtin sets permissions; ls -l displays them. Enforced on file
+    operations via PermissionManager.
+  files:
+    - web/clawser-permissions.js
+  api:
+    - PermissionManager
+    - checkPermission
+    - setPermission
+  category: filesystem
+  notes: >
+    Phase 4 of Unix filesystem architecture. Numeric modes simplified to
+    owner-only (e.g. 644 → rw-).
+  since: "2.1.0"
+
+- name: Device Files
+  status: implemented
+  description: >
+    Read/write device file layer at /dev/clawser/. Writing to a device triggers
+    an action; reading returns the result. Sub-trees for providers
+    (/dev/clawser/providers/), channels (/dev/clawser/channels/), hardware
+    (/dev/clawser/hardware/), and mesh peers (/dev/clawser/mesh/peers/).
+  files:
+    - web/clawser-fs-devices.mjs
+  api:
+    - DeviceFileHandler
+  category: filesystem
+  notes: >
+    Phase 5 of Unix filesystem architecture. echo "hello" > /dev/clawser/channels/slack
+    sends a message via the Slack channel adapter.
+  since: "2.1.0"
+
+- name: .env File Loading
+  status: implemented
+  description: >
+    Automatic loading of .env files from the workspace root into shell environment
+    variables on workspace init. Supports comments and KEY=VALUE syntax.
+  files:
+    - web/clawser-fs-bootstrap.mjs
+  category: filesystem
+  notes: Phase 7 of Unix filesystem architecture.
+  since: "2.1.0"
+
+- name: Motd and Profile Scripts
+  status: implemented
+  description: >
+    Message of the day (/etc/clawser/motd) displayed on shell startup.
+    Profile scripts (/etc/clawser/profile and ~/.clshrc) sourced on shell init
+    for setting aliases, environment variables, and custom functions.
+  files:
+    - web/clawser-fs-bootstrap.mjs
+    - web/clawser-shell.js
+  category: filesystem
+  notes: Phase 8 of Unix filesystem architecture.
+  since: "2.1.0"
+  see_also:
+    - Source Builtin and Profile System
+
+- name: Web Locks for OPFS Concurrency
+  status: implemented
+  description: >
+    Uses the Web Locks API to coordinate concurrent OPFS access across tabs
+    and workers. Prevents data corruption from simultaneous writes to config
+    files, event logs, and checkpoint data.
+  files:
+    - web/clawser-reactive-config.mjs
+    - web/clawser-fs-bootstrap.mjs
+  category: filesystem
+  notes: Integrated into ReactiveConfigStore and bootstrap writes.
+  since: "2.1.0"
+
+- name: Disposable Mode
+  status: implemented
+  description: >
+    Ephemeral workspace mode where nothing persists after tab close. No OPFS writes,
+    no localStorage, no IndexedDB. For demos, sensitive work, or guest access.
+  files:
+    - web/clawser-fs-bootstrap.mjs
+  category: workspaces
+  notes: >
+    Inspired by Linux on Tab's 'close tab, everything gone' privacy model.
+  since: "2.1.0"
+
 - name: Atomic Workspace Snapshots
-  status: planned
+  status: implemented
   description: >
     Save and restore the complete workspace state (shell history, filesystem, memory,
     agent state, goals, scheduler) as a single atomic blob in IndexedDB. Instant boot
     to exact previous state.
-  files: []
+  files:
+    - web/clawser-fs-bootstrap.mjs
   notes: >
-    Inspired by Linux on Tab's VM snapshot/restore. Extends existing checkpoint system
-    to be comprehensive and atomic.
+    Extends existing checkpoint system to be comprehensive and atomic.
   category: checkpoint
-  since: "2.1.0"
-
-- name: Tunnel Exposure (WISP)
-  status: planned
-  description: >
-    Expose clawser services (RPC mode, remote access) through tunneled ports via
-    WebSocket-based tunneling protocol. Lets external tools connect without Unix sockets.
-  files: []
-  notes: >
-    Inspired by Linux on Tab's SSH tunneling via WISP protocol.
-  category: networking
-  since: "2.1.0"
-
-- name: Disposable Mode
-  status: planned
-  description: >
-    Ephemeral workspace mode where nothing persists after tab close. No OPFS writes,
-    no localStorage, no IndexedDB. For demos, sensitive work, or guest access.
-  files: []
-  notes: >
-    Inspired by Linux on Tab's 'close tab, everything gone' privacy model.
-  category: workspaces
-  since: "2.1.0"
-
-- name: Embedded Linux Guest (v86)
-  status: planned
-  description: >
-    Embed a v86 WASM x86 Linux guest as a real terminal option. AI shell handles agent
-    commands, real Linux binaries (gcc, python, node) execute in the guest. Bridges via
-    wterm adapter layer.
-  files: []
-  notes: >
-    Inspired by Linux on Tab. Already in roadmap as 'guest-native wsh-server'. v86 is
-    BSD-2-Clause. Biggest architectural addition.
-  category: terminal
-  since: "2.1.0"
-
-- name: Guest Filesystem Browser
-  status: planned
-  description: >
-    Visual file browser panel for embedded Linux guest filesystem. Browse, upload,
-    download files between OPFS and the guest. Extends existing Files panel.
-  files: []
-  notes: >
-    Companion feature to Embedded Linux Guest.
-  category: mount
   since: "2.1.0"

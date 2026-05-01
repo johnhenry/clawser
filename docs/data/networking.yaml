@@ -241,3 +241,87 @@
     - generateQR
   category: utility
   since: "1.5.0"
+
+# ─── NEW TRANSPORT & INFRASTRUCTURE ──────────────────────────────────
+
+- name: WISP Transport
+  status: implemented
+  description: >
+    WISP (WebSocket-based Internet Stream Protocol) transport adapter for WSH.
+    Carries WSH protocol messages through a WISP relay tunnel with dedicated
+    control streams. Additional streams for data transfer, RPC, and mesh relay.
+    Implements the same interface as WebSocketTransport for drop-in use.
+  files:
+    - web/clawser-wisp-transport.mjs
+    - web/clawser-wisp.mjs
+  api:
+    - WispTransport
+    - WispClient
+  category: transport
+  notes: >
+    Standalone uses beyond WSH: exposing RPC mode over a tunneled port,
+    mesh relay through restrictive networks, and future v86 guest networking.
+  since: "2.1.0"
+  see_also:
+    - WSH Remote Shell
+
+- name: WSH Bridge Deprecation
+  status: implemented
+  description: >
+    The legacy Kernel WSH Bridge (clawser-kernel-wsh-bridge.js) is deprecated
+    in favor of direct mesh transport connections via WISP and Server WebSocket
+    emulation. Bridge remains functional but emits deprecation warnings. New
+    code should use mesh-native transports.
+  files:
+    - web/clawser-kernel-wsh-bridge.js
+    - web/clawser-mesh-wsh-bridge.js
+  category: wsh
+  notes: Migration path documented. Bridge will be removed in 3.0.0.
+  since: "2.1.0"
+  see_also:
+    - WISP Transport
+    - Server WebSocket Emulation
+
+- name: Server WebSocket Emulation
+  status: implemented
+  description: >
+    WebSocket-compatible server interface running entirely in the browser.
+    Connections multiplexed over BroadcastChannel (cross-tab) or MessagePort
+    (iframe/worker). Gives handler code the same API surface as a real
+    WebSocket server — accept, send, close, event listeners — without
+    leaving the browser.
+  files:
+    - web/clawser-server-ws.js
+  api:
+    - ServerWebSocketServer
+    - ServerWebSocket
+    - ClientWebSocket
+  category: transport
+  notes: >
+    Wire protocol uses JSON over BroadcastChannel/MessagePort. Supports
+    sub-protocol negotiation.
+  since: "2.1.0"
+
+- name: Mesh Hardening
+  status: implemented
+  description: >
+    Five production-hardening primitives that compose with existing MeshTransport
+    without breaking backward compatibility. RetryWithBackoff (exponential backoff
+    + circuit breaker), TransportHealthCheck (ping/pong liveness probes),
+    ConnectionPool (per-peer pooling with idle eviction), TransportMetrics
+    (byte/message/error/latency counters), and TransportFailover (graceful
+    degradation across transport types).
+  files:
+    - web/clawser-mesh-hardening.js
+  api:
+    - RetryWithBackoff
+    - TransportHealthCheck
+    - ConnectionPool
+    - TransportMetrics
+    - TransportFailover
+    - CIRCUIT_STATES
+  category: mesh
+  notes: >
+    Additive layer — existing mesh code unchanged. Circuit breaker states:
+    closed, open, half-open.
+  since: "2.1.0"
