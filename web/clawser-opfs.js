@@ -132,3 +132,42 @@ export const withLock = async (lockName, fn) => {
   // No Web Locks available — execute without locking
   return fn();
 };
+
+// ── Workspace directory helpers ───────────────────────────────────
+
+/**
+ * Get the workspace directory handle for a given workspace ID.
+ * Navigates: OPFS root → clawser → workspaces → {wsId}
+ *
+ * @param {string} wsId - Workspace ID
+ * @param {object} [opts]
+ * @param {boolean} [opts.create=false] - Create intermediate directories if missing
+ * @returns {Promise<FileSystemDirectoryHandle>}
+ *
+ * @example
+ * const wsDir = await getWorkspaceDir('default', { create: true });
+ * const file = await wsDir.getFileHandle('readme.md');
+ */
+export const getWorkspaceDir = async (wsId, { create = false } = {}) => {
+  const root = await navigator.storage.getDirectory();
+  const clawser = await root.getDirectoryHandle('clawser', { create });
+  const workspaces = await clawser.getDirectoryHandle('workspaces', { create });
+  return workspaces.getDirectoryHandle(wsId, { create });
+};
+
+/**
+ * Get the workspaces root directory (clawser/workspaces/).
+ *
+ * @param {object} [opts]
+ * @param {boolean} [opts.create=false] - Create intermediate directories if missing
+ * @returns {Promise<FileSystemDirectoryHandle>}
+ *
+ * @example
+ * const wsRoot = await getWorkspacesRoot({ create: true });
+ * for await (const [name] of wsRoot) { console.log(name); }
+ */
+export const getWorkspacesRoot = async ({ create = false } = {}) => {
+  const root = await navigator.storage.getDirectory();
+  const clawser = await root.getDirectoryHandle('clawser', { create });
+  return clawser.getDirectoryHandle('workspaces', { create });
+};

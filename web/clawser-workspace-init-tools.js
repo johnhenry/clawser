@@ -6,6 +6,7 @@
  */
 import { $, state } from './clawser-state.js';
 import { getActiveWorkspaceId } from './clawser-workspaces.js';
+import { getWorkspaceDir } from './clawser-opfs.js';
 import { SwitchAgentTool, ConsultAgentTool } from './clawser-tools.js';
 import { registerAgentTools, AskUserQuestionTool } from './clawser-tools.js';
 import { ShellTool } from './clawser-shell.js';
@@ -243,8 +244,7 @@ export async function registerAllTools({ activeWsId, configureServerRuntimeResol
     try { globalAgentDir = await opfsRoot.getDirectoryHandle('clawser_agents', { create: true }); } catch { globalAgentDir = null; }
     let wsAgentDir;
     try {
-      const wsBase = await opfsRoot.getDirectoryHandle('clawser_workspaces', { create: true });
-      const wsHandle = await wsBase.getDirectoryHandle(activeWsId, { create: true });
+      const wsHandle = await getWorkspaceDir(activeWsId, { create: true });
       wsAgentDir = await wsHandle.getDirectoryHandle('.agents', { create: true });
     } catch { wsAgentDir = null; }
     state.agentStorage = new AgentStorage({ globalDir: globalAgentDir, wsDir: wsAgentDir, wsId: activeWsId });

@@ -204,11 +204,15 @@ describe('withLock', () => {
   it('works when navigator.locks is unavailable', async () => {
     const origLocks = globalThis.navigator.locks;
     try {
-      globalThis.navigator.locks = undefined;
+      Object.defineProperty(globalThis.navigator, 'locks', {
+        value: undefined, configurable: true, writable: true,
+      });
       const result = await withLock('test:lock', async () => 'ok');
       assert.equal(result, 'ok');
     } finally {
-      globalThis.navigator.locks = origLocks;
+      Object.defineProperty(globalThis.navigator, 'locks', {
+        value: origLocks, configurable: true, writable: true,
+      });
     }
   });
 

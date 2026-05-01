@@ -16,6 +16,7 @@ import { $, esc, state, lsKey } from './clawser-state.js';
 import { modal } from './clawser-modal.js';
 import { addMsg, addErrorMsg, updateState, resetToolAndEventState } from './clawser-ui-chat.js';
 import { loadWorkspaces, getActiveWorkspaceId, renameWorkspace, deleteWorkspace, createWorkspace, getWorkspaceName } from './clawser-workspaces.js';
+import { getWorkspaceDir } from './clawser-opfs.js';
 import { navigate } from './clawser-router.js';
 import { SkillParser, SkillStorage, SKILL_TEMPLATES, simpleDiff, validateRequirements } from './clawser-skills.js';
 import { createItemBar, _relativeTime } from './clawser-item-bar.js';
@@ -1783,10 +1784,18 @@ export function initPanelListeners() {
     localStorage.removeItem(`clawser_conversations_${wsId}`);
 
     const root = await navigator.storage.getDirectory();
+    // New namespace: clawser/workspaces/{wsId}
+    try {
+      const wsDir = await getWorkspaceDir(wsId);
+      const parent = await root.getDirectoryHandle('clawser');
+      const wsRoot = await parent.getDirectoryHandle('workspaces');
+      await wsRoot.removeEntry(wsId, { recursive: true });
+    } catch (e) { console.debug('[clawser] OPFS clear (new ns) error', e); }
+    // Legacy namespace fallback
     try {
       const base = await root.getDirectoryHandle('clawser_workspaces');
       await base.removeEntry(wsId, { recursive: true });
-    } catch (e) { console.debug('[clawser] OPFS clear error', e); }
+    } catch (e) { console.debug('[clawser] OPFS clear (legacy) error', e); }
     try {
       const dir = await root.getDirectoryHandle('clawser_checkpoints');
       await dir.removeEntry(wsId, { recursive: true });

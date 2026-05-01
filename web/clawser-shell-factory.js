@@ -15,6 +15,7 @@ import { ClawserShell } from './clawser-shell.js';
  * @param {object} [opts]
  * @param {import('./clawser-tools.js').WorkspaceFs} [opts.workspaceFs]
  * @param {object} [opts.fs]
+ * @param {string} [opts.wsId] - Workspace ID for system path resolution
  * @param {boolean} [opts.sourceRc=true]
  * @param {() => unknown} [opts.getAgent]
  * @param {() => unknown} [opts.getRoutineEngine]
@@ -25,13 +26,14 @@ import { ClawserShell } from './clawser-shell.js';
 export async function createConfiguredShell({
   workspaceFs,
   fs,
+  wsId,
   sourceRc = true,
   getAgent = () => null,
   getRoutineEngine = () => null,
   getModelManager = () => null,
   getSkillRegistry = () => null,
 } = {}) {
-  const shell = new ClawserShell({ workspaceFs, fs });
+  const shell = new ClawserShell({ workspaceFs, fs, wsId });
 
   if (sourceRc) {
     await shell.source('/.clawserrc');

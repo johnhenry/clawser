@@ -8,6 +8,7 @@ import { $, esc, state, lsKey } from './clawser-state.js';
 import { WorkspaceFs } from './clawser-tools.js';
 import { modal } from './clawser-modal.js';
 import { addMsg, addErrorMsg } from './clawser-ui-chat.js';
+import { getWorkspaceDir } from './clawser-opfs.js';
 const PAGE_SIZE = 50;
 
 /** Render the OPFS file browser for the active workspace, with click-to-preview.
@@ -17,13 +18,10 @@ const PAGE_SIZE = 50;
 export async function refreshFiles(path = '/', el = null) {
   if (!el) el = $('fileList');
   try {
-    const root = await navigator.storage.getDirectory();
-
     let wsDir;
     try {
-      const base = await root.getDirectoryHandle('clawser_workspaces');
       const wsId = state.agent?.getWorkspace() || 'default';
-      wsDir = await base.getDirectoryHandle(wsId);
+      wsDir = await getWorkspaceDir(wsId);
     } catch {
       el.textContent = '(empty \u2014 files created by the agent will appear here)';
       return;

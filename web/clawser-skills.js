@@ -15,6 +15,7 @@
 
 import { lsKey } from './clawser-state.js';
 import { BrowserTool } from './clawser-tools.js';
+import { getWorkspaceDir } from './clawser-opfs.js';
 
 // ── SkillParser ──────────────────────────────────────────────────
 
@@ -384,9 +385,7 @@ export class SkillStorage {
    * @returns {Promise<FileSystemDirectoryHandle>}
    */
   static async getWorkspaceSkillsDir(wsId, create = false) {
-    const root = await navigator.storage.getDirectory();
-    const base = await root.getDirectoryHandle('clawser_workspaces', { create });
-    const wsDir = await base.getDirectoryHandle(wsId, { create });
+    const wsDir = await getWorkspaceDir(wsId, { create });
     return wsDir.getDirectoryHandle('.skills', { create });
   }
 

@@ -3532,10 +3532,11 @@ export class ClawserAgent {
     }
   }
 
-  /** Get (or create) the workspace home directory: /clawser_workspaces/{wsId}/ */
+  /** Get (or create) the workspace home directory: clawser/workspaces/{wsId}/ */
   async #getWorkspaceDir(root, create = false) {
-    const base = await root.getDirectoryHandle('clawser_workspaces', { create });
-    return base.getDirectoryHandle(this.#workspaceId, { create });
+    const clawser = await root.getDirectoryHandle('clawser', { create });
+    const workspaces = await clawser.getDirectoryHandle('workspaces', { create });
+    return workspaces.getDirectoryHandle(this.#workspaceId, { create });
   }
 
   /** Save checkpoint to OPFS for persistence across reloads */

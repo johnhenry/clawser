@@ -25,6 +25,7 @@ import {
   parseTerminalSessionEvents,
   serializeTerminalSessionEvents,
 } from './clawser-terminal-session-store.js';
+import { getWorkspaceDir } from './clawser-opfs.js';
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -91,9 +92,7 @@ export class TerminalSessionManager {
   }
 
   async #wsDir(create = false) {
-    const root = await this.#root();
-    const base = await root.getDirectoryHandle('clawser_workspaces', { create });
-    return base.getDirectoryHandle(this.#wsId, { create });
+    return getWorkspaceDir(this.#wsId, { create });
   }
 
   async #sessionsDir(create = false) {

@@ -172,6 +172,25 @@ export const writeDefaultConfigs = async (wsId) => {
 };
 
 /**
+ * Default permission manifest written on first boot.
+ * Sets read-only defaults for system directories and read-write for user paths.
+ * This is the seed data for PermissionManager — it can be overridden at runtime
+ * via `chmod`.
+ */
+export const DEFAULT_PERMISSIONS = Object.freeze({
+  '/etc/clawser/':          'r',
+  '/proc/clawser/':         'r',
+  '/proc/kernel/':          'r',
+  '/dev/clawser/':          'r',
+  '/sys/':                  'r',
+  '/run/clawser/':          'r',
+  '~/.config/clawser/':     'rw',
+  '~/.local/share/clawser/':'rw',
+  '/var/log/clawser/':      'rw',
+  '/tmp/clawser/':          'rw',
+});
+
+/**
  * Full first-boot initialization: create directories + write default configs.
  * Called early in the app startup sequence. Idempotent — safe to call on every boot.
  *
@@ -185,6 +204,11 @@ export const writeDefaultConfigs = async (wsId) => {
 export const bootstrapFilesystem = async (wsId = 'default') => {
   await ensureDirectoryStructure(wsId);
   const configs = await writeDefaultConfigs(wsId);
+
+  // Write default permissions manifest if it doesn't already exist
+  const permPath = resolveVirtualPath('~/.config/clawser/permissions.json', wsId);
+  await writeIfMissing(permPath, JSON.stringify(DEFAULT_PERMISSIONS, null, 2));
+
   console.log(`[clawser] filesystem bootstrap complete for workspace "${wsId}"`, {
     configsCreated: configs.length,
     configs,

@@ -281,7 +281,7 @@ describe('E2E — Tool Execution', () => {
 
     const resolved = ws.resolve('../../etc/passwd')
     assert.ok(!resolved.includes('..'), 'should not contain ..')
-    assert.ok(resolved.startsWith('clawser_workspaces/test-ws'))
+    assert.ok(resolved.startsWith('clawser/workspaces/test-ws'))
   })
 
   it('WorkspaceFs.resolve normalizes leading slashes', () => {

@@ -136,7 +136,7 @@ function mockOPFS(globalSkills = {}, workspaceSkills = {}) {
 
   const root = createDirHandle({
     clawser_skills: createDirHandle(globalDirs),
-    clawser_workspaces: createDirHandle(wsDirs),
+    clawser: createDirHandle({ workspaces: createDirHandle(wsDirs) }),
   });
 
   return root;

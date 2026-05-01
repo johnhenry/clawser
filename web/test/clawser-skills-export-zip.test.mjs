@@ -194,9 +194,15 @@ describe('SkillStorage.exportZip', () => {
       throw new Error('unexpected');
     };
 
+    const clawserDir = createDirHandle();
+    clawserDir.getDirectoryHandle = async (name) => {
+      if (name === 'workspaces') return workspacesDir;
+      throw new Error('unexpected');
+    };
+
     const root = createDirHandle();
     root.getDirectoryHandle = async (name) => {
-      if (name === 'clawser_workspaces') return workspacesDir;
+      if (name === 'clawser') return clawserDir;
       throw new Error('unexpected');
     };
 

@@ -2,6 +2,7 @@
 import { $, esc, state, emit, setSending, setConversation, resetConversationState } from './clawser-state.js';
 import { modal } from './clawser-modal.js';
 import { loadConversations, updateConversationMeta, generateConvId } from './clawser-conversations.js';
+import { getWorkspaceDir } from './clawser-opfs.js';
 import { loadAccounts } from './clawser-accounts.js';
 import { updateRouteHash } from './clawser-router.js';
 import { estimateCost, classifyError } from './clawser-providers.js';
@@ -725,9 +726,7 @@ export async function forkConversationFromEvent(eventId) {
 
   // Persist the sliced events as a new conversation via OPFS
   try {
-    const root = await navigator.storage.getDirectory();
-    const base = await root.getDirectoryHandle('clawser_workspaces', { create: true });
-    const wsDir = await base.getDirectoryHandle(wsId, { create: true });
+    const wsDir = await getWorkspaceDir(wsId, { create: true });
     const convDir = await wsDir.getDirectoryHandle('.conversations', { create: true });
     const convIdDir = await convDir.getDirectoryHandle(newId, { create: true });
 

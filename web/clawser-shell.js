@@ -1,29 +1,33 @@
 /**
- * Clawser Shell — Browser shell emulation layer
+ * clsh — Clawser Shell (browser shell language)
  *
  * Provides a virtual shell that parses command strings into an AST,
  * routes commands to JS implementations, and supports pipes, redirects,
- * and logical operators (&&, ||, ;).
+ * logical operators (&&, ||, ;), and control flow (if/else/fi,
+ * while/do/done, for/in/do/done, function definitions).
  *
  * Architecture:
  *   1. Tokenizer — splits command string into tokens
- *   2. Parser — recursive descent, builds AST from tokens
+ *   2. Parser — recursive descent, builds AST from tokens (control flow aware)
  *   3. Executor — walks AST, dispatches to CommandRegistry
- *   4. Built-in commands — 22+ commands backed by OPFS via ShellFs
+ *   4. Built-in commands — 65+ commands backed by OPFS via ShellFs
  *   5. ClawserShell — main API: exec(command) → {stdout, stderr, exitCode}
- *   6. ShellTool — BrowserTool subclass for agent integration
+ *   6. Profile system — sources /etc/clawser/profile and ~/.config/clawser/profile
+ *   7. ShellTool — BrowserTool subclass for agent integration
  *
- * Scoping: one ClawserShell per conversation. Shell state (cwd, env, $?)
- * is ephemeral; filesystem changes persist in OPFS.
+ * Scoping: one ClawserShell per conversation. Shell state (cwd, env, $?,
+ * functions, aliases) is ephemeral; filesystem changes persist in OPFS.
  */
 
 import { BrowserTool, WorkspaceFs } from './clawser-tools.js';
-import { opfsWalk, opfsWalkDir } from './clawser-opfs.js';
+import { opfsWalk, opfsWalkDir, resolveVirtualPath } from './clawser-opfs.js';
 import { registerExtendedBuiltins, registerJqBuiltin } from './clawser-shell-builtins.js';
+import { VirtualFs, ProcFileHandler } from './clawser-proc.js';
+import { PermissionManager, registerChmodBuiltin } from './clawser-permissions.js';
 
 // ── Token Types ─────────────────────────────────────────────────
 
-const T = {
+export const T = {
   WORD: 'WORD',
   PIPE: 'PIPE',                     // |
   AND: 'AND',                       // &&
@@ -35,6 +39,9 @@ const T = {
   REDIRECT_ERR_APPEND: 'REDIRECT_ERR_APPEND', // 2>>
   REDIRECT_ERR_TO_OUT: 'REDIRECT_ERR_TO_OUT', // 2>&1
   BACKGROUND: 'BACKGROUND',               // &
+  LBRACE: 'LBRACE',                 // {
+  RBRACE: 'RBRACE',                 // }
+  NEWLINE: 'NEWLINE',               // \n (multi-line mode)
   EOF: 'EOF',
 };
 
@@ -42,18 +49,34 @@ const T = {
 
 /**
  * Tokenize a shell command string.
- * Handles: single/double quotes, backslash escaping, |, &&, ||, ;, >, >>
+ * Handles: single/double quotes, backslash escaping, |, &&, ||, ;, >, >>, {, }
  * @param {string} input
+ * @param {object} [opts] - { multiline: false } - if true, emit NEWLINE tokens
  * @returns {Array<{type: string, value: string}>}
  */
-export function tokenize(input) {
+export function tokenize(input, opts = {}) {
   const tokens = [];
   let i = 0;
   const len = input.length;
 
   while (i < len) {
+    // Handle newlines — in multi-line mode emit NEWLINE tokens, otherwise treat as whitespace
+    if (input[i] === '\n') {
+      if (opts.multiline) {
+        tokens.push({ type: T.NEWLINE, value: '\n' });
+      }
+      i++;
+      continue;
+    }
+
     // Skip whitespace
     if (input[i] === ' ' || input[i] === '\t') { i++; continue; }
+
+    // Comment: # to end of line (only at token boundary)
+    if (input[i] === '#') {
+      while (i < len && input[i] !== '\n') i++;
+      continue;
+    }
 
     // Pipe or OR
     if (input[i] === '|') {
@@ -76,6 +99,18 @@ export function tokenize(input) {
         tokens.push({ type: T.BACKGROUND, value: '&' });
         i++;
       }
+      continue;
+    }
+
+    // Braces (function body delimiters)
+    if (input[i] === '{') {
+      tokens.push({ type: T.LBRACE, value: '{' });
+      i++;
+      continue;
+    }
+    if (input[i] === '}') {
+      tokens.push({ type: T.RBRACE, value: '}' });
+      i++;
       continue;
     }
 
@@ -117,9 +152,9 @@ export function tokenize(input) {
 
     // Word (quoted or unquoted)
     let word = '';
-    while (i < len && input[i] !== ' ' && input[i] !== '\t') {
+    while (i < len && input[i] !== ' ' && input[i] !== '\t' && input[i] !== '\n') {
       // Check for unquoted operator characters
-      if (input[i] === '|' || input[i] === ';' || input[i] === '>') break;
+      if (input[i] === '|' || input[i] === ';' || input[i] === '>' || input[i] === '{' || input[i] === '}') break;
       if (input[i] === '&' && input[i + 1] === '&') break;
 
       if (input[i] === '\\' && i + 1 < len) {
@@ -164,27 +199,245 @@ export function tokenize(input) {
 // ── Parser ──────────────────────────────────────────────────────
 
 /**
+ * Check whether a command string looks incomplete (unclosed control structure).
+ * Used by the REPL to detect multi-line input.
+ * @param {string} input
+ * @returns {boolean} true if the input needs more lines
+ */
+export function isIncomplete(input) {
+  if (!input || !input.trim()) return false;
+  const trimmed = input.trim();
+  // Trailing backslash = line continuation
+  if (trimmed.endsWith('\\')) return true;
+  // Count control structure keywords
+  const tokens = trimmed.split(/\s+|;/);
+  let depth = 0;
+  for (const t of tokens) {
+    if (t === 'if' || t === 'while' || t === 'for') depth++;
+    if (t === 'fi' || t === 'done') depth--;
+    // Function body: count braces
+    if (t === '{' || t.endsWith('{')) depth++;
+    if (t === '}') depth--;
+  }
+  if (depth > 0) return true;
+  // Unclosed then/do without fi/done
+  const hasOpenThen = /\bthen\b/.test(trimmed) && !/\bfi\b/.test(trimmed);
+  const hasOpenDo = /\bdo\b/.test(trimmed) && !/\bdone\b/.test(trimmed);
+  if (hasOpenThen || hasOpenDo) return true;
+  return false;
+}
+
+/**
  * Parse a command string (or token array) into an AST.
  *
- * Grammar (P0):
+ * Grammar (P1 — extended with control flow):
+ *   program    = statement*
+ *   statement  = if_stmt | while_stmt | for_stmt | func_def | list
+ *   if_stmt    = 'if' condition ';'? 'then' body ('else' body)? 'fi'
+ *   while_stmt = 'while' condition ';'? 'do' body 'done'
+ *   for_stmt   = 'for' WORD 'in' WORD* ';'? 'do' body 'done'
+ *   func_def   = WORD '()' '{' body '}'
  *   list       = pipeline ((';' | '&&' | '||') pipeline)*
  *   pipeline   = command ('|' command)* redirect*
  *   command    = WORD+
  *   redirect   = '>' WORD | '>>' WORD | '2>' WORD | '2>>' WORD | '2>&1'
+ *   body       = statement*
+ *   condition  = list (everything up to 'then' or 'do')
  *
  * @param {string|Array} input - Command string or pre-tokenized array
+ * @param {object} [opts] - { multiline: false }
  * @returns {object|null} AST node or null for empty input
  */
-export function parse(input) {
-  const tokens = typeof input === 'string' ? tokenize(input) : input;
+export function parse(input, opts = {}) {
+  const tokens = typeof input === 'string' ? tokenize(input, opts) : input;
   let pos = 0;
 
   function peek() { return tokens[pos] || { type: T.EOF, value: '' }; }
   function advance() { return tokens[pos++]; }
+  function skipSep() {
+    // Skip optional semicolons and newlines between statements
+    while (peek().type === T.SEMI || peek().type === T.NEWLINE) advance();
+  }
+
+  /** Check if current token is a keyword (WORD with a specific value). */
+  function isKeyword(val) {
+    const t = peek();
+    return t.type === T.WORD && t.value === val;
+  }
+
+  /** Expect a keyword or throw. */
+  function expectKeyword(val) {
+    if (!isKeyword(val)) {
+      throw new SyntaxError(`Expected '${val}', got '${peek().value || peek().type}'`);
+    }
+    advance();
+  }
+
+  /**
+   * Parse a control-flow condition (everything up to 'then' or 'do').
+   * Returns a list AST representing the condition command(s).
+   */
+  function parseCondition(terminator) {
+    // Collect tokens until we hit the terminator keyword
+    const condTokens = [];
+    while (pos < tokens.length) {
+      const t = peek();
+      if (t.type === T.EOF) break;
+      if (t.type === T.SEMI || t.type === T.NEWLINE) {
+        // Semicolons before the terminator are separators
+        if (pos + 1 < tokens.length) {
+          const next = tokens[pos + 1];
+          if (next && next.type === T.WORD && next.value === terminator) {
+            advance(); // skip the semicolon
+            break;
+          }
+        }
+        // Just a separator within the condition
+        condTokens.push(advance());
+        continue;
+      }
+      if (t.type === T.WORD && t.value === terminator) break;
+      condTokens.push(advance());
+    }
+    condTokens.push({ type: T.EOF, value: '' });
+    // Parse the condition tokens as a sub-expression
+    const subParser = parse(condTokens);
+    return subParser;
+  }
+
+  /**
+   * Parse a body (sequence of statements) until a terminator keyword.
+   * Returns an array of AST nodes.
+   */
+  function parseBody(...terminators) {
+    const stmts = [];
+    skipSep();
+    while (pos < tokens.length) {
+      const t = peek();
+      if (t.type === T.EOF) break;
+      if (t.type === T.WORD && terminators.includes(t.value)) break;
+      if (t.type === T.RBRACE && terminators.includes('}')) break;
+      const stmt = parseStatement();
+      if (stmt) stmts.push(stmt);
+      skipSep();
+    }
+    return stmts;
+  }
+
+  function parseIfStmt() {
+    advance(); // consume 'if'
+    const condition = parseCondition('then');
+    expectKeyword('then');
+    skipSep();
+    const body = parseBody('else', 'fi');
+    let elseBody = null;
+    if (isKeyword('else')) {
+      advance(); // consume 'else'
+      skipSep();
+      elseBody = parseBody('fi');
+    }
+    expectKeyword('fi');
+    return { type: 'if', condition, body, elseBody };
+  }
+
+  function parseWhileStmt() {
+    advance(); // consume 'while'
+    const condition = parseCondition('do');
+    expectKeyword('do');
+    skipSep();
+    const body = parseBody('done');
+    expectKeyword('done');
+    return { type: 'while', condition, body };
+  }
+
+  function parseForStmt() {
+    advance(); // consume 'for'
+    const varTok = peek();
+    if (varTok.type !== T.WORD) throw new SyntaxError("Expected variable name after 'for'");
+    const varName = advance().value;
+    expectKeyword('in');
+    // Collect word list until 'do' or ';'
+    const items = [];
+    while (pos < tokens.length) {
+      const t = peek();
+      if (t.type === T.EOF) break;
+      if (t.type === T.SEMI || t.type === T.NEWLINE) { advance(); break; }
+      if (t.type === T.WORD && t.value === 'do') break;
+      if (t.type !== T.WORD) break;
+      items.push(advance().value);
+    }
+    expectKeyword('do');
+    skipSep();
+    const body = parseBody('done');
+    expectKeyword('done');
+    return { type: 'for', varName, items, body };
+  }
+
+  /**
+   * Try to parse a function definition: name() { body }
+   * Returns null if this isn't a function def (so caller can fall through).
+   */
+  function tryParseFuncDef() {
+    // Pattern: WORD followed by '()' or WORD '(' ')' then '{' body '}'
+    // We look ahead to detect this pattern
+    if (peek().type !== T.WORD) return null;
+    const name = peek().value;
+    // Check for name() pattern: the name itself ends with ()
+    if (name.endsWith('()')) {
+      advance(); // consume 'name()'
+      const funcName = name.slice(0, -2);
+      if (!funcName) return null;
+      // Expect {
+      skipSep();
+      if (peek().type !== T.LBRACE) throw new SyntaxError("Expected '{' after function name()");
+      advance(); // consume {
+      skipSep();
+      const body = parseBody('}');
+      if (peek().type !== T.RBRACE) throw new SyntaxError("Expected '}' to close function body");
+      advance(); // consume }
+      return { type: 'function', name: funcName, body };
+    }
+    // Check for: WORD LBRACE pattern (when () was tokenized separately)
+    // Actually let's also handle when the next tokens are '(' ')' as separate words
+    // But since our tokenizer produces '(' ')' inside words, we handle it with the () suffix above
+    return null;
+  }
+
+  function parseStatement() {
+    skipSep();
+    const t = peek();
+    if (t.type === T.EOF) return null;
+
+    // Control flow keywords
+    if (t.type === T.WORD) {
+      if (t.value === 'if') return parseIfStmt();
+      if (t.value === 'while') return parseWhileStmt();
+      if (t.value === 'for') return parseForStmt();
+
+      // Try function definition
+      const funcDef = tryParseFuncDef();
+      if (funcDef) return funcDef;
+    }
+
+    // Fall through to regular list parsing
+    return parseList();
+  }
+
+  // Reserved words that cannot appear as command names or arguments in control-flow contexts.
+  // 'then', 'fi', 'else', 'done' are terminators — they should never be consumed as commands.
+  // 'do' and 'in' are also structure keywords.
+  // Note: 'if', 'while', 'for' are handled by parseStatement before reaching parseCommand.
+  const RESERVED_TERMINATORS = new Set(['then', 'fi', 'else', 'do', 'done']);
+  const RESERVED_ARGS = new Set(['then', 'fi', 'else', 'do', 'done', 'in']);
 
   function parseCommand() {
+    // Don't consume reserved terminators as command names
+    if (peek().type === T.WORD && RESERVED_TERMINATORS.has(peek().value)) return null;
+
     const words = [];
     while (peek().type === T.WORD) {
+      // Stop at reserved words when collecting arguments
+      if (words.length > 0 && RESERVED_ARGS.has(peek().value)) break;
       words.push(advance().value);
     }
     if (words.length === 0) return null;
@@ -272,13 +525,13 @@ export function parse(input) {
 
     while (peek().type === T.AND || peek().type === T.OR || peek().type === T.SEMI) {
       const op = advance();
-      operators.push(op.value);
       const next = parsePipeline();
       if (!next) {
-        // Trailing semicolons are ok
+        // Trailing semicolons are ok — don't add to operators
         if (op.type === T.SEMI) break;
         throw new SyntaxError(`Expected command after ${op.value}`);
       }
+      operators.push(op.value);
       commands.push(next);
     }
 
@@ -295,7 +548,18 @@ export function parse(input) {
     return node;
   }
 
-  return parseList();
+  // Top-level: parse as a program (sequence of statements)
+  const stmts = [];
+  skipSep();
+  while (peek().type !== T.EOF) {
+    const stmt = parseStatement();
+    if (stmt) stmts.push(stmt);
+    else break;
+    skipSep();
+  }
+  if (stmts.length === 0) return null;
+  if (stmts.length === 1) return stmts[0];
+  return { type: 'program', statements: stmts };
 }
 
 // ── Variable Expansion ──────────────────────────────────────────
@@ -348,6 +612,27 @@ export function expandVariables(token, env) {
         // No closing brace — treat as literal
         result += '$';
         i++;
+        continue;
+      }
+
+      // $N — positional parameters ($0-$9)
+      if (/[0-9]/.test(token[i + 1])) {
+        result += (get(token[i + 1]) ?? '');
+        i += 2;
+        continue;
+      }
+
+      // $@ — all positional parameters
+      if (token[i + 1] === '@') {
+        result += (get('@') ?? '');
+        i += 2;
+        continue;
+      }
+
+      // $# — number of positional parameters
+      if (token[i + 1] === '#') {
+        result += (get('#') ?? '');
+        i += 2;
         continue;
       }
 
@@ -763,6 +1048,14 @@ export class ShellState {
     this.pipefail = true;
     /** @type {Map<string, string>} Shell aliases (name → expanded command) */
     this.aliases = new Map();
+    /** @type {Map<string, object[]>} User-defined functions (name → body AST) */
+    this.functions = new Map();
+    /** @type {boolean} Signal that a `return` was called inside a function */
+    this._returnSignal = false;
+    /** @type {number|undefined} Return code from `return N` */
+    this._returnCode = undefined;
+    /** @type {Map<string, string>|undefined} Local variable scope inside function */
+    this._localScope = undefined;
   }
 
   /** Virtual working directory (workspace-relative, starts at /). */
@@ -869,9 +1162,123 @@ export async function execute(node, state, registry, opts = {}) {
       return executePipeline(node, state, registry, opts);
     case 'list':
       return executeList(node, state, registry, opts);
+    case 'program':
+      return executeProgram(node, state, registry, opts);
+    case 'if':
+      return executeIf(node, state, registry, opts);
+    case 'while':
+      return executeWhile(node, state, registry, opts);
+    case 'for':
+      return executeFor(node, state, registry, opts);
+    case 'function':
+      return executeFunction(node, state, registry, opts);
     default:
       return { stdout: '', stderr: `Unknown AST node type: ${node.type}`, exitCode: 1 };
   }
+}
+
+/** Execute a program (sequence of statements). */
+async function executeProgram(node, state, registry, opts) {
+  let lastResult = { stdout: '', stderr: '', exitCode: 0 };
+  let stdout = '';
+  let stderr = '';
+  for (const stmt of node.statements) {
+    lastResult = await execute(stmt, state, registry, opts);
+    stdout += lastResult.stdout;
+    stderr += lastResult.stderr;
+  }
+  return { stdout, stderr, exitCode: lastResult.exitCode };
+}
+
+/** Execute an if/else/fi block. */
+async function executeIf(node, state, registry, opts) {
+  const condResult = await execute(node.condition, state, registry, opts);
+  let stdout = '';
+  let stderr = '';
+  let exitCode = 0;
+
+  const branch = condResult.exitCode === 0 ? node.body : (node.elseBody || []);
+  let lastResult = { stdout: '', stderr: '', exitCode: 0 };
+  for (const stmt of branch) {
+    // Check for return signal
+    if (state._returnSignal) break;
+    lastResult = await execute(stmt, state, registry, opts);
+    stdout += lastResult.stdout;
+    stderr += lastResult.stderr;
+    exitCode = lastResult.exitCode;
+  }
+  state.lastExitCode = exitCode;
+  return { stdout, stderr, exitCode };
+}
+
+/** Execute a while/do/done loop. */
+async function executeWhile(node, state, registry, opts) {
+  let stdout = '';
+  let stderr = '';
+  let exitCode = 0;
+  const MAX_ITERATIONS = 10000; // safety limit
+  let iterations = 0;
+
+  while (iterations++ < MAX_ITERATIONS) {
+    const condResult = await execute(node.condition, state, registry, opts);
+    if (condResult.exitCode !== 0) break;
+
+    for (const stmt of node.body) {
+      if (state._returnSignal) break;
+      const result = await execute(stmt, state, registry, opts);
+      stdout += result.stdout;
+      stderr += result.stderr;
+      exitCode = result.exitCode;
+    }
+    if (state._returnSignal) break;
+  }
+
+  state.lastExitCode = exitCode;
+  return { stdout, stderr, exitCode };
+}
+
+/** Execute a for/in/do/done loop. */
+async function executeFor(node, state, registry, opts) {
+  let stdout = '';
+  let stderr = '';
+  let exitCode = 0;
+
+  // Expand variables in items, then word-split (unquoted $VAR with spaces becomes multiple items)
+  const envObj = state.env instanceof Map ? state.env : new Map();
+  envObj.set('?', String(state.lastExitCode));
+  const expandedItems = [];
+  for (const item of node.items) {
+    const expanded = expandVariables(item, envObj);
+    // Word-split: if expansion contains spaces, split into multiple items
+    if (expanded.includes(' ') || expanded.includes('\t')) {
+      expandedItems.push(...expanded.split(/\s+/).filter(Boolean));
+    } else {
+      expandedItems.push(expanded);
+    }
+  }
+
+  for (const item of expandedItems) {
+    state.env.set(node.varName, item);
+    for (const stmt of node.body) {
+      if (state._returnSignal) break;
+      const result = await execute(stmt, state, registry, opts);
+      stdout += result.stdout;
+      stderr += result.stderr;
+      exitCode = result.exitCode;
+    }
+    if (state._returnSignal) break;
+  }
+
+  state.lastExitCode = exitCode;
+  return { stdout, stderr, exitCode };
+}
+
+/** Execute a function definition — registers the function in state. */
+async function executeFunction(node, state, registry, opts) {
+  // Store function body AST in shell state
+  if (!state.functions) state.functions = new Map();
+  state.functions.set(node.name, node.body);
+  return { stdout: '', stderr: '', exitCode: 0 };
 }
 
 async function executeCommand(node, state, registry, opts) {
@@ -908,6 +1315,57 @@ async function executeCommand(node, state, registry, opts) {
       globExpanded.push(...matches);
     }
     expandedArgs = globExpanded;
+  }
+
+  // User-defined function invocation
+  if (state.functions?.has(expandedName)) {
+    const funcBody = state.functions.get(expandedName);
+    // Set positional parameters and local scope
+    const prevArgs = state.env.get('_FUNC_ARGS');
+    const prevLocals = state._localScope;
+    state._localScope = new Map();
+    // Set $1, $2, ... and $@ positional args
+    for (let i = 0; i < expandedArgs.length; i++) {
+      state.env.set(String(i + 1), expandedArgs[i]);
+    }
+    state.env.set('@', expandedArgs.join(' '));
+    state.env.set('#', String(expandedArgs.length));
+
+    let stdout = '';
+    let stderr = '';
+    let exitCode = 0;
+    state._returnSignal = false;
+    for (const stmt of funcBody) {
+      if (state._returnSignal) break;
+      const result = await execute(stmt, state, registry, opts);
+      stdout += result.stdout;
+      stderr += result.stderr;
+      exitCode = result.exitCode;
+    }
+    if (state._returnSignal) {
+      exitCode = state._returnCode ?? 0;
+      state._returnSignal = false;
+      state._returnCode = undefined;
+    }
+
+    // Clean up positional params
+    for (let i = 0; i < expandedArgs.length; i++) {
+      state.env.delete(String(i + 1));
+    }
+    state.env.delete('@');
+    state.env.delete('#');
+    // Clean up local scope
+    if (state._localScope) {
+      for (const [k] of state._localScope) {
+        state.env.delete(k);
+      }
+    }
+    state._localScope = prevLocals;
+    if (prevArgs !== undefined) state.env.set('_FUNC_ARGS', prevArgs);
+    else state.env.delete('_FUNC_ARGS');
+
+    state.lastExitCode = exitCode;
+    return { stdout, stderr, exitCode };
   }
 
   const handler = registry.get(expandedName);
@@ -1020,8 +1478,13 @@ async function executePipeline(node, state, registry, opts) {
 
 async function executeList(node, state, registry, opts) {
   let lastResult = await execute(node.commands[0], state, registry, opts);
+  let stdout = lastResult.stdout;
+  let stderr = lastResult.stderr;
 
   for (let i = 0; i < node.operators.length; i++) {
+    // Check for return signal (from `return` inside functions)
+    if (state._returnSignal) break;
+
     const op = node.operators[i];
     const nextCmd = node.commands[i + 1];
 
@@ -1030,9 +1493,11 @@ async function executeList(node, state, registry, opts) {
     // ';' always executes
 
     lastResult = await execute(nextCmd, state, registry, opts);
+    stdout += lastResult.stdout;
+    stderr += lastResult.stderr;
   }
 
-  return lastResult;
+  return { stdout, stderr, exitCode: lastResult.exitCode };
 }
 
 // ── OPFS Filesystem Adapter ─────────────────────────────────────
@@ -1044,19 +1509,56 @@ async function executeList(node, state, registry, opts) {
 export class ShellFs {
   /** @type {import('./clawser-tools.js').WorkspaceFs} */
   #ws;
+  /** @type {string} */
+  #wsId;
+  /** @type {PermissionManager|null} */
+  #permissions;
 
-  constructor(ws) {
+  /**
+   * @param {import('./clawser-tools.js').WorkspaceFs} ws
+   * @param {string} [wsId] - Workspace ID for system path resolution
+   * @param {PermissionManager} [permissions] - Permission manager for write guards
+   */
+  constructor(ws, wsId, permissions) {
     this.#ws = ws;
+    this.#wsId = wsId || 'default';
+    this.#permissions = permissions || null;
   }
 
-  /** Resolve a shell path through WorkspaceFs to an OPFS path. */
+  /**
+   * Resolve a shell path to an OPFS path.
+   * System paths (/etc/, /var/, /proc/, etc.) go through resolveVirtualPath.
+   * Workspace-relative paths go through WorkspaceFs.
+   */
   #resolve(shellPath) {
+    // System paths go through resolveVirtualPath
+    if (shellPath.startsWith('/etc/') || shellPath.startsWith('/var/') ||
+        shellPath.startsWith('/run/') || shellPath.startsWith('/dev/') ||
+        shellPath.startsWith('/proc/') || shellPath.startsWith('/sys/') ||
+        shellPath.startsWith('/tmp/') || shellPath.startsWith('~/')) {
+      return resolveVirtualPath(shellPath, this.#wsId);
+    }
+    // Workspace-relative paths
     const stripped = shellPath.replace(/^\//, '');
     return this.#ws.resolve(stripped);
   }
 
-  /** Throw if the shell path targets an internal read-only directory. */
+  /**
+   * Throw if the shell path targets a read-only path.
+   * Checks PermissionManager first (if available), then falls back
+   * to hardcoded system directory rules.
+   */
   #guardWrite(shellPath) {
+    // Permission manager takes precedence — it checks both manifest and defaults
+    if (this.#permissions) {
+      this.#permissions.checkWrite(shellPath);  // throws on read-only
+      return;
+    }
+    // Fallback: hardcoded rules (pre-Phase 4 behavior)
+    if (shellPath.startsWith('/etc/') || shellPath.startsWith('/proc/') ||
+        shellPath.startsWith('/dev/') || shellPath.startsWith('/sys/')) {
+      throw new Error(`Read-only: ${shellPath} is a system directory`);
+    }
     if (WorkspaceFs.isInternalPath(shellPath)) {
       throw new Error(`Read-only: ${shellPath} is a system directory`);
     }
@@ -1162,9 +1664,22 @@ export class MemoryFs {
   #files = new Map();
   /** @type {Set<string>} directory paths */
   #dirs = new Set(['/']);
+  /** @type {PermissionManager|null} */
+  #permissions;
 
-  /** Throw if the path targets an internal read-only directory. */
+  /**
+   * @param {PermissionManager} [permissions] - Permission manager for write guards
+   */
+  constructor(permissions) {
+    this.#permissions = permissions || null;
+  }
+
+  /** Throw if the path targets a read-only path. */
   #guardWrite(shellPath) {
+    if (this.#permissions) {
+      this.#permissions.checkWrite(shellPath);
+      return;
+    }
     if (WorkspaceFs.isInternalPath(shellPath)) {
       throw new Error(`Read-only: ${shellPath} is a system directory`);
     }
@@ -1344,14 +1859,18 @@ export function registerBuiltins(registry) {
     const resolved = state.resolvePath(target);
     const longFormat = flags.some(f => f.includes('l'));
     const showAll = flags.some(f => f.includes('a'));
+    // Access permissions from the fs chain (VirtualFs → ShellFs/MemoryFs)
+    const perms = state._permissions || null;
     try {
       const entries = await fs.listDir(resolved, { showDotfiles: showAll });
       entries.sort((a, b) => a.name.localeCompare(b.name));
       let lines;
       if (longFormat) {
         lines = entries.map(e => {
-          const prefix = e.kind === 'directory' ? 'd ' : '- ';
-          return prefix + e.name;
+          const childPath = resolved === '/' ? '/' + e.name : resolved + '/' + e.name;
+          const typeChar = e.kind === 'directory' ? 'd' : '-';
+          const rwx = perms ? perms.formatMode(childPath) : (e.kind === 'directory' ? 'rw-' : 'rw-');
+          return `${typeChar}${rwx} ${e.name}`;
         });
       } else {
         lines = entries.map(e => e.kind === 'directory' ? e.name + '/' : e.name);
@@ -1675,6 +2194,51 @@ export function registerBuiltins(registry) {
     }
     return { stdout: lines.join('\n') + '\n', stderr: '', exitCode: 0 };
   }, { description: 'Show help for commands', category: 'Shell', usage: 'help [COMMAND]' });
+
+  // ── type ── (show whether a name is a builtin, function, or alias)
+  registry.register('type', ({ args, state, registry }) => {
+    if (args.length === 0) return { stdout: '', stderr: 'type: missing argument', exitCode: 1 };
+    const lines = [];
+    let exitCode = 0;
+    for (const name of args) {
+      if (state.aliases?.has(name)) {
+        lines.push(`${name} is aliased to '${state.aliases.get(name)}'`);
+      } else if (state.functions?.has(name)) {
+        lines.push(`${name} is a function`);
+      } else if (registry.has(name)) {
+        lines.push(`${name} is a shell builtin`);
+      } else {
+        lines.push(`${name}: not found`);
+        exitCode = 1;
+      }
+    }
+    return { stdout: lines.join('\n') + '\n', stderr: '', exitCode };
+  }, { description: 'Show whether a name is a builtin, function, or alias', category: 'Shell', usage: 'type NAME...' });
+
+  // ── local ── (declare local variables in function scope)
+  registry.register('local', ({ args, state }) => {
+    for (const arg of args) {
+      const eq = arg.indexOf('=');
+      if (eq > 0) {
+        const k = arg.slice(0, eq);
+        const v = arg.slice(eq + 1);
+        state.env.set(k, expandVariables(v, state.env));
+        if (state._localScope) state._localScope.set(k, v);
+      } else {
+        state.env.set(arg, '');
+        if (state._localScope) state._localScope.set(arg, '');
+      }
+    }
+    return { stdout: '', stderr: '', exitCode: 0 };
+  }, { description: 'Declare local variables (inside functions)', category: 'Shell', usage: 'local NAME[=VALUE]...' });
+
+  // ── return ── (exit a function with a status code)
+  registry.register('return', ({ args, state }) => {
+    const code = args.length > 0 ? parseInt(args[0], 10) || 0 : state.lastExitCode;
+    state._returnSignal = true;
+    state._returnCode = code;
+    return { stdout: '', stderr: '', exitCode: code };
+  }, { description: 'Exit a function with a status code', category: 'Shell', usage: 'return [N]' });
 }
 
 // ── ClawserShell (main API) ─────────────────────────────────────
@@ -1698,19 +2262,70 @@ export class ClawserShell {
    * @param {object} [opts]
    * @param {import('./clawser-tools.js').WorkspaceFs} [opts.workspaceFs] - OPFS filesystem adapter
    * @param {object} [opts.fs] - Pre-built filesystem (e.g. MemoryFs for testing)
+   * @param {string} [opts.wsId] - Workspace ID for system path resolution
    * @param {CommandRegistry} [opts.registry] - Pre-built command registry
    * @param {import('./clawser-kernel-integration.js').KernelIntegration} [opts.kernelIntegration] - Kernel integration for ByteStream pipes
+   * @param {import('./clawser-proc.js').ProcFileHandler} [opts.procHandler] - Virtual /proc and /run filesystem handler
+   * @param {import('./clawser-fs-devices.mjs').DeviceFileHandler} [opts.deviceHandler] - Device file handler for /dev/clawser/
+   * @param {PermissionManager} [opts.permissions] - Permission manager for chmod support
    */
   constructor(opts = {}) {
     this.state = new ShellState();
     this.registry = opts.registry || new CommandRegistry();
-    this.fs = opts.fs || (opts.workspaceFs ? new ShellFs(opts.workspaceFs) : null);
     this.kernelIntegration = opts.kernelIntegration || null;
+
+    // Build the permission manager
+    /** @type {PermissionManager|null} */
+    this.permissions = opts.permissions || null;
+
+    // Expose permissions on state so builtins (like ls -l) can access them
+    if (this.permissions) {
+      this.state._permissions = this.permissions;
+    }
+
+    // Build the filesystem, optionally wrapping with VirtualFs for /proc, /run, and /dev
+    const baseFs = opts.fs || (opts.workspaceFs ? new ShellFs(opts.workspaceFs, opts.wsId, this.permissions) : null);
+    if (baseFs && opts.procHandler) {
+      this.fs = new VirtualFs(baseFs, opts.procHandler, opts.deviceHandler || null);
+    } else {
+      this.fs = baseFs;
+    }
 
     if (!opts.registry) {
       registerBuiltins(this.registry);
       registerExtendedBuiltins(this.registry);
       registerJqBuiltin(this.registry);
+    }
+
+    // Register source builtin (delegates to this.source())
+    this.registry.register('source', async ({ args }) => {
+      if (args.length === 0) return { stdout: '', stderr: 'source: missing filename', exitCode: 1 };
+      try {
+        await this.source(args[0]);
+        return { stdout: '', stderr: '', exitCode: 0 };
+      } catch (e) {
+        return { stdout: '', stderr: `source: ${e.message}`, exitCode: 1 };
+      }
+    }, { description: 'Execute commands from a file in the current shell', category: 'Shell', usage: 'source FILE' });
+
+    // Also register '.' as alias for source (POSIX convention)
+    this.registry.register('.', async ({ args }) => {
+      if (args.length === 0) return { stdout: '', stderr: '.: missing filename', exitCode: 1 };
+      try {
+        await this.source(args[0]);
+        return { stdout: '', stderr: '', exitCode: 0 };
+      } catch (e) {
+        return { stdout: '', stderr: `.: ${e.message}`, exitCode: 1 };
+      }
+    }, { description: 'Execute commands from a file (alias for source)', category: 'Shell', usage: '. FILE' });
+
+    // Set default shell identity env vars
+    this.state.env.set('SHELL', 'clsh');
+    this.state.env.set('CLSH_VERSION', '1.0');
+
+    // Register chmod builtin if permissions are available
+    if (this.permissions) {
+      registerChmodBuiltin(this.registry, this.permissions);
     }
 
     // Register job-related builtins
@@ -1847,7 +2462,8 @@ export class ClawserShell {
   }
 
   /**
-   * Source a file: execute each non-empty, non-comment line as a command.
+   * Source a file: parse the entire file as a script and execute it.
+   * Handles multi-line constructs (if/while/for/functions) correctly.
    * @param {string} path - Path to the file to source
    */
   async source(path) {
@@ -1856,13 +2472,39 @@ export class ClawserShell {
       const content = await this.fs.readFile(path);
       // Join continuation lines (trailing backslash)
       const joined = content.replace(/\\\n/g, '');
-      const lines = joined.split('\n').filter(l => l.trim() && !l.trim().startsWith('#'));
+      // Try to parse the entire file as a multi-line script
+      // Split into logical command groups using semicolons and newlines
+      const lines = joined.split('\n');
+      let buffer = '';
       for (const line of lines) {
-        await this.exec(line);
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        buffer += (buffer ? '\n' : '') + line;
+        // Check if the buffer is a complete statement
+        if (!isIncomplete(buffer)) {
+          // Replace newlines with semicolons for the parser
+          const cmd = buffer.replace(/\n/g, '; ');
+          await this.exec(cmd);
+          buffer = '';
+        }
+      }
+      // Execute any remaining buffer
+      if (buffer.trim()) {
+        const cmd = buffer.replace(/\n/g, '; ');
+        await this.exec(cmd);
       }
     } catch {
-      // .clawserrc not found is fine — not an error
+      // Profile not found is fine — not an error
     }
+  }
+
+  /**
+   * Source profile scripts on workspace init.
+   * Order: /etc/clawser/profile → ~/.config/clawser/profile
+   */
+  async sourceProfiles() {
+    await this.source('/etc/clawser/profile');
+    await this.source('~/.config/clawser/profile');
   }
 }
 
@@ -1887,7 +2529,7 @@ export class ShellTool extends BrowserTool {
 
   get name() { return 'browser_shell'; }
   get description() {
-    return 'Execute shell commands in a virtual browser shell. Supports pipes (|), redirects (>, >>), stderr redirects (2>, 2>>, 2>&1, 2>/dev/null), logical operators (&&, ||), and semicolons (;). Built-in commands include: cd, ls, pwd, cat, mkdir, rm, cp, mv, echo, head, tail, grep, wc, sort, uniq, tee, env, export, which, help. All filesystem commands operate on the workspace OPFS.';
+    return 'Execute commands in clsh (clawser shell). Supports pipes (|), redirects (>, >>), stderr redirects (2>, 2>>, 2>&1, 2>/dev/null), logical operators (&&, ||), semicolons (;), if/else/fi, while/do/done, for/in/do/done loops, and function definitions. Built-in commands include: cd, ls, pwd, cat, mkdir, rm, cp, mv, echo, head, tail, grep, wc, sort, uniq, tee, env, export, which, type, source, help. All filesystem commands operate on the workspace OPFS.';
   }
   get parameters() {
     return {
