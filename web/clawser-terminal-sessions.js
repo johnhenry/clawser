@@ -11,7 +11,13 @@
  *   clawser_workspaces/{wsId}/.terminal-sessions/{termId}/state.json
  *
  * Session metadata shape (meta.json):
- *   { id, name, created, lastUsed, commandCount, preview, version: 1, workspaceId }
+ *   { id, name, created, lastUsed, commandCount, preview, version: 1, workspaceId,
+ *     parentId?, branchPoint? }
+ *
+ * Branch fields (optional — absent on root sessions):
+ *   parentId   — the session ID this was branched from
+ *   branchPoint — the event sequence number (0-based index) in the parent
+ *                 where this branch diverges
  */
 
 import {
@@ -137,7 +143,7 @@ export class TerminalSessionManager {
   /**
    * Create a new terminal session.
    */
-  async create(name) {
+  async create(name, { parentId, branchPoint } = {}) {
     if (this.#activeSessionId) {
       await this.persist();
     }
@@ -154,6 +160,9 @@ export class TerminalSessionManager {
       version: 1,
       workspaceId: this.#wsId,
     };
+
+    if (parentId) meta.parentId = parentId;
+    if (branchPoint != null) meta.branchPoint = branchPoint;
 
     this.#store.resetShellState();
     this.#store.clear();
@@ -280,10 +289,15 @@ export class TerminalSessionManager {
 
     await this.persist();
 
+    const parentId = this.#activeSessionId;
     const originalEvents = this.#store.cloneEvents();
+    const branchPoint = originalEvents.length > 0 ? originalEvents.length - 1 : 0;
     const originalState = this.#store.serializeShellState();
 
-    const meta = await this.create(newName || `Fork of ${this.activeName || this.#activeSessionId}`);
+    const meta = await this.create(
+      newName || `Fork of ${this.activeName || this.#activeSessionId}`,
+      { parentId, branchPoint },
+    );
 
     this.#store.setEvents(originalEvents, { dirty: true });
     this.#store.applyShellState(originalState);
@@ -309,6 +323,8 @@ export class TerminalSessionManager {
 
     await this.persist();
 
+    const parentId = this.#activeSessionId;
+
     let endIndex = eventIndex;
     const targetEvent = this.#store.events[eventIndex];
     if (targetEvent.type === 'shell_command' && eventIndex + 1 < this.#store.events.length) {
@@ -329,7 +345,8 @@ export class TerminalSessionManager {
 
     const originalName = this.activeName || this.#activeSessionId;
     const meta = await this.create(
-      newName || `${originalName} (fork@cmd ${slicedEvents.filter(e => e.type === 'shell_command').length})`
+      newName || `${originalName} (fork@cmd ${slicedEvents.filter(e => e.type === 'shell_command').length})`,
+      { parentId, branchPoint: eventIndex },
     );
 
     this.#store.setEvents(slicedEvents, { dirty: true });
@@ -346,6 +363,168 @@ export class TerminalSessionManager {
     await this.persist();
 
     return { ...meta, commandCount: newMeta?.commandCount || 0 };
+  }
+
+  // ── Branching ──────────────────────────────────────────────
+
+  /**
+   * Create a new branch from a specific event sequence number in the current
+   * session. This is the primary branching API — it copies events up to
+   * `fromSeq` (inclusive) into a new session and records the parentage.
+   *
+   * @param {number} [fromSeq] — 0-based event index to branch from.
+   *   Defaults to the last event (i.e. branch from current point).
+   * @param {string} [name] — optional name for the new branch session.
+   * @returns {Promise<Object>} the new session metadata.
+   */
+  async branch(fromSeq, name) {
+    if (!this.#activeSessionId) throw new Error('No active session to branch');
+
+    const events = this.#store.events;
+    if (events.length === 0) throw new Error('Cannot branch an empty session');
+
+    const seq = fromSeq != null ? fromSeq : events.length - 1;
+    if (seq < 0 || seq >= events.length) {
+      throw new Error(`Event sequence out of range: ${seq} (session has ${events.length} events)`);
+    }
+
+    await this.persist();
+
+    const parentId = this.#activeSessionId;
+    const parentName = this.activeName || parentId;
+
+    // Determine a clean end index — if branching at a shell_command, include its result
+    let endIndex = seq;
+    if (events[seq]?.type === 'shell_command' && seq + 1 < events.length) {
+      if (events[seq + 1]?.type === 'shell_result') {
+        endIndex = seq + 1;
+      }
+    }
+
+    const slicedEvents = events.slice(0, endIndex + 1);
+
+    // Find closest state snapshot for shell restoration
+    let snapshot = null;
+    for (let i = endIndex; i >= 0; i--) {
+      if (slicedEvents[i]?.type === 'state_snapshot') {
+        snapshot = slicedEvents[i].data;
+        break;
+      }
+    }
+
+    const cmdCount = slicedEvents.filter(e => e.type === 'shell_command').length;
+    const branchName = name || `${parentName} [branch@${seq}]`;
+
+    const meta = await this.create(branchName, { parentId, branchPoint: seq });
+
+    this.#store.setEvents(slicedEvents, { dirty: true });
+    if (snapshot) {
+      this.#store.applyShellState(snapshot);
+    }
+
+    const newMeta = this.#sessions.find(s => s.id === meta.id);
+    if (newMeta) {
+      newMeta.commandCount = cmdCount;
+    }
+
+    await this.persist();
+    return { ...meta, commandCount: cmdCount };
+  }
+
+  /**
+   * List all sessions that were branched directly from the given session.
+   * @param {string} [sessionId] — defaults to the active session.
+   * @returns {Array<Object>} array of branch session metadata.
+   */
+  listBranches(sessionId) {
+    const targetId = sessionId || this.#activeSessionId;
+    if (!targetId) return [];
+    return this.#sessions
+      .filter(s => s.parentId === targetId)
+      .map(s => ({ ...s }));
+  }
+
+  /**
+   * Build the full branch tree starting from a root session.
+   * Returns a recursive tree structure:
+   *   { id, name, created, branchPoint?, children: [...] }
+   *
+   * @param {string} [rootId] — defaults to the active session's root ancestor.
+   * @returns {Object|null} tree node, or null if session not found.
+   */
+  getBranchTree(rootId) {
+    // Find the root — walk up parentId chain if no rootId given
+    let startId = rootId || this.#activeSessionId;
+    if (!startId) return null;
+
+    if (!rootId) {
+      // Walk to root ancestor
+      const byId = new Map(this.#sessions.map(s => [s.id, s]));
+      let current = byId.get(startId);
+      while (current?.parentId && byId.has(current.parentId)) {
+        current = byId.get(current.parentId);
+      }
+      startId = current?.id || startId;
+    }
+
+    // Build child lookup
+    const childMap = new Map();
+    for (const s of this.#sessions) {
+      if (s.parentId) {
+        if (!childMap.has(s.parentId)) childMap.set(s.parentId, []);
+        childMap.get(s.parentId).push(s);
+      }
+    }
+
+    const buildNode = (session) => {
+      const children = (childMap.get(session.id) || [])
+        .sort((a, b) => (a.created || 0) - (b.created || 0))
+        .map(buildNode);
+
+      const node = {
+        id: session.id,
+        name: session.name,
+        created: session.created,
+        commandCount: session.commandCount || 0,
+      };
+      if (session.branchPoint != null) node.branchPoint = session.branchPoint;
+      if (session.parentId) node.parentId = session.parentId;
+      if (children.length > 0) node.children = children;
+      return node;
+    };
+
+    const rootSession = this.#sessions.find(s => s.id === startId);
+    if (!rootSession) return null;
+    return buildNode(rootSession);
+  }
+
+  /**
+   * Render the branch tree as an ASCII art string.
+   * @param {string} [rootId] — defaults to active session's root ancestor.
+   * @returns {string} multi-line ASCII tree.
+   */
+  renderBranchTree(rootId) {
+    const tree = this.getBranchTree(rootId);
+    if (!tree) return '(no sessions)';
+
+    const activeId = this.#activeSessionId;
+    const lines = [];
+
+    const render = (node, prefix, isLast) => {
+      const marker = node.id === activeId ? ' *' : '';
+      const bp = node.branchPoint != null ? ` (branched@${node.branchPoint})` : '';
+      const connector = lines.length === 0 ? '' : (isLast ? '└── ' : '├── ');
+      lines.push(`${prefix}${connector}${node.name}${bp}${marker}`);
+
+      const children = node.children || [];
+      const childPrefix = lines.length === 1 ? '' : prefix + (isLast ? '    ' : '│   ');
+      children.forEach((child, i) => {
+        render(child, childPrefix, i === children.length - 1);
+      });
+    };
+
+    render(tree, '', true);
+    return lines.join('\n');
   }
 
   // ── Event Recording ─────────────────────────────────────────

@@ -443,3 +443,11 @@
     - RemoteUI
   category: remote
   since: "2.0.0"
+
+- name: wterm Migration
+  status: planned
+  description: >
+    Replace xterm.js with wterm DOM-native terminal renderer for better browser
+    integration, accessibility, and smaller bundle size.
+  files: []
+  notes: "https://wterm.dev/ — Vercel Labs project, ~12KB WASM, Apache-2.0"

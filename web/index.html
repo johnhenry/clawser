@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1, user-scalable=no">
   <title>clawser — browser agent workspace</title>
   <!--
     CDN dependency manifest — all versions pinned for supply-chain safety.
@@ -35,6 +35,13 @@
       "browsermesh-primitives": "https://esm.sh/browsermesh-primitives@0.1.1",
       "browsermesh-netway": "https://esm.sh/browsermesh-netway@0.1.1",
       "browsermesh-pod": "https://esm.sh/browsermesh-pod@0.2.0",
+      "browsermesh-core": "../packages/browsermesh-core/src/index.mjs",
+      "browsermesh-core/compat": "../packages/browsermesh-core/src/compat.mjs",
+      "browsermesh-transport": "../packages/browsermesh-transport/src/index.mjs",
+      "browsermesh-sync": "../packages/browsermesh-sync/src/index.mjs",
+      "browsermesh-discovery": "../packages/browsermesh-discovery/src/index.mjs",
+      "browsermesh-apps": "../packages/browsermesh-apps/src/index.mjs",
+      "browsermesh-apps/compat": "../packages/browsermesh-apps/src/compat.mjs",
       "wsh-upon-star": "https://esm.sh/wsh-upon-star@0.1.1",
       "andbox": "https://esm.sh/andbox@0.1.1",
       "ai.matey.core": "https://esm.sh/ai.matey.core@0.2.0",
@@ -136,6 +143,7 @@
 
 <div id="viewWorkspace">
 <div id="demoBanner" class="demo-banner" style="display:none;">Demo mode &mdash; using Echo provider (no LLM)</div>
+<div id="disposableBanner" class="disposable-banner" style="display:none;">Disposable mode &mdash; nothing will persist after tab close</div>
 <header>
   <span class="logo">clawser</span>
   <span class="sep">/</span>
@@ -961,5 +969,13 @@
 </dialog>
 
 <script type="module" src="./clawser-app.js"></script>
+<script type="module">
+  import { initMobile } from './clawser-mobile.js';
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => initMobile());
+  } else {
+    initMobile();
+  }
+</script>
 </body>
 </html>

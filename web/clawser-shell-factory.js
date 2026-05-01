@@ -3,6 +3,7 @@ import { registerAndboxCli } from './clawser-andbox-cli.js';
 import { registerWshCli } from './clawser-wsh-cli.js';
 import { registerSchedulerCli } from './clawser-scheduler-cli.js';
 import { registerModelCli } from './clawser-model-cli.js';
+import { registerSnapshotCli } from './clawser-snapshot-cli.js';
 import { ClawserShell } from './clawser-shell.js';
 
 /**
@@ -18,6 +19,7 @@ import { ClawserShell } from './clawser-shell.js';
  * @param {() => unknown} [opts.getAgent]
  * @param {() => unknown} [opts.getRoutineEngine]
  * @param {() => unknown} [opts.getModelManager]
+ * @param {() => unknown} [opts.getSkillRegistry]
  * @returns {Promise<ClawserShell>}
  */
 export async function createConfiguredShell({
@@ -27,6 +29,7 @@ export async function createConfiguredShell({
   getAgent = () => null,
   getRoutineEngine = () => null,
   getModelManager = () => null,
+  getSkillRegistry = () => null,
 } = {}) {
   const shell = new ClawserShell({ workspaceFs, fs });
 
@@ -40,6 +43,7 @@ export async function createConfiguredShell({
   registerWshCli(shell.registry, getAgent, getShell);
   registerSchedulerCli(shell.registry, getRoutineEngine, getAgent);
   registerModelCli(shell.registry, getModelManager);
+  registerSnapshotCli(shell.registry, getAgent, getShell, getRoutineEngine, getSkillRegistry);
 
   return shell;
 }

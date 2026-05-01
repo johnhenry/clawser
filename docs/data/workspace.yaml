@@ -171,3 +171,62 @@
     - FsObserver
   category: observer
   since: "1.5.0"
+
+- name: Atomic Workspace Snapshots
+  status: planned
+  description: >
+    Save and restore the complete workspace state (shell history, filesystem, memory,
+    agent state, goals, scheduler) as a single atomic blob in IndexedDB. Instant boot
+    to exact previous state.
+  files: []
+  notes: >
+    Inspired by Linux on Tab's VM snapshot/restore. Extends existing checkpoint system
+    to be comprehensive and atomic.
+  category: checkpoint
+  since: "2.1.0"
+
+- name: Tunnel Exposure (WISP)
+  status: planned
+  description: >
+    Expose clawser services (RPC mode, remote access) through tunneled ports via
+    WebSocket-based tunneling protocol. Lets external tools connect without Unix sockets.
+  files: []
+  notes: >
+    Inspired by Linux on Tab's SSH tunneling via WISP protocol.
+  category: networking
+  since: "2.1.0"
+
+- name: Disposable Mode
+  status: planned
+  description: >
+    Ephemeral workspace mode where nothing persists after tab close. No OPFS writes,
+    no localStorage, no IndexedDB. For demos, sensitive work, or guest access.
+  files: []
+  notes: >
+    Inspired by Linux on Tab's 'close tab, everything gone' privacy model.
+  category: workspaces
+  since: "2.1.0"
+
+- name: Embedded Linux Guest (v86)
+  status: planned
+  description: >
+    Embed a v86 WASM x86 Linux guest as a real terminal option. AI shell handles agent
+    commands, real Linux binaries (gcc, python, node) execute in the guest. Bridges via
+    wterm adapter layer.
+  files: []
+  notes: >
+    Inspired by Linux on Tab. Already in roadmap as 'guest-native wsh-server'. v86 is
+    BSD-2-Clause. Biggest architectural addition.
+  category: terminal
+  since: "2.1.0"
+
+- name: Guest Filesystem Browser
+  status: planned
+  description: >
+    Visual file browser panel for embedded Linux guest filesystem. Browse, upload,
+    download files between OPFS and the guest. Extends existing Files panel.
+  files: []
+  notes: >
+    Companion feature to Embedded Linux Guest.
+  category: mount
+  since: "2.1.0"

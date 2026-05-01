@@ -1,25 +1,26 @@
 // clawser-workspaces.js — Pure localStorage CRUD for workspaces (no DOM, no agent)
 import { lsKey } from './clawser-state.js';
+import { getStorage } from './clawser-disposable.js';
 
 export const WS_KEY = 'clawser_workspaces';
 export const WS_ACTIVE_KEY = 'clawser_active_workspace';
 
-/** Load all workspaces from localStorage. @returns {Array<Object>} */
+/** Load all workspaces from storage (sessionStorage in disposable mode). @returns {Array<Object>} */
 export function loadWorkspaces() {
-  try { return JSON.parse(localStorage.getItem(WS_KEY)) || []; } catch { return []; }
+  try { return JSON.parse(getStorage().getItem(WS_KEY)) || []; } catch { return []; }
 }
 
-/** Persist the workspace list to localStorage. @param {Array<Object>} list */
+/** Persist the workspace list to storage. @param {Array<Object>} list */
 export function saveWorkspaces(list) {
-  localStorage.setItem(WS_KEY, JSON.stringify(list));
+  getStorage().setItem(WS_KEY, JSON.stringify(list));
 }
 
 export function getActiveWorkspaceId() {
-  return localStorage.getItem(WS_ACTIVE_KEY) || 'default';
+  return getStorage().getItem(WS_ACTIVE_KEY) || 'default';
 }
 
 export function setActiveWorkspaceId(id) {
-  localStorage.setItem(WS_ACTIVE_KEY, id);
+  getStorage().setItem(WS_ACTIVE_KEY, id);
 }
 
 /** Ensure a 'default' workspace exists, migrating legacy data if needed. @returns {Array<Object>} */
@@ -29,10 +30,11 @@ export function ensureDefaultWorkspace() {
     list.unshift({ id: 'default', name: 'workspace', created: Date.now(), lastUsed: Date.now() });
     saveWorkspaces(list);
     // Migrate old non-namespaced data to default workspace
-    const oldMem = localStorage.getItem('clawser_memories');
-    if (oldMem) { localStorage.setItem(lsKey.memories('default'), oldMem); localStorage.removeItem('clawser_memories'); }
-    const oldCfg = localStorage.getItem('clawser_config');
-    if (oldCfg) { localStorage.setItem(lsKey.config('default'), oldCfg); localStorage.removeItem('clawser_config'); }
+    const s = getStorage();
+    const oldMem = s.getItem('clawser_memories');
+    if (oldMem) { s.setItem(lsKey.memories('default'), oldMem); s.removeItem('clawser_memories'); }
+    const oldCfg = s.getItem('clawser_config');
+    if (oldCfg) { s.setItem(lsKey.config('default'), oldCfg); s.removeItem('clawser_config'); }
   }
   return list;
 }
@@ -60,28 +62,29 @@ export async function deleteWorkspace(id) {
   list = list.filter(w => w.id !== id);
   saveWorkspaces(list);
   // Clean up persisted data — versioned keys via lsKey
-  localStorage.removeItem(lsKey.memories(id));
-  localStorage.removeItem(lsKey.config(id));
-  localStorage.removeItem(lsKey.toolPerms(id));
-  localStorage.removeItem(lsKey.security(id));
-  localStorage.removeItem(lsKey.skillsEnabled(id));
-  localStorage.removeItem(lsKey.autonomy(id));
-  localStorage.removeItem(lsKey.identity(id));
-  localStorage.removeItem(lsKey.selfRepair(id));
-  localStorage.removeItem(lsKey.sandbox(id));
-  localStorage.removeItem(lsKey.heartbeat(id));
-  localStorage.removeItem(lsKey.routines(id));
-  localStorage.removeItem(lsKey.termSessions(id));
-  localStorage.removeItem(lsKey.hooks(id));
-  localStorage.removeItem(lsKey.peripherals(id));
-  localStorage.removeItem(lsKey.showDotfiles(id));
+  const s = getStorage();
+  s.removeItem(lsKey.memories(id));
+  s.removeItem(lsKey.config(id));
+  s.removeItem(lsKey.toolPerms(id));
+  s.removeItem(lsKey.security(id));
+  s.removeItem(lsKey.skillsEnabled(id));
+  s.removeItem(lsKey.autonomy(id));
+  s.removeItem(lsKey.identity(id));
+  s.removeItem(lsKey.selfRepair(id));
+  s.removeItem(lsKey.sandbox(id));
+  s.removeItem(lsKey.heartbeat(id));
+  s.removeItem(lsKey.routines(id));
+  s.removeItem(lsKey.termSessions(id));
+  s.removeItem(lsKey.hooks(id));
+  s.removeItem(lsKey.peripherals(id));
+  s.removeItem(lsKey.showDotfiles(id));
   // Clean up legacy unversioned keys
-  localStorage.removeItem(`clawser_conversations_${id}`);
-  localStorage.removeItem(`clawser_tool_perms_${id}`);
-  localStorage.removeItem(`clawser_skills_enabled_${id}`);
-  localStorage.removeItem(`clawser_active_conversation_${id}`);
-  localStorage.removeItem(`clawser_goals_${id}`);
-  localStorage.removeItem(`clawser_log_${id}`);
+  s.removeItem(`clawser_conversations_${id}`);
+  s.removeItem(`clawser_tool_perms_${id}`);
+  s.removeItem(`clawser_skills_enabled_${id}`);
+  s.removeItem(`clawser_active_conversation_${id}`);
+  s.removeItem(`clawser_goals_${id}`);
+  s.removeItem(`clawser_log_${id}`);
   try {
     const root = await navigator.storage.getDirectory();
     try {

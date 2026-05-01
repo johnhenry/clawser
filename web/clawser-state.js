@@ -89,6 +89,7 @@ export const lsKey = {
   showDotfiles:  wsId => `clawser_${LS_VERSION}_show_dotfiles_${wsId}`,
   modelConfig:   wsId => `clawser_${LS_VERSION}_model_config_${wsId}`,
   terminalRenderer: wsId => `clawser_${LS_VERSION}_terminal_renderer_${wsId}`,
+  skillHotReload:   wsId => `clawser_${LS_VERSION}_skill_hot_reload_${wsId}`,
 };
 
 /**
@@ -250,6 +251,13 @@ export const state = {
     if (typeof location === 'undefined' || !location.search) return false;
     const p = new URLSearchParams(location.search);
     return p.has('demo') && p.get('demo') !== 'false';
+  })(),
+  /** Disposable mode — ephemeral workspace, nothing persists after tab close.
+   *  Activated via ?disposable or ?disposable=true URL param (not ?disposable=false). */
+  disposableMode: (() => {
+    if (typeof location === 'undefined' || !location.search) return false;
+    const p = new URLSearchParams(location.search);
+    return p.has('disposable') && p.get('disposable') !== 'false';
   })(),
   // Block 36: Tool usage tracking
   toolUsageStats: {},

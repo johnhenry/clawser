@@ -24,6 +24,7 @@ import { createDefaultRegistry, WorkspaceFs } from './clawser-tools.js';
 
 import { SkillMarketplace } from './clawser-marketplace.js';
 import { createConfiguredShell } from './clawser-shell-factory.js';
+import { SkillHotReloader } from './clawser-skill-hot-reload.js';
 
 // Fallback chain
 import { FallbackChain, FallbackExecutor } from './clawser-fallback.js';
@@ -85,6 +86,7 @@ export async function createShellSession() {
     getAgent: () => state.agent,
     getRoutineEngine: () => state.routineEngine,
     getModelManager: () => state.modelManager,
+    getSkillRegistry: () => state.skillRegistry,
   });
   // Update terminal session manager's shell reference
   if (state.terminalSessions) {
@@ -119,18 +121,20 @@ export async function cleanupWorkspace() {
     _kernelIntegration.destroyWorkspaceTenant(oldWsId);
   }
 
-  // Save current workspace state
-  await persistActiveConversation();
-  state.agent.persistMemories();
-  await state.agent.persistCheckpoint();
-  saveConfig();
+  // Save current workspace state (skip in disposable mode — nothing to persist)
+  if (!state.disposableMode) {
+    await persistActiveConversation();
+    state.agent.persistMemories();
+    await state.agent.persistCheckpoint();
+    saveConfig();
 
-  // Save routine state
-  try {
-    const wsId = state.agent.getWorkspace();
-    const routineData = state.routineEngine.toJSON();
-    if (routineData) localStorage.setItem(lsKey.routines(wsId), JSON.stringify(routineData));
-  } catch (e) { console.warn('[clawser] routine save failed', e); }
+    // Save routine state
+    try {
+      const wsId = state.agent.getWorkspace();
+      const routineData = state.routineEngine.toJSON();
+      if (routineData) localStorage.setItem(lsKey.routines(wsId), JSON.stringify(routineData));
+    } catch (e) { console.warn('[clawser] routine save failed', e); }
+  }
 
   // Shut down the ClawserPod (stops peer node, sync engine, relay, etc.)
   if (state.pod) {
@@ -140,6 +144,11 @@ export async function cleanupWorkspace() {
   // Stop channel gateway
   if (state.gateway) {
     try { state.gateway.stop(); } catch { /* best-effort */ }
+  }
+
+  // Stop skill hot-reload
+  if (state.skillHotReloader) {
+    state.skillHotReloader.stop();
   }
 
   // Deactivate all skills
@@ -266,6 +275,16 @@ export async function switchWorkspace(newId, convId) {
   // Defer non-essential panel renders until first activation (Gap 11.1)
   resetRenderedPanels();
   await state.skillRegistry.discover(newId);
+
+  // Restart skill hot-reload for new workspace
+  try {
+    if (state.skillHotReloader) {
+      state.skillHotReloader.setWorkspace(newId);
+      await state.skillHotReloader.snapshot();
+      if (!state.skillHotReloader.running) state.skillHotReloader.start();
+    }
+  } catch (e) { console.warn('[clawser] skill hot-reload switch failed', e); }
+
   state.marketplace = new SkillMarketplace();
   restoreSavedChannels(state.channelManager);
   updateChannelBadge();
@@ -588,6 +607,22 @@ export async function initWorkspace(wsId, convId) {
 
     await state.skillRegistry.discover(activeWsId);
 
+    // ── Skill hot-reload ──
+    try {
+      const hrConfig = JSON.parse(localStorage.getItem(lsKey.skillHotReload(activeWsId)) || '{}');
+      if (hrConfig.enabled !== false) {
+        state.skillHotReloader = new SkillHotReloader({
+          registry: state.skillRegistry,
+          wsId: activeWsId,
+          intervalMs: hrConfig.intervalMs,
+          onLog: (level, msg) => console.log(msg),
+          onReload: () => renderSkills(),
+        });
+        await state.skillHotReloader.snapshot();
+        state.skillHotReloader.start();
+      }
+    } catch (e) { console.warn('[clawser] skill hot-reload init failed', e); }
+
     // Init marketplace
     state.marketplace = new SkillMarketplace();
 
@@ -626,6 +661,10 @@ export async function initWorkspace(wsId, convId) {
 
     if (providerSelect.value === 'echo') {
       parts.push('Tip: Select a provider in Settings (gear icon) to enable intelligent responses.');
+    }
+
+    if (state.disposableMode) {
+      parts.push('⚠ Disposable mode — nothing will persist after tab close.');
     }
 
     addMsg('system', parts.join(' '));

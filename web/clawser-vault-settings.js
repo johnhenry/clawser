@@ -98,7 +98,12 @@ const exportVaultBackup = async () => {
       if (handle.kind === 'file') {
         const file = await handle.getFile();
         const buf = await file.arrayBuffer();
-        backup.entries[name] = btoa(String.fromCharCode(...new Uint8Array(buf)));
+        const bytes = new Uint8Array(buf);
+        let binary = '';
+        for (let i = 0; i < bytes.byteLength; i++) {
+          binary += String.fromCharCode(bytes[i]);
+        }
+        backup.entries[name] = btoa(binary);
       }
     }
 

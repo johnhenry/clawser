@@ -116,12 +116,16 @@ Usage:
   clawser memory add KEY VALUE  Add a memory entry
   clawser memory remove KEY     Remove a memory entry
   clawser mcp                   Show MCP server status
+  clawser rpc                    Start JSON-RPC 2.0 server on stdin/stdout
+  clawser rpc --rpc-socket PATH  Start JSON-RPC 2.0 server on Unix socket
   clawser session                List terminal sessions
   clawser session new [name]     Create new terminal session
   clawser session switch <name>  Switch to a session
   clawser session rename <name>  Rename current session
   clawser session delete <name>  Delete a session
   clawser session fork [name]    Fork current session
+  clawser session branch [--from <seq>] [name]  Branch from event seq
+  clawser session tree           Show branch tree (ASCII)
   clawser session export [fmt]   Export session (--script|--markdown|--json|--html)
   clawser session save           Persist current session
 
@@ -158,6 +162,7 @@ export const CLAWSER_SUBCOMMAND_META = [
   { name: 'compact', description: 'Trigger context compaction', usage: 'clawser compact' },
   { name: 'memory', description: 'Manage agent memory entries', usage: 'clawser memory [list|add|remove] [KEY] [VALUE]' },
   { name: 'mcp', description: 'Show MCP server status', usage: 'clawser mcp' },
+  { name: 'rpc', description: 'Start JSON-RPC 2.0 server for programmatic access', usage: 'clawser rpc [--rpc-socket PATH]' },
   { name: 'session', description: 'Manage terminal sessions', usage: 'clawser session [list|new|switch|rename|delete|fork|export|save]' },
 ];
 
@@ -754,6 +759,42 @@ export function registerClawserCli(registry, getAgent, getShell) {
       return { stdout: `Forked session: ${meta.name} (${meta.id})\n`, stderr: '', exitCode: 0 };
     }
 
+    // clawser session branch [--from <seq>] [name]
+    if (sub === 'branch') {
+      let fromSeq;
+      const remaining = subArgs.slice(1);
+      const fromIdx = remaining.indexOf('--from');
+      if (fromIdx !== -1) {
+        const seqStr = remaining[fromIdx + 1];
+        if (seqStr == null || isNaN(Number(seqStr))) {
+          if (json) return jsonErr({ code: 'INVALID_SEQ', message: '--from requires a numeric event sequence' }, 'clawser session branch');
+          return { stdout: '', stderr: 'Usage: clawser session branch [--from <seq>] [name]', exitCode: 1 };
+        }
+        fromSeq = Number(seqStr);
+        remaining.splice(fromIdx, 2);
+      }
+      const name = remaining.join(' ').trim() || undefined;
+      try {
+        const meta = await ts.branch(fromSeq, name);
+        if (json) return jsonOut({ name: meta.name, id: meta.id, parentId: meta.parentId, branchPoint: meta.branchPoint }, 'clawser session branch');
+        return { stdout: `Branched session: ${meta.name} (${meta.id})\n`, stderr: '', exitCode: 0 };
+      } catch (e) {
+        if (json) return jsonErr({ code: 'BRANCH_FAILED', message: e.message }, 'clawser session branch');
+        return { stdout: '', stderr: e.message, exitCode: 1 };
+      }
+    }
+
+    // clawser session tree
+    if (sub === 'tree') {
+      if (json) {
+        const tree = ts.getBranchTree();
+        if (!tree) return jsonErr({ code: 'NO_SESSION', message: 'No active session' }, 'clawser session tree');
+        return jsonOut(tree, 'clawser session tree');
+      }
+      const rendered = ts.renderBranchTree();
+      return { stdout: rendered + '\n', stderr: '', exitCode: 0 };
+    }
+
     // clawser session export [--script|--markdown|--json|--jsonl|--html]
     if (sub === 'export') {
       const format = subArgs[1] || '--script';
@@ -831,6 +872,47 @@ export function registerClawserCli(registry, getAgent, getShell) {
     return { stdout: '', stderr: `Unknown session subcommand: ${sub}\nUsage: clawser session [list|new|switch|rename|delete|fork|export|save]`, exitCode: 1 };
   }
 
+  // ── Subcommand: rpc ─────────────────────────────────────────
+
+  async function cmdRpc(subArgs, json = false) {
+    const agent = getAgent();
+    if (!agent) {
+      if (json) return jsonErr({ code: 'NO_AGENT', message: 'No agent available' }, 'clawser rpc');
+      return { stdout: '', stderr: 'No agent available', exitCode: 1 };
+    }
+
+    const { flags } = parseFlags(subArgs, { 'rpc-socket': false });
+    const socketPath = flags['rpc-socket'];
+
+    if (socketPath) {
+      // Unix domain socket transport
+      const { startSocketRpc } = await import('./clawser-rpc.mjs');
+      const handle = await startSocketRpc(socketPath, getAgent, {
+        onLog: (msg) => process.stderr?.write?.(`[rpc] ${msg}\n`),
+      });
+      if (json) return jsonOut({ transport: 'socket', socketPath: handle.socketPath }, 'clawser rpc');
+      return {
+        stdout: `RPC server listening on ${handle.socketPath}\n`,
+        stderr: '',
+        exitCode: 0,
+        __rpcHandle: handle,
+      };
+    }
+
+    // Default: stdio transport
+    const { startStdioRpc } = await import('./clawser-rpc.mjs');
+    const handle = startStdioRpc(getAgent, {
+      onLog: (msg) => process.stderr?.write?.(`[rpc] ${msg}\n`),
+    });
+    if (json) return jsonOut({ transport: 'stdio' }, 'clawser rpc');
+    return {
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      __rpcHandle: handle,
+    };
+  }
+
   // ── Main `clawser` command ──────────────────────────────────
 
   registry.register('clawser', async ({ args }) => {
@@ -881,6 +963,8 @@ export function registerClawserCli(registry, getAgent, getShell) {
         return cmdMemory(cleanSubArgs, json);
       case 'mcp':
         return cmdMcp(json);
+      case 'rpc':
+        return cmdRpc(cleanSubArgs, json);
       case 'session':
         return cmdSession(cleanSubArgs, json);
       case 'help':

@@ -31,6 +31,7 @@ export { renderChannelPanel, updateChannelBadge, initChannelPanelListeners, rest
 export { renderSwarmPanel, initSwarmListeners } from './clawser-ui-swarms.js';
 export { renderTransferPanel, initTransferListeners } from './clawser-ui-transfers.js';
 export { renderMeshPanel, initMeshListeners } from './clawser-ui-mesh.js';
+export { renderGuestFsPanel, parseLsOutput, parseStatOutput, createGuestFsState, createGuestFsController } from './clawser-ui-guest-fs.mjs';
 export { renderSharedWorkerSection, handleSharedWorkerToggle, initSharedWorkerFromConfig } from './clawser-ui-config-shared-worker.js';
 export {
   applySecuritySettings,

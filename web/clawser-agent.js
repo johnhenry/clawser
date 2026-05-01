@@ -1194,50 +1194,55 @@ export class ClawserAgent {
     this.#activeAgent = agentDef;
     this.#agentCredentialWarning = null;
 
-    // Derive provider from account if accountId is set
+    // ── Block 52: Flat providerConfig path (preferred) ──────────
+    // Resolve provider config: use providerConfig if present, fall back to legacy fields
+    const NO_KEY_PROVIDERS = ['echo', 'chrome-ai', 'ollama', 'lmstudio'];
+    const cfg = agentDef.providerConfig || {
+      provider: agentDef.provider || '',
+      model: agentDef.model || '',
+      accountId: agentDef.accountId || null,
+    };
+
+    this.#activeProvider = cfg.provider;
+    if (cfg.model) this.#model = cfg.model;
+    if (cfg.baseUrl) this.#providerBaseUrl = cfg.baseUrl;
+
+    // Resolve credentials from account if present
     let credentialsResolved = false;
-    if (agentDef.accountId && this.#accountResolver) {
+    if (cfg.accountId && this.#accountResolver) {
       try {
-        const { apiKey, baseUrl, service, model } = await this.#accountResolver(agentDef.accountId);
-        if (service) this.#activeProvider = service;
+        const { apiKey, baseUrl, service, model } = await this.#accountResolver(cfg.accountId);
         if (apiKey) { this.#apiKey = apiKey; credentialsResolved = true; }
-        if (baseUrl) this.#providerBaseUrl = baseUrl;
-        if (model && !agentDef.model) this.#model = model;
+        if (baseUrl && !cfg.baseUrl) this.#providerBaseUrl = baseUrl;
+        // Account service should match cfg.provider; use account's if available
+        if (service) this.#activeProvider = service;
+        if (model && !cfg.model) this.#model = model;
       } catch (_) {
-        // Account was deleted or resolver failed
-        this.#agentCredentialWarning = `Account "${agentDef.accountId}" not found. Add an API key in Settings.`;
+        this.#agentCredentialWarning = `Account "${cfg.accountId}" not found. Add an API key in Settings.`;
       }
     }
 
-    // No accountId — try to auto-match an account by service type
-    if (!agentDef.accountId && agentDef.provider && this.#accountResolver) {
-      const noKeyProviders = ['echo', 'chrome-ai', 'ollama', 'lmstudio'];
-      if (!noKeyProviders.includes(agentDef.provider)) {
-        // This agent needs an API key — try to find a matching account
-        try {
-          const { apiKey, baseUrl, service, model } = await this.#accountResolver(`service:${agentDef.provider}`);
-          if (apiKey) {
-            if (service) this.#activeProvider = service;
-            this.#apiKey = apiKey;
-            if (baseUrl) this.#providerBaseUrl = baseUrl;
-            if (model && !agentDef.model) this.#model = model;
-            credentialsResolved = true;
-          }
-        } catch (_) { /* no matching account */ }
-
-        if (!credentialsResolved) {
-          this.#agentCredentialWarning =
-            `"${agentDef.name}" needs a ${agentDef.provider} API key. Add one in Settings → Accounts.`;
+    // Auto-match by service type if no accountId and provider needs a key
+    if (!cfg.accountId && cfg.provider && !NO_KEY_PROVIDERS.includes(cfg.provider) && this.#accountResolver) {
+      try {
+        const { apiKey, baseUrl, service, model } = await this.#accountResolver(`service:${cfg.provider}`);
+        if (apiKey) {
+          this.#apiKey = apiKey;
+          if (baseUrl && !cfg.baseUrl) this.#providerBaseUrl = baseUrl;
+          if (service) this.#activeProvider = service;
+          if (model && !cfg.model) this.#model = model;
+          credentialsResolved = true;
         }
+      } catch (_) { /* no matching account */ }
+
+      if (!credentialsResolved) {
+        this.#agentCredentialWarning =
+          `"${agentDef.name}" needs a ${cfg.provider} API key. Add one in Settings → Accounts.`;
       }
     }
 
-    // Direct provider assignment for no-key providers
-    if (!credentialsResolved && agentDef.provider) {
-      this.#activeProvider = agentDef.provider;
-    }
-
-    if (agentDef.model) this.#model = agentDef.model;
+    // Override model from agentDef top-level if explicitly set (legacy compat)
+    if (agentDef.model && !agentDef.providerConfig) this.#model = agentDef.model;
 
     // Set system prompt
     if (agentDef.systemPrompt) this.setSystemPrompt(agentDef.systemPrompt);

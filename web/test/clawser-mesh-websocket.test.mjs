@@ -1,5 +1,5 @@
 // Run with: node --import ./web/test/_setup-globals.mjs --test web/test/clawser-mesh-websocket.test.mjs
-import { describe, it, beforeEach, afterEach, mock } from 'node:test';
+import { describe, it, beforeEach, afterEach, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
@@ -206,6 +206,14 @@ describe('WebSocketTransport', () => {
   let ws;
   /** @type {MockWebSocket|null} */
   let lastMockWs;
+
+  afterEach(async () => {
+    if (ws && ws.state !== 'closed' && ws.state !== 'disconnected') {
+      try { await ws.close(); } catch { /* already closed */ }
+    }
+    ws = null;
+    lastMockWs = null;
+  });
 
   function createWS(overrides = {}) {
     lastMockWs = null;
@@ -631,6 +639,14 @@ describe('WebRTCTransport', () => {
   /** @type {MockRTCPeerConnection} */
   let lastPC;
 
+  afterEach(async () => {
+    if (rtc && rtc.state !== 'closed' && rtc.state !== 'disconnected') {
+      try { await rtc.close(); } catch { /* already closed */ }
+    }
+    rtc = null;
+    lastPC = null;
+  });
+
   function createRTC(overrides = {}) {
     signaler = new MockSignaler();
     lastPC = null;
@@ -919,6 +935,14 @@ describe('WebTransportTransport', () => {
   let wt;
   /** @type {MockWebTransport|null} */
   let lastMockWT;
+
+  afterEach(async () => {
+    if (wt && wt.state !== 'closed' && wt.state !== 'disconnected') {
+      try { await wt.close(); } catch { /* already closed */ }
+    }
+    wt = null;
+    lastMockWT = null;
+  });
 
   function createWT(overrides = {}) {
     lastMockWT = null;

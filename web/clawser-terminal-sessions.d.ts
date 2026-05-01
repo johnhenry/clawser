@@ -1,5 +1,15 @@
 export function createTerminalSessionId(): string;
 
+export interface BranchTreeNode {
+  id: string;
+  name: string;
+  created: number;
+  commandCount: number;
+  branchPoint?: number;
+  parentId?: string;
+  children?: BranchTreeNode[];
+}
+
 export interface TerminalSessionMeta {
   id: string;
   name: string;
@@ -9,6 +19,8 @@ export interface TerminalSessionMeta {
   preview: string;
   version: number;
   workspaceId: string;
+  parentId?: string;
+  branchPoint?: number;
 }
 
 export interface TerminalEvent {
@@ -29,6 +41,10 @@ export class TerminalSessionManager {
   rename(sessionId: string, newName: string): Promise<void>;
   fork(newName?: string): Promise<TerminalSessionMeta>;
   forkFromEvent(eventIndex: number, newName?: string): Promise<TerminalSessionMeta>;
+  branch(fromSeq?: number, name?: string): Promise<TerminalSessionMeta>;
+  listBranches(sessionId?: string): TerminalSessionMeta[];
+  getBranchTree(rootId?: string): BranchTreeNode | null;
+  renderBranchTree(rootId?: string): string;
   recordCommand(cmd: string, result?: string): void;
   recordResult(output: string, exitCode?: number): void;
   recordAgentPrompt(prompt: string): void;

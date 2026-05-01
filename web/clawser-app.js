@@ -28,7 +28,8 @@ import { createDefaultProviders, ResponseCache } from './clawser-providers.js';
 import { McpManager } from './clawser-mcp.js';
 import { SkillRegistry, SkillRegistryClient } from './clawser-skills.js';
 import { MountableFs } from './clawser-mount.js';
-import { SecretVault, OPFSVaultStorage } from './clawser-vault.js';
+import { SecretVault, OPFSVaultStorage, MemoryVaultStorage } from './clawser-vault.js';
+import { NullCheckpointIDB } from './clawser-disposable.js';
 import { IdentityManager } from './clawser-identity.js';
 import { IntentRouter } from './clawser-intent.js';
 import { InputSanitizer, ToolCallValidator, SafetyPipeline } from './clawser-safety.js';
@@ -80,7 +81,7 @@ state.mcpManager = new McpManager({
 });
 
 state.responseCache = new ResponseCache();
-state.vault = new SecretVault(new OPFSVaultStorage());
+state.vault = new SecretVault(state.disposableMode ? new MemoryVaultStorage() : new OPFSVaultStorage());
 
 // ── Create advanced module singletons (Batch 6-8) ───────────────
 state.identityManager = new IdentityManager();
@@ -213,7 +214,7 @@ setKernelIntegration(_kernelIntegration);
 state.mcpManager._kernelIntegration = _kernelIntegration;
 console.log('[clawser] Kernel initialized — integration active');
 
-state.checkpointIDB = new CheckpointIndexedDB();
+state.checkpointIDB = state.disposableMode ? new NullCheckpointIDB() : new CheckpointIndexedDB();
 state.daemonController = new DaemonController({
   getStateFn: () => state.agent?.getState(),
   checkpoints: new CheckpointManager({
@@ -560,7 +561,7 @@ initHomeListeners();
   // Wire up vault settings gear icon
   initVaultSettings();
 
-  if (state.vault && state.vault.isLocked && !state.demoMode) {
+  if (state.vault && state.vault.isLocked && !state.demoMode && !state.disposableMode) {
     await showVaultModal(state.vault);
     // After unlock, migrate any plaintext account keys to vault
     const { migrateKeysToVault } = await import('./clawser-accounts.js');
@@ -572,6 +573,13 @@ initHomeListeners();
   if (state.demoMode) {
     const banner = document.getElementById('demoBanner');
     if (banner) banner.style.display = '';
+  }
+
+  // Disposable mode banner
+  if (state.disposableMode) {
+    const banner = document.getElementById('disposableBanner');
+    if (banner) banner.style.display = '';
+    console.log('[clawser] Disposable mode — nothing will persist after tab close');
   }
 
   ensureDefaultWorkspace();
@@ -612,6 +620,7 @@ initHomeListeners();
 window.addEventListener('beforeunload', () => {
   if (state.shuttingDown) return;
   state.shuttingDown = true;
+  if (state.disposableMode) return; // nothing to persist
   // Sync-safe: persistMemories writes to localStorage (synchronous)
   try { state.agent?.persistMemories(); } catch { /* best-effort */ }
   // Sync-safe: vault lock clears in-memory key (no I/O)
@@ -622,7 +631,7 @@ window.addEventListener('beforeunload', () => {
 
 // Primary save trigger — visibilitychange fires reliably and supports async.
 document.addEventListener('visibilitychange', () => {
-  if (state.shuttingDown) return;
+  if (state.shuttingDown || state.disposableMode) return;
   if (document.visibilityState === 'hidden' && state.agent) {
     try { state.agent.persistMemories(); } catch { /* ignore */ }
     state.agent.persistCheckpoint().catch(e => console.warn('[clawser] Checkpoint save:', e.message));

@@ -36,7 +36,8 @@ import {
   initRemoteTerminalListeners,
   renderRemoteRuntimePanel,
   updatePeerBadge,
-} from './clawser-ui-remote.js';
+} from './clawser-ui-remote.js'
+import { CollabManager } from './clawser-peer-collab-bridge.js';
 
 // ── Module-level state ───────────────────────────────────────────
 let _reverseVirtualTerminalManager = null;
@@ -690,6 +691,19 @@ export async function initMeshSubsystem() {
     state.meshFetchRouter = result.meshFetchRouter;
     state.timestampAuthority = result.timestampAuthority;
     state.syncCoordinator = result.syncCoordinator;
+
+    // ── Wire collaborative editing bridge ────────────────────────
+    if (state.collabManager) {
+      try { state.collabManager.destroy() } catch { /* best-effort */ }
+    }
+    state.collabManager = new CollabManager({
+      localPodId: state.pod.podId,
+      syncEngine: state.syncEngine,
+      syncCoordinator: state.syncCoordinator,
+      sessionManager: state.sessionManager,
+      onLog: (level, msg) => console.log(`[collab] ${msg}`),
+    })
+
     state.remoteRuntimeRegistry = result.remoteRuntimeRegistry || state.pod.remoteRuntimeRegistry;
     state.remoteSessionBroker = result.remoteSessionBroker || state.pod.remoteSessionBroker;
     globalThis.__clawserRemoteRuntimeRegistry = state.remoteRuntimeRegistry;
@@ -836,6 +850,23 @@ export async function initMeshSubsystem() {
         // Re-render mesh panel to reflect peer departure
         refreshMeshWorkspacePanel()
       })
+
+      // Attach collab manager to react to peer lifecycle events
+      if (state.collabManager) {
+        state.collabManager.attach(state.peerNode)
+      }
+
+      // Wire SyncCoordinator sendFn to route delta sync messages
+      // through PeerSession via the collab bridge's CRDT service type
+      if (state.syncCoordinator && state.sessionManager) {
+        state.syncCoordinator.setSendFn((targetId, msg) => {
+          const sessions = state.sessionManager.getSessionsForPeer(targetId)
+          if (sessions.length === 0) return
+          try {
+            sessions[0].send('crdt-sync', { action: 'delta', docId: msg.type, message: msg })
+          } catch { /* non-fatal: peer may have disconnected */ }
+        })
+      }
     }
 
     // ── Wire SW mesh-fetch relay ──────────────────────────────────
@@ -977,6 +1008,10 @@ export async function initMeshSubsystem() {
     }
     state.timestampAuthority = null;
     state.syncCoordinator = null;
+    if (state.collabManager) {
+      try { state.collabManager.destroy() } catch { /* best-effort */ }
+      state.collabManager = null;
+    }
   }
 }
 

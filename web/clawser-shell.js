@@ -1163,6 +1163,13 @@ export class MemoryFs {
   /** @type {Set<string>} directory paths */
   #dirs = new Set(['/']);
 
+  /** Throw if the path targets an internal read-only directory. */
+  #guardWrite(shellPath) {
+    if (WorkspaceFs.isInternalPath(shellPath)) {
+      throw new Error(`Read-only: ${shellPath} is a system directory`);
+    }
+  }
+
   async readFile(path) {
     const norm = normalizePath(path);
     if (!this.#files.has(norm)) throw new Error(`ENOENT: ${norm}`);
@@ -1170,6 +1177,7 @@ export class MemoryFs {
   }
 
   async writeFile(path, content) {
+    this.#guardWrite(path);
     const norm = normalizePath(path);
     // Auto-create parent dirs
     const parts = norm.split('/').filter(Boolean);
@@ -1223,6 +1231,7 @@ export class MemoryFs {
   }
 
   async mkdir(path) {
+    this.#guardWrite(path);
     const norm = normalizePath(path);
     const parts = norm.split('/').filter(Boolean);
     for (let i = 1; i <= parts.length; i++) {
@@ -1231,6 +1240,7 @@ export class MemoryFs {
   }
 
   async delete(path, recursive = false) {
+    this.#guardWrite(path);
     const norm = normalizePath(path);
     if (this.#files.has(norm)) {
       this.#files.delete(norm);
@@ -1252,11 +1262,14 @@ export class MemoryFs {
   }
 
   async copy(src, dst) {
+    this.#guardWrite(dst);
     const content = await this.readFile(src);
     await this.writeFile(dst, content);
   }
 
   async move(src, dst) {
+    this.#guardWrite(src);
+    this.#guardWrite(dst);
     await this.copy(src, dst);
     await this.delete(src);
   }

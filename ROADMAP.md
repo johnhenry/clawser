@@ -35,6 +35,7 @@ Clawser is a **beta-quality** browser-native AI agent platform. The core runtime
 | **Batch 2** | Router single source of truth, state namespacing |
 | **Batch 3** | Panel enhancements, agent loop integration, 9 API mismatch fixes |
 | **0.1.0-beta** | 9 feature module integrations with 36 new agent tools. Phase 2 UI/agent loop wiring for all 30 blocks. |
+| **Phase 5** | Phase 5: Remote Execution (wsh) -- COMPLETE. Phase 5.7: Protocol Extensions — COMPLETE. Full wsh protocol: shell exec, file transfer, MCP bridging, CORS proxy, policy engine. |
 | **Phase 7** | Virtual Server subsystem — SW fetch intercept, ServerManager, function/static/proxy handlers, 8 agent tools, FetchTool auto-routing, kernel svc:// integration, Servers UI panel |
 | **Phase 8** | Remote runtime access expansion (`wsh`) — canonical runtime registry, session broker, reverse host parity, VM console peers, route policy, remote filesystems, and audit convergence |
 | **Phase 9** | BrowserMesh integration — 30 new modules for decentralized mesh: identity, trust, CRDT sync, P2P transport, naming, real transports, resource scheduling, payments, consensus, swarm coordination |

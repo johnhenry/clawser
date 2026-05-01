@@ -8,6 +8,7 @@ export interface CreateConfiguredShellOptions {
   getAgent?: () => unknown;
   getRoutineEngine?: () => unknown;
   getModelManager?: () => unknown;
+  getSkillRegistry?: () => unknown;
 }
 
 export declare function createConfiguredShell(
