@@ -45,6 +45,7 @@ export async function createConfiguredShell({
   // Set clsh environment variables
   shell.state.env.set('SHELL', 'clsh');
   shell.state.env.set('CLSH_VERSION', '1.0');
+  shell.state.env.set('HOME', '/');
 
   // Register chmod builtin if permissions manager is available
   if (permissions) {

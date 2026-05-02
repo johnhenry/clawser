@@ -1073,6 +1073,9 @@ export class ShellState {
    */
   resolvePath(path) {
     if (!path) return this.cwd;
+    // Tilde expansion: ~ and ~/... resolve to workspace root
+    if (path === '~') return '/';
+    if (path.startsWith('~/')) return normalizePath('/' + path.slice(2));
     // Absolute path
     if (path.startsWith('/')) return normalizePath(path);
     // Relative path
@@ -1306,6 +1309,14 @@ async function executeCommand(node, state, registry, opts) {
   envObj.set('?', String(state.lastExitCode));
   const expandedName = expandVariables(node.name, envObj);
   let expandedArgs = node.args.map(a => expandVariables(a, envObj));
+
+  // Tilde expansion: ~ at the start of an arg expands to $HOME (workspace root)
+  const home = (state.env instanceof Map ? state.env.get('HOME') : '') || '/';
+  expandedArgs = expandedArgs.map(a => {
+    if (a === '~') return home;
+    if (a.startsWith('~/')) return home + (home.endsWith('/') ? '' : '/') + a.slice(2);
+    return a;
+  });
 
   // Glob expansion: expand *, ?, [abc] patterns in args
   if (opts.fs) {
@@ -2322,6 +2333,7 @@ export class ClawserShell {
     // Set default shell identity env vars
     this.state.env.set('SHELL', 'clsh');
     this.state.env.set('CLSH_VERSION', '1.0');
+    this.state.env.set('HOME', '/');
 
     // Register chmod builtin if permissions are available
     if (this.permissions) {
