@@ -6,6 +6,7 @@
 // Agent tools: routine_create, routine_list, routine_delete, routine_run
 
 import { BrowserTool } from './clawser-tools.js';
+import { silentCatch } from './clawser-silent-catch.mjs'
 
 // ── Constants ───────────────────────────────────────────────────
 
@@ -921,7 +922,7 @@ export class RoutineEngine {
 
   #emitChange() {
     if (this.#onChange) {
-      try { this.#onChange(); } catch { /* best-effort */ }
+      try { this.#onChange(); } catch (e) { silentCatch('clawser-routines', 'this', e) }
     }
   }
 }

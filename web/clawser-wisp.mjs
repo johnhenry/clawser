@@ -1,3 +1,4 @@
+import { silentCatch } from './clawser-silent-catch.mjs'
 /**
  * clawser-wisp.mjs -- WISP (WebSocket Internet Subprotocol) Transport.
  *
@@ -312,7 +313,7 @@ export class WispStream {
    */
   _fireEvent(event, data) {
     for (const cb of this.#callbacks[event] || []) {
-      try { cb(data) } catch { /* swallow listener errors */ }
+      try { cb(data) } catch (e) { silentCatch('clawser-wisp', 'swallow-listener-errors', e) }
     }
   }
 
@@ -740,7 +741,7 @@ export class WispClient {
    */
   _fireEvent(event, data) {
     for (const cb of this.#callbacks[event] || []) {
-      try { cb(data) } catch { /* swallow listener errors */ }
+      try { cb(data) } catch (e) { silentCatch('clawser-wisp', 'swallow-listener-errors', e) }
     }
   }
 }

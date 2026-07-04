@@ -10,6 +10,7 @@ import {
   umountGuest,
   listGuestMounts,
   isGuestMount,
+  autoMountGuest,
 } from '../clawser-fs-guest-mount.mjs';
 
 // ── Mock LinuxGuest ──────────────────────────────────────────────
@@ -383,5 +384,115 @@ describe('adapter integration with MountableFs', () => {
   it('readOnly option is respected', () => {
     const { adapter } = mountGuest('/mnt/ro-guest', guest, mfs, { readOnly: true });
     assert.equal(adapter.readOnly, true);
+  });
+});
+
+// ── autoMountGuest ─────────────────────────────────────────────────
+
+/** Mock guest that fires state callbacks on demand. */
+const createStatefulMockGuest = (initialState = 'idle') => {
+  const callbacks = [];
+  let state = initialState;
+  return {
+    get state() { return state; },
+    onStateChange: (cb) => {
+      callbacks.push(cb);
+      return () => {
+        const i = callbacks.indexOf(cb);
+        if (i >= 0) callbacks.splice(i, 1);
+      };
+    },
+    /** Test helper: change state and fire callbacks. */
+    transition: (newState) => {
+      state = newState;
+      for (const cb of callbacks.slice()) cb(newState);
+    },
+    /** Stub for sendCommand, matches the LinuxGuest API. */
+    sendCommand: async () => '',
+  };
+};
+
+describe('autoMountGuest', () => {
+  let mfs;
+
+  beforeEach(() => {
+    mfs = createMockMountableFs();
+    for (const m of listGuestMounts()) {
+      umountGuest(m.mountPoint, mfs);
+    }
+  });
+
+  afterEach(() => {
+    for (const m of listGuestMounts()) {
+      umountGuest(m.mountPoint, mfs);
+    }
+  });
+
+  it('mounts when guest transitions to running', () => {
+    const guest = createStatefulMockGuest('booting');
+    autoMountGuest(guest, mfs);
+
+    assert.equal(isGuestMount('/mnt/guest'), false, 'not yet running');
+
+    guest.transition('running');
+    assert.equal(isGuestMount('/mnt/guest'), true, 'mounted on running');
+  });
+
+  it('umounts when guest transitions to shutdown', () => {
+    const guest = createStatefulMockGuest('running');
+    autoMountGuest(guest, mfs);
+
+    assert.equal(isGuestMount('/mnt/guest'), true, 'mounted immediately for already-running guest');
+
+    guest.transition('shutdown');
+    assert.equal(isGuestMount('/mnt/guest'), false, 'umounted on shutdown');
+  });
+
+  it('umounts on error transition', () => {
+    const guest = createStatefulMockGuest('running');
+    autoMountGuest(guest, mfs);
+    assert.equal(isGuestMount('/mnt/guest'), true);
+
+    guest.transition('error');
+    assert.equal(isGuestMount('/mnt/guest'), false);
+  });
+
+  it('returned unwire detaches and unmounts', () => {
+    const guest = createStatefulMockGuest('running');
+    const unwire = autoMountGuest(guest, mfs);
+
+    assert.equal(isGuestMount('/mnt/guest'), true);
+
+    unwire();
+    assert.equal(isGuestMount('/mnt/guest'), false, 'unmounted on unwire');
+
+    // Subsequent state changes should not remount
+    guest.transition('shutdown');
+    guest.transition('running');
+    assert.equal(isGuestMount('/mnt/guest'), false, 'detached — state changes ignored');
+  });
+
+  it('respects custom mountPoint', () => {
+    const guest = createStatefulMockGuest('running');
+    autoMountGuest(guest, mfs, { mountPoint: '/mnt/custom' });
+    assert.equal(isGuestMount('/mnt/custom'), true);
+  });
+
+  it('respects readOnly option', () => {
+    const guest = createStatefulMockGuest('running');
+    autoMountGuest(guest, mfs, { readOnly: true });
+    const list = listGuestMounts();
+    assert.equal(list.length, 1);
+  });
+
+  it('does not double-mount if running fires multiple times', () => {
+    const guest = createStatefulMockGuest('running');
+    autoMountGuest(guest, mfs);
+
+    // Re-emit running — autoMount should be idempotent
+    guest.transition('running');
+    guest.transition('running');
+
+    assert.equal(listGuestMounts().length, 1);
   });
 });

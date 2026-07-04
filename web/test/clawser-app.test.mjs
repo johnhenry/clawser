@@ -6,7 +6,7 @@
 // _setup-globals.mjs (via --import) plus additional stubs here BEFORE using
 // dynamic `import()` to load the module under test.
 
-import { describe, it, beforeEach, afterEach, before } from 'node:test'
+import { describe, it, beforeEach, afterEach, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 
 // ── Additional browser globals needed by clawser-app's deep import tree ──
@@ -117,6 +117,14 @@ before(async () => {
 
   // Give the async IIFE a tick to settle (it calls ensureDefaultWorkspace, handleRoute, etc.)
   await new Promise(r => setTimeout(r, 50))
+})
+
+after(() => {
+  // The app boot path leaves background handles (intervals, listeners,
+  // OPFS pollers) that can't be cleanly torn down in a test environment.
+  // Once all tests pass, schedule a process.exit() with enough delay for
+  // node:test to flush its final # tests / # suites summary to stdout.
+  setTimeout(() => process.exit(0), 100).unref?.()
 })
 
 // ── Test helpers ─────────────────────────────────────────────────

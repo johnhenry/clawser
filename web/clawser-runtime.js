@@ -26,6 +26,8 @@ import {
   registerProviderDevice,
   registerChannelDevice,
   registerHardwareDevice,
+  registerMeshPeerDevice,
+  unregisterMeshPeerDevice,
   registerSpecialDevices,
 } from './clawser-fs-devices.mjs';
 
@@ -164,6 +166,31 @@ export const addProviderDevice = (handler, providerName, providerRegistry, opts 
  */
 export const addChannelDevice = (handler, channelName, channelManager) => {
   registerChannelDevice(handler, channelName, channelManager);
+};
+
+/**
+ * Register a mesh peer device (`/dev/clawser/mesh/peers/{peerId}`) on an
+ * existing handler. Wrap helpers from clawser-fs-devices for consistency
+ * with the addProviderDevice / addChannelDevice surface.
+ *
+ * @param {DeviceFileHandler} handler
+ * @param {string} peerId
+ * @param {object} pod
+ * @param {object} [opts]
+ */
+export const addMeshPeerDevice = (handler, peerId, pod, opts) => {
+  registerMeshPeerDevice(handler, peerId, pod, opts);
+};
+
+/**
+ * Remove a previously-registered mesh peer device.
+ *
+ * @param {DeviceFileHandler} handler
+ * @param {string} peerId
+ * @returns {boolean} true if the device existed and was removed
+ */
+export const removeMeshPeerDevice = (handler, peerId) => {
+  return unregisterMeshPeerDevice(handler, peerId);
 };
 
 // Re-export device types for consumers

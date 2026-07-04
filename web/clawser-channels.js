@@ -153,6 +153,9 @@ export class ChannelManager {
   /** @type {boolean} */
   #connected = false;
 
+  /** @type {Set<Function>} */
+  #subscribers = new Set();
+
   /**
    * @param {object} [opts]
    * @param {Function} [opts.onMessage] - (message: InboundMessage) => void
@@ -165,6 +168,27 @@ export class ChannelManager {
     this.#onLog = opts.onLog || null;
     this.#maxHistory = opts.maxHistory || 200;
     this._createWs = opts.createWs || null;
+  }
+
+  /**
+   * Subscribe to channel-list mutations (add/remove). Returns an
+   * unsubscribe function. Subscribers are called with no arguments
+   * after each mutation; consumers re-read via `listChannels()`.
+   *
+   * @param {Function} cb
+   * @returns {Function} unsubscribe
+   */
+  subscribe(cb) {
+    if (typeof cb !== 'function') return () => {};
+    this.#subscribers.add(cb);
+    return () => this.#subscribers.delete(cb);
+  }
+
+  /** @internal — fire subscribers; swallow throws to keep state consistent. */
+  _notifySubscribers() {
+    for (const cb of this.#subscribers) {
+      try { cb(); } catch (e) { if (this.#onLog) this.#onLog(`subscriber threw: ${e?.message || e}`); }
+    }
   }
 
   /** Whether connected to bridge WebSocket. */
@@ -183,6 +207,7 @@ export class ChannelManager {
     const cfg = createChannelConfig(config);
     this.#configs.set(cfg.name, cfg);
     this.#log(`Channel configured: ${cfg.name}`);
+    this._notifySubscribers();
   }
 
   /**
@@ -191,7 +216,9 @@ export class ChannelManager {
    * @returns {boolean}
    */
   removeChannel(name) {
-    return this.#configs.delete(name);
+    const ok = this.#configs.delete(name);
+    if (ok) this._notifySubscribers();
+    return ok;
   }
 
   /**
@@ -478,6 +505,9 @@ export class ChannelCreateTool extends BrowserTool {
 
   get name() { return 'channel_create'; }
   get description() { return 'Create a new communication channel.'; }
+  /** Declared sensitive fields — defense-in-depth alongside the
+   *  regex defaults in clawser-redaction.mjs. */
+  get redactedFields() { return ['secret']; }
   get parameters() {
     return {
       type: 'object',

@@ -26,11 +26,48 @@ async function getMarked() {
 // Eager-load on module init (non-blocking)
 getMarked();
 
+/**
+ * Strip dangerous tags + attributes from HTML. Used as a defense-in-depth
+ * post-processor over marked output, since marked (v5+) does not sanitize.
+ *
+ * Agent responses can contain attacker-controlled markdown (e.g. via prompt
+ * injection from a fetched web page or MCP tool result). Without this
+ * pass, an agent message containing `<img src=x onerror="…">` would
+ * execute in the user's session.
+ *
+ * @param {string} html - HTML produced by marked
+ * @returns {string} HTML with script/iframe/object/embed/style/link/meta
+ *   stripped, and `on*` attributes plus `javascript:` URLs removed.
+ */
+function sanitizeMarkdownHtml(html) {
+  if (typeof document === 'undefined' || !document.createElement) return html;
+  const template = document.createElement('template');
+  template.innerHTML = html;
+  // Remove script-injection elements outright.
+  for (const el of template.content.querySelectorAll(
+    'script, iframe, object, embed, style, link, meta, base, form'
+  )) {
+    el.remove();
+  }
+  // Strip on* event handlers and javascript:/data: URL schemes from every node.
+  const SCHEME_RE = /^\s*(javascript|data|vbscript)\s*:/i;
+  for (const el of template.content.querySelectorAll('*')) {
+    for (const attr of [...el.attributes]) {
+      const name = attr.name.toLowerCase();
+      if (name.startsWith('on')) { el.removeAttribute(attr.name); continue; }
+      if ((name === 'href' || name === 'src' || name === 'srcset' || name === 'action' || name === 'formaction') && SCHEME_RE.test(attr.value)) {
+        el.removeAttribute(attr.name);
+      }
+    }
+  }
+  return template.innerHTML;
+}
+
 /** Render markdown to sanitized HTML for agent messages. */
 function renderMarkdown(text) {
   if (!_marked || typeof _marked !== 'function') return esc(text);
   try {
-    return _marked(text);
+    return sanitizeMarkdownHtml(_marked(text));
   } catch {
     return esc(text);
   }

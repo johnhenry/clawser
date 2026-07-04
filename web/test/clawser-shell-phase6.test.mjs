@@ -192,6 +192,38 @@ describe('isIncomplete — multi-line detection', () => {
   it('detects incomplete function body', () => {
     assert.equal(isIncomplete('fn() {'), true)
   })
+
+  // ── Quote awareness ─────────────────────────────────────────
+
+  it('keywords inside double quotes do not trigger continuation', () => {
+    assert.equal(isIncomplete('echo "if then"'), false)
+    assert.equal(isIncomplete('echo "while do"'), false)
+    assert.equal(isIncomplete('echo "for in do"'), false)
+    assert.equal(isIncomplete('echo "do not continue"'), false)
+  })
+
+  it('keywords inside single quotes do not trigger continuation', () => {
+    assert.equal(isIncomplete(`echo 'if then'`), false)
+    assert.equal(isIncomplete(`echo 'while do done'`), false)
+  })
+
+  it('test bracket containing the literal string "do" does not block', () => {
+    assert.equal(isIncomplete('if [ "$x" = "do" ]; then echo y; fi'), false)
+  })
+
+  it('open quote reports incomplete', () => {
+    assert.equal(isIncomplete('echo "unclosed'), true)
+    assert.equal(isIncomplete(`echo 'unclosed`), true)
+  })
+
+  it('escaped chars do not interfere', () => {
+    assert.equal(isIncomplete('echo \\"if then\\"'), false)
+  })
+
+  it('comment containing keywords is ignored', () => {
+    assert.equal(isIncomplete('echo hello # do not continue'), false)
+    assert.equal(isIncomplete('echo hello # if then fi'), false)
+  })
 })
 
 // ═══════════════════════════════════════════════════════════════════

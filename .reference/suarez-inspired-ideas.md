@@ -1,5 +1,8 @@
 # Clawser × Daniel Suarez: Ideas for the Future
 
+> **Status: not implemented; not on the roadmap.** Inspirational futures
+> list, kept here for reference. Nothing here is a commitment.
+
 > Inspired by *Daemon* (2006), *Freedom™* (2009), and *Kill Decision* (2012).
 > Synthesized from two rounds of deep analysis across all three novels.
 

@@ -303,6 +303,6 @@ async function rollbackMigration(ctx: MigrationContext): Promise<void> {
 
 ## Implementation Status
 
-**Status**: Code exists in `web/clawser-mesh-migration.js`. Not surfaced through runtime API — migration tools are not registered during app bootstrap.
+**Status**: Implemented and wired to app bootstrap. `MigrationEngine` is instantiated in `ClawserPod.initMesh()` (`web/clawser-pod.js` ~line 632) and exposed via the `pod.migrationEngine` getter. `MigrationStep`, `Checkpoint`, `MigrationPlan`, and `DualActiveWindow` are all available. Migration agent tools surfacing through the chat UI is a tighter follow-up but not blocked.
 
 **Source**: `web/clawser-mesh-migration.js`

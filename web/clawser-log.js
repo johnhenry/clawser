@@ -1,3 +1,4 @@
+import { silentCatch } from './clawser-silent-catch.mjs'
 /**
  * Clawser Log — Unified logging facade
  *
@@ -105,7 +106,7 @@ export class LogFacade {
     if (level < this.#minLevel) return;
     for (const { backend, minLevel } of this.#backends) {
       if (level >= minLevel) {
-        try { backend.write(level, module, msg, data); } catch { /* best-effort */ }
+        try { backend.write(level, module, msg, data); } catch (e) { silentCatch('clawser-log', 'backend.write', e) }
       }
     }
   }

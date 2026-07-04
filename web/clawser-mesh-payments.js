@@ -11,6 +11,7 @@
  */
 
 import { MESH_TYPE } from './packages-mesh-primitives.js';
+import { silentCatch } from './clawser-silent-catch.mjs'
 
 // ---------------------------------------------------------------------------
 // Wire constants — imported from canonical registry
@@ -785,7 +786,7 @@ export class PaymentRouter {
           // Remote peer wants to open a channel with us
           this.openChannel(fromPodId, capacity);
         }
-      } catch { /* ignore duplicate or invalid opens */ }
+      } catch (e) { silentCatch('clawser-mesh-payments', 'ignore-duplicate-or-invalid-opens', e) }
     });
 
     // Inbound: channel payment update
@@ -795,14 +796,12 @@ export class PaymentRouter {
         if (ch) {
           ch.receive(payload);
         }
-      } catch { /* ignore invalid updates */ }
+      } catch (e) { silentCatch('clawser-mesh-payments', 'ignore-invalid-updates', e) }
     });
 
     // Inbound: channel close
     subscribeFn(PAYMENT_CLOSE, (payload, fromPodId) => {
-      try {
-        this.closeChannel(fromPodId);
-      } catch { /* ignore invalid close */ }
+      try { this.closeChannel(fromPodId); } catch (e) { silentCatch('clawser-mesh-payments', 'this.closeChannel', e) }
     });
 
     // Inbound: escrow creation
@@ -810,7 +809,7 @@ export class PaymentRouter {
       try {
         const { payeePodId, amount, conditions } = payload;
         this.#escrow.create(fromPodId, payeePodId, amount, conditions);
-      } catch { /* ignore invalid escrow */ }
+      } catch (e) { silentCatch('clawser-mesh-payments', 'ignore-invalid-escrow', e) }
     });
   }
 

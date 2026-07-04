@@ -1,3 +1,4 @@
+import { silentCatch } from './clawser-silent-catch.mjs'
 /**
  * remote-ui.js — Mobile-friendly Remote UI (Phase 7d)
  *
@@ -82,7 +83,7 @@ export class RemoteUIState {
 
   #notify(event) {
     for (const fn of this.#listeners) {
-      try { fn(event); } catch { /* swallow listener errors */ }
+      try { fn(event); } catch (e) { silentCatch('web/remote-ui.js', 'swallow-listener-errors', e) }
     }
   }
 }
@@ -219,7 +220,7 @@ export class RemoteUI {
         try {
           const data = JSON.parse(event.data);
           onMessage(data);
-        } catch { /* ignore parse errors */ }
+        } catch (e) { silentCatch('web/remote-ui.js', 'ignore-parse-errors', e) }
       };
 
       es.onerror = () => {

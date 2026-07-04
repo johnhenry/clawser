@@ -1181,24 +1181,114 @@ export class SkillRegistry {
 // ── SkillScriptTool ──────────────────────────────────────────────
 
 /**
- * A BrowserTool that executes a skill's JS script in an andbox sandbox.
+ * Execute a skill script.
+ *
+ * Two execution paths:
+ *
+ *   - **Local skill (default).** No `capabilities` token attached →
+ *     run in the standard andbox Worker sandbox. Existing behavior:
+ *     pure compute on `input`, no fs/network exposed in the worker
+ *     scope.
+ *
+ *   - **Deployed skill.** A capability token attached (the manifest's
+ *     declared `{fs, net, mesh}` set) → run in a same-realm
+ *     AsyncFunction with a capability-gated `{fetch, fs, mesh}` API
+ *     bound as locals. Each surface enforces
+ *     `enforceCapabilityRequest` and throws an actionable error on
+ *     denial.
+ *
+ * Why two paths: the deployed-skill case has gone through signature
+ * verification + manifest approval, so the user has explicitly opted
+ * into running this code. Worker isolation is defense-in-depth for
+ * untrusted local skills — for trusted-but-bounded deployed skills,
+ * surface-level capability gating matches the threat model better.
+ *
+ * @param {string} scriptContent
+ * @param {string} input
+ * @param {object} [opts]
+ * @param {{fs:string[], net:string[], mesh:string[]}} [opts.capabilities]
+ *   - When present, runs the gated path. When absent or null, runs the
+ *     andbox sandbox.
+ * @param {object} [opts.capabilityHooks]
+ *   - `{fetch, fs, meshCall}` — host-side implementations the gated
+ *     APIs delegate to. Tests inject mocks; production wires real fs
+ *     and fetch.
+ * @returns {Promise<{success:boolean, output:string, error?:string}>}
+ */
+export async function executeSkillScript(scriptContent, input = '', opts = {}) {
+  if (opts.capabilities) {
+    try {
+      const { createSkillCapabilityAPI, wrapSkillScript } = await import('./clawser-skill-capabilities.mjs');
+      const api = createSkillCapabilityAPI(opts.capabilities, opts.capabilityHooks || {});
+      const wrapped = wrapSkillScript(scriptContent, api);
+      const result = await wrapped.runner(input);
+      return {
+        success: true,
+        output: result == null ? '' : (typeof result === 'string' ? result : JSON.stringify(result)),
+      };
+    } catch (e) {
+      return { success: false, output: '', error: e.message };
+    }
+  }
+
+  // Default path — Worker sandbox.
+  try {
+    const { createSandbox } = await import('./packages-andbox.js');
+    const sandbox = await createSandbox();
+    try {
+      const wrapper = `const input = ${JSON.stringify(input)};\n${scriptContent}`;
+      const result = await sandbox.evaluate(wrapper);
+      return {
+        success: true,
+        output: result == null ? '' : (typeof result === 'string' ? result : JSON.stringify(result)),
+      };
+    } finally {
+      sandbox.dispose?.();
+    }
+  } catch (e) {
+    return { success: false, output: '', error: e.message };
+  }
+}
+
+/**
+ * A BrowserTool that executes a skill's JS script.
+ *
+ * Local skills: Worker-sandbox path. Deployed skills (when constructed
+ * with a `capabilities` token) use the capability-gated path —
+ * `executeSkillScript` resolves which.
  */
 class SkillScriptTool extends BrowserTool {
   #toolName;
   #skillName;
   #scriptName;
   #scriptContent;
+  #capabilities;
+  #capabilityHooks;
 
-  constructor(toolName, skillName, scriptName, scriptContent) {
+  /**
+   * @param {string} toolName
+   * @param {string} skillName
+   * @param {string} scriptName
+   * @param {string} scriptContent
+   * @param {object} [opts]
+   * @param {object} [opts.capabilities] - capability token (deployed skills only)
+   * @param {object} [opts.capabilityHooks] - inner fetch/fs/meshCall hooks
+   */
+  constructor(toolName, skillName, scriptName, scriptContent, opts = {}) {
     super();
     this.#toolName = toolName;
     this.#skillName = skillName;
     this.#scriptName = scriptName;
     this.#scriptContent = scriptContent;
+    this.#capabilities = opts.capabilities || null;
+    this.#capabilityHooks = opts.capabilityHooks || null;
   }
 
   get name() { return this.#toolName; }
-  get description() { return `Skill script: ${this.#skillName}/${this.#scriptName}`; }
+  get description() {
+    const base = `Skill script: ${this.#skillName}/${this.#scriptName}`;
+    return this.#capabilities ? `${base} (deployed, capability-gated)` : base;
+  }
   get parameters() {
     return {
       type: 'object',
@@ -1210,23 +1300,10 @@ class SkillScriptTool extends BrowserTool {
   get permission() { return 'approve'; }
 
   async execute({ input = '' }) {
-    try {
-      const { createSandbox } = await import('./packages-andbox.js');
-      const sandbox = await createSandbox();
-      try {
-        // Wrap script to expose `input` variable and capture return value
-        const wrapper = `const input = ${JSON.stringify(input)};\n${this.#scriptContent}`;
-        const result = await sandbox.evaluate(wrapper);
-        return {
-          success: true,
-          output: result == null ? '' : (typeof result === 'string' ? result : JSON.stringify(result)),
-        };
-      } finally {
-        sandbox.dispose?.();
-      }
-    } catch (e) {
-      return { success: false, output: '', error: e.message };
-    }
+    return executeSkillScript(this.#scriptContent, input, {
+      capabilities: this.#capabilities,
+      capabilityHooks: this.#capabilityHooks,
+    });
   }
 }
 

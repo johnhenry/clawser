@@ -203,8 +203,17 @@ export function initTransferListeners(opts = {}) {
   document.querySelectorAll('.transfer-cancel-btn').forEach(btn => {
     btn.onclick = () => {
       const transferId = btn.dataset.transferId
-      if (opts.onCancel) opts.onCancel(transferId)
-      addMsg('system', `Cancelling transfer ${transferId}...`)
+      if (typeof opts.onCancel !== 'function') {
+        addErrorMsg('Cancel: no controller wired')
+        return
+      }
+      try {
+        const r = opts.onCancel(transferId)
+        if (r && r.ok === false) addErrorMsg(`Cancel failed: ${r.error || 'unknown'}`)
+        else addMsg('system', `Cancelling transfer ${transferId}...`)
+      } catch (e) {
+        addErrorMsg(`Cancel failed: ${e?.message || e}`)
+      }
     }
   })
 }

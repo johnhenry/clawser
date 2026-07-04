@@ -1,9 +1,24 @@
 /**
  * clawser-mesh-relay.js -- Relay Client for Peer Discovery & Signal Forwarding.
  *
- * Connects to a signaling/relay server for peer discovery and signal
- * forwarding when direct connections aren't possible. Provides a
- * MockRelayServer for testing without real WebSocket infrastructure.
+ * Two paths:
+ *   1. MockRelayServer — in-memory, used by tests and offline scenarios.
+ *      Construction/connect parity with the real path.
+ *   2. Real WebSocket — connects to a relay server URL and serializes
+ *      the same protocol surface (register / announce / find / signal /
+ *      peer_announce). Auto-reconnects with exponential backoff.
+ *
+ * Wire protocol (JSON over WS, mirrors MockRelayServer methods):
+ *   client → server:
+ *     {type:'register', fingerprint}
+ *     {type:'announce', fingerprint, capabilities}
+ *     {type:'find', requestId, query}            → expects find_response
+ *     {type:'signal',  from, to, signal}
+ *   server → client:
+ *     {type:'peer_announce', fingerprint, capabilities}
+ *     {type:'signal',  from, signal}
+ *     {type:'find_response', requestId, peers}
+ *     {type:'error',   message}
  *
  * Run tests:
  *   node --import ./web/test/_setup-globals.mjs --test web/test/clawser-mesh-relay.test.mjs
@@ -169,13 +184,44 @@ export class MeshRelayClient {
   /** @type {number} */
   #knownPeerCount = 0;
 
+  /** @type {WebSocket|null} Real WS used when no MockRelayServer is given. */
+  #ws = null;
+
+  /** @type {boolean} True after .disconnect() / consumer-initiated close. */
+  #userClosed = false;
+
+  /** @type {number} */
+  #reconnectAttempts = 0;
+
+  /** @type {number} */
+  #maxReconnectAttempts;
+
+  /** @type {number} */
+  #reconnectDelayMs;
+
+  /** @type {boolean} */
+  #autoReconnect;
+
+  /** @type {Function|null} - WebSocket constructor override (Node tests). */
+  #WebSocketCtor;
+
+  /** @type {Map<string, {resolve:Function, reject:Function, timer:any}>} */
+  #pendingFinds = new Map();
+
+  /** @type {number} */
+  #findSeq = 0;
+
   /**
    * @param {object} opts
    * @param {string} opts.relayUrl - WebSocket endpoint for the relay
    * @param {{ fingerprint: string }} opts.identity - Local identity
    * @param {Function} [opts.onLog] - Logging callback (level, msg)
+   * @param {Function} [opts.WebSocket] - Override constructor (Node tests)
+   * @param {number} [opts.maxReconnectAttempts=5]
+   * @param {number} [opts.reconnectDelayMs=500] - Base delay; exp-backoff multiplies
+   * @param {boolean} [opts.autoReconnect=true]
    */
-  constructor({ relayUrl, identity, onLog } = {}) {
+  constructor({ relayUrl, identity, onLog, WebSocket: WSCtor, maxReconnectAttempts, reconnectDelayMs, autoReconnect } = {}) {
     if (!relayUrl || typeof relayUrl !== 'string') {
       throw new Error('relayUrl is required and must be a non-empty string');
     }
@@ -185,6 +231,10 @@ export class MeshRelayClient {
     this.#relayUrl = relayUrl;
     this.#fingerprint = identity.fingerprint;
     this.#onLog = onLog || (() => {});
+    this.#WebSocketCtor = WSCtor || (typeof WebSocket !== 'undefined' ? WebSocket : null);
+    this.#maxReconnectAttempts = maxReconnectAttempts ?? 5;
+    this.#reconnectDelayMs = reconnectDelayMs ?? 500;
+    this.#autoReconnect = autoReconnect !== false;
   }
 
   // -- Accessors ------------------------------------------------------------
@@ -213,13 +263,18 @@ export class MeshRelayClient {
 
   /**
    * Connect to the relay server.
-   * Accepts an optional MockRelayServer for testing.
+   *
+   * Two modes:
+   *   - With a `MockRelayServer` argument: in-memory test path.
+   *   - Without one: opens a real WebSocket to `relayUrl`. Resolves
+   *     after the WS open + register handshake, or rejects on failure.
    *
    * @param {MockRelayServer} [mockServer] - Mock server instance for testing
    * @returns {Promise<void>}
    */
   async connect(mockServer) {
     if (this.#state === 'connected') return;
+    this.#userClosed = false;
     this.#state = 'connecting';
     this.#onLog(2, `Connecting to relay: ${this.#relayUrl}`);
 
@@ -227,11 +282,15 @@ export class MeshRelayClient {
       if (mockServer) {
         this.#server = mockServer;
         mockServer.registerClient(this);
+        this.#state = 'connected';
+        this.#onLog(2, 'Connected to relay (mock)');
+        this.#fire(this.#connectCallbacks);
+        return;
       }
-      // In production this would open a WebSocket to this.#relayUrl.
-      // For now only the mock path is supported.
+      await this.#connectRealWs();
       this.#state = 'connected';
-      this.#onLog(2, 'Connected to relay');
+      this.#reconnectAttempts = 0;
+      this.#onLog(2, 'Connected to relay (ws)');
       this.#fire(this.#connectCallbacks);
     } catch (err) {
       this.#state = 'disconnected';
@@ -245,15 +304,139 @@ export class MeshRelayClient {
    */
   disconnect() {
     if (this.#state === 'disconnected') return;
+    this.#userClosed = true;
     if (this.#server) {
       this.#server.removeClient(this.#fingerprint);
       this.#server = null;
     }
+    if (this.#ws) {
+      try { this.#sendWs({ type: 'unregister', fingerprint: this.#fingerprint }); } catch { /* ignore */ }
+      try { this.#ws.close(); } catch { /* ignore */ }
+      this.#ws = null;
+    }
+    // Reject any in-flight finds so callers don't hang.
+    for (const [, p] of this.#pendingFinds) {
+      try { clearTimeout(p.timer); } catch { /* ignore */ }
+      p.reject(new Error('relay disconnected'));
+    }
+    this.#pendingFinds.clear();
     this.#state = 'disconnected';
     this._announcedCapabilities = [];
     this.#knownPeerCount = 0;
     this.#onLog(2, 'Disconnected from relay');
     this.#fire(this.#disconnectCallbacks);
+  }
+
+  /**
+   * Open the real WebSocket and run the register handshake. Returns
+   * when the server has accepted our register message (or `open` if
+   * the server is silent).
+   * @returns {Promise<void>}
+   */
+  async #connectRealWs() {
+    if (!this.#WebSocketCtor) {
+      throw new Error('WebSocket is not available in this environment');
+    }
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let ws;
+      try { ws = new this.#WebSocketCtor(this.#relayUrl); }
+      catch (e) { reject(e); return; }
+      this.#ws = ws;
+
+      const onOpen = () => {
+        // Send register immediately on open. Server may or may not ack.
+        this.#sendWs({ type: 'register', fingerprint: this.#fingerprint });
+        if (!settled) { settled = true; resolve(); }
+      };
+      const onMessage = (ev) => this.#handleWsMessage(ev);
+      const onErr = (ev) => {
+        const err = ev?.error || new Error('relay ws error');
+        if (!settled) { settled = true; reject(err); return; }
+        // Post-open errors propagate via callbacks.
+        this.#fire(this.#errorCallbacks, err);
+      };
+      const onClose = () => {
+        // Detach so re-opens get fresh handlers.
+        try { ws.removeEventListener?.('open', onOpen); } catch { /* ignore */ }
+        try { ws.removeEventListener?.('message', onMessage); } catch { /* ignore */ }
+        try { ws.removeEventListener?.('error', onErr); } catch { /* ignore */ }
+        try { ws.removeEventListener?.('close', onClose); } catch { /* ignore */ }
+        if (!settled) { settled = true; reject(new Error('relay ws closed before open')); return; }
+        if (this.#userClosed) {
+          this.#state = 'disconnected';
+          this.#fire(this.#disconnectCallbacks);
+          return;
+        }
+        this.#state = 'disconnected';
+        this.#fire(this.#disconnectCallbacks);
+        if (this.#autoReconnect) this.#scheduleReconnect();
+      };
+
+      // Support both Node `ws` library (.on) and browser (.addEventListener).
+      if (typeof ws.addEventListener === 'function') {
+        ws.addEventListener('open', onOpen);
+        ws.addEventListener('message', onMessage);
+        ws.addEventListener('error', onErr);
+        ws.addEventListener('close', onClose);
+      } else if (typeof ws.on === 'function') {
+        ws.on('open', onOpen);
+        ws.on('message', (data) => onMessage({ data: typeof data === 'string' ? data : data.toString() }));
+        ws.on('error', (err) => onErr({ error: err }));
+        ws.on('close', onClose);
+      }
+    });
+  }
+
+  #scheduleReconnect() {
+    if (this.#reconnectAttempts >= this.#maxReconnectAttempts) {
+      this.#fire(this.#errorCallbacks, new Error(
+        `Relay reconnect failed after ${this.#maxReconnectAttempts} attempts (giving up)`,
+      ));
+      return;
+    }
+    this.#reconnectAttempts++;
+    const delay = this.#reconnectDelayMs * Math.pow(2, this.#reconnectAttempts - 1);
+    setTimeout(() => {
+      if (this.#userClosed) return;
+      this.connect().catch(() => { /* errors already fired */ });
+    }, delay);
+  }
+
+  #sendWs(msg) {
+    if (!this.#ws) return;
+    try { this.#ws.send(JSON.stringify(msg)); }
+    catch (e) { this.#onLog(3, `relay send failed: ${e?.message || e}`); }
+  }
+
+  #handleWsMessage(ev) {
+    let msg;
+    try { msg = typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data; }
+    catch { return; }
+    if (!msg || typeof msg.type !== 'string') return;
+    switch (msg.type) {
+      case 'peer_announce':
+        this.#fire(this.#peerAnnounceCallbacks, {
+          fingerprint: msg.fingerprint,
+          capabilities: msg.capabilities || [],
+        });
+        break;
+      case 'signal':
+        this.#fire(this.#signalCallbacks, msg.from, msg.signal);
+        break;
+      case 'find_response': {
+        const pending = this.#pendingFinds.get(msg.requestId);
+        if (pending) {
+          clearTimeout(pending.timer);
+          this.#pendingFinds.delete(msg.requestId);
+          pending.resolve(msg.peers || []);
+        }
+        break;
+      }
+      case 'error':
+        this.#fire(this.#errorCallbacks, new Error(msg.message || 'relay error'));
+        break;
+    }
   }
 
   // -- Presence & Discovery -------------------------------------------------
@@ -272,6 +455,12 @@ export class MeshRelayClient {
     );
     if (this.#server) {
       this.#server.broadcastPresence(this.#fingerprint, capabilities);
+    } else if (this.#ws) {
+      this.#sendWs({
+        type: 'announce',
+        fingerprint: this.#fingerprint,
+        capabilities: [...capabilities],
+      });
     }
   }
 
@@ -284,12 +473,29 @@ export class MeshRelayClient {
    */
   async findPeers(query = {}) {
     this.#assertConnected();
-    if (!this.#server) return [];
-    const peers = this.#server.findPeers(query);
-    // Exclude ourselves from results
-    const filtered = peers.filter(p => p.fingerprint !== this.#fingerprint);
-    this.#knownPeerCount = filtered.length;
-    return filtered;
+    if (this.#server) {
+      // Mock path
+      const peers = this.#server.findPeers(query)
+        .filter(p => p.fingerprint !== this.#fingerprint);
+      this.#knownPeerCount = peers.length;
+      return peers;
+    }
+    if (this.#ws) {
+      // Real WS path: send find request, await response keyed by requestId.
+      const requestId = `find_${++this.#findSeq}`;
+      const result = await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          this.#pendingFinds.delete(requestId);
+          reject(new Error(`relay findPeers timed out after 5s`));
+        }, 5000);
+        this.#pendingFinds.set(requestId, { resolve, reject, timer });
+        this.#sendWs({ type: 'find', requestId, query });
+      });
+      const filtered = result.filter(p => p.fingerprint !== this.#fingerprint);
+      this.#knownPeerCount = filtered.length;
+      return filtered;
+    }
+    return [];
   }
 
   // -- Signal Forwarding ----------------------------------------------------
@@ -304,12 +510,26 @@ export class MeshRelayClient {
   forwardSignal(targetFingerprint, signal) {
     this.#assertConnected();
     this.#onLog(2, `Forwarding signal to ${targetFingerprint}`);
-    if (!this.#server) return false;
-    return this.#server.forwardSignal(
-      this.#fingerprint,
-      targetFingerprint,
-      signal,
-    );
+    if (this.#server) {
+      return this.#server.forwardSignal(
+        this.#fingerprint,
+        targetFingerprint,
+        signal,
+      );
+    }
+    if (this.#ws) {
+      // Real WS path: server-side relay does the routing. We optimistically
+      // return true; the server reports `error` asynchronously if the
+      // target is offline.
+      this.#sendWs({
+        type: 'signal',
+        from: this.#fingerprint,
+        to: targetFingerprint,
+        signal,
+      });
+      return true;
+    }
+    return false;
   }
 
   // -- Event Registration ---------------------------------------------------

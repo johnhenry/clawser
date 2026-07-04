@@ -86,7 +86,7 @@ A micro-operating-system inside the browser whose primary process is an AI agent
 6. 38+ LLM backends available with zero configuration
 7. Memory footprint under 64MB for core runtime
 8. P2P mesh connects agents across browser instances
-9. 7,127+ tests passing across all subsystems
+9. 8,800+ tests passing across all subsystems
 
 ---
 
@@ -754,8 +754,8 @@ Three-stage defense:
 ### 12.1 Test Infrastructure
 
 - **Framework**: `node:test` with `node:assert/strict`
-- **Test Files**: 253 files in `web/test/`
-- **Total Tests**: 7,127+ individual test cases
+- **Test Files**: 300+ files in `web/test/`
+- **Total Tests**: 8,800+ individual test cases
 - **Global Stubs**: `_setup-globals.mjs` provides localStorage, document, navigator, BroadcastChannel
 
 ### 12.2 Test Groups
@@ -929,7 +929,7 @@ All loaded via CDN (zero npm runtime deps):
 - Parallel tool execution
 - Session idle timeout
 - Config UI for new settings
-- 7,127+ tests across all subsystems
+- 8,800+ tests across all subsystems
 
 ---
 

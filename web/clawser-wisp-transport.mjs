@@ -19,6 +19,7 @@
  */
 
 import { WispClient, WispStream, WISP_DATA } from './clawser-wisp.mjs'
+import { silentCatch } from './clawser-silent-catch.mjs'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -341,7 +342,7 @@ export class WispTransport {
    */
   _fireEvent(event, data) {
     for (const cb of this.#callbacks[event] || []) {
-      try { cb(data) } catch { /* swallow listener errors */ }
+      try { cb(data) } catch (e) { silentCatch('clawser-wisp-transport', 'swallow-listener-errors', e) }
     }
   }
 }

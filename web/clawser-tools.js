@@ -69,6 +69,22 @@ export class BrowserTool {
   get idempotent() { return false; }
 
   /**
+   * Field names whose values should be redacted from the eventlog
+   * record of this tool's calls. Tools that accept secrets as
+   * parameters (API keys, OAuth tokens, vault passphrases, etc.)
+   * should declare those fields here so the eventlog (persisted to
+   * OPFS, included in workspace exports) doesn't carry them.
+   *
+   * Tools that don't override this still get conservative defaults
+   * applied via `redactArgs(args)` below — any field name matching
+   * the standard regex (`key|token|password|passphrase|secret|
+   * authorization|cookie|bearer|credential`) is auto-redacted.
+   *
+   * @returns {string[]}
+   */
+  get redactedFields() { return []; }
+
+  /**
    * Execute the tool.
    * @param {object} params - Parsed JSON parameters
    * @returns {Promise<{success: boolean, output: string, error?: string}>}

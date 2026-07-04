@@ -45,6 +45,10 @@ export const clawserDebug = {
   warn(...args) { if (_debugEnabled) console.warn('[clawser]', ...args); },
 };
 
+/** Structured silent-catch helper. Re-exported here for backwards-compat;
+ *  the canonical location is `clawser-silent-catch.mjs`. */
+export { silentCatch } from './clawser-silent-catch.mjs';
+
 /** @param {string} id @returns {HTMLElement|null} */
 export const $ = id => document.getElementById(id);
 
@@ -185,6 +189,10 @@ export const state = {
     identityManager: null,
     pod: null,
     peerNode: null,
+    presenceService: null,
+    pairedDevices: null,
+    deployTarget: null,
+    syncFlags: null,
     swarmCoordinator: null,
     discoveryManager: null,
     transportNegotiator: null,
@@ -267,7 +275,7 @@ export const state = {
 // ── Backward-compatible flat aliases (deprecated — use state.ui.X, state.services.X, etc.) ──
 for (const [ns, fields] of [
   ['ui', ['isSending', 'currentRoute', 'switchingViaRouter', 'slashSelectedIdx', 'pendingImportBlob', 'cmdSelectedSpec']],
-  ['services', ['agent', 'providers', 'browserTools', 'mcpManager', 'vault', 'workspaceFs', 'responseCache', 'shell', 'skillRegistry', 'intentRouter', 'inputSanitizer', 'toolCallValidator', 'safetyPipeline', 'providerHealth', 'modelRouter', 'stuckDetector', 'selfRepairEngine', 'undoManager', 'heartbeatRunner', 'authProfileManager', 'metricsCollector', 'ringBufferLog', 'daemonController', 'routineEngine', 'oauthManager', 'identityManager', 'peerNode', 'swarmCoordinator', 'modelManager', 'pod', 'discoveryManager', 'transportNegotiator', 'auditChain', 'streamMultiplexer', 'fileTransfer', 'serviceDirectory', 'serviceAdvertiser', 'serviceBrowser', 'syncEngine', 'checkpointIDB', 'resourceRegistry', 'meshMarketplace', 'quotaManager', 'quotaEnforcer', 'paymentRouter', 'consensusManager', 'relayClient', 'nameResolver', 'appRegistry', 'appStore', 'orchestrator', 'remoteRuntimeRegistry', 'remoteSessionBroker']],
+  ['services', ['agent', 'providers', 'browserTools', 'mcpManager', 'vault', 'workspaceFs', 'responseCache', 'shell', 'skillRegistry', 'intentRouter', 'inputSanitizer', 'toolCallValidator', 'safetyPipeline', 'providerHealth', 'modelRouter', 'stuckDetector', 'selfRepairEngine', 'undoManager', 'heartbeatRunner', 'authProfileManager', 'metricsCollector', 'ringBufferLog', 'daemonController', 'routineEngine', 'oauthManager', 'identityManager', 'peerNode', 'presenceService', 'pairedDevices', 'deployTarget', 'syncFlags', 'swarmCoordinator', 'modelManager', 'pod', 'discoveryManager', 'transportNegotiator', 'auditChain', 'streamMultiplexer', 'fileTransfer', 'serviceDirectory', 'serviceAdvertiser', 'serviceBrowser', 'syncEngine', 'checkpointIDB', 'resourceRegistry', 'meshMarketplace', 'quotaManager', 'quotaEnforcer', 'paymentRouter', 'consensusManager', 'relayClient', 'nameResolver', 'appRegistry', 'appStore', 'orchestrator', 'remoteRuntimeRegistry', 'remoteSessionBroker']],
   ['features', ['toolBuilder', 'channelManager', 'delegateManager', 'gitBehavior', 'gitMemory', 'automationManager', 'sandboxManager', 'peripheralManager', 'pairingManager', 'goalManager', 'skillRegistryClient', 'terminalSessions', 'agentStorage', 'remoteMountManager', 'vmConsoleRegistry', 'terminalAdapter']],
   ['session', ['sessionCost', 'activeConversationId', 'activeConversationName', 'activeSkillPrompts', 'toolCallLog', 'eventLog', 'eventCount', 'pendingInlineTools']],
 ]) {

@@ -9,7 +9,9 @@ import { WorkspaceFs } from './clawser-tools.js';
 import { modal } from './clawser-modal.js';
 import { addMsg, addErrorMsg } from './clawser-ui-chat.js';
 import { getWorkspaceDir } from './clawser-opfs.js';
+import { DropHandler, mountPathForHandle } from './clawser-ui-drop.js';
 const PAGE_SIZE = 50;
+let _dropHandlerInstalled = false;
 
 /** Render the OPFS file browser for the active workspace, with click-to-preview.
  * @param {string} [path='/'] - Directory path relative to workspace root
@@ -136,6 +138,35 @@ export async function refreshFiles(path = '/', el = null) {
   } catch (e) {
     el.textContent = `Error: ${e.message}`;
   }
+}
+
+// ── Drag-and-drop folder mounting ───────────────────────────────
+/**
+ * Install a `DropHandler` on the file list element so users can
+ * drag a local folder onto the panel to mount it. Idempotent —
+ * runs at most once per page load. Wired from `initPanelListeners`
+ * via the `mountFolder` button click is the explicit path; this is
+ * the implicit-by-drop path.
+ */
+export function installFileDropHandler() {
+  if (_dropHandlerInstalled) return;
+  const list = $('fileList');
+  if (!list) return;
+  const dh = new DropHandler({
+    onMount: (path, handle) => {
+      try {
+        const mountPath = path || mountPathForHandle(handle);
+        state.workspaceFs.mount(mountPath, handle);
+        renderMountList();
+        refreshFiles();
+        addMsg('system', `Mounted "${handle.name}" at ${mountPath} (drop)`);
+      } catch (e) {
+        addErrorMsg(`Drop-mount failed: ${e?.message || e}`);
+      }
+    },
+  });
+  dh.bind(list);
+  _dropHandlerInstalled = true;
 }
 
 // ── Mount local folder (Block 2) ─────────────────────────────────

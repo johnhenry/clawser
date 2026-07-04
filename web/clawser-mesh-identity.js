@@ -12,6 +12,7 @@
  *   node --import ./web/test/_setup-globals.mjs --test web/test/clawser-mesh-identity.test.mjs
  */
 
+import { silentCatch } from './clawser-silent-catch.mjs'
 import {
   PodIdentity,
   derivePodId,
@@ -31,88 +32,45 @@ const VAULT_SALT_BYTES = 16;
 const VAULT_IV_BYTES = 12;
 
 // ---------------------------------------------------------------------------
-// base58btc + did:key encoding (W3C did:key spec)
+// base58btc encoding (Bitcoin alphabet) — used for W3C did:key
 // ---------------------------------------------------------------------------
 
 const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-const ED25519_MULTICODEC = [0xed, 0x01];
 
 /**
- * Encode bytes as base58btc (Bitcoin alphabet, leading zeros → '1').
+ * Encode bytes as base58btc (Bitcoin alphabet) without checksum.
+ * Used for W3C did:key URIs (RFC 5234, Multibase 'z' prefix).
+ *
  * @param {Uint8Array} bytes
  * @returns {string}
  */
-export const base58btcEncode = (bytes) => {
-  let n = 0n;
-  for (const b of bytes) n = (n << 8n) | BigInt(b);
-  let out = '';
-  while (n > 0n) {
-    out = BASE58_ALPHABET[Number(n % 58n)] + out;
-    n /= 58n;
-  }
-  for (const b of bytes) {
-    if (b !== 0) break;
-    out = '1' + out;
-  }
-  return out || '1';
-};
+const base58btcEncode = (bytes) => {
+  if (bytes.length === 0) return '';
+  // Count leading zeros
+  let zeros = 0;
+  while (zeros < bytes.length && bytes[zeros] === 0) zeros++;
 
-/**
- * Decode a base58btc string to bytes.
- * @param {string} str
- * @returns {Uint8Array}
- * @throws {Error} On characters outside the base58btc alphabet
- */
-export const base58btcDecode = (str) => {
-  let n = 0n;
-  for (const ch of str) {
-    const idx = BASE58_ALPHABET.indexOf(ch);
-    if (idx === -1) throw new Error(`Invalid base58 character: ${ch}`);
-    n = n * 58n + BigInt(idx);
-  }
-  const bytes = [];
-  while (n > 0n) {
-    bytes.unshift(Number(n & 0xffn));
-    n >>= 8n;
-  }
-  for (const ch of str) {
-    if (ch !== '1') break;
-    bytes.unshift(0);
-  }
-  return new Uint8Array(bytes);
-};
-
-/**
- * Encode a raw Ed25519 public key as a W3C did:key URI:
- * `did:key:z` + base58btc(0xed 0x01 + 32-byte key).
- * @param {Uint8Array} publicKeyBytes - Raw Ed25519 public key (32 bytes)
- * @returns {string}
- */
-export const encodeDIDKey = (publicKeyBytes) => {
-  const prefixed = new Uint8Array(ED25519_MULTICODEC.length + publicKeyBytes.length);
-  prefixed.set(ED25519_MULTICODEC, 0);
-  prefixed.set(publicKeyBytes, ED25519_MULTICODEC.length);
-  return `did:key:z${base58btcEncode(prefixed)}`;
-};
-
-/**
- * Parse a did:key URI. Handles both the W3C multicodec form and the legacy
- * MVP form `did:key:z<podId>` (podId = base64url SHA-256 fingerprint).
- *
- * @param {string} did
- * @returns {{publicKeyBytes: Uint8Array}|{legacyId: string}}
- * @throws {Error} If the string is not a did:key URI
- */
-export const parseDIDKey = (did) => {
-  const m = /^did:key:z(.+)$/.exec(did);
-  if (!m) throw new Error(`Not a did:key URI: ${did}`);
-  try {
-    const decoded = base58btcDecode(m[1]);
-    if (decoded.length === 34 && decoded[0] === 0xed && decoded[1] === 0x01) {
-      return { publicKeyBytes: decoded.slice(2) };
+  // Convert to base 58 via repeated division
+  const input = Array.from(bytes);
+  const out = [];
+  let start = zeros;
+  while (start < input.length) {
+    let remainder = 0;
+    let i = start;
+    for (; i < input.length; i++) {
+      const acc = remainder * 256 + input[i];
+      input[i] = Math.floor(acc / 58);
+      remainder = acc % 58;
     }
-  } catch { /* not base58btc — fall through to legacy */ }
-  return { legacyId: m[1] };
+    out.push(BASE58_ALPHABET[remainder]);
+    while (start < input.length && input[start] === 0) start++;
+  }
+
+  // Each leading zero byte → '1' (alphabet[0])
+  let prefix = '';
+  for (let i = 0; i < zeros; i++) prefix += BASE58_ALPHABET[0];
+
+  return prefix + out.reverse().join('');
 };
 
 // ---------------------------------------------------------------------------
@@ -233,8 +191,14 @@ export class MeshIdentityManager {
     const created = Date.now();
     const metadata = opts.metadata || {};
 
-    this.#identities.set(identity.podId, { identity, label, metadata, created });
-    await this.#cachePublicKeyBytes(identity.podId);
+    // Cache raw public key bytes for proper W3C did:key encoding.
+    let rawPubKey = null;
+    try {
+      const raw = await crypto.subtle.exportKey('raw', identity.keyPair.publicKey);
+      rawPubKey = new Uint8Array(raw);
+    } catch { /* exportable: false — fall back to legacy DID form */ }
+
+    this.#identities.set(identity.podId, { identity, label, metadata, created, rawPubKey });
     this.#onLog('identity:create', { podId: identity.podId, label });
 
     // Auto-set default if this is the first identity
@@ -295,8 +259,13 @@ export class MeshIdentityManager {
     const created = Date.now();
     const metadata = opts?.metadata || {};
 
-    this.#identities.set(podId, { identity, label, metadata, created });
-    await this.#cachePublicKeyBytes(podId);
+    let rawPubKey = null;
+    try {
+      const raw = await crypto.subtle.exportKey('raw', publicKey);
+      rawPubKey = new Uint8Array(raw);
+    } catch { /* exportable: false — fall back to legacy DID form */ }
+
+    this.#identities.set(podId, { identity, label, metadata, created, rawPubKey });
     this.#onLog('identity:import', { podId, label });
 
     if (this.#identities.size === 1) {
@@ -519,12 +488,12 @@ export class MeshIdentityManager {
   // -- DID support --------------------------------------------------------
 
   /**
-   * Convert an identity's public key to a W3C did:key URI:
-   * `did:key:z` + base58btc(0xed01 + raw Ed25519 public key).
+   * Convert an identity's public key to a W3C did:key URI.
    *
-   * Falls back to the legacy `did:key:z<podId>` form when raw public key
-   * bytes aren't cached (e.g. non-extractable keys). parseDIDKey() accepts
-   * both forms.
+   * Returns the proper W3C format `did:key:z<base58btc(0xed 0x01 + rawPubKey)>`
+   * when the raw Ed25519 public key was cached at create/import time. Falls
+   * back to the legacy `did:key:z<podId>` form if no raw key is cached
+   * (older in-memory identities loaded before this upgrade).
    *
    * @param {string} podId
    * @returns {string}
@@ -532,22 +501,26 @@ export class MeshIdentityManager {
   toDID(podId) {
     const entry = this.#identities.get(podId);
     if (!entry) throw new Error(`Unknown identity: ${podId}`);
-    if (entry.pubKeyBytes) return encodeDIDKey(entry.pubKeyBytes);
+    if (entry.rawPubKey) {
+      const prefixed = new Uint8Array(2 + entry.rawPubKey.length);
+      prefixed[0] = 0xed;
+      prefixed[1] = 0x01;
+      prefixed.set(entry.rawPubKey, 2);
+      return `did:key:z${base58btcEncode(prefixed)}`;
+    }
+    // Backward-compatibility: legacy form for entries without cached raw bytes
     return `did:key:z${podId}`;
   }
 
   /**
-   * Cache the raw public key bytes on an identity entry so toDID() can
-   * build the multicodec form synchronously.
+   * Legacy DID form, retained as a stable identifier alias.
+   *
    * @param {string} podId
+   * @returns {string}
    */
-  async #cachePublicKeyBytes(podId) {
-    const entry = this.#identities.get(podId);
-    if (!entry || entry.pubKeyBytes) return;
-    try {
-      const raw = await crypto.subtle.exportKey('raw', entry.identity.keyPair.publicKey);
-      entry.pubKeyBytes = new Uint8Array(raw);
-    } catch { /* non-extractable key — toDID falls back to the legacy form */ }
+  toLegacyDID(podId) {
+    if (!this.#identities.has(podId)) throw new Error(`Unknown identity: ${podId}`);
+    return `did:key:z${podId}`;
   }
 
   // -- Size ---------------------------------------------------------------
@@ -621,7 +594,6 @@ export class MeshIdentityManager {
           metadata: data.metadata || {},
           created: data.created,
         });
-        await this.#cachePublicKeyBytes(data.podId);
       } catch (err) {
         this.#onLog('identity:load:error', { podId, error: err.message });
       }
@@ -958,8 +930,8 @@ export class IdentitySyncCoordinator {
   /** @type {BroadcastChannel} */
   #channel;
 
-  /** @type {Set<string>} */
-  #pendingCreates = new Set();
+  /** @type {Map<string, string>} podId -> our local tiebreaker token */
+  #pendingCreates = new Map();
 
   /** @type {Function[]} */
   #changeListeners = [];
@@ -974,13 +946,20 @@ export class IdentitySyncCoordinator {
 
   /**
    * Attempt to acquire a "create lock" for a pod ID.
-   * Broadcasts intent and waits briefly for conflicts.
+   *
+   * Broadcasts intent and waits briefly for conflicts. Includes a
+   * tiebreaker token so two tabs racing to create the same podId
+   * resolve deterministically (lower token wins) — without it, both
+   * tabs would yield to the other and neither would acquire.
+   *
    * @param {string} podId
    * @returns {Promise<boolean>} true if lock acquired
    */
   async acquireCreateLock(podId) {
-    this.#pendingCreates.add(podId);
-    this.#channel.postMessage({ type: 'create-intent', podId });
+    // Random token bound to this attempt. Lexicographic compare → lower wins.
+    const myToken = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    this.#pendingCreates.set(podId, myToken);
+    this.#channel.postMessage({ type: 'create-intent', podId, token: myToken });
 
     // Wait 100ms for conflict signals
     await new Promise(r => setTimeout(r, 100));
@@ -1029,15 +1008,38 @@ export class IdentitySyncCoordinator {
     if (!msg || !msg.type) return;
 
     if (msg.type === 'create-intent') {
-      // If we're also trying to create the same ID, yield
-      if (this.#pendingCreates.has(msg.podId)) {
-        this.#pendingCreates.delete(msg.podId);
+      // Two tabs racing for the same podId both broadcast intent. The
+      // tab whose intent arrives FIRST at the other has its handler
+      // fire when the other's pendingCreates is empty (no-op). Without
+      // a response, the first tab never sees the second's intent.
+      //
+      // Resolution: when we see a conflicting intent, ALWAYS reply with
+      // our own intent — this way both tabs eventually see each other,
+      // and the deterministic token comparison resolves it identically
+      // on both sides. Lower token wins.
+      const myToken = this.#pendingCreates.get(msg.podId);
+      if (myToken) {
+        const theirToken = typeof msg.token === 'string' ? msg.token : '';
+        if (theirToken && theirToken < myToken) {
+          // We lose — yield.
+          this.#pendingCreates.delete(msg.podId);
+        } else if (msg._isResponse !== true) {
+          // We win (or peer is on old code without a token). Respond
+          // with our own intent so the peer can compare and yield.
+          // The `_isResponse` flag prevents infinite ping-pong.
+          this.#channel.postMessage({
+            type: 'create-intent',
+            podId: msg.podId,
+            token: myToken,
+            _isResponse: true,
+          });
+        }
       }
     }
 
     if (msg.type === 'created' || msg.type === 'deleted') {
       for (const cb of this.#changeListeners) {
-        try { cb(msg); } catch { /* swallow */ }
+        try { cb(msg); } catch (e) { silentCatch('clawser-mesh-identity', 'swallow', e) }
       }
     }
   }
@@ -1149,7 +1151,7 @@ export class AutoIdentityManager {
     this.#identityManager.setDefault(podId);
 
     for (const cb of this.#switchListeners) {
-      try { cb({ oldId, newId: podId }); } catch { /* swallow */ }
+      try { cb({ oldId, newId: podId }); } catch (e) { silentCatch('clawser-mesh-identity', 'swallow', e) }
     }
   }
 

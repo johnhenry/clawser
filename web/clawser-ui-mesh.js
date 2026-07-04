@@ -180,50 +180,20 @@ export function initMeshListeners(opts = {}) {
   const drainBtn = $('meshDrainPod')
   const refreshBtn = $('meshRefresh')
 
-  if (execBtn) {
-    execBtn.onclick = () => {
-      if (opts.onExecRemote) {
-        opts.onExecRemote()
-      } else {
-        modal('Remote Exec', `
-          <div class="mesh-modal-form">
-            <div class="mesh-form-row">
-              <input type="text" id="meshExecPodId" class="mesh-input" placeholder="Target pod ID" />
-            </div>
-            <div class="mesh-form-row">
-              <input type="text" id="meshExecCommand" class="mesh-input" placeholder="Command" />
-            </div>
-            <button class="btn-sm" id="meshExecSubmit">Execute</button>
-          </div>
-        `)
-      }
+  // Each handler properly awaits and surfaces unexpected rejections
+  // via addErrorMsg. Missing-handler fallbacks are deliberately
+  // explicit "not configured" messages — the production mount in
+  // `clawser-workspace-init-mesh.js` always passes a controller, so
+  // these paths only fire if a caller wires the panel without one.
+  const wrap = (fn, name) => async () => {
+    if (typeof fn !== 'function') {
+      addErrorMsg(`Mesh ${name}: no controller wired`)
+      return
     }
+    try { await fn() } catch (e) { addErrorMsg(`Mesh ${name} failed: ${e?.message || e}`) }
   }
-
-  if (deployBtn) {
-    deployBtn.onclick = () => {
-      if (opts.onDeploySkill) {
-        opts.onDeploySkill()
-      } else {
-        addMsg('system', 'Deploy Skill: select a skill and target pod')
-      }
-    }
-  }
-
-  if (drainBtn) {
-    drainBtn.onclick = () => {
-      if (opts.onDrainPod) {
-        opts.onDrainPod()
-      } else {
-        addMsg('system', 'Drain Pod: select a pod to gracefully disconnect')
-      }
-    }
-  }
-
-  if (refreshBtn) {
-    refreshBtn.onclick = () => {
-      if (opts.onRefresh) opts.onRefresh()
-      addMsg('system', 'Refreshing mesh status...')
-    }
-  }
+  if (execBtn) execBtn.onclick = wrap(opts.onExecRemote, 'exec-remote')
+  if (deployBtn) deployBtn.onclick = wrap(opts.onDeploySkill, 'deploy-skill')
+  if (drainBtn) drainBtn.onclick = wrap(opts.onDrainPod, 'drain-pod')
+  if (refreshBtn) refreshBtn.onclick = wrap(opts.onRefresh, 'refresh')
 }

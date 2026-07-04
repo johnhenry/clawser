@@ -1,6 +1,7 @@
 // clawser-accounts.js — Account/provider management + config persistence
 import { $, esc, state, lsKey } from './clawser-state.js';
 import { modal } from './clawser-modal.js';
+import { silentCatch } from './clawser-silent-catch.mjs'
 
 export const SERVICES = {
   openai: { name: 'OpenAI', defaultModel: 'gpt-4o-mini', models: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini', 'gpt-4.1', 'gpt-4.1-nano', 'o3-mini'] },
@@ -293,7 +294,18 @@ export async function applyRestoredConfig(savedConfig) {
     const validValues = [...providerSelect.options].map(o => o.value);
     if (validValues.includes(savedConfig.selectedProvider)) {
       providerSelect.value = savedConfig.selectedProvider;
-      onProviderChange();
+      // onProviderChange() resets the agent's model to the account's
+      // default. If the user had explicitly set a model (e.g. via
+      // `clawser model X`), restore it after the provider switch so
+      // the CLI override survives reloads. (Issue 2026-05-04#3.)
+      await onProviderChange();
+      if (savedConfig.model && state.agent) {
+        state.agent.setModel(savedConfig.model);
+      }
+      // Same for max_tokens — wired via the bug-hunt pass.
+      if (savedConfig.maxTokens && state.agent?.setDefaultMaxTokens) {
+        state.agent.setDefaultMaxTokens(savedConfig.maxTokens);
+      }
       return;
     }
   }
@@ -404,7 +416,7 @@ export async function setupProviders() {
           return;
         }
       }
-    } catch { /* ignore parse errors */ }
+    } catch (e) { silentCatch('clawser-accounts', 'ignore-parse-errors', e) }
   }
 
   // Fallback: auto-select Chrome AI if available

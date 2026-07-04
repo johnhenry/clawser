@@ -664,6 +664,80 @@ describe('startStdioRpc', () => {
   });
 });
 
+// ── HTTP transport ─────────────────────────────────────────────
+
+describe('startHttpRpc', () => {
+  it('serves a JSON-RPC request over HTTP and requires bearer auth', async () => {
+    const { startHttpRpc } = await import('../clawser-rpc.mjs');
+    const getAgent = () => createMockAgent();
+
+    const port = 30000 + Math.floor(Math.random() * 5000);
+    const handle = await startHttpRpc({
+      getAgent, port, host: '127.0.0.1',
+      bearerToken: 'test-secret',
+    });
+
+    try {
+      // Without auth: 401
+      const reqNoAuth = await fetch(`http://127.0.0.1:${port}`, {
+        method: 'POST',
+        body: makeRequest('session.status', {}),
+      });
+      assert.equal(reqNoAuth.status, 401);
+
+      // Wrong auth: 401
+      const reqBadAuth = await fetch(`http://127.0.0.1:${port}`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer wrong' },
+        body: makeRequest('session.status', {}),
+      });
+      assert.equal(reqBadAuth.status, 401);
+
+      // Correct auth: 200 + JSON-RPC response
+      const reqOk = await fetch(`http://127.0.0.1:${port}`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer test-secret' },
+        body: makeRequest('session.status', {}, 42),
+      });
+      assert.equal(reqOk.status, 200);
+      const body = await reqOk.json();
+      assert.equal(body.jsonrpc, '2.0');
+      assert.equal(body.id, 42);
+      assert.ok(body.result, 'expected result on success');
+
+      // GET: 405
+      const getRes = await fetch(`http://127.0.0.1:${port}`, {
+        method: 'GET',
+        headers: { Authorization: 'Bearer test-secret' },
+      });
+      assert.equal(getRes.status, 405);
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('generates a random bearer token when none is provided', async () => {
+    const { startHttpRpc } = await import('../clawser-rpc.mjs');
+    const port = 35000 + Math.floor(Math.random() * 5000);
+    const handle = await startHttpRpc({
+      getAgent: () => createMockAgent(), port, host: '127.0.0.1',
+    });
+    try {
+      assert.ok(handle.bearerToken);
+      assert.equal(handle.bearerToken.length, 64);
+      assert.match(handle.bearerToken, /^[0-9a-f]{64}$/);
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('rejects when port or getAgent is missing', async () => {
+    const { startHttpRpc } = await import('../clawser-rpc.mjs');
+    await assert.rejects(() => startHttpRpc({ port: 8000 }), /getAgent is required/);
+    await assert.rejects(() => startHttpRpc({ getAgent: () => null }), /port is required/);
+  });
+});
+
 // ── RPC_ERRORS constants ───────────────────────────────────────
 
 describe('RPC_ERRORS', () => {

@@ -471,6 +471,33 @@ describe('SkillFsWatcher', () => {
     // No public getter, but setWorkspace shouldn't throw
     assert.equal(watcher.running, false);
   });
+
+  it('aborts a stale poll when setWorkspace fires mid-scan', async () => {
+    // Regression test for the workspace-switch race: an in-flight poll
+    // for workspace A would otherwise overwrite #hashes with A's data
+    // after the user switched to B (which has cleared its hashes).
+    const { registry, logs } = createTestRegistry();
+    await registry.discover('test-ws');
+
+    const reloader = new SkillHotReloader({
+      registry,
+      wsId: 'test-ws',
+      onLog: (level, msg) => logs.push({ level, msg }),
+    });
+    await reloader.snapshot();
+    // Force a workspace change immediately and confirm pollNow returns
+    // an empty array (aborted). We trigger by switching wsId before the
+    // poll completes — since pollNow() is async, awaiting it after
+    // setting wsId synchronously simulates the race.
+    const promise = reloader.pollNow();
+    reloader.setWorkspace('different-ws');
+    const changed = await promise;
+    assert.deepEqual(changed, []);
+    assert.ok(
+      logs.some(l => /Aborting stale poll/.test(l.msg)),
+      'aborted poll should log',
+    );
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════

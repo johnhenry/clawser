@@ -88,7 +88,8 @@ export class IPFSStore {
         this.#onLog(2, 'Helia node initialized from globalThis')
       } else {
         try {
-          await import('https://cdn.jsdelivr.net/npm/helia@6.0.21/dist/index.min.js')
+          // CDN URL verified current 2026-05-03 against npm registry latest (helia@6.1.4).
+          await import('https://cdn.jsdelivr.net/npm/helia@6.1.4/dist/index.min.js')
           if (typeof globalThis.Helia === 'function') {
             this.#helia = await globalThis.Helia.create()
             this.#heliaAvailable = true

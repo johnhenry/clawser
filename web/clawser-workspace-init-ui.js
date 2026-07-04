@@ -19,6 +19,8 @@ import { renderSwarmPanel, initSwarmListeners } from './clawser-ui-swarms.js';
 import { renderTransferPanel, initTransferListeners } from './clawser-ui-transfers.js';
 import { renderIdentityWallet, initIdentityWalletListeners, renderContactBook, initContactBookListeners, renderConnectionPanel, initConnectionListeners, renderAuditLog, initAuditLogListeners } from './clawser-ui-peers.js';
 import { refreshMeshWorkspacePanel } from './clawser-workspace-init-mesh.js';
+import { buildTransferController, buildTransferViewModel } from './clawser-transfer-controller.mjs';
+import { buildSwarmController, buildSwarmViewModel } from './clawser-swarm-controller.mjs';
 
 // ── Lazy Panel Rendering (Gap 11.1) ──────────────────────────────
 /**
@@ -53,6 +55,15 @@ export function registerLazyPanelRenders(renders) {
       continue;
     }
 
+    // If the panel is currently visible (a workspace switch happened
+    // while the user was looking at this panel), force an eager
+    // render so they see the new workspace's data immediately rather
+    // than stale content until they navigate away and back.
+    if (el.classList?.contains?.('active-panel')) {
+      try { renderFn(); } catch (e) { /* fall through to firstrender */ }
+      continue;
+    }
+
     const handler = () => {
       renderFn();
       _deferredRenders.delete(panelName);
@@ -84,7 +95,12 @@ export function buildLazyPanelConfig(renderRemotePanel) {
     marketplace: () => {
       const container = $('marketplaceContainer');
       if (container && state.marketplace) {
-        renderMarketplace(container, state.marketplace, {
+        // Run any prior mount's cleanup (removes the injected style el)
+        // so workspace switches don't accumulate orphan style nodes.
+        if (state._marketplaceCleanup) {
+          try { state._marketplaceCleanup(); } catch { /* ignore */ }
+        }
+        state._marketplaceCleanup = renderMarketplace(container, state.marketplace, {
           onInstall: () => renderSkills(),
           onUninstall: () => renderSkills(),
         });
@@ -95,31 +111,44 @@ export function buildLazyPanelConfig(renderRemotePanel) {
       if (!c) return;
       const podId = state.peerNode?.podId || 'local';
       const sc = state.swarmCoordinator;
-      const getSwarms = () => sc?.listSwarms?.() || [];
-      const listenerOpts = {
-        onCreate: (opts) => {
-          if (sc) {
-            sc.submitTask(opts.goal, opts.strategy || 'round_robin', {});
-            addMsg('system', `Swarm task submitted: "${opts.goal}"`);
-          }
-        },
-        onRefresh: () => {
-          c.innerHTML = renderSwarmPanel({ swarms: getSwarms(), localPodId: podId });
-          initSwarmListeners(listenerOpts);
-        },
+      const ctrl = buildSwarmController({
+        coordinator: sc,
+        localPodId: podId,
+        onLog: (m) => addMsg('system', m),
+      });
+      const renderNow = () => {
+        const vm = buildSwarmViewModel(sc, podId);
+        c.innerHTML = renderSwarmPanel({ swarms: vm.swarms, localPodId: podId });
+        initSwarmListeners({
+          ...ctrl,
+          onRefresh: renderNow,
+        });
       };
-      c.innerHTML = renderSwarmPanel({ swarms: getSwarms(), localPodId: podId });
-      initSwarmListeners(listenerOpts);
+      renderNow();
     },
     transfers: () => {
       const c = $('transfersContainer');
       if (!c) return;
       const podId = state.peerNode?.podId || 'local';
       const ft = state.fileTransfer;
-      const active = ft?.listTransfers?.({ status: 'transferring' }) || [];
-      const history = ft?.listTransfers?.({ status: 'completed' }) || [];
-      c.innerHTML = renderTransferPanel({ active, history, localPodId: podId });
-      initTransferListeners();
+      const ctrl = buildTransferController({
+        fileTransfer: ft,
+        onLog: (m) => addMsg('system', m),
+        onError: (err) => addMsg('system', `Transfer error: ${err?.message || err}`),
+      });
+      const renderNow = () => {
+        const vm = buildTransferViewModel(ft, podId);
+        c.innerHTML = renderTransferPanel({ active: vm.active, history: vm.history, localPodId: podId });
+        initTransferListeners({
+          onSend: async (files, target) => {
+            const r = await ctrl.onSend(files, target);
+            if (!r.ok && r.error) addMsg('system', `Send failed: ${r.error}`);
+            renderNow();
+          },
+          onCancel: (id) => { ctrl.onCancel(id); renderNow(); },
+        });
+      };
+      renderNow();
     },
     mesh: () => refreshMeshWorkspacePanel(),
     peers: () => {

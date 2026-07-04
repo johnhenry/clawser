@@ -14,6 +14,7 @@
  */
 
 import { esc } from './clawser-state.js';
+import { silentCatch } from './clawser-silent-catch.mjs'
 
 // ── Constants ──────────────────────────────────────────────────────
 
@@ -227,7 +228,7 @@ export const createGuestFsState = () => {
 
   const notify = () => {
     for (const fn of _listeners) {
-      try { fn(getState()); } catch { /* swallow */ }
+      try { fn(getState()); } catch (e) { silentCatch('clawser-ui-guest-fs', 'swallow', e) }
     }
   };
 

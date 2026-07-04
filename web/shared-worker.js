@@ -1,3 +1,4 @@
+import { silentCatch } from './clawser-silent-catch.mjs'
 // shared-worker.js — SharedWorker host for Clawser
 //
 // Hosts a single ClawserAgent instance (conceptually) and routes messages
@@ -166,7 +167,7 @@ export class SharedWorkerHost {
    */
   destroy() {
     for (const [port] of this.#ports) {
-      try { port.close(); } catch { /* ignore */ }
+      try { port.close(); } catch (e) { silentCatch('web/shared-worker.js', 'port.close', e) }
     }
     this.#ports.clear();
     this.#queue = [];

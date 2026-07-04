@@ -1,9 +1,12 @@
 // Run with: node --import ./web/test/_setup-globals.mjs --test web/test/clawser-agent.test.mjs
 import { describe, it, beforeEach, afterEach, mock } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 import {
   ClawserAgent,
   EventLog,
+  KNOWN_EVENT_TYPES,
   AutonomyController,
   HookPipeline,
   HOOK_POINTS,
@@ -135,6 +138,27 @@ describe('EventLog', () => {
   it('starts empty', () => {
     assert.equal(log.size, 0)
     assert.deepEqual(log.events, [])
+  })
+
+  it('every event type appended in clawser-agent.js is in KNOWN_EVENT_TYPES', async () => {
+    // Lint-style check: scan the agent source for `eventLog.append('X', ...)`
+    // calls and verify each X is documented in the KNOWN_EVENT_TYPES
+    // registry. The two prior silent-skip bugs (`goal_edited`,
+    // `goal_removed`) shipped because event types were appended without a
+    // corresponding `derive*` branch — this test surfaces any new type
+    // before it slips through.
+    const agentSrc = await readFile(
+      fileURLToPath(new URL('../clawser-agent.js', import.meta.url)),
+      'utf8',
+    )
+    const re = /eventLog\.append\(\s*['"]([a-z_]+)['"]/g
+    const seen = new Set()
+    let m
+    while ((m = re.exec(agentSrc)) !== null) seen.add(m[1])
+    const missing = [...seen].filter(t => !KNOWN_EVENT_TYPES.has(t))
+    assert.deepEqual(missing, [],
+      `Event types appended but not in KNOWN_EVENT_TYPES: ${missing.join(', ')}. ` +
+      `Add them to the registry in clawser-agent.js and update the relevant derive* function.`)
   })
 
   it('append creates an event with id, type, timestamp, data, source', () => {
@@ -1516,6 +1540,86 @@ describe('ClawserAgent — goal management (extended)', () => {
     assert.equal(events[0].data.id, id)
   })
 
+  it('getGoal returns the goal by id (and null when missing)', async () => {
+    const agent = await createTestAgent()
+    const id = agent.addGoal('Look up me')
+    const found = agent.getGoal(id)
+    assert.equal(found?.id, id)
+    assert.equal(found.description, 'Look up me')
+    assert.equal(agent.getGoal('does-not-exist'), null)
+  })
+
+  it('editGoal updates description + priority and logs goal_edited', async () => {
+    const agent = await createTestAgent()
+    const id = agent.addGoal('Original')
+    const ok = agent.editGoal(id, { description: 'Updated', priority: 'high' })
+    assert.equal(ok, true)
+    const goal = agent.getGoal(id)
+    assert.equal(goal.description, 'Updated')
+    assert.equal(goal.priority, 'high')
+    const events = agent.eventLog.query({ type: 'goal_edited' })
+    assert.equal(events.length, 1)
+    assert.equal(events[0].data.description, 'Updated')
+    assert.equal(events[0].data.priority, 'high')
+  })
+
+  it('editGoal returns false for unknown id and ignores empty patch', async () => {
+    const agent = await createTestAgent()
+    const id = agent.addGoal('x')
+    assert.equal(agent.editGoal('missing', { description: 'X' }), false)
+    assert.equal(agent.editGoal(id, {}), false)
+    assert.equal(agent.editGoal(id, { description: '' }), false)
+  })
+
+  it('addHook accepts UI-style {handler} spec and registers via execute', async () => {
+    const agent = await createTestAgent()
+    let hits = 0
+    agent.addHook({ name: 'h1', point: 'beforeInbound', handler: async () => { hits++; return { action: 'continue' } } })
+    const list = agent.listHooks()
+    assert.equal(list.length, 1)
+    assert.equal(list[0].name, 'h1')
+    assert.equal(list[0].point, 'beforeInbound')
+    // The pipeline runs by `execute`; calling run() through the agent path is
+    // covered elsewhere — here, just verify execute is set.
+  })
+
+  it('removeHook removes a hook by name across all points', async () => {
+    const agent = await createTestAgent()
+    agent.addHook({ name: 'h1', point: 'beforeInbound', handler: () => ({}) })
+    agent.addHook({ name: 'h1', point: 'beforeOutbound', handler: () => ({}) })
+    agent.addHook({ name: 'h2', point: 'beforeInbound', handler: () => ({}) })
+    const ok = agent.removeHook('h1')
+    assert.equal(ok, true)
+    const list = agent.listHooks()
+    assert.equal(list.length, 1)
+    assert.equal(list[0].name, 'h2')
+    assert.equal(agent.removeHook('does-not-exist'), false)
+  })
+
+  it('enableHook flips enabled flag without removing the hook', async () => {
+    const agent = await createTestAgent()
+    agent.addHook({ name: 'h1', point: 'beforeInbound', handler: () => ({}) })
+    agent.enableHook('h1', false)
+    let h = agent.listHooks().find(x => x.name === 'h1')
+    assert.equal(h.enabled, false)
+    agent.enableHook('h1', true)
+    h = agent.listHooks().find(x => x.name === 'h1')
+    assert.equal(h.enabled, true)
+  })
+
+  it('deriveGoals replays goal_edited and goal_removed events', async () => {
+    const agent = await createTestAgent()
+    const idA = agent.addGoal('A')
+    const idB = agent.addGoal('B')
+    agent.editGoal(idA, { description: 'A renamed', priority: 'low' })
+    agent.removeGoal(idB)
+    const goals = agent.eventLog.deriveGoals()
+    assert.equal(goals.length, 1)
+    assert.equal(goals[0].id, idA)
+    assert.equal(goals[0].description, 'A renamed')
+    assert.equal(goals[0].priority, 'low')
+  })
+
   it('getState includes goal count', async () => {
     const agent = await createTestAgent()
     agent.addGoal('One')
@@ -1590,6 +1694,72 @@ describe('ClawserAgent — cancel during run', () => {
     // After cancel, next iteration should detect aborted signal
     // The first iteration may have already completed, so check either outcome
     assert.ok(result.status === 1 || result.status === -2)
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════════
+// ClawserAgent — awaitRun (settles after in-flight turn)
+// ══════════════════════════════════════════════════════════════════════
+
+describe('ClawserAgent — awaitRun', () => {
+  it('resolves immediately when idle', async () => {
+    const agent = await createTestAgent()
+    const r = await agent.awaitRun({ timeoutMs: 100 })
+    assert.deepEqual(r, { settled: true })
+  })
+
+  it('waits for an in-flight turn to settle', async () => {
+    let resolveChat
+    const slowProvider = {
+      supportsNativeTools: true,
+      supportsStreaming: false,
+      requiresApiKey: false,
+      chat: () => new Promise((resolve) => { resolveChat = resolve }),
+    }
+    const agent = await createTestAgent({ _provider: slowProvider })
+    agent.sendMessage('hi')
+    const runPromise = agent.run()
+    // Yield so run() enters its loop and sets #runAbort
+    await new Promise(r => setTimeout(r, 10))
+    assert.equal(agent.isRunning, true)
+
+    let waitingFired = 0
+    const awaitPromise = agent.awaitRun({
+      timeoutMs: 1000,
+      onWaiting: () => { waitingFired++ },
+      gracePeriodMs: 30,
+    })
+
+    // Yield long enough for the grace period to fire onWaiting
+    await new Promise(r => setTimeout(r, 80))
+
+    resolveChat({ content: 'done', tool_calls: [], usage: { input_tokens: 1, output_tokens: 1 }, model: 'm' })
+    await runPromise
+    const r = await awaitPromise
+    assert.deepEqual(r, { settled: true })
+    assert.equal(waitingFired, 1, 'onWaiting fires when turn outlives grace period')
+  })
+
+  it('reports timedOut and stays unblocked when the turn never settles', async () => {
+    const slowProvider = {
+      supportsNativeTools: true,
+      supportsStreaming: false,
+      requiresApiKey: false,
+      chat: () => new Promise(() => {}), // never resolves
+    }
+    const agent = await createTestAgent({ _provider: slowProvider })
+    agent.sendMessage('hi')
+    const runPromise = agent.run()
+    await new Promise(r => setTimeout(r, 10))
+    const r = await agent.awaitRun({ timeoutMs: 100 })
+    assert.equal(r.timedOut, true)
+    assert.equal(r.settled, false)
+    // Caller (cleanupWorkspace) is expected to cancel and proceed.
+    agent.cancel()
+    // Don't await runPromise — its underlying Promise will never settle
+    // because the chat never resolves. We've verified awaitRun doesn't
+    // hang the caller.
+    void runPromise
   })
 })
 

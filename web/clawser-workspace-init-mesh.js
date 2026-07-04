@@ -14,11 +14,17 @@ import { modal } from './clawser-modal.js';
 import { getActiveWorkspaceId } from './clawser-workspaces.js';
 import { isPanelRendered } from './clawser-router.js';
 import { renderMeshPanel, initMeshListeners } from './clawser-ui-mesh.js';
-import { addMsg } from './clawser-ui-chat.js';
+import { addMsg, addErrorMsg } from './clawser-ui-chat.js';
+import { buildMeshController } from './clawser-mesh-controller.mjs';
 import { bridgePeerAgent } from './clawser-peer-agent.js';
 import { ChannelGateway } from './clawser-gateway.js';
 import { ClawserPod } from './clawser-pod.js';
 import { registerMeshTools } from './clawser-mesh-tools.js';
+import { PresenceService } from './clawser-presence.mjs';
+import { installMultiDeviceWiring, uninstallMultiDeviceWiring } from './clawser-multi-device.mjs';
+import { SkillStorage } from './clawser-skills.js';
+import { writeConfig as writeFsConfig } from './clawser-fs-config.mjs';
+import { approvalModalPrompt } from './clawser-approval-modal.mjs';
 import { registerMeshPeerTools } from './clawser-mesh-peer-tools.js';
 import { registerIdentityTools } from './clawser-mesh-identity-tools.js';
 import { createMeshctlTools } from './clawser-mesh-orchestrator.js';
@@ -38,6 +44,7 @@ import {
   updatePeerBadge,
 } from './clawser-ui-remote.js'
 import { CollabManager } from './clawser-peer-collab-bridge.js';
+import { silentCatch } from './clawser-silent-catch.mjs'
 
 // ── Module-level state ───────────────────────────────────────────
 let _reverseVirtualTerminalManager = null;
@@ -485,7 +492,27 @@ export function refreshMeshWorkspacePanel() {
     ),
     services,
   });
-  initMeshListeners();
+  const ctrl = buildMeshController({
+    peerNode: state.peerNode,
+    refresh: refreshMeshWorkspacePanel,
+    promptForPubKey: async () => modal.prompt('Pod ID / pubKey to drain:', ''),
+    promptForExec: async () => {
+      const target = await modal.prompt('Target pod ID / pubKey:', '');
+      if (!target) return null;
+      const cmd = await modal.prompt('Command to execute on remote pod:', '');
+      if (!cmd) return null;
+      return { target, cmd };
+    },
+    deploySkillFlow: async () => {
+      // The full deploy-skill picker lives under My Devices; surface a
+      // hint rather than re-implementing the picker here.
+      addMsg('system', 'Deploy a skill from Settings → My Devices → Deploy now.');
+      return { ok: false, error: 'open My Devices to deploy' };
+    },
+    onLog: (m) => addMsg('system', m),
+    onError: (e) => addErrorMsg(`Mesh action failed: ${e?.message || e}`),
+  });
+  initMeshListeners(ctrl);
 }
 
 function bindRemoteRuntimePanelEvents() {
@@ -638,6 +665,49 @@ export async function initMeshSubsystem() {
       || undefined
     const result = await state.pod.initMesh({ relayUrl });
     state.peerNode = result.peerNode;
+    // Authoritative peer-presence map (online/idle/offline). Subscribes to
+    // PeerNode's connect/disconnect events; consumers can call
+    // state.presenceService.recordHeartbeat(peerId) from any heartbeat
+    // producer (relay, swarm, app-level) to refresh liveness.
+    if (state.presenceService) {
+      try { state.presenceService.stop(); } catch (e) { silentCatch('clawser-workspace-init-mesh', 'state.presenceService.stop', e) }
+    }
+    state.presenceService = new PresenceService({ peerNode: state.peerNode });
+    state.presenceService.start();
+
+    // Per-workspace sync-flags + deploy-target wiring. Subscribes to
+    // pod.onMessage so inbound `{type:'sync'}` and `{type:'deploy'}`
+    // envelopes get routed to the right consumer. Storage is at
+    // ~/.config/clawser/sync/ and ~/.config/clawser/deploy/ for the
+    // active workspace (resolves under /home/<active>/ via the alias).
+    uninstallMultiDeviceWiring(state); // idempotent — clears prior workspace's
+    try {
+      const wsId = getActiveWorkspaceId() || 'default';
+      installMultiDeviceWiring({
+        pod: state.pod,
+        state,
+        wsId,
+        syncEngine: state.syncEngine,
+        // resolvePublicKey defaults to `resolveDidKey` from
+        // clawser-did-key.mjs, so signed packages from `did:key:` peers
+        // verify out of the box.
+        // applyHandlers wires the real per-kind persistence:
+        //   skill  → SkillStorage.writeSkill
+        //   config → writeFsConfig (under ~/.config/clawser/)
+        //   memory → state.agent.memoryStore (set inside the apply registry)
+        applyHandlers: {
+          writeConfig: writeFsConfig,
+          skillsAPI: { writeSkill: SkillStorage.writeSkill },
+        },
+        // First-deploy approval modal — surfaces the source DID,
+        // manifest fingerprint, capabilities, and items being deployed.
+        // User clicks Approve/Deny; cached by (source, manifestHash)
+        // so future deploys with the same fingerprint auto-apply.
+        promptApprove: approvalModalPrompt,
+      });
+    } catch (e) {
+      silentCatch('clawser-workspace-init-mesh', 'multi-device-wiring', e);
+    }
     state.swarmCoordinator = result.swarmCoordinator;
     state.discoveryManager = result.discoveryManager;
     state.transportNegotiator = result.transportNegotiator;
@@ -655,6 +725,20 @@ export async function initMeshSubsystem() {
     state.paymentRouter = result.paymentRouter;
     state.consensusManager = result.consensusManager;
     state.relayClient = result.relayClient;
+    // If user opted in via Settings → Mesh / Relay, fire-and-forget connect.
+    // Failure is non-fatal (mesh still works peer-to-peer), but surface
+    // visibly so a bad relay URL or down server isn't silent. The
+    // relayClient also emits 'error' on reconnect-budget exhaustion;
+    // forward those to the user too.
+    if (state.relayClient && localStorage.getItem('clawser_relay_auto_connect') === 'true') {
+      state.relayClient.onError?.((err) => {
+        addErrorMsg(`Relay error: ${err?.message || err}`);
+      });
+      state.relayClient.connect().catch(err => {
+        console.warn('[clawser] relay auto-connect failed:', err?.message || err);
+        addErrorMsg(`Relay auto-connect failed: ${err?.message || err}`);
+      });
+    }
     state.nameResolver = result.nameResolver;
     state.appRegistry = result.appRegistry;
     state.appStore = result.appStore;
@@ -692,9 +776,65 @@ export async function initMeshSubsystem() {
     state.timestampAuthority = result.timestampAuthority;
     state.syncCoordinator = result.syncCoordinator;
 
+    // ── Mesh peer device files (`/dev/clawser/mesh/peers/{peerId}`) ──
+    // Subscribe to discovery events to register/unregister per-peer device
+    // files. Reads return current metadata; writes require a sendFn (not
+    // currently provided by the pod's public API — they will throw a clear
+    // "no send function wired" error until a per-peer send is added).
+    if (state.deviceHandler && state.discoveryManager) {
+      try {
+        const { addMeshPeerDevice, removeMeshPeerDevice } = await import('./clawser-runtime.js');
+        // Track registered peer paths so we don't double-register.
+        if (!state._registeredPeerDevices) state._registeredPeerDevices = new Set();
+
+        const registerForPeer = (record) => {
+          if (!record?.podId) return;
+          if (state._registeredPeerDevices.has(record.podId)) return;
+          addMeshPeerDevice(state.deviceHandler, record.podId, {
+            getMetadata: () => {
+              const fresh = state.discoveryManager.getRecord?.(record.podId)
+                || state.peerNode?.registry?.getPeer?.(record.podId)
+                || record;
+              return {
+                podId: fresh.podId,
+                status: fresh.isExpired?.() ? 'expired' : 'active',
+                lastSeen: fresh.discoveredAt || fresh.lastSeen || null,
+                capabilities: fresh.capabilities || [],
+                peerType: fresh.peerType || 'unknown',
+              };
+            },
+            // A3 write path: route shell-side writes through the pod's
+            // unicast send. Throws when the peer has no active session.
+            sendFn: async (peerId, envelope) => {
+              if (!state.pod || typeof state.pod.sendMessage !== 'function') {
+                throw new Error('mesh peer write: pod.sendMessage unavailable');
+              }
+              return state.pod.sendMessage(peerId, envelope);
+            },
+          });
+          state._registeredPeerDevices.add(record.podId);
+        };
+        const unregisterForPeer = (record) => {
+          if (!record?.podId) return;
+          if (!state._registeredPeerDevices.has(record.podId)) return;
+          removeMeshPeerDevice(state.deviceHandler, record.podId);
+          state._registeredPeerDevices.delete(record.podId);
+        };
+
+        // Register devices for already-known peers.
+        const known = state.discoveryManager.list?.() || [];
+        for (const r of known) registerForPeer(r);
+
+        state.discoveryManager.onPeerDiscovered?.(registerForPeer);
+        state.discoveryManager.onPeerLost?.(unregisterForPeer);
+      } catch (e) {
+        console.warn('[clawser] mesh peer device wiring failed:', e?.message || e);
+      }
+    }
+
     // ── Wire collaborative editing bridge ────────────────────────
     if (state.collabManager) {
-      try { state.collabManager.destroy() } catch { /* best-effort */ }
+      try { state.collabManager.destroy() } catch (e) { silentCatch('clawser-workspace-init-mesh', 'state.collabManager.destroy', e) }
     }
     state.collabManager = new CollabManager({
       localPodId: state.pod.podId,
@@ -810,17 +950,17 @@ export async function initMeshSubsystem() {
 
         // Add route for the new peer
         if (state.meshRouter) {
-          try { state.meshRouter.addRoute(peerId, peerId, 1) } catch { /* non-fatal */ }
+          try { state.meshRouter.addRoute(peerId, peerId, 1) } catch (e) { silentCatch('clawser-workspace-init-mesh', 'state.meshRouter.addRoute', e) }
         }
 
         // Register peer with gateway node
         if (state.gatewayNode) {
-          try { state.gatewayNode.registerPeer?.(peerId) } catch { /* non-fatal */ }
+          try { state.gatewayNode.registerPeer?.(peerId) } catch (e) { silentCatch('clawser-workspace-init-mesh', 'state.gatewayNode.registerPeer', e) }
         }
 
         // Join swarm coordinator
         if (state.swarmCoordinator) {
-          try { state.swarmCoordinator.join(peerId) } catch { /* non-fatal */ }
+          try { state.swarmCoordinator.join(peerId) } catch (e) { silentCatch('clawser-workspace-init-mesh', 'state.swarmCoordinator.join', e) }
         }
 
         // Re-render mesh panel to reflect new peer
@@ -834,17 +974,17 @@ export async function initMeshSubsystem() {
 
         // Remove peer route
         if (state.meshRouter) {
-          try { state.meshRouter.removeRoute?.(peerId) } catch { /* non-fatal */ }
+          try { state.meshRouter.removeRoute?.(peerId) } catch (e) { silentCatch('clawser-workspace-init-mesh', 'state.meshRouter.removeRoute', e) }
         }
 
         // Remove from gateway
         if (state.gatewayNode) {
-          try { state.gatewayNode.unregisterPeer?.(peerId) } catch { /* non-fatal */ }
+          try { state.gatewayNode.unregisterPeer?.(peerId) } catch (e) { silentCatch('clawser-workspace-init-mesh', 'state.gatewayNode.unregisterPeer', e) }
         }
 
         // Leave swarm coordinator
         if (state.swarmCoordinator) {
-          try { state.swarmCoordinator.leave(peerId) } catch { /* non-fatal */ }
+          try { state.swarmCoordinator.leave(peerId) } catch (e) { silentCatch('clawser-workspace-init-mesh', 'state.swarmCoordinator.leave', e) }
         }
 
         // Re-render mesh panel to reflect peer departure
@@ -864,7 +1004,7 @@ export async function initMeshSubsystem() {
           if (sessions.length === 0) return
           try {
             sessions[0].send('crdt-sync', { action: 'delta', docId: msg.type, message: msg })
-          } catch { /* non-fatal: peer may have disconnected */ }
+          } catch (e) { silentCatch('clawser-workspace-init-mesh', 'non-fatal-peer-may-have-disconnected', e) }
         })
       }
     }
@@ -945,6 +1085,11 @@ export async function initMeshSubsystem() {
   } catch (err) {
     console.warn('[clawser] P2P mesh init failed (non-fatal):', err.message);
     state.peerNode = null;
+    if (state.presenceService) {
+      try { state.presenceService.stop(); } catch (e) { silentCatch('clawser-workspace-init-mesh', 'state.presenceService.stop', e) }
+      state.presenceService = null;
+    }
+    uninstallMultiDeviceWiring(state);
     state.swarmCoordinator = null;
     state.discoveryManager = null;
     state.transportNegotiator = null;
@@ -1003,13 +1148,13 @@ export async function initMeshSubsystem() {
     state.stealthAgent = null;
     state.meshFetchRouter = null;
     if (state._meshFetchSwCleanup) {
-      try { state._meshFetchSwCleanup() } catch { /* best-effort */ }
+      try { state._meshFetchSwCleanup() } catch (e) { silentCatch('clawser-workspace-init-mesh', 'state._meshFetchSwCleanup', e) }
       state._meshFetchSwCleanup = null
     }
     state.timestampAuthority = null;
     state.syncCoordinator = null;
     if (state.collabManager) {
-      try { state.collabManager.destroy() } catch { /* best-effort */ }
+      try { state.collabManager.destroy() } catch (e) { silentCatch('clawser-workspace-init-mesh', 'state.collabManager.destroy', e) }
       state.collabManager = null;
     }
   }

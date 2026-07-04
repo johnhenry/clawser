@@ -169,6 +169,10 @@ export const registerProcGenerators = (handler, ctx) => {
     providerStatus,
     initTime = performance.now(),
     wsId = 'default',
+    /** @type {() => Array<{id:string, name:string}>|null} */
+    getWorkspaces = null,
+    /** @type {() => string|null} */
+    getActiveId = null,
   } = ctx;
 
   // /proc/clawser/version
@@ -303,6 +307,26 @@ export const registerProcGenerators = (handler, ctx) => {
     } catch {
       return '(no providers configured)\n';
     }
+  });
+
+  // /proc/clawser/workspaces — id, name, sanitized home dir, active marker.
+  // Lets users see at a glance which workspace owns which `/home/<name>`.
+  handler.register('/proc/clawser/workspaces', async () => {
+    if (!getWorkspaces) return '(workspace registry unavailable)\n';
+    let list = [];
+    try { list = getWorkspaces() || []; } catch { list = []; }
+    if (list.length === 0) return '(no workspaces)\n';
+    const { buildSanitizedNameMap } = await import('./clawser-workspace-name.mjs');
+    const sanitized = buildSanitizedNameMap(list);
+    let activeId = null;
+    try { activeId = getActiveId ? getActiveId() : null; } catch { activeId = null; }
+    const lines = ['id\tname\thome\tactive'];
+    for (const ws of list) {
+      const home = `/home/${sanitized.get(ws.id) || 'workspace'}`;
+      const active = ws.id === activeId ? 'yes' : '';
+      lines.push(`${ws.id}\t${ws.name || ''}\t${home}\t${active}`);
+    }
+    return lines.join('\n') + '\n';
   });
 };
 
@@ -440,17 +464,37 @@ export class VirtualFs {
   }
 
   async listDir(path, opts) {
-    // Device directory listings
+    // Merge virtual + device + real entries by name; virtual / device
+    // entries take precedence on a name collision, but real entries are
+    // never hidden when their names don't collide. The previous
+    // early-return behavior caused real files at `/` to disappear once
+    // `/proc/` was registered (issue 2026-05-04#1).
+    const seen = new Set();
+    const merged = [];
+
     if (this.#devices && this.#isDevicePath(path)) {
-      const deviceEntries = this.#devices.listDir(path);
-      if (deviceEntries.length > 0) return deviceEntries;
+      for (const entry of this.#devices.listDir(path)) {
+        if (!seen.has(entry.name)) { seen.add(entry.name); merged.push(entry); }
+      }
     }
     if (this.#proc.handles(path)) {
-      const virtualEntries = this.#proc.listDir(path);
-      if (virtualEntries.length > 0) return virtualEntries;
+      for (const entry of this.#proc.listDir(path)) {
+        if (!seen.has(entry.name)) { seen.add(entry.name); merged.push(entry); }
+      }
     }
-    // Fall through to real FS for non-virtual paths
-    return this.#realFs.listDir(path, opts);
+    let realEntries = [];
+    try { realEntries = await this.#realFs.listDir(path, opts); }
+    catch {
+      // Real FS doesn't have this directory at all. If we already have
+      // virtual/device entries, return those; otherwise re-throw the
+      // original ENOENT-style error from the real FS.
+      if (merged.length > 0) return merged;
+      return this.#realFs.listDir(path, opts);
+    }
+    for (const entry of realEntries) {
+      if (!seen.has(entry.name)) { seen.add(entry.name); merged.push(entry); }
+    }
+    return merged;
   }
 
   async mkdir(path) {

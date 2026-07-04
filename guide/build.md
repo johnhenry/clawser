@@ -8,7 +8,7 @@ Zero build step, PWA, Docker, CI/CD, browser compat, CDN deps, testing
 
 **Status:** ✅ Implemented · **Category:** build · **Since:** v1.0.0
 
-No build step required. Pure ES modules served directly from the web/ directory. All 148 modules are pre-compiled .js bundles with accompanying .d.ts type definitions. External dependencies loaded via CDN (cdnjs.cloudflare.com). Zero npm runtime deps.
+No build step required. Pure ES modules served directly from the web/ directory. All 240+ modules are pre-compiled .js bundles with accompanying .d.ts type definitions. External dependencies loaded via CDN (cdnjs.cloudflare.com). Zero npm runtime deps.
 
 **Source files:**
 
@@ -38,11 +38,41 @@ HTTPS dev server via web/serve-https.mjs or HTTP fallback via npx serve on port 
 
 **Status:** ✅ Implemented · **Category:** pwa · **Since:** v1.0.0
 
-Installable as a Progressive Web App. Service Worker (sw.js) provides offline caching and background sync. PWA manifest enables home screen installation on mobile and desktop.
+Installable as a Progressive Web App. Service Worker (sw.js) provides offline caching and background sync. PWA manifest enables home screen installation on mobile and desktop. Manifest fields: id, display, display_override (window-controls-overlay / standalone / minimal-ui), categories (developer/productivity/utilities), orientation, shortcuts (New chat, Terminal), icons (192/512 + SVG, maskable).
 
 **Source files:**
 
 - `web/sw.js`
+- `web/manifest.json`
+
+---
+
+### PWA Install Flow
+
+**Status:** ✅ Implemented · **Category:** pwa · **Since:** v2.1.0
+
+Captures the browser-fired beforeinstallprompt event, exposes an imperative tryInstall() to surface the native install prompt, and notifies subscribers when the app becomes installable or installed. Detects standalone mode (iOS Safari home-screen install or display-mode standalone media query) and platform (iOS/Android/desktop). Wired in clawser-app.js at boot.
+
+**Source files:**
+
+- `web/clawser-pwa-install.js`
+- `web/clawser-app.js`
+- `web/manifest.json`
+
+**API surface:**
+
+- `initPwaInstall`
+- `tryInstall`
+- `getInstallState`
+- `onInstallStateChange`
+- `isStandalone`
+- `detectPlatform`
+
+> **Note:** Returned outcome from tryInstall(): 'accepted' | 'dismissed' | 'unavailable'. iOS Safari has no beforeinstallprompt; getInstallState reports installable=false there but isStandalone correctly detects Add-to-Home-Screen.
+
+**See also:**
+
+- PWA (Progressive Web App)
 
 ---
 
@@ -75,7 +105,7 @@ GitHub Actions workflow for continuous integration and deployment. Runs tests, l
 
 **Status:** ✅ Implemented · **Category:** testing · **Since:** v1.0.0
 
-Comprehensive test infrastructure with 253 test files and 7,127+ tests across 12 test groups. Custom test runner (run-tests.mjs) plus vitest for unit tests and Playwright for E2E tests.
+Comprehensive test infrastructure with 300+ test files and 8,800+ tests across 12 test groups. Custom test runner (run-tests.mjs) plus vitest for unit tests and Playwright for E2E tests.
 
 **Source files:**
 
@@ -138,7 +168,7 @@ Targets modern browsers with ES2022+ module support. Requires Web Crypto API, OP
 
 - `types.d.ts`
 
-> **Note:** 77 .d.ts files covering all 148 modules.
+> **Note:** 77+ .d.ts files covering all production modules.
 
 ---
 

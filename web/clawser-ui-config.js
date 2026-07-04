@@ -16,6 +16,21 @@ import { renderIdentityEditor } from './clawser-ui-identity-editor.js';
 import { loadAccounts, resolveAccountKey, SERVICES } from './clawser-accounts.js';
 import { FallbackChain, FallbackExecutor } from './clawser-fallback.js';
 import { AutonomyPresetManager } from './clawser-autonomy-presets.js';
+import { setIfClean, setRadioIfClean, markPanelClean, bindDirtyTrackingForIds } from './clawser-panel-dirty.mjs';
+import { silentCatch } from './clawser-silent-catch.mjs'
+
+// ── Panel input ID groups (used by dirty-tracker registrations) ──
+const AUTONOMY_INPUT_IDS = [
+  'cfgMaxActions', 'cfgDailyCostLimit', 'cfgMonthlyCostLimit',
+  'cfgIdleTimeout', 'cfgAllowedHoursStart', 'cfgAllowedHoursEnd',
+];
+const IDENTITY_INPUT_IDS = [
+  'identityFormat', 'identityPlain', 'identityName', 'identityRole', 'identityPersonality',
+];
+const SECURITY_INPUT_IDS = ['cfgDomainAllowlist', 'cfgMaxFileSize'];
+const TERMINAL_INPUT_IDS = ['terminalRendererSelect'];
+// Heartbeat and hooks panels are list-based (no fixed input IDs);
+// dirty tracking for them is best-effort container-scoped.
 
 // ── Security settings ──────────────────────────────────────────
 /** Apply domain allowlist and max file size from UI inputs to the browser tools and persist. */
@@ -32,49 +47,100 @@ export function applySecuritySettings() {
 
   if (state.agent) {
     const wsId = state.agent.getWorkspace();
-    localStorage.setItem(lsKey.security(wsId), JSON.stringify({ domains: raw, maxFileSizeMB: maxMB }));
+    const value = { domains: raw, maxFileSizeMB: maxMB };
+    localStorage.setItem(lsKey.security(wsId), JSON.stringify(value));
+    // Phase 7: also write through to ~/.config/clawser/security.json
+    if (state.fsUiSync) {
+      state.fsUiSync.saveValue('security', value).catch(e =>
+        console.warn('[clawser] FsUiSync security save failed:', e?.message || e));
+    }
+    // Phase 7: panel is clean again after a successful save.
+    markPanelClean(SECURITY_INPUT_IDS);
   }
 }
 
-// ── Mesh connectivity settings ─────────────────────────────────
-/** Populate relay/signaling URL fields from localStorage. */
-export function renderMeshConnSection() {
-  $('cfgRelayUrl').value = localStorage.getItem('clawser_relay_url') || '';
-  $('cfgSignalingUrl').value = localStorage.getItem('clawser_signaling_url') || '';
+/**
+ * Render security section. Phase 7 read-side helper — refreshes the
+ * allowlist/max-size inputs from a config object (or localStorage when
+ * called without args). Uses dirty-aware setters.
+ *
+ * @param {object} [config]
+ */
+export function renderSecuritySection(config) {
+  const wsId = state.agent?.getWorkspace() || 'default';
+  const saved = config ?? JSON.parse(localStorage.getItem(lsKey.security(wsId)) || '{}');
+  if (saved.domains != null) setIfClean('cfgDomainAllowlist', saved.domains);
+  if (saved.maxFileSizeMB != null) setIfClean('cfgMaxFileSize', saved.maxFileSizeMB);
+  // Apply to live tools (idempotent — applySecuritySettings re-reads UI)
+  applySecuritySettings();
 }
 
-/**
- * Persist relay/signaling URL overrides. Blank clears the override so the
- * DEFAULTS value applies again. Takes effect on next workspace init/switch.
- */
-export function applyMeshConnSettings() {
-  const relayUrl = $('cfgRelayUrl').value.trim();
-  const signalingUrl = $('cfgSignalingUrl').value.trim();
+// ── Mesh / Relay settings ──────────────────────────────────────────
+// Global keys (not workspace-scoped) — relay/signaling endpoints are
+// per-installation, not per-workspace. Match the existing convention
+// used elsewhere in workspace-init-mesh.js.
+const LS_KEY_RELAY_URL = 'clawser_relay_url';
+const LS_KEY_SIGNALING_URL = 'clawser_signaling_url';
+const LS_KEY_RELAY_AUTO_CONNECT = 'clawser_relay_auto_connect';
 
-  if (relayUrl) localStorage.setItem('clawser_relay_url', relayUrl);
-  else localStorage.removeItem('clawser_relay_url');
+/** Read mesh/relay settings from localStorage, falling back to DEFAULTS. */
+export function readMeshRelaySettings() {
+  const ls = (typeof localStorage !== 'undefined') ? localStorage : null;
+  const relayUrl = ls?.getItem(LS_KEY_RELAY_URL) ?? '';
+  const signalingUrl = ls?.getItem(LS_KEY_SIGNALING_URL) ?? '';
+  const autoConnect = ls?.getItem(LS_KEY_RELAY_AUTO_CONNECT) === 'true';
+  return { relayUrl, signalingUrl, autoConnect };
+}
 
-  if (signalingUrl) localStorage.setItem('clawser_signaling_url', signalingUrl);
-  else localStorage.removeItem('clawser_signaling_url');
+/** Render the Mesh / Relay settings section from current localStorage values. */
+export function renderMeshRelaySection() {
+  const settings = readMeshRelaySettings();
+  setIfClean('cfgRelayUrl', settings.relayUrl);
+  setIfClean('cfgSignalingUrl', settings.signalingUrl);
+  const auto = $('cfgRelayAutoConnect');
+  if (auto && document.activeElement !== auto) {
+    auto.checked = !!settings.autoConnect;
+  }
+}
+
+/** Persist mesh/relay settings from UI inputs to localStorage. Empty values clear the override. */
+export function applyMeshRelaySettings() {
+  const ls = (typeof localStorage !== 'undefined') ? localStorage : null;
+  if (!ls) return;
+  const relay = ($('cfgRelayUrl')?.value || '').trim();
+  const signaling = ($('cfgSignalingUrl')?.value || '').trim();
+  const autoConnect = !!$('cfgRelayAutoConnect')?.checked;
+  if (relay) ls.setItem(LS_KEY_RELAY_URL, relay);
+  else ls.removeItem(LS_KEY_RELAY_URL);
+  if (signaling) ls.setItem(LS_KEY_SIGNALING_URL, signaling);
+  else ls.removeItem(LS_KEY_SIGNALING_URL);
+  if (autoConnect) ls.setItem(LS_KEY_RELAY_AUTO_CONNECT, 'true');
+  else ls.removeItem(LS_KEY_RELAY_AUTO_CONNECT);
 }
 
 // ── Config sections (Batch 1) ────────────────────────────────────
 
-/** Render autonomy & costs section (Block 6). */
-export function renderAutonomySection() {
+/**
+ * Render autonomy & costs section (Block 6).
+ *
+ * Phase 7 read-side: when called with a `config` arg (e.g. from
+ * `state.fsUiSync.registerPanel('autonomy', { render })`), uses
+ * dirty-aware setters so external file changes don't trample user-typed
+ * input. When called without args, reads localStorage as before.
+ *
+ * @param {object} [config] - Autonomy config object. When omitted, reads
+ *   from localStorage.
+ */
+export function renderAutonomySection(config) {
   const wsId = state.agent?.getWorkspace() || 'default';
-  const saved = JSON.parse(localStorage.getItem(lsKey.autonomy(wsId)) || '{}');
-  if (saved.level) {
-    const radio = document.querySelector(`input[name="autonomyLevel"][value="${saved.level}"]`);
-    if (radio) radio.checked = true;
-  }
-  if (saved.maxActions) $('cfgMaxActions').value = saved.maxActions;
-  if (saved.dailyCostLimit != null) $('cfgDailyCostLimit').value = saved.dailyCostLimit;
-  if (saved.monthlyCostLimit != null && $('cfgMonthlyCostLimit')) $('cfgMonthlyCostLimit').value = saved.monthlyCostLimit;
-  if (saved.idleTimeoutMin != null && $('cfgIdleTimeout')) $('cfgIdleTimeout').value = saved.idleTimeoutMin;
-  // Restore allowed hours
-  if ($('cfgAllowedHoursStart') && saved.allowedHoursStart != null) $('cfgAllowedHoursStart').value = saved.allowedHoursStart;
-  if ($('cfgAllowedHoursEnd') && saved.allowedHoursEnd != null) $('cfgAllowedHoursEnd').value = saved.allowedHoursEnd;
+  const saved = config ?? JSON.parse(localStorage.getItem(lsKey.autonomy(wsId)) || '{}');
+  if (saved.level) setRadioIfClean('autonomyLevel', saved.level);
+  if (saved.maxActions != null) setIfClean('cfgMaxActions', saved.maxActions);
+  if (saved.dailyCostLimit != null) setIfClean('cfgDailyCostLimit', saved.dailyCostLimit);
+  if (saved.monthlyCostLimit != null) setIfClean('cfgMonthlyCostLimit', saved.monthlyCostLimit);
+  if (saved.idleTimeoutMin != null) setIfClean('cfgIdleTimeout', saved.idleTimeoutMin);
+  if (saved.allowedHoursStart != null) setIfClean('cfgAllowedHoursStart', saved.allowedHoursStart);
+  if (saved.allowedHoursEnd != null) setIfClean('cfgAllowedHoursEnd', saved.allowedHoursEnd);
   // Apply saved config to agent's AutonomyController
   if (state.agent && saved.level) {
     const allowedHours = parseAllowedHoursFromUI(saved);
@@ -90,8 +156,9 @@ export function renderAutonomySection() {
       state.agent.init({ idleTimeoutMs: parseFloat(saved.idleTimeoutMin) * 60000 || 0 });
     }
   }
-  // Render preset dropdown
-  renderAutonomyPresets(wsId);
+  // Render preset dropdown (only on initial / explicit render — preset
+  // dropdown is independent of config).
+  if (!config) renderAutonomyPresets(wsId);
   updateCostMeter();
   updateAutonomyBadge();
 }
@@ -116,7 +183,16 @@ export function saveAutonomySettings() {
   const allowedHoursStart = $('cfgAllowedHoursStart')?.value || '';
   const allowedHoursEnd = $('cfgAllowedHoursEnd')?.value || '';
   const allowedHours = parseAllowedHoursFromUI({ allowedHoursStart, allowedHoursEnd });
-  localStorage.setItem(lsKey.autonomy(wsId), JSON.stringify({ level, maxActions, dailyCostLimit, monthlyCostLimit, idleTimeoutMin, allowedHoursStart, allowedHoursEnd }));
+  const value = { level, maxActions, dailyCostLimit, monthlyCostLimit, idleTimeoutMin, allowedHoursStart, allowedHoursEnd };
+  localStorage.setItem(lsKey.autonomy(wsId), JSON.stringify(value));
+  // Phase 7: also write through to ~/.config/clawser/autonomy.json so the
+  // file-system view stays in sync with the panel. Best-effort — the
+  // localStorage write above remains the authoritative panel persistence
+  // until all panels migrate.
+  if (state.fsUiSync) {
+    state.fsUiSync.saveValue('autonomy', value).catch(e =>
+      console.warn('[clawser] FsUiSync autonomy save failed:', e?.message || e));
+  }
   // Apply live to agent's AutonomyController
   if (state.agent) {
     state.agent.applyAutonomyConfig({
@@ -131,6 +207,9 @@ export function saveAutonomySettings() {
       state.agent.init({ idleTimeoutMs: idleTimeoutMin * 60000 });
     }
   }
+  // Phase 7: panel is clean again after a successful save — subsequent
+  // external file changes can update untouched inputs.
+  markPanelClean(AUTONOMY_INPUT_IDS);
   updateCostMeter();
   updateAutonomyBadge();
 }
@@ -190,7 +269,20 @@ function renderAutonomyPresets(wsId) {
 
 /** Update cost meter bar and label. */
 export function updateCostMeter() {
-  const limit = parseFloat($('cfgDailyCostLimit')?.value) || 5;
+  // Prefer the DOM input (when the autonomy panel is rendered) but fall
+  // back to the persisted config so the meter reflects the saved limit
+  // even when the user hasn't opened the autonomy panel this session.
+  const inputVal = parseFloat($('cfgDailyCostLimit')?.value);
+  let limit = Number.isFinite(inputVal) && inputVal > 0 ? inputVal : null;
+  if (limit == null) {
+    const wsId = state.agent?.getWorkspace?.() || 'default';
+    try {
+      const saved = JSON.parse(localStorage.getItem(lsKey.autonomy(wsId)) || '{}');
+      const fromCfg = parseFloat(saved.dailyCostLimit);
+      if (Number.isFinite(fromCfg) && fromCfg > 0) limit = fromCfg;
+    } catch { /* fall through to default */ }
+  }
+  if (limit == null) limit = 5;
   const spent = state.sessionCost || 0;
   const pct = Math.min((spent / limit) * 100, 100);
   const bar = $('costMeterBar');
@@ -206,21 +298,34 @@ export function updateCostMeter() {
 export function updateAutonomyBadge() {
   const badge = $('autonomyBadge');
   if (!badge) return;
-  const level = document.querySelector('input[name="autonomyLevel"]:checked')?.value || 'supervised';
+  // Same pattern as updateCostMeter — prefer DOM, fall back to saved config.
+  let level = document.querySelector('input[name="autonomyLevel"]:checked')?.value;
+  if (!level) {
+    const wsId = state.agent?.getWorkspace?.() || 'default';
+    try {
+      const saved = JSON.parse(localStorage.getItem(lsKey.autonomy(wsId)) || '{}');
+      if (saved.level) level = saved.level;
+    } catch { /* fall through to default */ }
+  }
+  if (!level) level = 'supervised';
   const labels = { readonly: '\u{1F534} ReadOnly', supervised: '\u{1F7E1} Supervised', full: '\u{1F7E2} Full' };
   badge.textContent = labels[level] || '';
   badge.className = `autonomy-badge visible ${level}`;
 }
 
-/** Render identity section (Block 7). */
-export function renderIdentitySection() {
+/**
+ * Render identity section (Block 7).
+ *
+ * Phase 7 read-side: takes optional `config`. Uses dirty-aware setters.
+ */
+export function renderIdentitySection(config) {
   const wsId = state.agent?.getWorkspace() || 'default';
-  const saved = JSON.parse(localStorage.getItem(lsKey.identity(wsId)) || '{}');
-  if (saved.format) $('identityFormat').value = saved.format;
-  if (saved.plain) $('identityPlain').value = saved.plain;
-  if (saved.name) $('identityName').value = saved.name;
-  if (saved.role) $('identityRole').value = saved.role;
-  if (saved.personality) $('identityPersonality').value = saved.personality;
+  const saved = config ?? JSON.parse(localStorage.getItem(lsKey.identity(wsId)) || '{}');
+  if (saved.format != null) setIfClean('identityFormat', saved.format);
+  if (saved.plain != null) setIfClean('identityPlain', saved.plain);
+  if (saved.name != null) setIfClean('identityName', saved.name);
+  if (saved.role != null) setIfClean('identityRole', saved.role);
+  if (saved.personality != null) setIfClean('identityPersonality', saved.personality);
   toggleIdentityFormat();
   // Apply saved identity to system prompt on init
   applyIdentityToAgent(saved);
@@ -264,10 +369,17 @@ export function saveIdentitySettings() {
     personality: $('identityPersonality').value,
   };
   localStorage.setItem(lsKey.identity(wsId), JSON.stringify(saved));
+  // Phase 7: also write through to ~/.config/clawser/identity.json
+  if (state.fsUiSync) {
+    state.fsUiSync.saveValue('identity', saved).catch(e =>
+      console.warn('[clawser] FsUiSync identity save failed:', e?.message || e));
+  }
   // Toggle format visibility (plain vs aieos) when format changes
   toggleIdentityFormat();
   // Apply live to agent's system prompt
   applyIdentityToAgent(saved);
+  // Phase 7: panel is clean again after a successful save.
+  markPanelClean(IDENTITY_INPUT_IDS);
 }
 
 /** Render model routing section (Block 11). */
@@ -437,9 +549,7 @@ export function saveLimitsSettings() {
 export function renderLimitsSection() {
   const wsId = state.agent?.getWorkspace() || 'default';
   let saved = null;
-  try {
-    saved = JSON.parse(localStorage.getItem(lsKey.config(wsId)) || 'null');
-  } catch { /* ignore */ }
+  try { saved = JSON.parse(localStorage.getItem(lsKey.config(wsId)) || 'null'); } catch (e) { silentCatch('clawser-ui-config', 'saved', e) }
 
   // Restore input values from saved config (or use DEFAULTS)
   const ttlMin = saved?.cacheTtlMs != null ? Math.round(saved.cacheTtlMs / 60_000) : 30;
@@ -516,16 +626,31 @@ export function saveHeartbeatSettings() {
     if (nameEl) items.push({ description: nameEl.textContent, interval: 300000 });
   }
   localStorage.setItem(lsKey.heartbeat(wsId), JSON.stringify(items));
+  // Phase 7: also write through to ~/.config/clawser/daemon.json
+  if (state.fsUiSync) {
+    state.fsUiSync.saveValue('daemon', { items }).catch(e =>
+      console.warn('[clawser] FsUiSync daemon save failed:', e?.message || e));
+  }
 }
 
-/** Render heartbeat checks (Block 29). */
-export function renderHeartbeatSection() {
+/**
+ * Render heartbeat checks (Block 29).
+ *
+ * Phase 7 read-side: takes optional `config`. Heartbeat is a list panel
+ * — we re-render the whole list. Since the list is server-of-truth and
+ * has no per-row form state, dirty preservation is moot for this panel.
+ *
+ * @param {object} [config] - `{ items: [...] }` shape, or array directly.
+ */
+export function renderHeartbeatSection(config) {
   const el = $('heartbeatChecks');
   if (!el) return;
   el.innerHTML = '';
 
   const wsId = state.agent?.getWorkspace() || 'default';
-  const saved = JSON.parse(localStorage.getItem(lsKey.heartbeat(wsId)) || 'null');
+  const saved = config?.items
+    ?? (Array.isArray(config) ? config : null)
+    ?? JSON.parse(localStorage.getItem(lsKey.heartbeat(wsId)) || 'null');
   const defaultChecks = [
     { description: 'Memory health', interval: 300000 },
     { description: 'Provider connectivity', interval: 300000 },
@@ -894,7 +1019,8 @@ export function renderSchedulerDashboard() {
   el.querySelectorAll('[data-sched-run]').forEach(btn => {
     btn.addEventListener('click', async () => {
       const id = btn.dataset.schedRun;
-      try { await state.routineEngine.triggerManual(id); } catch (e) { addErrorMsg(`Routine run failed: ${e.message}`); }
+      try { await state.routineEngine.triggerManual(id); }
+      catch (e) { addErrorMsg(`Routine "${id}" run failed: ${e?.message || e}`); }
       renderSchedulerDashboard();
     });
   });
@@ -1014,8 +1140,15 @@ export async function renderQuotaBar() {
 
 // ── Hook Management UI (Phase 2d) ────────────────────────────────
 
-/** Render the hooks section in the config panel. */
-export function renderHooksSection() {
+/**
+ * Render the hooks section in the config panel.
+ *
+ * Phase 7 read-side: takes optional `config` (`{ hooks: [...] }`). Like
+ * heartbeat, hooks are a list panel — re-render is full-replace.
+ *
+ * @param {object} [config]
+ */
+export function renderHooksSection(config) {
   const list = $('hookList');
   if (!list) return;
   list.innerHTML = '';
@@ -1025,7 +1158,9 @@ export function renderHooksSection() {
     return;
   }
 
-  const hooks = state.agent.listHooks();
+  const hooks = (config?.hooks && Array.isArray(config.hooks))
+    ? config.hooks
+    : state.agent.listHooks();
   for (const hook of hooks) {
     const d = document.createElement('div');
     d.className = 'hook-item';
@@ -1071,6 +1206,12 @@ export function renderHooksSection() {
           addMsg('system', `Hook "${name}" added.`);
           if (addForm) addForm.style.display = 'none';
           renderHooksSection();
+          // Phase 7: also write through to ~/.config/clawser/hooks.json
+          if (state.fsUiSync && state.agent.listHooks) {
+            const hooks = state.agent.listHooks();
+            state.fsUiSync.saveValue('hooks', { hooks }).catch(e =>
+              console.warn('[clawser] FsUiSync hooks save failed:', e?.message || e));
+          }
         }
       } catch (e) { addMsg('error', `Hook parse error: ${e.message}`); }
     };
@@ -1314,10 +1455,16 @@ export function renderAuthProfilesEnhanced() {
       if (!name) return;
       const provider = await modal.prompt('Provider (e.g. openai, anthropic):');
       if (!provider) return;
-      if (state.authProfileManager?.createProfile) {
-        state.authProfileManager.createProfile({ name, provider });
+      if (!state.authProfileManager?.addProfile) {
+        addErrorMsg('Auth profile manager not initialized.');
+        return;
+      }
+      try {
+        await state.authProfileManager.addProfile(provider, name, {});
         renderAuthProfilesEnhanced();
-        addMsg('system', `Profile "${name}" created.`);
+        addMsg('system', `Profile "${name}" created. Set credentials via the OAuth flow or auth-profile API.`);
+      } catch (e) {
+        addErrorMsg(`Profile create failed: ${e?.message || e}`);
       }
     });
     list.parentElement?.appendChild(btn);

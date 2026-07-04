@@ -31,12 +31,12 @@ describe('SecretVault recovery codes', () => {
 
   it('hasRecovery is false before setup, true after', async () => {
     assert.equal(await vault.hasRecovery(), false);
-    await vault.setupRecovery('original-passphrase-9!');
+    await vault.setupRecovery();
     assert.equal(await vault.hasRecovery(), true);
   });
 
   it('recoverWithCode rekeys the vault to a new passphrase', async () => {
-    const code = await vault.setupRecovery('original-passphrase-9!');
+    const code = await vault.setupRecovery();
     vault.lock();
 
     const result = await vault.recoverWithCode(code, 'brand-new-passphrase-7?');
@@ -56,7 +56,7 @@ describe('SecretVault recovery codes', () => {
   });
 
   it('recoverWithCode tolerates lowercase and missing dashes', async () => {
-    const code = await vault.setupRecovery('original-passphrase-9!');
+    const code = await vault.setupRecovery();
     vault.lock();
 
     const sloppy = code.toLowerCase().replace(/-/g, ' ');
@@ -65,7 +65,7 @@ describe('SecretVault recovery codes', () => {
   });
 
   it('rejects a wrong recovery code and leaves the vault intact', async () => {
-    await vault.setupRecovery('original-passphrase-9!');
+    await vault.setupRecovery();
     vault.lock();
 
     const result = await vault.recoverWithCode('AAAA-AAAA-AAAA-AAAA-AAAA', 'x');
@@ -82,7 +82,7 @@ describe('SecretVault recovery codes', () => {
   });
 
   it('list() hides internal vault entries', async () => {
-    await vault.setupRecovery('original-passphrase-9!');
+    await vault.setupRecovery();
     const names = await vault.list();
     assert.deepEqual(names, ['apikey-openai']);
   });

@@ -17,6 +17,7 @@
  *   umountGuest('/mnt/guest', mountableFs);
  */
 
+import { silentCatch } from './clawser-silent-catch.mjs'
 import {
   parseLsOutput,
   parseStatOutput,
@@ -240,6 +241,67 @@ export const listGuestMounts = () => {
  */
 export const isGuestMount = (mountPoint) => {
   return activeMounts.has(mountPoint.replace(/\/+$/, ''));
+};
+
+/**
+ * Wire a v86 guest's lifecycle to automatic mount/umount of its filesystem.
+ *
+ * Subscribes to the guest's `onStateChange` callbacks and mounts at
+ * `mountPoint` when the guest reaches `running`, unmounts on `shutdown`
+ * or `error`. If the guest is already running at call time, mounts
+ * immediately.
+ *
+ * @param {import('./clawser-v86-guest.mjs').LinuxGuest} guest
+ * @param {import('./clawser-mount.js').MountableFs} mountableFs
+ * @param {object} [opts]
+ * @param {string} [opts.mountPoint='/mnt/guest'] - Where to mount
+ * @param {boolean} [opts.readOnly=false]
+ * @returns {() => void} Unsubscribe function — also unmounts if currently mounted
+ *
+ * @example
+ *   const unwire = autoMountGuest(guest, state.workspaceFs);
+ *   // Guest's filesystem is now mounted at /mnt/guest whenever it's running.
+ *   unwire(); // detaches the listener and unmounts
+ */
+export const autoMountGuest = (guest, mountableFs, opts = {}) => {
+  const mountPoint = (opts.mountPoint || '/mnt/guest').replace(/\/+$/, '');
+  const readOnly = !!opts.readOnly;
+
+  const tryMount = () => {
+    if (activeMounts.has(mountPoint)) return; // already mounted
+    try {
+      mountGuest(mountPoint, guest, mountableFs, { readOnly });
+    } catch (e) {
+      console.warn(`[clawser] autoMountGuest: mount failed: ${e.message}`);
+    }
+  };
+
+  const tryUmount = () => {
+    if (!activeMounts.has(mountPoint)) return;
+    try {
+      umountGuest(mountPoint, mountableFs);
+    } catch (e) {
+      console.warn(`[clawser] autoMountGuest: umount failed: ${e.message}`);
+    }
+  };
+
+  const handler = (state) => {
+    if (state === 'running') tryMount();
+    else if (state === 'shutdown' || state === 'error') tryUmount();
+  };
+
+  // Mount immediately if the guest is already running.
+  if (guest.state === 'running') tryMount();
+
+  // onStateChange returns its own unsubscribe in the v86-guest module.
+  const unsub = typeof guest.onStateChange === 'function'
+    ? guest.onStateChange(handler)
+    : () => {};
+
+  return () => {
+    try { unsub(); } catch (e) { silentCatch('clawser-fs-guest-mount', 'unsub', e) }
+    tryUmount();
+  };
 };
 
 // ── Helpers ──────────────────────────────────────────────────────

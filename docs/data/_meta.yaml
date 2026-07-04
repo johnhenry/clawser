@@ -5,16 +5,16 @@ status: beta
 repo: https://github.com/johnhenry/clawser
 site: https://johnhenry.github.io/clawser/
 chrome_extension: https://chromewebstore.google.com/detail/clawser-browser-control/dljchbfodafekojicopaboiegophjcbc
-generated: 2026-04-27
-total_modules: 148
+generated: 2026-05-02
+total_modules: 240
 total_loc: 120000
 total_tools: 285
-total_tests: 7127
-test_files: 253
-shell_builtins: 59
+total_tests: 8884
+test_files: 305
+shell_builtins: 65
 llm_providers: 38
 channel_adapters: 8
-mesh_modules: 43
+mesh_modules: 44
 kernel_modules: 16
 design_principles:
   - Browser as OS
