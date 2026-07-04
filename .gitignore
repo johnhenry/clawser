@@ -5,3 +5,9 @@ node_modules/
 extracted_conversations/
 .claude/settings.local.json
 .claude/worktrees/
+
+# docs-site build output — copied into web/docs/ at build time by
+# docs-site's own build script, not committed
+/web/docs/
+docs-site/dist/
+docs-site/.astro/
