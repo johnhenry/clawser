@@ -1,3 +1,4 @@
+import { silentCatch } from './clawser-silent-catch.mjs'
 /**
  * Clawser Skills Registry Server
  *
@@ -163,7 +164,7 @@ export class SkillsRegistryServer {
 
     // Persist
     if (this.#onPersist) {
-      try { await this.#onPersist([...this.#skills.values()]); } catch { /* ignore */ }
+      try { await this.#onPersist([...this.#skills.values()]); } catch (e) { silentCatch('clawser-skills-registry-server', 'this', e) }
     }
 
     const { content, ...meta } = entry;

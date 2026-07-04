@@ -1,9 +1,14 @@
 /**
  * clawser-snapshots.js — Atomic Workspace Snapshots
  *
- * Save and restore complete workspace state as a single compressed
- * IndexedDB blob. All subsystem state is serialized into one object,
- * compressed with fflate, and stored atomically.
+ * Two persistence backends:
+ *
+ * - **Tar-on-OPFS (default).** Snapshots live as POSIX USTAR archives at
+ *   `~/.local/share/clawser/snapshots/{id}.tar` per UFS §2.4. Writer/reader
+ *   in `clawser-tar.mjs`. Each subsystem becomes one tar entry.
+ * - **IndexedDB (legacy).** A single fflate-compressed blob keyed by snapshot
+ *   id. Older snapshots created before the OPFS migration are still readable
+ *   through this path.
  *
  * Subsystems captured:
  *   - EventLog (JSONL)
@@ -20,10 +25,12 @@
  *
  * @example
  *   import { SnapshotManager } from './clawser-snapshots.js';
- *   const mgr = new SnapshotManager({ idb });
+ *   const mgr = new SnapshotManager();
  *   const meta = await mgr.createAtomicSnapshot({ agent, routineEngine, shell, ... });
- *   await mgr.restoreAtomicSnapshot(meta.id);
+ *   await mgr.restoreAtomicSnapshot(meta.id, { agent, routineEngine, shell });
  */
+
+import { writeTar, readTar } from './clawser-tar.mjs';
 
 // ── Constants ──────────────────────────────────────────────────
 
@@ -32,6 +39,12 @@ const DB_VERSION = 1;
 const STORE_NAME = 'snapshots';
 const META_STORE = 'snapshot_meta';
 const SNAPSHOT_VERSION = 1;
+
+/**
+ * OPFS path where tar snapshots are stored, relative to workspace home.
+ * Per UFS §2.4 the path is `~/.local/share/clawser/snapshots/`.
+ */
+const SNAPSHOT_DIR = '~/.local/share/clawser/snapshots';
 
 // ── IndexedDB helpers ──────────────────────────────────────────
 
@@ -517,6 +530,234 @@ export class SnapshotManager {
       tx.oncomplete = () => { db.close(); resolve(); };
       tx.onerror = () => { db.close(); reject(tx.error); };
     });
+  }
+
+  // ── Tar-on-OPFS backend ───────────────────────────────────────
+
+  /**
+   * Create an atomic snapshot as a POSIX USTAR archive in OPFS.
+   *
+   * Each subsystem becomes one tar entry under a fixed prefix; metadata is
+   * also serialized as a JSON entry so the archive is self-describing.
+   * Layout:
+   *
+   *   meta.json
+   *   eventLog.jsonl
+   *   checkpoint.json
+   *   memories.json
+   *   config.json
+   *   routines.json
+   *   shell.json
+   *   skill-activations.json
+   *   hooks.json
+   *   localStorage.json
+   *
+   * @param {object} opts - Same shape as `createAtomicSnapshot`, plus `fs`.
+   * @param {object} opts.fs - A workspace-fs adapter exposing async
+   *   readFile/writeFile/listDir/delete (e.g. `state.workspaceFs` or a
+   *   `ShellFs`). Falls back to `MemoryFs` when omitted (testing).
+   * @returns {Promise<{ id, name, timestamp, size, wsId, subsystems, version, path }>}
+   *
+   * @example
+   *   const meta = await mgr.createTarSnapshot({
+   *     agent, routineEngine, shell, skillRegistry,
+   *     fs: state.shell.fs,
+   *     name: 'before-refactor',
+   *   });
+   */
+  async createTarSnapshot(opts) {
+    const { name, fs, ...stateOpts } = opts;
+    if (!fs) throw new Error('createTarSnapshot: opts.fs is required');
+
+    const data = collectState(stateOpts);
+    const id = `snap_${Date.now().toString(36)}_${(globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2)).slice(0, 6)}`;
+    const timestamp = Date.now();
+
+    const subsystems = [];
+    const entries = [];
+
+    // meta.json — header containing snapshot metadata
+    const meta = {
+      id,
+      name: name || `snapshot-${new Date(timestamp).toISOString().slice(0, 19).replace(/[T:]/g, '-')}`,
+      timestamp,
+      wsId: data.wsId,
+      version: SNAPSHOT_VERSION,
+    };
+
+    // One entry per subsystem
+    if (data.eventLog) {
+      entries.push({ name: 'eventLog.jsonl', content: data.eventLog });
+      subsystems.push('eventLog');
+    }
+    if (data.checkpoint) {
+      entries.push({ name: 'checkpoint.json', content: JSON.stringify(data.checkpoint) });
+      subsystems.push('checkpoint');
+    }
+    if (data.memories?.length) {
+      entries.push({ name: 'memories.json', content: JSON.stringify(data.memories) });
+      subsystems.push('memories');
+    }
+    if (data.config && Object.keys(data.config).length) {
+      entries.push({ name: 'config.json', content: JSON.stringify(data.config) });
+      subsystems.push('config');
+    }
+    if (data.routines) {
+      entries.push({ name: 'routines.json', content: JSON.stringify(data.routines) });
+      subsystems.push('routines');
+    }
+    if (data.shell) {
+      entries.push({ name: 'shell.json', content: JSON.stringify(data.shell) });
+      subsystems.push('shell');
+    }
+    if (data.skillActivations?.length) {
+      entries.push({ name: 'skill-activations.json', content: JSON.stringify(data.skillActivations) });
+      subsystems.push('skillActivations');
+    }
+    if (data.hooks) {
+      entries.push({ name: 'hooks.json', content: JSON.stringify(data.hooks) });
+      subsystems.push('hooks');
+    }
+    if (data.localStorage && Object.keys(data.localStorage).length) {
+      entries.push({ name: 'localStorage.json', content: JSON.stringify(data.localStorage) });
+      subsystems.push('localStorage');
+    }
+
+    meta.subsystems = subsystems;
+
+    // Prepend meta.json so a partial read still yields header info
+    entries.unshift({ name: 'meta.json', content: JSON.stringify(meta, null, 2) });
+
+    const archive = writeTar(entries);
+    meta.size = archive.byteLength;
+    const path = `${SNAPSHOT_DIR}/${id}.tar`;
+
+    // Ensure directory exists, then write
+    if (typeof fs.mkdir === 'function') {
+      try { await fs.mkdir(SNAPSHOT_DIR); } catch { /* may already exist */ }
+    }
+    await fs.writeFile(path, archive);
+
+    return { ...meta, path };
+  }
+
+  /**
+   * Restore from a tar snapshot stored in OPFS.
+   *
+   * @param {string} idOrPath - Snapshot id (`snap_*`) or the full path.
+   * @param {object} opts
+   * @param {object} opts.fs - Workspace fs (same shape as createTarSnapshot).
+   * @param {import('./clawser-agent.js').ClawserAgent} opts.agent
+   * @param {import('./clawser-routines.js').RoutineEngine} [opts.routineEngine]
+   * @param {import('./clawser-shell.js').ClawserShell} [opts.shell]
+   * @param {import('./clawser-skills.js').SkillRegistry} [opts.skillRegistry]
+   * @returns {Promise<{ meta, restored, skipped, errors }|null>}
+   */
+  async restoreTarSnapshot(idOrPath, opts) {
+    const { fs, ...applyOpts } = opts;
+    if (!fs) throw new Error('restoreTarSnapshot: opts.fs is required');
+
+    const path = idOrPath.includes('/') ? idOrPath : `${SNAPSHOT_DIR}/${idOrPath}.tar`;
+
+    let archive;
+    try {
+      const raw = await fs.readFile(path);
+      archive = raw instanceof Uint8Array ? raw : new TextEncoder().encode(String(raw));
+    } catch {
+      return null;
+    }
+
+    const entries = readTar(archive);
+    const byName = Object.fromEntries(entries.map(e => [e.name, e]));
+    const dec = new TextDecoder();
+    const readJson = (name) => {
+      const e = byName[name];
+      if (!e) return undefined;
+      try { return JSON.parse(dec.decode(e.content)); } catch { return undefined; }
+    };
+
+    const meta = readJson('meta.json');
+    if (!meta) return null;
+
+    // Reassemble the snapshot object expected by applyState()
+    const data = {
+      version: meta.version,
+      wsId: meta.wsId,
+      eventLog: byName['eventLog.jsonl'] ? dec.decode(byName['eventLog.jsonl'].content) : '',
+      checkpoint: readJson('checkpoint.json') ?? null,
+      memories: readJson('memories.json') ?? [],
+      config: readJson('config.json') ?? {},
+      routines: readJson('routines.json') ?? null,
+      shell: readJson('shell.json') ?? null,
+      skillActivations: readJson('skill-activations.json') ?? [],
+      hooks: readJson('hooks.json') ?? null,
+      localStorage: readJson('localStorage.json') ?? {},
+    };
+
+    const result = applyState(data, applyOpts);
+    return { meta, ...result };
+  }
+
+  /**
+   * List tar snapshots stored under `~/.local/share/clawser/snapshots/`.
+   * Reads each file's `meta.json` entry to produce metadata.
+   *
+   * @param {object} opts
+   * @param {object} opts.fs - Workspace fs.
+   * @param {string} [opts.wsId] - Filter to a specific workspace id.
+   * @returns {Promise<Array<{ id, name, timestamp, size, wsId, subsystems, path }>>}
+   */
+  async listTarSnapshots(opts) {
+    const { fs, wsId } = opts || {};
+    if (!fs) throw new Error('listTarSnapshots: opts.fs is required');
+
+    let dirEntries;
+    try {
+      dirEntries = await fs.listDir(SNAPSHOT_DIR);
+    } catch {
+      return [];
+    }
+
+    const results = [];
+    for (const entry of dirEntries) {
+      if (entry.kind !== 'file' || !entry.name.endsWith('.tar')) continue;
+      const path = `${SNAPSHOT_DIR}/${entry.name}`;
+      try {
+        const raw = await fs.readFile(path);
+        const archive = raw instanceof Uint8Array ? raw : new TextEncoder().encode(String(raw));
+        const tarEntries = readTar(archive);
+        const metaEntry = tarEntries.find(e => e.name === 'meta.json');
+        if (!metaEntry) continue;
+        const meta = JSON.parse(new TextDecoder().decode(metaEntry.content));
+        if (wsId && meta.wsId !== wsId) continue;
+        results.push({ ...meta, size: archive.byteLength, path });
+      } catch {
+        // Skip unreadable / corrupt archives — never throw from list.
+      }
+    }
+
+    results.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    return results;
+  }
+
+  /**
+   * Delete a tar snapshot.
+   *
+   * @param {string} idOrPath - Snapshot id or full path.
+   * @param {object} opts
+   * @param {object} opts.fs - Workspace fs.
+   * @returns {Promise<boolean>}
+   */
+  async deleteTarSnapshot(idOrPath, opts) {
+    const { fs } = opts || {};
+    if (!fs) throw new Error('deleteTarSnapshot: opts.fs is required');
+    const path = idOrPath.includes('/') ? idOrPath : `${SNAPSHOT_DIR}/${idOrPath}.tar`;
+    try {
+      await fs.delete(path);
+      return true;
+    } catch {
+      return false;
+    }
   }
 }
 

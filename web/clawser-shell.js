@@ -207,10 +207,65 @@ export function tokenize(input, opts = {}) {
 export function isIncomplete(input) {
   if (!input || !input.trim()) return false;
   const trimmed = input.trim();
-  // Trailing backslash = line continuation
-  if (trimmed.endsWith('\\')) return true;
-  // Count control structure keywords
-  const tokens = trimmed.split(/\s+|;/);
+
+  // Walk the string character by character, tracking quote and comment state
+  // so keywords like `then`/`fi`/`do`/`done` inside quotes or comments don't
+  // affect depth. Output is a "stripped" string with all quoted runs and
+  // comments replaced by spaces — safe to keyword-scan.
+  let stripped = '';
+  let inSingle = false, inDouble = false, escape = false, openQuote = false;
+  for (let i = 0; i < trimmed.length; i++) {
+    const ch = trimmed[i];
+    if (escape) {
+      // Escaped char becomes part of the surrounding word so adjacent
+      // keywords don't get split out by the whitespace tokenizer.
+      // Treat both the backslash and the escaped char as a single word
+      // character ('_'). That way `\"if` parses as one token, not bare 'if'.
+      stripped += '_';
+      escape = false;
+      continue;
+    }
+    if (ch === '\\') {
+      escape = true;
+      stripped += '_';
+      continue;
+    }
+    if (inSingle) {
+      if (ch === "'") inSingle = false;
+      stripped += ' ';
+      continue;
+    }
+    if (inDouble) {
+      if (ch === '"') inDouble = false;
+      stripped += ' ';
+      continue;
+    }
+    if (ch === "'") { inSingle = true; stripped += ' '; continue; }
+    if (ch === '"') { inDouble = true; stripped += ' '; continue; }
+    if (ch === '#') {
+      // Line comment — strip until end of line
+      while (i < trimmed.length && trimmed[i] !== '\n') {
+        stripped += ' ';
+        i++;
+      }
+      // Re-examine the newline (or fall off end) on next iteration
+      if (i < trimmed.length) stripped += trimmed[i];
+      continue;
+    }
+    stripped += ch;
+  }
+  if (inSingle || inDouble) {
+    openQuote = true;
+  }
+
+  // Trailing backslash (only if not inside an open quote) = line continuation.
+  // The escape flag may already be true for a trailing `\` — same signal.
+  if (escape) return true;
+  if (trimmed.endsWith('\\') && !openQuote) return true;
+  if (openQuote) return true;
+
+  // Count control structure keywords on the stripped, comment/quote-free text
+  const tokens = stripped.split(/\s+|;/);
   let depth = 0;
   for (const t of tokens) {
     if (t === 'if' || t === 'while' || t === 'for') depth++;
@@ -220,9 +275,10 @@ export function isIncomplete(input) {
     if (t === '}') depth--;
   }
   if (depth > 0) return true;
-  // Unclosed then/do without fi/done
-  const hasOpenThen = /\bthen\b/.test(trimmed) && !/\bfi\b/.test(trimmed);
-  const hasOpenDo = /\bdo\b/.test(trimmed) && !/\bdone\b/.test(trimmed);
+
+  // Unclosed then/do without fi/done — checked against stripped text only.
+  const hasOpenThen = /\bthen\b/.test(stripped) && !/\bfi\b/.test(stripped);
+  const hasOpenDo = /\bdo\b/.test(stripped) && !/\bdone\b/.test(stripped);
   if (hasOpenThen || hasOpenDo) return true;
   return false;
 }
@@ -1056,6 +1112,9 @@ export class ShellState {
     this._returnCode = undefined;
     /** @type {Map<string, string>|undefined} Local variable scope inside function */
     this._localScope = undefined;
+    /** @type {string|null} Sanitized active workspace name. Powers the
+     *  /home/<active>/… alias for ~/ in `resolvePath`. */
+    this.activeHomeName = null;
   }
 
   /** Virtual working directory (workspace-relative, starts at /). */
@@ -1076,11 +1135,39 @@ export class ShellState {
     // Tilde expansion: ~ and ~/... resolve to workspace root
     if (path === '~') return '/';
     if (path.startsWith('~/')) return normalizePath('/' + path.slice(2));
+    // /home/<active>/... aliases to the workspace root, mirroring ~/.
+    // Cross-workspace /home/<other>/... is left intact so the fs layer
+    // can deny it; same for the bare /home and /home/.
+    if (this.activeHomeName) {
+      const prefix = `/home/${this.activeHomeName}`;
+      if (path === prefix) return '/';
+      if (path.startsWith(`${prefix}/`)) return normalizePath('/' + path.slice(prefix.length + 1));
+    }
     // Absolute path
     if (path.startsWith('/')) return normalizePath(path);
     // Relative path
     const base = this.cwd === '/' ? '' : this.cwd;
     return normalizePath(`${base}/${path}`);
+  }
+
+  /**
+   * Test whether `shellPath` targets a workspace other than the active
+   * one (or the bare `/home` listing). Used by builtins / redirects to
+   * deny cross-workspace operations regardless of the underlying fs.
+   * Workspace isolation is "none cross-workspace access" per the user's
+   * design decision; this helper is the fs-agnostic enforcement point.
+   *
+   * @param {string} shellPath
+   * @returns {boolean}
+   */
+  isCrossWorkspaceHome(shellPath) {
+    if (typeof shellPath !== 'string') return false;
+    if (shellPath === '/home' || shellPath === '/home/') return true;
+    if (!shellPath.startsWith('/home/')) return false;
+    const rest = shellPath.slice('/home/'.length);
+    const slashIdx = rest.indexOf('/');
+    const name = slashIdx === -1 ? rest : rest.slice(0, slashIdx);
+    return name !== this.activeHomeName;
   }
 }
 
@@ -1154,7 +1241,6 @@ export class CommandRegistry {
  * @param {object} [opts] - { stdin, fs }
  * @returns {Promise<{stdout: string, stderr: string, exitCode: number}>}
  */
-// TODO: tab completion for commands and file paths
 export async function execute(node, state, registry, opts = {}) {
   if (!node) return { stdout: '', stderr: '', exitCode: 0 };
 
@@ -1331,11 +1417,35 @@ async function executeCommand(node, state, registry, opts) {
   // User-defined function invocation
   if (state.functions?.has(expandedName)) {
     const funcBody = state.functions.get(expandedName);
-    // Set positional parameters and local scope
-    const prevArgs = state.env.get('_FUNC_ARGS');
+
+    // Snapshot positional params and the bookkeeping vars so nested calls
+    // restore the caller's $1..$N, $@, $# correctly. We capture the prior
+    // value for every key we are about to overwrite (or absence as undefined),
+    // then restore exactly that on exit.
+    const positionalKeys = new Set(['@', '#']);
+    // Snapshot existing $1..$9 (plus any higher arity already in env) and any
+    // index we will set during this call so the restore covers the union.
+    for (const k of state.env.keys()) {
+      if (/^\d+$/.test(k)) positionalKeys.add(k);
+    }
+    for (let i = 0; i < expandedArgs.length; i++) {
+      positionalKeys.add(String(i + 1));
+    }
+    const savedPositional = new Map();
+    for (const k of positionalKeys) {
+      savedPositional.set(k, state.env.has(k) ? state.env.get(k) : undefined);
+    }
+
     const prevLocals = state._localScope;
+    const prevReturnSignal = state._returnSignal;
+    const prevReturnCode = state._returnCode;
     state._localScope = new Map();
-    // Set $1, $2, ... and $@ positional args
+
+    // Set $1, $2, ... and $@/$# positional args. Clear any higher-arity
+    // positional params left over from a caller with more args than us.
+    for (const k of positionalKeys) {
+      if (/^\d+$/.test(k)) state.env.delete(k);
+    }
     for (let i = 0; i < expandedArgs.length; i++) {
       state.env.set(String(i + 1), expandedArgs[i]);
     }
@@ -1346,34 +1456,38 @@ async function executeCommand(node, state, registry, opts) {
     let stderr = '';
     let exitCode = 0;
     state._returnSignal = false;
-    for (const stmt of funcBody) {
-      if (state._returnSignal) break;
-      const result = await execute(stmt, state, registry, opts);
-      stdout += result.stdout;
-      stderr += result.stderr;
-      exitCode = result.exitCode;
-    }
-    if (state._returnSignal) {
-      exitCode = state._returnCode ?? 0;
-      state._returnSignal = false;
-      state._returnCode = undefined;
-    }
-
-    // Clean up positional params
-    for (let i = 0; i < expandedArgs.length; i++) {
-      state.env.delete(String(i + 1));
-    }
-    state.env.delete('@');
-    state.env.delete('#');
-    // Clean up local scope
-    if (state._localScope) {
-      for (const [k] of state._localScope) {
-        state.env.delete(k);
+    try {
+      for (const stmt of funcBody) {
+        if (state._returnSignal) break;
+        const result = await execute(stmt, state, registry, opts);
+        stdout += result.stdout;
+        stderr += result.stderr;
+        exitCode = result.exitCode;
       }
+      if (state._returnSignal) {
+        exitCode = state._returnCode ?? 0;
+      }
+    } finally {
+      // Clean up local scope
+      if (state._localScope) {
+        for (const [k] of state._localScope) {
+          state.env.delete(k);
+        }
+      }
+      state._localScope = prevLocals;
+
+      // Restore positional params from snapshot — present keys back to their
+      // prior values, absent keys deleted.
+      for (const [k, v] of savedPositional) {
+        if (v === undefined) state.env.delete(k);
+        else state.env.set(k, v);
+      }
+
+      // Restore return-signal bookkeeping so an outer function that itself
+      // hit `return` keeps its signal.
+      state._returnSignal = prevReturnSignal;
+      state._returnCode = prevReturnCode;
     }
-    state._localScope = prevLocals;
-    if (prevArgs !== undefined) state.env.set('_FUNC_ARGS', prevArgs);
-    else state.env.delete('_FUNC_ARGS');
 
     state.lastExitCode = exitCode;
     return { stdout, stderr, exitCode };
@@ -1467,6 +1581,18 @@ async function executePipeline(node, state, registry, opts) {
 
     // Handle stdout redirect
     if (redir.type && redir.type !== null && opts.fs) {
+      // Cross-workspace redirect targets (`> /home/<other>/x`) are
+      // denied at this layer so the rule holds even when the underlying
+      // fs is something simple like MemoryFs that doesn't enforce it
+      // itself. ShellState owns the active-name knowledge; the fs
+      // layer below also enforces this for production via ShellFs.
+      if (state.isCrossWorkspaceHome?.(redir.path)) {
+        return {
+          stdout: '',
+          stderr: `redirect: cross-workspace write denied: ${redir.path} (workspaces are isolated)`,
+          exitCode: 1,
+        };
+      }
       const path = state.resolvePath(redir.path);
       try {
         if (redir.type === 'append') {
@@ -1524,6 +1650,8 @@ export class ShellFs {
   #wsId;
   /** @type {PermissionManager|null} */
   #permissions;
+  /** @type {string|null} - sanitized name of the active workspace; powers the /home/<name> alias */
+  #activeHomeName = null;
 
   /**
    * @param {import('./clawser-tools.js').WorkspaceFs} ws
@@ -1537,17 +1665,52 @@ export class ShellFs {
   }
 
   /**
+   * Set the sanitized name of the active workspace. Called on workspace
+   * switch so the `/home/<name>` alias resolves correctly. When unset
+   * (legacy callers), `/home/...` paths route to the isolated subtree
+   * and ENOENT cleanly.
+   * @param {string|null} name
+   */
+  setActiveHomeName(name) {
+    this.#activeHomeName = (typeof name === 'string' && name) ? name : null;
+  }
+
+  /** @returns {string|null} */
+  getActiveHomeName() { return this.#activeHomeName; }
+
+  /**
+   * True iff the given shell path is a cross-workspace `/home/<other>/...`
+   * that this shell must refuse to read or write. Exposed for builtins
+   * (e.g. ls) that want a clearer error than ENOENT.
+   * @param {string} shellPath
+   * @returns {boolean}
+   */
+  isCrossWorkspaceHome(shellPath) {
+    if (!shellPath.startsWith('/home/') && shellPath !== '/home' && shellPath !== '/home/') return false;
+    if (shellPath === '/home' || shellPath === '/home/') return true; // listing / itself is cross-workspace
+    const rest = shellPath.slice('/home/'.length);
+    const slashIdx = rest.indexOf('/');
+    const name = slashIdx === -1 ? rest : rest.slice(0, slashIdx);
+    return name !== this.#activeHomeName;
+  }
+
+  /**
    * Resolve a shell path to an OPFS path.
    * System paths (/etc/, /var/, /proc/, etc.) go through resolveVirtualPath.
+   * `/home/<active-name>/…` aliases to the workspace home (~/).
+   * `/home/<other-name>/…` and `/home`/`/home/` are fully isolated —
+   * they map to a private OPFS subtree that's never created, so reads
+   * naturally ENOENT and writes are explicitly rejected by `#guardWrite`.
    * Workspace-relative paths go through WorkspaceFs.
    */
   #resolve(shellPath) {
-    // System paths go through resolveVirtualPath
+    // System paths and the new /home/ alias go through resolveVirtualPath.
     if (shellPath.startsWith('/etc/') || shellPath.startsWith('/var/') ||
         shellPath.startsWith('/run/') || shellPath.startsWith('/dev/') ||
         shellPath.startsWith('/proc/') || shellPath.startsWith('/sys/') ||
-        shellPath.startsWith('/tmp/') || shellPath.startsWith('~/')) {
-      return resolveVirtualPath(shellPath, this.#wsId);
+        shellPath.startsWith('/tmp/') || shellPath.startsWith('~/') ||
+        shellPath === '/home' || shellPath === '/home/' || shellPath.startsWith('/home/')) {
+      return resolveVirtualPath(shellPath, this.#wsId, { activeHomeName: this.#activeHomeName });
     }
     // Workspace-relative paths
     const stripped = shellPath.replace(/^\//, '');
@@ -1560,6 +1723,12 @@ export class ShellFs {
    * to hardcoded system directory rules.
    */
   #guardWrite(shellPath) {
+    // Cross-workspace writes are unconditionally denied — no permission
+    // manager override. This is the user's "full isolation" decision
+    // for the /home/<name> restructure.
+    if (this.isCrossWorkspaceHome(shellPath)) {
+      throw new Error(`Cross-workspace write denied: ${shellPath} (workspaces are isolated)`);
+    }
     // Permission manager takes precedence — it checks both manifest and defaults
     if (this.#permissions) {
       this.#permissions.checkWrite(shellPath);  // throws on read-only
@@ -1673,6 +1842,8 @@ export class ShellFs {
 export class MemoryFs {
   /** @type {Map<string, string>} file path → content */
   #files = new Map();
+  /** @type {Map<string, number>} file path → last modified timestamp (ms) */
+  #mtimes = new Map();
   /** @type {Set<string>} directory paths */
   #dirs = new Set(['/']);
   /** @type {PermissionManager|null} */
@@ -1711,6 +1882,7 @@ export class MemoryFs {
       this.#dirs.add('/' + parts.slice(0, i).join('/'));
     }
     this.#files.set(norm, content);
+    this.#mtimes.set(norm, Date.now());
   }
 
   async listDir(path, { showDotfiles = false } = {}) {
@@ -1770,6 +1942,7 @@ export class MemoryFs {
     const norm = normalizePath(path);
     if (this.#files.has(norm)) {
       this.#files.delete(norm);
+      this.#mtimes.delete(norm);
       return;
     }
     if (this.#dirs.has(norm)) {
@@ -1779,7 +1952,10 @@ export class MemoryFs {
       if (!recursive && (childFiles.length > 0 || childDirs.length > 0)) {
         throw new Error(`Directory not empty: ${norm}`);
       }
-      for (const f of childFiles) this.#files.delete(f);
+      for (const f of childFiles) {
+        this.#files.delete(f);
+        this.#mtimes.delete(f);
+      }
       for (const d of childDirs) this.#dirs.delete(d);
       this.#dirs.delete(norm);
       return;
@@ -1802,10 +1978,100 @@ export class MemoryFs {
 
   async stat(path) {
     const norm = normalizePath(path);
-    if (this.#files.has(norm)) return { kind: 'file', size: this.#files.get(norm).length };
+    if (this.#files.has(norm)) {
+      return {
+        kind: 'file',
+        size: this.#files.get(norm).length,
+        lastModified: this.#mtimes.get(norm) ?? 0,
+      };
+    }
     if (this.#dirs.has(norm)) return { kind: 'directory' };
     return null;
   }
+}
+
+// ── Tab completion ──────────────────────────────────────────────
+
+/**
+ * Compute completions for an input string at the cursor position.
+ *
+ * Returns the set of suggestions plus the prefix that should be replaced.
+ *
+ * Heuristic: if the cursor is on the first whitespace-separated token,
+ * complete against builtin command names. Otherwise treat the token as a
+ * path-like fragment and complete against directory entries.
+ *
+ * @param {string} input - The full current input line.
+ * @param {number} cursor - Cursor offset within `input`.
+ * @param {object} ctx
+ * @param {CommandRegistry} ctx.registry
+ * @param {object} [ctx.fs] - Filesystem with `listDir(path)`. Optional.
+ * @param {string} [ctx.cwd='/'] - Current working directory for path completion.
+ * @returns {Promise<{ token: string, start: number, end: number, suggestions: string[] }>}
+ *
+ * @example
+ *   const { token, start, end, suggestions } = await getCompletions('ec', 2, { registry });
+ *   // → { token: 'ec', start: 0, end: 2, suggestions: ['echo'] }
+ */
+export async function getCompletions(input, cursor, ctx) {
+  const { registry, fs, cwd = '/' } = ctx;
+  const safeCursor = Math.min(Math.max(cursor, 0), input.length);
+
+  // Find the token boundaries around the cursor: walk back to the previous
+  // whitespace, walk forward to the next.
+  let start = safeCursor;
+  while (start > 0 && !/\s/.test(input[start - 1])) start--;
+  let end = safeCursor;
+  while (end < input.length && !/\s/.test(input[end])) end++;
+  const token = input.slice(start, end);
+
+  // Determine whether this is the first token (command position) or an
+  // argument (path/file position).
+  const before = input.slice(0, start);
+  const isFirstToken = !before || /^\s*$/.test(before);
+
+  if (isFirstToken) {
+    // Command-name completion.
+    const names = registry?.names ? registry.names() : [];
+    const prefix = token;
+    const matches = names.filter(n => n.startsWith(prefix)).sort();
+    return { token, start, end, suggestions: matches };
+  }
+
+  // Path completion.
+  if (!fs || typeof fs.listDir !== 'function') {
+    return { token, start, end, suggestions: [] };
+  }
+
+  let dir, base;
+  if (token.includes('/')) {
+    const lastSlash = token.lastIndexOf('/');
+    base = token.slice(lastSlash + 1);
+    const dirPart = token.slice(0, lastSlash) || '/';
+    dir = dirPart.startsWith('/') ? dirPart : (cwd === '/' ? '/' + dirPart : `${cwd}/${dirPart}`);
+  } else {
+    dir = cwd;
+    base = token;
+  }
+
+  let entries;
+  try {
+    entries = await fs.listDir(dir);
+  } catch {
+    return { token, start, end, suggestions: [] };
+  }
+
+  const matches = entries
+    .filter(e => e.name.startsWith(base))
+    .map(e => {
+      // Reattach the directory path so the completion replaces the full token.
+      const prefix = token.slice(0, token.length - base.length);
+      const slash = e.kind === 'directory' ? '/' : '';
+      return `${prefix}${e.name}${slash}`;
+    })
+    .sort();
+
+  return { token, start, end, suggestions: matches };
 }
 
 // ── Built-in Commands ───────────────────────────────────────────
@@ -2427,6 +2693,35 @@ export class ClawserShell {
       this.#jobTable.delete(job.id);
       return result;
     }, { description: 'Bring a background job to foreground', category: 'Process', usage: 'fg [%job_id]' });
+  }
+
+  /**
+   * Set the active workspace's sanitized name (the dirname under
+   * `/home/`). Updates `$HOME` to `/home/<name>` and propagates the
+   * name down to the underlying ShellFs so the path-resolution alias
+   * works. Called on initial shell construction and every workspace
+   * switch — so `$HOME` is always live.
+   *
+   * Pass `null` (or omit) to fall back to the legacy `$HOME = '/'`.
+   *
+   * @param {string|null} name
+   */
+  setActiveHomeName(name) {
+    const safe = (typeof name === 'string' && name) ? name : null;
+    if (safe) this.state.env.set('HOME', `/home/${safe}`);
+    else this.state.env.set('HOME', '/');
+    // Make the alias visible to ShellState.resolvePath so cwd-rooted
+    // operations rewrite /home/<active>/x → /x consistently regardless
+    // of which fs is underneath.
+    this.state.activeHomeName = safe;
+    // Walk through the (possibly VirtualFs-wrapped) fs chain to find the
+    // ShellFs; update its alias state so /home/<name>/... resolves at
+    // the OPFS layer too (needed for production where the OPFS path
+    // mapping happens in ShellFs).
+    const target = this.fs?.realFs || this.fs;
+    if (target && typeof target.setActiveHomeName === 'function') {
+      target.setActiveHomeName(safe);
+    }
   }
 
   /**

@@ -52,6 +52,9 @@ export class FileWatcher {
   /** @type {boolean} */
   #enabled = true;
 
+  /** @type {boolean} Single-flight guard — true while a poll is in flight. */
+  #polling = false;
+
   /**
    * Timestamp of the last write performed by this instance.
    * Used to suppress self-notifications and avoid feedback loops.
@@ -181,7 +184,20 @@ export class FileWatcher {
 
   async #poll() {
     if (!this.#enabled) return;
+    // Single-flight: setInterval may fire while a previous poll is still
+    // running (slow OPFS reads), or `rescan()` may overlap `start()`'s
+    // immediate poll. Two concurrent polls clobber each other's
+    // debounce timers and entry state. Skip the overlapping call.
+    if (this.#polling) return;
+    this.#polling = true;
+    try {
+      await this.#pollImpl();
+    } finally {
+      this.#polling = false;
+    }
+  }
 
+  async #pollImpl() {
     for (const [path, entry] of this.#watches) {
       try {
         const stat = await this.#fs.stat(path);

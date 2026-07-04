@@ -367,6 +367,10 @@ export function renderTabWatcherSection() {
 /** Get active tab watchers (for testing/diagnostics). */
 export function getActiveWatchers() { return _activeWatchers; }
 
+// Hold the active channelManager subscription so successive panel
+// inits don't pile up listeners.
+let _channelSubUnsub = null;
+
 /**
  * Initialize the Channels panel event listeners.
  * Called from initPanelListeners.
@@ -374,4 +378,21 @@ export function getActiveWatchers() { return _activeWatchers; }
 export function initChannelPanelListeners() {
   $('channelNewBtn')?.addEventListener('click', () => showChannelForm(null));
   renderTabWatcherSection();
+
+  // Subscribe to channelManager mutations so out-of-panel writes
+  // (slash commands, scheduled tasks, MCP tools) re-render the list.
+  if (state.channelManager?.subscribe && !_channelSubUnsub) {
+    _channelSubUnsub = state.channelManager.subscribe(() => {
+      renderChannelPanel();
+      updateChannelBadge();
+    });
+  }
+}
+
+/**
+ * Tear down the channel-manager subscription. Idempotent. Called on
+ * workspace switch via `cleanupWorkspace`.
+ */
+export function uninstallChannelPanelListeners() {
+  if (_channelSubUnsub) { try { _channelSubUnsub(); } catch { /* ignore */ } _channelSubUnsub = null; }
 }

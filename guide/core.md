@@ -598,7 +598,7 @@ Machine-readable JSON output mode for the clawser CLI. All subcommands support -
 
 **Status:** ✅ Implemented · **Category:** cli · **Since:** v2.1.0
 
-JSON-RPC interface for the clawser CLI. Accepts tool calls over stdin/stdout or via WebSocket, enabling external programs to drive the agent programmatically. Supports all registered tools and returns structured results.
+JSON-RPC 2.0 interface for the clawser CLI. Three transports: stdio (default), Unix domain socket (--rpc-socket PATH), and HTTP (--rpc-http :PORT). HTTP auto-generates a 32-byte hex bearer token printed to stderr unless --rpc-token is supplied; binds 127.0.0.1 by default and warns when bound to 0.0.0.0. Supported methods include send, tools.list/execute, session.status/history, memory.recall/store; cancel notification.
 
 **Source files:**
 
@@ -607,9 +607,13 @@ JSON-RPC interface for the clawser CLI. Accepts tool calls over stdin/stdout or 
 
 **API surface:**
 
-- `RpcServer`
+- `startStdioRpc`
+- `startSocketRpc`
+- `startHttpRpc`
+- `createHandlers`
+- `dispatchRequest`
 
-> **Note:** Can be exposed over a tunneled port via WISP transport for remote programmatic access.
+> **Note:** External tools can call clawser via Unix socket inside the browser-control extension's host, or via HTTP for cross-process integrations. WISP transport can also expose the socket over a relay.
 
 **See also:**
 

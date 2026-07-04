@@ -20,11 +20,13 @@ import {
   renameWorkspace,
   getWorkspaceName,
   touchWorkspace,
+  __resetForTests,
 } from '../clawser-workspaces.js';
 
 describe('Workspace CRUD', () => {
   beforeEach(() => {
     localStorage.clear();
+    __resetForTests();
   });
 
   it('loadWorkspaces returns [] when empty', () => {
@@ -121,5 +123,139 @@ describe('Workspace CRUD', () => {
   it('WS_KEY and WS_ACTIVE_KEY are strings', () => {
     assert.equal(typeof WS_KEY, 'string');
     assert.equal(typeof WS_ACTIVE_KEY, 'string');
+  });
+});
+
+// ── OPFS-backed cache + migration ─────────────────────────────────
+
+describe('initWorkspacesCache — OPFS + migration', () => {
+  // In-memory OPFS stub
+  const createMemoryOPFS = () => {
+    const dirs = new Map();
+    const files = new Map();
+    const ensureDir = (path) => {
+      if (dirs.has(path)) return;
+      // Recursively create any parent dirs as well
+      if (path) {
+        const parts = path.split('/');
+        let acc = '';
+        for (const p of parts) {
+          acc = acc ? `${acc}/${p}` : p;
+          if (!dirs.has(acc)) dirs.set(acc, makeDir(acc, false));
+        }
+      } else {
+        dirs.set('', makeDir('', false));
+      }
+    };
+    const makeDir = (path, register = true) => {
+      const handle = {
+        kind: 'directory',
+        getDirectoryHandle: async (name, opts = {}) => {
+          const childPath = path ? `${path}/${name}` : name;
+          if (!dirs.has(childPath) && opts.create) {
+            ensureDir(childPath);
+          }
+          if (!dirs.has(childPath)) throw new Error(`NotFound: ${childPath}`);
+          return dirs.get(childPath);
+        },
+        getFileHandle: async (name, opts = {}) => {
+          const filePath = path ? `${path}/${name}` : name;
+          if (!files.has(filePath) && !opts.create) throw new Error(`NotFound: ${filePath}`);
+          if (!files.has(filePath)) files.set(filePath, '');
+          return makeFile(filePath);
+        },
+      };
+      if (register) dirs.set(path, handle);
+      return handle;
+    };
+    const makeFile = (filePath) => ({
+      kind: 'file',
+      getFile: async () => ({ text: async () => files.get(filePath) || '' }),
+      createWritable: async () => {
+        let buf = '';
+        return {
+          write: async (data) => { buf += typeof data === 'string' ? data : String(data); },
+          close: async () => { files.set(filePath, buf); },
+        };
+      },
+    });
+    ensureDir('');
+    return { root: dirs.get(''), files, dirs, ensureDir };
+  };
+
+  let memOPFS;
+  beforeEach(() => {
+    localStorage.clear();
+    __resetForTests();
+    memOPFS = createMemoryOPFS();
+    Object.defineProperty(globalThis.navigator, 'storage', {
+      value: { getDirectory: async () => memOPFS.root },
+      configurable: true,
+    });
+  });
+
+  it('reads from OPFS when /etc/clawser/workspaces.json exists', async () => {
+    memOPFS.ensureDir('clawser/etc/clawser');
+    memOPFS.files.set('clawser/etc/clawser/workspaces.json', JSON.stringify([
+      { id: 'opfs-ws', name: 'From OPFS' },
+    ]));
+    memOPFS.files.set('clawser/etc/clawser/active-workspace', 'opfs-ws');
+
+    const { initWorkspacesCache } = await import('../clawser-workspaces.js');
+    await initWorkspacesCache();
+
+    assert.equal(loadWorkspaces().length, 1);
+    assert.equal(loadWorkspaces()[0].id, 'opfs-ws');
+    assert.equal(getActiveWorkspaceId(), 'opfs-ws');
+  });
+
+  it('migrates from localStorage to OPFS when OPFS is empty', async () => {
+    localStorage.setItem(WS_KEY, JSON.stringify([{ id: 'legacy', name: 'Legacy' }]));
+    localStorage.setItem(WS_ACTIVE_KEY, 'legacy');
+
+    const { initWorkspacesCache } = await import('../clawser-workspaces.js');
+    await initWorkspacesCache();
+
+    // Cache reflects localStorage content
+    assert.equal(loadWorkspaces()[0].id, 'legacy');
+    assert.equal(getActiveWorkspaceId(), 'legacy');
+
+    // Wait for the background OPFS write to land
+    await new Promise(r => setTimeout(r, 30));
+
+    const written = memOPFS.files.get('clawser/etc/clawser/workspaces.json');
+    assert.ok(written, 'OPFS file should be populated by migration');
+    const parsed = JSON.parse(written);
+    assert.equal(parsed[0].id, 'legacy');
+  });
+
+  it('returns defaults when both OPFS and localStorage are empty', async () => {
+    const { initWorkspacesCache } = await import('../clawser-workspaces.js');
+    await initWorkspacesCache();
+    assert.deepEqual(loadWorkspaces(), []);
+    assert.equal(getActiveWorkspaceId(), 'default');
+  });
+
+  it('saveWorkspaces writes to OPFS asynchronously', async () => {
+    const { initWorkspacesCache } = await import('../clawser-workspaces.js');
+    await initWorkspacesCache();
+
+    saveWorkspaces([{ id: 'fresh', name: 'Fresh' }]);
+    setActiveWorkspaceId('fresh');
+    await new Promise(r => setTimeout(r, 30));
+
+    const written = memOPFS.files.get('clawser/etc/clawser/workspaces.json');
+    assert.ok(written);
+    assert.equal(JSON.parse(written)[0].id, 'fresh');
+    assert.equal(memOPFS.files.get('clawser/etc/clawser/active-workspace'), 'fresh');
+  });
+
+  it('initWorkspacesCache is idempotent', async () => {
+    memOPFS.ensureDir('clawser/etc/clawser');
+    memOPFS.files.set('clawser/etc/clawser/workspaces.json', JSON.stringify([{ id: 'x' }]));
+    const { initWorkspacesCache } = await import('../clawser-workspaces.js');
+    await initWorkspacesCache();
+    await initWorkspacesCache(); // no-op
+    assert.equal(loadWorkspaces()[0].id, 'x');
   });
 });

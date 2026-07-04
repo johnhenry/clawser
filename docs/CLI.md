@@ -39,7 +39,31 @@ clawser exit                  Exit agent chat mode
 | `clawser memory add KEY VALUE` | Add a memory entry (category: user) |
 | `clawser memory remove KEY` | Remove a memory entry by key or ID |
 | `clawser mcp` | Show MCP server status |
+| `clawser rpc` | Start JSON-RPC 2.0 server on stdio (default) |
+| `clawser rpc --rpc-socket PATH` | JSON-RPC over Unix domain socket |
+| `clawser rpc --rpc-http :PORT` | JSON-RPC over HTTP (binds 127.0.0.1 by default; bearer token auto-generated and printed to stderr) |
+| `clawser rpc --rpc-host HOST --rpc-token T` | HTTP RPC with explicit bind host and token |
+| `clawser session branch [--from <seq>] [name]` | Branch the current event log from a sequence number |
+| `clawser session tree` | Print the branch tree as ASCII |
 | `clawser help` | Show help text |
+
+### Top-level shell commands (not `clawser` subcommands)
+
+These register at the shell registry root, so they're invoked directly in
+the terminal panel:
+
+| Command | Description |
+|---------|-------------|
+| `snapshot save [name]` | Save an atomic workspace snapshot (USTAR tar in OPFS by default; falls back to legacy IDB) |
+| `snapshot restore <id>` | Restore from a snapshot |
+| `snapshot list` | List snapshots (merges OPFS-tar and legacy-IDB sources) |
+| `snapshot delete <id>` | Delete a snapshot |
+| `snapshot info <id>` | Show snapshot metadata |
+| `wsh ...` | Browser-side `wsh` shell (see WSH CLI section below) |
+| `andbox ...` | Sandboxed JS execution CLI |
+| `model ...` | Model selection / fallback chain CLI |
+| `schedule ...` | Routine engine CLI (`schedule add/list/run/delete`) |
+| `cron ...` | Cron expression helpers |
 
 ### Session Management
 
@@ -66,6 +90,8 @@ clawser exit                  Exit agent chat mode
 | `--resume` | | Resume from checkpoint |
 | `--tools LIST` | | Comma-separated tool filter |
 | `--max-turns N` | | Max agent loop iterations |
+| `--json` | `-j` | Emit machine-readable JSONL output |
+| `--output json` | | Alias for `--json` |
 
 ---
 

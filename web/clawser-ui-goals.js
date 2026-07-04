@@ -79,12 +79,8 @@ export function renderGoals() {
       const save = () => {
         const newDesc = input.value.trim();
         const newPriority = editWrap.querySelector('.goal-edit-priority').value;
-        if (newDesc && state.agent) {
-          const goalObj = state.agent.getGoal?.(g.id);
-          if (goalObj) {
-            goalObj.description = newDesc;
-            goalObj.priority = newPriority;
-          }
+        if (newDesc && state.agent?.editGoal) {
+          state.agent.editGoal(g.id, { description: newDesc, priority: newPriority });
         }
         renderGoals();
         updateState();

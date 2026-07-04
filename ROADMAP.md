@@ -1,8 +1,8 @@
 # Clawser Roadmap
 
-## Current Status (Mar 2026)
+## Current Status (May 2026)
 
-Clawser is a **beta-quality** browser-native AI agent platform. The core runtime is functionally complete with 100+ JS modules (~120K LOC), 70+ tools, and 38+ LLM provider backends. The project transitioned from a Rust/WASM architecture to pure JavaScript. Phase 8 (BrowserMesh) added 30 decentralized mesh modules with 3,710 tests.
+Clawser is a **beta-quality** browser-native AI agent platform. The core runtime is functionally complete with 240+ JS modules (~120K LOC), 100+ tools, and 38+ LLM provider backends. The project transitioned from a Rust/WASM architecture to pure JavaScript. Phase 8 (BrowserMesh) added 44 decentralized mesh modules. Full test suite: **8,800+ tests passing, 0 failing.**
 
 ### What Works
 - Full agent loop with streaming, tool calling, and context compaction
@@ -91,8 +91,9 @@ All planned package extractions are complete. The internal `web/packages/*` dire
 Items partially complete or planned for the mesh networking layer:
 
 #### Peer Type Taxonomy
-- [ ] Canonical peer type system — distinguish `chat`, `runtime`, `host-shell`, `vm-compute` peers
-- [ ] Peer type advertised in discovery records and visible in UI
+- [x] Canonical peer type system — `PEER_TYPE` enum exported from `clawser-mesh-discovery.js`: `chat`, `runtime`, `host-shell`, `vm-compute`, `unknown`
+- [x] Peer type carried in `DiscoveryRecord` (with normalization for forward-compat)
+- [ ] Peer type visible in UI (badge in peer list)
 - [ ] Routing policies based on peer type (e.g., compute jobs only go to `vm-compute` peers)
 
 #### Remote Peers as Deployment Targets
@@ -142,7 +143,7 @@ Items partially complete or planned for the mesh networking layer:
 - [ ] Kernel tenants usable from ServerPod (Node.js) — unified resource model
 
 #### Mobile & Cross-Platform
-- [ ] PWA install flow refinement for mobile browsers
+- [x] PWA install flow plumbing — `web/clawser-pwa-install.js` captures `beforeinstallprompt`, exposes `tryInstall()` / `getInstallState()` / `onInstallStateChange()`. Manifest gained `id`, `display_override`, `categories`, `shortcuts`. (UI surface for mobile browsers still needs polish work.)
 - [ ] Touch-optimized UI for mesh peer management
 - [ ] iOS Safari compatibility audit (WebRTC, BroadcastChannel, OPFS)
 

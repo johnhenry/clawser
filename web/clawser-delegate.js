@@ -399,12 +399,21 @@ export class DelegateManager {
   /** Currently running count */
   #running = 0;
 
+  /** Maximum total sub-agents retained (oldest completed are pruned). */
+  #maxRetained;
+
   /**
    * @param {object} [opts]
    * @param {number} [opts.maxConcurrency=3]
+   * @param {number} [opts.maxRetained=50]  Cap on the #agents map to
+   *   prevent unbounded growth — completed sub-agents (with full
+   *   conversation history attached) accumulate forever otherwise.
+   *   The oldest completed agents are pruned past this cap; running
+   *   agents are never pruned.
    */
   constructor(opts = {}) {
     this.#maxConcurrency = opts.maxConcurrency ?? DEFAULT_MAX_CONCURRENCY;
+    this.#maxRetained = opts.maxRetained ?? 50;
   }
 
   /**
@@ -415,7 +424,25 @@ export class DelegateManager {
   create(opts) {
     const agent = new SubAgent(opts);
     this.#agents.set(agent.id, agent);
+    this.#trimRetained();
     return agent;
+  }
+
+  /**
+   * Prune completed/failed/cancelled agents beyond the retention cap.
+   * Map insertion order = creation order, so we drop oldest first.
+   */
+  #trimRetained() {
+    if (this.#agents.size <= this.#maxRetained) return;
+    const overflow = this.#agents.size - this.#maxRetained;
+    let pruned = 0;
+    for (const [id, agent] of this.#agents) {
+      if (pruned >= overflow) break;
+      if (agent.status !== 'running' && agent.status !== 'pending') {
+        this.#agents.delete(id);
+        pruned++;
+      }
+    }
   }
 
   /**

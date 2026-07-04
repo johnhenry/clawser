@@ -50,7 +50,7 @@ export const CLAWSER_ROOT = 'clawser';
  * resolveVirtualPath('docs/readme.md', 'default')
  * // → "clawser/workspaces/default/docs/readme.md"
  */
-export const resolveVirtualPath = (virtualPath, wsId) => {
+export const resolveVirtualPath = (virtualPath, wsId, opts = {}) => {
   if (virtualPath.startsWith('/etc/'))  return `${CLAWSER_ROOT}${virtualPath}`;
   if (virtualPath.startsWith('/var/'))  return `${CLAWSER_ROOT}${virtualPath}`;
   if (virtualPath.startsWith('/run/'))  return `${CLAWSER_ROOT}${virtualPath}`;
@@ -59,6 +59,31 @@ export const resolveVirtualPath = (virtualPath, wsId) => {
   if (virtualPath.startsWith('/sys/'))  return `${CLAWSER_ROOT}${virtualPath}`;
   if (virtualPath.startsWith('/tmp/'))  return `${CLAWSER_ROOT}${virtualPath}`;
   if (virtualPath.startsWith('~/'))     return `${CLAWSER_ROOT}/workspaces/${wsId}/${virtualPath.slice(2)}`;
+  // /home/<active-name>/... is the user-facing alias for ~/.
+  // Cross-workspace access is intentionally not supported: any
+  // /home/<other-name>/... resolves to a unique non-existent OPFS
+  // path so realFs operations naturally ENOENT, keeping workspaces
+  // fully isolated. The active sanitized name is supplied via
+  // opts.activeHomeName by the shell layer; when omitted, /home/...
+  // paths fall through to the workspace-relative branch (matches
+  // the legacy behavior).
+  if (virtualPath === '/home' || virtualPath === '/home/') {
+    return `${CLAWSER_ROOT}/_isolated_/__virtual_home_root__`;
+  }
+  if (virtualPath.startsWith('/home/')) {
+    const rest = virtualPath.slice('/home/'.length);
+    const slashIdx = rest.indexOf('/');
+    const name = slashIdx === -1 ? rest : rest.slice(0, slashIdx);
+    const tail = slashIdx === -1 ? '' : rest.slice(slashIdx + 1);
+    if (opts.activeHomeName && name === opts.activeHomeName) {
+      return tail
+        ? `${CLAWSER_ROOT}/workspaces/${wsId}/${tail}`
+        : `${CLAWSER_ROOT}/workspaces/${wsId}`;
+    }
+    // Cross-workspace path → route to a never-created subtree so reads
+    // ENOENT and writes can be guarded by ShellFs.
+    return `${CLAWSER_ROOT}/_isolated_/${name}/${tail}`;
+  }
   // Workspace-relative paths (strip leading / if present)
   return `${CLAWSER_ROOT}/workspaces/${wsId}/${virtualPath.replace(/^\//, '')}`;
 };

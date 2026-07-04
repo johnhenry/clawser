@@ -15,6 +15,7 @@
  */
 
 import { MESH_TYPE } from './packages-mesh-primitives.js';
+import { silentCatch } from './clawser-silent-catch.mjs'
 
 // ---------------------------------------------------------------------------
 // Wire constants (re-exported from canonical registry)
@@ -639,7 +640,7 @@ export class ConsensusManager {
         const proposal = Proposal.fromJSON(payload);
         const tally = new Tally(proposal);
         this.#tallies.set(proposal.proposalId, tally);
-      } catch { /* ignore malformed proposals */ }
+      } catch (e) { silentCatch('clawser-mesh-consensus', 'ignore-malformed-proposals', e) }
     });
 
     // Inbound: receive votes
@@ -647,14 +648,12 @@ export class ConsensusManager {
       try {
         const { proposalId, choice, weight } = payload;
         this.vote(proposalId, fromPodId, choice, weight ?? 1);
-      } catch { /* ignore invalid votes */ }
+      } catch (e) { silentCatch('clawser-mesh-consensus', 'ignore-invalid-votes', e) }
     });
 
     // Inbound: receive close requests
     subscribeFn(CONSENSUS_CLOSE, (payload, fromPodId) => {
-      try {
-        this.closeProposal(payload.proposalId);
-      } catch { /* ignore invalid close */ }
+      try { this.closeProposal(payload.proposalId); } catch (e) { silentCatch('clawser-mesh-consensus', 'this.closeProposal', e) }
     });
 
     // Inbound: receive results (informational, for sync)

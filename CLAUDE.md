@@ -28,7 +28,7 @@ All source files are in `web/` and follow the naming pattern `clawser-{domain}.j
 
 - **clawser-agent.js** — Agent core: EventLog, HookPipeline, AutonomyController, ClawserAgent
 - **clawser-providers.js** — LLM providers (Tier 1: built-in, Tier 2: OpenAI-compatible, Tier 3: ai.matey)
-- **clawser-tools.js** — BrowserTool base class, 70+ tools, permission system
+- **clawser-tools.js** — BrowserTool base class, 100+ tools (240+ classes shipping), permission system
 - **clawser-codex.js** — Code-based tool execution via vimble sandbox
 - **clawser-skills.js** — SkillParser, SkillStorage, SkillRegistry
 - **clawser-shell.js** — Virtual shell with tokenizer, parser, command registry

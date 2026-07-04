@@ -94,12 +94,12 @@ Client for connecting to a signaling/relay server. Manages connection lifecycle,
 
 ## Implementation Status
 
-**Status: Implemented, not wired to app bootstrap.**
+**Status: Implemented and wired to app bootstrap (when `relayUrl` is configured).**
 
 - `MeshRelayClient` and `MockRelayServer` are fully implemented.
-- The `connect()` method currently only supports the mock path; real WebSocket connection is stubbed with a comment placeholder.
-- No integration with `ClawserPod.initMesh()` or any bootstrap path.
-- No wire codes are used; the relay protocol operates at a transport level below the mesh wire format.
+- `MeshRelayClient` is instantiated in `ClawserPod.initMesh()` when `opts.relayUrl` is supplied. Without a relay URL the client is intentionally absent (workspace runs in fully-local mode). See `web/clawser-pod.js` ~line 449.
+- The pod hooks `relayClient.onPeerAnnounce()` to ingest peers into the `RemoteRuntimeRegistry`.
+- The `connect()` method's real WebSocket transport remains a placeholder at the spec level; production deployments use `clawser-mesh-websocket.js` for the actual socket.
 - All callback-based events (signal, announce, connect, disconnect, error) are implemented with error-swallowing listeners.
 - Test file: `web/test/clawser-mesh-relay.test.mjs`
 

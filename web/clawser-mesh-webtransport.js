@@ -13,6 +13,7 @@
  */
 
 import { MeshTransport } from './clawser-mesh-transport.js'
+import { silentCatch } from './clawser-silent-catch.mjs'
 
 // ---------------------------------------------------------------------------
 // Feature detection
@@ -126,11 +127,11 @@ export class WebTransportBridge extends MeshTransport {
     this._setState('closing')
     this.#streams.clear()
     if (this.#writer) {
-      try { this.#writer.close() } catch { /* ignore */ }
+      try { this.#writer.close() } catch (e) { silentCatch('clawser-mesh-webtransport', 'this', e) }
       this.#writer = null
     }
     if (this.#transport) {
-      try { this.#transport.close() } catch { /* ignore */ }
+      try { this.#transport.close() } catch (e) { silentCatch('clawser-mesh-webtransport', 'this', e) }
       this.#transport = null
     }
     this._setState('closed')

@@ -64,14 +64,14 @@ OPFS root/
         .local/share/clawser/       # per-workspace data
 ```
 
-The `~` tilde expands to `clawser/workspaces/{activeWorkspaceId}` in OPFS terms. `ShellState.resolvePath()` and `WorkspaceFs.resolve()` must be updated to handle this mapping.
+The `~` tilde expands to `clawser/workspaces/{activeWorkspaceId}` in OPFS terms. As of 2026-05-04, the user-facing path `/home/<sanitized-name>` is also an alias for `~` for the active workspace; cross-workspace `/home/<other>/...` paths are blocked at the resolver layer.
 
-**Path mapping function** (new export in `clawser-opfs.js`):
+**Path mapping function** (`clawser-opfs.js` `resolveVirtualPath`):
 
 ```javascript
 const CLAWSER_ROOT = 'clawser';
 
-const resolveVirtualPath = (virtualPath, wsId) => {
+const resolveVirtualPath = (virtualPath, wsId, opts = {}) => {
   if (virtualPath.startsWith('/etc/'))      return `${CLAWSER_ROOT}${virtualPath}`;
   if (virtualPath.startsWith('/var/'))      return `${CLAWSER_ROOT}${virtualPath}`;
   if (virtualPath.startsWith('/run/'))      return `${CLAWSER_ROOT}${virtualPath}`;
@@ -80,10 +80,52 @@ const resolveVirtualPath = (virtualPath, wsId) => {
   if (virtualPath.startsWith('/sys/'))      return `${CLAWSER_ROOT}${virtualPath}`;
   if (virtualPath.startsWith('/tmp/'))      return `${CLAWSER_ROOT}${virtualPath}`;
   if (virtualPath.startsWith('~/'))         return `${CLAWSER_ROOT}/workspaces/${wsId}/${virtualPath.slice(2)}`;
+  // /home/<active>/... aliases to ~/. /home/<other>/... routes to a
+  // never-created isolated subtree so reads ENOENT and writes can be
+  // explicitly rejected by the shell layer.
+  if (virtualPath === '/home' || virtualPath === '/home/') {
+    return `${CLAWSER_ROOT}/_isolated_/__virtual_home_root__`;
+  }
+  if (virtualPath.startsWith('/home/')) {
+    const rest = virtualPath.slice('/home/'.length);
+    const slashIdx = rest.indexOf('/');
+    const name = slashIdx === -1 ? rest : rest.slice(0, slashIdx);
+    const tail = slashIdx === -1 ? '' : rest.slice(slashIdx + 1);
+    if (opts.activeHomeName && name === opts.activeHomeName) {
+      return tail
+        ? `${CLAWSER_ROOT}/workspaces/${wsId}/${tail}`
+        : `${CLAWSER_ROOT}/workspaces/${wsId}`;
+    }
+    return `${CLAWSER_ROOT}/_isolated_/${name}/${tail}`;
+  }
   // Workspace-relative paths (no leading /)
   return `${CLAWSER_ROOT}/workspaces/${wsId}/${virtualPath.replace(/^\//, '')}`;
 };
 ```
+
+**`/home/<name>` aliasing (2026-05-04).** Each workspace has a sanitized
+shell-view name derived from its display name (`web/clawser-workspace-name.mjs`):
+lowercased, NFKD-normalized, non-ASCII dropped, runs of separators
+collapsed to single dash/underscore, reserved names rejected
+(`proc`, `etc`, `dev`, `tmp`, `home`, `sys`, `.`, `..`, etc.). The
+default workspace claims the bare name `default`; collisions get
+numeric suffixes (`my-project-2`, `my-project-3`).
+
+For the active workspace, `/home/<sanitized-name>/foo` is interchangeable
+with `~/foo`. For any other workspace, `/home/<other-name>/foo` is
+blocked: reads ENOENT (the OPFS path under `_isolated_/` is never
+created), writes throw `Cross-workspace write denied`. The user's
+design decision: full isolation, no cross-workspace access. To inspect
+another workspace's data, switch to it via the workspace dropdown.
+
+`$HOME` is set to `/home/<sanitized-name>` and re-exported live on
+workspace switch (a fresh shell session is built per switch via
+`createConfiguredShell`, which reads `loadWorkspaces()` and computes
+the active sanitized name).
+
+`/proc/clawser/workspaces` lists all workspaces with their `id`,
+display `name`, sanitized `home` path, and an `active` marker — useful
+for `cat /proc/clawser/workspaces` from inside the shell.
 
 **Disposable mode:** In disposable mode (ephemeral sessions), the same Unix path structure applies but all storage is backed by `MemoryFs` instead of OPFS. No behavioral difference from the shell's perspective — all paths, commands, and file operations work identically. The only difference is persistence: nothing survives page close.
 
@@ -313,7 +355,7 @@ Device files provide a Unix-style interface to external services. Writing to a d
 | `/dev/clawser/hardware/` | Directory | Hardware peripheral device files |
 | `/dev/clawser/hardware/{name}` | Device | Peripheral interface (camera, mic, etc.) |
 | `/dev/clawser/mesh/peers/` | Directory | One file per connected mesh peer |
-| `/dev/clawser/mesh/peers/{peerId}` | Device | Write → send message to peer, read → last received |
+| `/dev/clawser/mesh/peers/{peerId}` | Device | Read → JSON `{podId,status,lastSeen,capabilities,peerType,lastMessage}`. Write → JSON envelope `{type: string, payload: any, timeout?: number}` dispatched via `pod.sendMessage(peerId, envelope)`. Invalid JSON throws. |
 | `/dev/clawser/null` | Device | Discard all writes, read returns empty |
 | `/dev/clawser/random` | Device | Read returns random bytes |
 | `/dev/clawser/zero` | Device | Read returns null bytes |
@@ -400,7 +442,7 @@ The reactivity layer sits between the filesystem and application subsystems. It 
 
 OPFS does not support native file system events, so we use a polling watcher that tracks file modification times.
 
-**New file: `web/clawser-file-watcher.js`**
+**New file: `web/clawser-file-watcher.mjs`**
 
 ```javascript
 /**
@@ -542,7 +584,7 @@ export class FileWatcher {
 
 Connects the `FileWatcher` to subsystems. Registered handlers receive parsed config objects when files change.
 
-**New file: `web/clawser-reactive-config.js`**
+**New file: `web/clawser-reactive-config.mjs`**
 
 ```javascript
 /**
@@ -1422,7 +1464,7 @@ const mountGuestPath = (workspaceFs, emulator, guestPath, mountPoint) => {
 | File | Change |
 |------|--------|
 | `web/clawser-opfs.js` | Rewrite path handling, add `resolveVirtualPath()`, `CLAWSER_ROOT` |
-| `web/clawser-fs-bootstrap.js` | Implement `ensureDirectoryStructure()`, `writeDefaultConfigs()` |
+| `web/clawser-fs-bootstrap.mjs` | Implement `ensureDirectoryStructure()`, `writeDefaultConfigs()` |
 
 **Estimated complexity:** Medium (3-4 days)  
 **Dependencies:** None — **this blocks all other phases**
@@ -1434,8 +1476,7 @@ const mountGuestPath = (workspaceFs, emulator, guestPath, mountPoint) => {
 **Files to create:**
 | File | Description |
 |------|-------------|
-| `web/clawser-fs-layout.js` | Directory structure constants, `ensureDirectoryStructure()`, path resolver |
-| `web/clawser-fs-bootstrap.js` | First-boot setup: create all directories, write default config files |
+| `web/clawser-fs-bootstrap.mjs` | Directory structure constants, `ensureDirectoryStructure()`, path resolver, first-boot setup, default config writing (folded the originally planned `clawser-fs-layout.js` into this single module) |
 
 **Files to modify:**
 | File | Change |
@@ -1454,8 +1495,8 @@ const mountGuestPath = (workspaceFs, emulator, guestPath, mountPoint) => {
 **Files to create:**
 | File | Description |
 |------|-------------|
-| `web/clawser-file-watcher.js` | `FileWatcher` class (polling, debounce, JSON error handling) |
-| `web/clawser-reactive-config.js` | `ReactiveConfigBus` class, config domain registrations |
+| `web/clawser-file-watcher.mjs` | `FileWatcher` class (polling, debounce, JSON error handling) |
+| `web/clawser-reactive-config.mjs` | `ReactiveConfigBus` class, config domain registrations |
 
 **Files to modify:**
 | File | Change |
@@ -1499,7 +1540,7 @@ const mountGuestPath = (workspaceFs, emulator, guestPath, mountPoint) => {
 | File | Change |
 |------|--------|
 | `web/clawser-shell.js` | `ShellFs.writeFile()` checks permissions; add `chmod` builtin; add `stat` output for permissions |
-| `web/clawser-fs-bootstrap.js` | Set default permissions on system files (`/etc/`, `/proc/` are read-only) |
+| `web/clawser-fs-bootstrap.mjs` | Set default permissions on system files (`/etc/`, `/proc/` are read-only) |
 
 **Estimated complexity:** Low-Medium (2-3 days)  
 **Dependencies:** Phase 0, Phase 1
@@ -1511,7 +1552,7 @@ const mountGuestPath = (workspaceFs, emulator, guestPath, mountPoint) => {
 **Files to create:**
 | File | Description |
 |------|-------------|
-| `web/clawser-device-files.js` | `DeviceFileHandler`, provider device registration, special devices (`/dev/null`, etc.) |
+| `web/clawser-fs-devices.mjs` | `DeviceFileHandler`, provider device registration, special devices (`/dev/null`, etc.) |
 
 **Files to modify:**
 | File | Change |
@@ -1530,7 +1571,7 @@ const mountGuestPath = (workspaceFs, emulator, guestPath, mountPoint) => {
 **Files to create:**
 | File | Description |
 |------|-------------|
-| `web/clawser-env-loader.js` | `.env` parser and loader (KEY=VALUE, quotes, comments, vault integration) |
+| `web/clawser-fs-env.mjs` | `.env` parser and loader (KEY=VALUE, quotes, comments, vault integration) |
 
 **Files to modify:**
 | File | Change |
@@ -1538,7 +1579,7 @@ const mountGuestPath = (workspaceFs, emulator, guestPath, mountPoint) => {
 | `web/clawser-shell.js` | Verify `ClawserShell.source()` handles all profile constructs (aliases, exports, conditionals) |
 | `web/clawser-workspace-lifecycle.js` | Add profile sourcing sequence to workspace init |
 | `web/clawser-shell-builtins.js` | Add `source` as a builtin command (alias for shell.source()) |
-| `web/clawser-fs-bootstrap.js` | Write default `/etc/clawser/profile` and `motd` on first boot |
+| `web/clawser-fs-bootstrap.mjs` | Write default `/etc/clawser/profile` and `motd` on first boot |
 
 **Estimated complexity:** Low-Medium (2-3 days)  
 **Dependencies:** Phase 0, Phase 1, Phase 5 (profiles may use device files)
@@ -1701,10 +1742,10 @@ Each new module gets its own test file using `MemoryFs` (already exists in `claw
 
 - `test/clawser-file-watcher.test.js` — poll timing, debounce, JSON error recovery
 - `test/clawser-reactive-config.test.js` — domain registration, validation, apply callbacks
-- `test/clawser-device-files.test.js` — provider device write/read, blocking read during stream
+- `test/clawser-fs-devices.test.mjs` — provider device write/read, blocking read during stream
 - `test/clawser-proc.test.js` — proc generation, directory listing
 - `test/clawser-permissions.test.js` — chmod, read-only enforcement
-- `test/clawser-env-loader.test.js` — .env parsing, quote handling, comment stripping
+- `test/clawser-fs-e2e.test.mjs` — .env parsing, quote handling, comment stripping
 
 ### Integration Tests
 
@@ -1719,14 +1760,13 @@ Each new module gets its own test file using `MemoryFs` (already exists in `claw
 
 | File | Purpose |
 |------|---------|
-| `web/clawser-fs-layout.js` | Directory constants, path resolver, `resolveVirtualPath()` |
-| `web/clawser-fs-bootstrap.js` | First-boot directory creation, default config writing, clean slate migration |
-| `web/clawser-file-watcher.js` | `FileWatcher` — OPFS polling, debounce, change detection |
-| `web/clawser-reactive-config.js` | `ReactiveConfigBus` — wires file changes to subsystem updates |
+| `web/clawser-fs-bootstrap.mjs` | Directory constants, path resolver (`resolveVirtualPath` lives in `clawser-opfs.js`), first-boot directory creation, default config writing, clean slate migration |
+| `web/clawser-file-watcher.mjs` | `FileWatcher` — OPFS polling, debounce, change detection |
+| `web/clawser-reactive-config.mjs` | `ReactiveConfigStore` — wires file changes to subsystem updates |
 | `web/clawser-proc.js` | `ProcFileHandler` — generated read-only files for `/proc/` and `/sys/` |
 | `web/clawser-runtime.js` | Runtime state writer for `/run/` files |
-| `web/clawser-device-files.js` | `DeviceFileHandler` — provider, channel, hardware, mesh device files |
-| `web/clawser-env-loader.js` | `.env` file parser and loader |
+| `web/clawser-fs-devices.mjs` | `DeviceFileHandler` — provider, channel, hardware, mesh device files |
+| `web/clawser-fs-env.mjs` | `.env` file parser and loader |
 | `web/clawser-permissions.js` | `PermissionManager` — virtual chmod support |
 
 ## 15. Summary of Modified Files
@@ -2325,6 +2365,13 @@ Named errors replacing Unix errno:
 ---
 
 ## 22. Stream & Pipeline Architecture
+
+> **Status: not implemented.** Sections 22-34 describe a speculative
+> "wnix" design — a fuller browser-as-OS model. None of this is on the
+> roadmap or in the codebase. The implemented Unix filesystem architecture
+> is fully covered by sections 1-21 (Phases 0-9). Treat the rest as design
+> notes that escaped the design conversation. May be moved to `.reference/`
+> in a future cleanup.
 
 ### 22.1 Core I/O Model
 

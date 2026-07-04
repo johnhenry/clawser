@@ -106,8 +106,12 @@ export class Codex {
   #onLog;
   /** @type {import('./packages-andbox.js').createSandbox|null} */
   #sandbox = null;
+  /** @type {Promise<*>|null} Promise of in-flight sandbox creation. */
+  #sandboxInitPromise = null;
   /** @type {boolean} */
-  #sandboxInitializing = false;
+  // (Removed: #sandboxInitializing flag — replaced by #sandboxInitPromise
+  //  which lets concurrent callers share the same Promise instead of
+  //  sleep-polling.)
 
   constructor(browserTools, opts = {}) {
     this.#tools = browserTools;
@@ -164,31 +168,28 @@ export class Codex {
 
   /**
    * Ensure the sandbox is created and ready.
+   *
+   * Concurrent callers share the same in-flight init Promise instead of
+   * sleep-polling a boolean flag (the previous implementation woke
+   * every 10ms, paying 1+ wasted timer ticks per concurrent caller).
    */
   async #ensureSandbox() {
     if (this.#sandbox && !this.#sandbox.isDisposed()) return this.#sandbox;
-    if (this.#sandboxInitializing) {
-      // Wait for initialization
-      while (this.#sandboxInitializing) {
-        await new Promise(r => setTimeout(r, 10));
-      }
-      if (!this.#sandbox || this.#sandbox.isDisposed()) {
-        throw new Error('Sandbox initialization failed');
-      }
-      return this.#sandbox;
-    }
+    if (this.#sandboxInitPromise) return this.#sandboxInitPromise;
 
-    this.#sandboxInitializing = true;
-    try {
-      const caps = this.#buildCapabilities();
-      this.#sandbox = await createSandbox({
-        capabilities: caps,
-        defaultTimeoutMs: Codex.#EXEC_TIMEOUT_MS,
-      });
-      return this.#sandbox;
-    } finally {
-      this.#sandboxInitializing = false;
-    }
+    const caps = this.#buildCapabilities();
+    this.#sandboxInitPromise = (async () => {
+      try {
+        this.#sandbox = await createSandbox({
+          capabilities: caps,
+          defaultTimeoutMs: Codex.#EXEC_TIMEOUT_MS,
+        });
+        return this.#sandbox;
+      } finally {
+        this.#sandboxInitPromise = null;
+      }
+    })();
+    return this.#sandboxInitPromise;
   }
 
   /**

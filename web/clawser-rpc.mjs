@@ -1,3 +1,4 @@
+import { silentCatch } from './clawser-silent-catch.mjs'
 /**
  * Clawser RPC — JSON-RPC 2.0 server for programmatic agent access.
  *
@@ -370,7 +371,7 @@ export const startSocketRpc = async (socketPath, getAgent, opts = {}) => {
   const handlers = createHandlers(getAgent);
 
   // Clean up stale socket file
-  try { await unlink(socketPath); } catch { /* ignore */ }
+  try { await unlink(socketPath); } catch (e) { silentCatch('clawser-rpc', 'unlink', e) }
 
   const server = createServer((conn) => {
     log(`RPC client connected: ${conn.remoteAddress || 'local'}`);
@@ -406,7 +407,93 @@ export const startSocketRpc = async (socketPath, getAgent, opts = {}) => {
     socketPath,
     async close() {
       await new Promise((resolve) => server.close(resolve));
-      try { await unlink(socketPath); } catch { /* ignore */ }
+      try { await unlink(socketPath); } catch (e) { silentCatch('clawser-rpc', 'unlink', e) }
+    },
+  };
+};
+
+// ── HTTP Transport ─────────────────────────────────────────────
+
+/**
+ * Start the RPC server on an HTTP endpoint. Each POST is a single JSON-RPC
+ * request; the response body is the matching response. Optional bearer
+ * token authentication.
+ *
+ * Defaults bind to `127.0.0.1` for safety. Pass `host: '0.0.0.0'` explicitly
+ * to expose externally; the function logs a warning when this is done.
+ *
+ * @param {object} opts
+ * @param {() => import('./clawser-agent.js').ClawserAgent | null} opts.getAgent
+ * @param {number} opts.port - TCP port to listen on
+ * @param {string} [opts.host='127.0.0.1'] - Bind host
+ * @param {string} [opts.bearerToken] - Optional bearer token; when set, every
+ *   request must include `Authorization: Bearer <token>`. When omitted, a
+ *   random 32-byte hex token is generated and returned.
+ * @param {(msg: string) => void} [opts.onLog] - Optional logger
+ * @returns {Promise<{ close: () => Promise<void>, port: number, host: string, bearerToken: string }>}
+ */
+export const startHttpRpc = async (opts) => {
+  const { getAgent, port, host = '127.0.0.1', onLog } = opts;
+  if (!getAgent) throw new Error('startHttpRpc: getAgent is required');
+  if (typeof port !== 'number') throw new Error('startHttpRpc: port is required');
+
+  const log = onLog || (() => {});
+  const handlers = createHandlers(getAgent);
+
+  // Generate bearer token if not provided
+  let bearerToken = opts.bearerToken;
+  if (!bearerToken) {
+    const bytes = new Uint8Array(32);
+    const cryptoApi = globalThis.crypto || (await import('node:crypto')).webcrypto;
+    cryptoApi.getRandomValues(bytes);
+    bearerToken = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  if (host === '0.0.0.0') {
+    log('WARNING: HTTP RPC bound to 0.0.0.0 — exposed to the network');
+  }
+
+  const { createServer } = await import('node:http');
+  const server = createServer(async (req, res) => {
+    if (req.method !== 'POST') {
+      res.statusCode = 405;
+      res.setHeader('Allow', 'POST');
+      res.end('Method Not Allowed');
+      return;
+    }
+
+    // Auth check
+    const auth = req.headers['authorization'] || '';
+    if (auth !== `Bearer ${bearerToken}`) {
+      res.statusCode = 401;
+      res.setHeader('WWW-Authenticate', 'Bearer');
+      res.end('Unauthorized');
+      return;
+    }
+
+    let body = '';
+    for await (const chunk of req) body += chunk.toString();
+
+    const response = await processLine(body, handlers, getAgent);
+    res.statusCode = 200;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(response === null ? '' : response);
+  });
+
+  await new Promise((resolve, reject) => {
+    server.on('error', reject);
+    server.listen(port, host, () => {
+      log(`RPC server listening on http://${host}:${port}`);
+      resolve();
+    });
+  });
+
+  return {
+    port,
+    host,
+    bearerToken,
+    async close() {
+      await new Promise((resolve) => server.close(resolve));
     },
   };
 };

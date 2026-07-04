@@ -1,8 +1,25 @@
 # CLI Enhancement Plan — pi-Inspired Features
 
-> **Date**: 2026-04-28
-> **Status**: Draft
-> **Scope**: `web/clawser-cli.js` and related CLI modules
+> **Date**: 2026-04-28 (plan), updated 2026-05-02 (status).
+> **Status**: 4 of 5 features shipped; 1 partial.
+> **Scope**: `web/clawser-cli.js` and related CLI modules.
+>
+> Implementation status (verified 2026-05-02):
+>
+> - Feature 1 (Tree-Based Session Branching): **Done** — `clawser session
+>   branch` and `clawser session tree` wired via `ts.branch()`.
+> - Feature 2 (RPC Mode): **Done** — stdio (default), Unix socket
+>   (`--rpc-socket`), and HTTP (`--rpc-http`) all shipped. Bearer token
+>   auth on HTTP. See `web/clawser-rpc.mjs`.
+> - Feature 3 (JSON Output Mode): **Done** — `--json`/`-j` across
+>   subcommands.
+> - Feature 4 (Hot-Reloading Extensions): **Partial** — only skill hot
+>   reload exists (`clawser-skill-hot-reload.js`). General-extension
+>   hot reload remains a follow-up.
+> - Feature 5 (Session Sharing): **Done** — `clawser-session-export.js`
+>   with HTML/Markdown/JSON.
+>
+> See `docs/implementation-status.md` for cross-references.
 
 Five features inspired by [pi.dev](https://pi.dev/) that extend clawser's built-in CLI with branching conversations, machine-readable interfaces, live extension reloading, and session portability.
 

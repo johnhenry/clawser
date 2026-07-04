@@ -92,11 +92,12 @@ Top-level orchestrator managing multiple proposals.
 
 ## Implementation Status
 
-**Status: Implemented, not wired to app bootstrap.**
+**Status: Implemented and wired to app bootstrap.**
 
 - All classes (`Proposal`, `Ballot`, `Tally`, `ConsensusManager`) are fully implemented with validation, serialization, and deserialization.
-- Wire codes are defined but no transport integration exists -- proposals and votes are managed in-memory only.
-- No integration with `ClawserPod.initMesh()` or any bootstrap path.
+- `ConsensusManager` is instantiated in `ClawserPod.initMesh()` and exposed via the pod's `consensusManager` getter.
+- Wire codes (`CONSENSUS_PROPOSE`, `CONSENSUS_VOTE`, `CONSENSUS_CLOSE`, `CONSENSUS_RESULT`) are defined and used at runtime.
+- Pod-level helpers `propose()`, `voteOnProposal()`, and `closeProposal()` expose the protocol to consumers.
 - Test file: `web/test/clawser-mesh-consensus.test.mjs`
 
 ## Source File Reference

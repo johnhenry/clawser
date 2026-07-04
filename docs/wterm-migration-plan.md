@@ -1,10 +1,13 @@
 # wterm Integration Plan — Optional Terminal Rendering Layer for Clawser
 
-> **Status:** Draft  
-> **Author:** Generated from architecture review  
-> **Date:** 2026-04-29  
-> **Scope:** Add wterm as an optional renderer alongside the existing custom DOM renderer  
-> **Principle:** Additive only — no existing functionality removed or broken
+> **Status:** Shipped. Verified 2026-05-02.
+> Three modules in production: `web/clawser-terminal-adapter.mjs`,
+> `web/clawser-terminal-adapter-dom.mjs`, `web/clawser-terminal-adapter-wterm.mjs`.
+> `clawser-ui-panels.js` imports `createAdapter` and `detectAdapterType`.
+> **Author:** Generated from architecture review.
+> **Date:** 2026-04-29 (plan).
+> **Scope:** Add wterm as an optional renderer alongside the existing custom DOM renderer.
+> **Principle:** Additive only — no existing functionality removed or broken.
 
 ---
 

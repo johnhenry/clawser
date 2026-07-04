@@ -195,10 +195,10 @@ export const registerProviderDevice = (deviceHandler, providerName, providerRegi
       state.streamBuffer = '';
       state.error = null;
 
-      // Create a promise that resolves when the response completes
-      const responsePromise = new Promise((resolve) => {
-        state.streamResolve = resolve;
-      });
+      // Capture the resolve fn into shared state so reads can wait on it.
+      // The promise itself is intentionally unused — the side effect of
+      // assigning state.streamResolve is what matters.
+      new Promise((resolve) => { state.streamResolve = resolve; });
 
       const provider = providerRegistry.get(providerName);
       if (!provider) {
@@ -277,7 +277,6 @@ export const registerChannelDevice = (deviceHandler, channelName, channelManager
 
   deviceHandler.register(path, {
     state: {
-      lastReceived: null,
       lastSent: null,
     },
 
@@ -292,10 +291,142 @@ export const registerChannelDevice = (deviceHandler, channelName, channelManager
       return '';
     },
 
-    read: async (state) => {
-      return state.lastReceived ?? '';
+    read: async () => {
+      // Pull the most recent inbound message for this channel from
+      // the manager's history. Returns "<sender>: <text>" if present,
+      // empty string otherwise. Tab-separated for shell-friendly parsing.
+      if (!channelManager?.getHistory) return '';
+      const recent = channelManager.getHistory({ channel: channelName, limit: 1 });
+      if (!recent || recent.length === 0) return '';
+      const msg = recent[0];
+      const sender = msg?.sender?.name || msg?.sender?.id || 'unknown';
+      const text = msg?.text || msg?.body || '';
+      return `${sender}\t${text}\n`;
     },
   });
+};
+
+// ── Mesh Peer Device Registration ──────────────────────────────────
+
+/**
+ * Register a mesh peer as a device file at `/dev/clawser/mesh/peers/{peerId}`.
+ *
+ * **Read** (`cat /dev/clawser/mesh/peers/{peerId}`) returns a JSON object
+ * with peer metadata: `{ podId, status, lastSeen, capabilities, peerType,
+ * lastMessage }`. Always available — even when no send function is wired.
+ *
+ * **Write** (`echo '{"type":"ping","payload":"hi"}' > /dev/clawser/mesh/peers/{peerId}`)
+ * parses the JSON envelope and dispatches via `opts.sendFn(peerId, envelope)`
+ * if provided. Without a send function the write throws a clear "send not
+ * available" error — useful for surfacing the limitation explicitly rather
+ * than silently dropping outbound messages.
+ *
+ * Documented envelope shape:
+ *
+ * ```
+ * { "type": string, "payload": any, "timeout"?: number }
+ * ```
+ *
+ * Invalid JSON throws with a clear error. Unknown `type` values are
+ * forwarded as-is so peers with custom message types can opt in.
+ *
+ * @param {DeviceFileHandler} deviceHandler
+ * @param {string} peerId
+ * @param {object} [opts]
+ * @param {(peerId: string, envelope: object) => Promise<void>} [opts.sendFn]
+ *   - Outbound dispatch. When omitted, writes throw.
+ * @param {() => { podId, status, lastSeen, capabilities, peerType }} [opts.getMetadata]
+ *   - Metadata source for reads.
+ * @param {() => *} [opts.getLastMessage]
+ *   - Last-inbound-message source for reads.
+ * @param {object} [opts.pod]
+ *   - Pod instance. Used as fallback for `getMetadata` (`pod.getPeerInfo`)
+ *     and `getLastMessage` (`pod.getPeerLastMessage`) when those getters
+ *     aren't supplied directly. Backward-compat: if `opts.pod.sendMessage`
+ *     exists and `opts.sendFn` is not given, it's used as `sendFn`.
+ *
+ * @example
+ *   registerMeshPeerDevice(devices, 'pod-abc123', {
+ *     sendFn: (peerId, envelope) => streams.openStream(peerId).write(envelope),
+ *     getMetadata: () => discoveryManager.getRecord('pod-abc123'),
+ *   });
+ */
+export const registerMeshPeerDevice = (deviceHandler, peerId, podOrOpts = {}, legacyOpts = {}) => {
+  // Backward-compat: `registerMeshPeerDevice(handler, peerId, pod, opts)`
+  // OR new signature `registerMeshPeerDevice(handler, peerId, opts)`.
+  let opts = legacyOpts;
+  let pod = null;
+  if (podOrOpts && (typeof podOrOpts.sendMessage === 'function'
+    || typeof podOrOpts.getPeerInfo === 'function'
+    || typeof podOrOpts.getPeerLastMessage === 'function')) {
+    pod = podOrOpts;
+  } else if (podOrOpts && (typeof podOrOpts === 'object')) {
+    opts = { ...podOrOpts };
+    pod = opts.pod || null;
+  }
+
+  const path = `/dev/clawser/mesh/peers/${peerId}`;
+  const getMetadata = opts.getMetadata
+    || (() => pod?.getPeerInfo?.(peerId) || null);
+  const getLastMessage = opts.getLastMessage
+    || (() => pod?.getPeerLastMessage?.(peerId) ?? null);
+  const sendFn = opts.sendFn
+    || (typeof pod?.sendMessage === 'function' ? pod.sendMessage.bind(pod) : null);
+
+  deviceHandler.register(path, {
+    state: { peerId },
+
+    write: async (content) => {
+      const trimmed = String(content || '').trim();
+      if (!trimmed) {
+        throw new Error(`Mesh peer device write to ${path}: empty body`);
+      }
+      let envelope;
+      try {
+        envelope = JSON.parse(trimmed);
+      } catch (e) {
+        throw new Error(
+          `Mesh peer device write to ${path}: invalid JSON envelope. ` +
+          `Expected { "type": string, "payload": any }. Parse error: ${e.message}`,
+        );
+      }
+      if (!envelope || typeof envelope !== 'object' || typeof envelope.type !== 'string') {
+        throw new Error(
+          `Mesh peer device write to ${path}: envelope must be an object with a string "type" field`,
+        );
+      }
+      if (typeof sendFn !== 'function') {
+        throw new Error(
+          `Mesh peer device write to ${path}: no send function wired. ` +
+          `Pass opts.sendFn or supply a pod with .sendMessage(peerId, envelope).`,
+        );
+      }
+      await sendFn(peerId, envelope);
+      return '';
+    },
+
+    read: async () => {
+      const meta = getMetadata() || {};
+      const out = {
+        podId: meta.podId || peerId,
+        status: meta.status || 'unknown',
+        lastSeen: meta.lastSeen || null,
+        capabilities: meta.capabilities || [],
+        peerType: meta.peerType || 'unknown',
+        lastMessage: getLastMessage(),
+      };
+      return JSON.stringify(out, null, 2) + '\n';
+    },
+  });
+};
+
+/**
+ * Unregister a mesh peer device. Convenience wrapper.
+ * @param {DeviceFileHandler} deviceHandler
+ * @param {string} peerId
+ */
+export const unregisterMeshPeerDevice = (deviceHandler, peerId) => {
+  return deviceHandler.unregister(`/dev/clawser/mesh/peers/${peerId}`);
 };
 
 // ── Hardware Device Registration ───────────────────────────────────

@@ -10,6 +10,7 @@
  */
 
 import { opfsWalk, opfsWalkDir } from './clawser-opfs.js';
+import { silentCatch } from './clawser-silent-catch.mjs'
 
 // ── Constants ────────────────────────────────────────────────────
 
@@ -508,7 +509,7 @@ export class ServerManager {
           const replacement = handler.proxyRewrite.slice(arrowIdx + 2).trim();
           if (pattern) targetPath = url.replace(new RegExp(pattern), replacement);
         }
-      } catch { /* ignore bad rewrite rules */ }
+      } catch (e) { silentCatch('clawser-server', 'ignore-bad-rewrite-rules', e) }
     }
 
     const targetUrl = await resolveRuntimeProxyTarget(handler.proxyTarget, targetPath);

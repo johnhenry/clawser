@@ -1,6 +1,190 @@
 # Mesh
 
-BrowserMesh modules, identity, transport, CRDT, DHT, marketplace, consensus, swarm
+BrowserMesh modules, identity, transport, CRDT, DHT, marketplace, consensus, swarm.
+
+For the personal-device-sync and remote-deploy systems specifically,
+see [`docs/DEPLOY.md`](../docs/DEPLOY.md) for the full protocol /
+threat model and
+[`docs/browsermesh/specs/extensions/sync-protocol.md`](../docs/browsermesh/specs/extensions/sync-protocol.md)
+for the wire format. The sections below cover the user-facing surface.
+
+---
+
+### Personal multi-device sync (pairing → sync → deploy)
+
+**Status:** ✅ Implemented · **Category:** sync · **Since:** 2026-05-03
+
+Pair two browsers (your laptop and your tablet, say) so they share
+one mesh identity (`did:key`); flag items for sync (a skill, a config
+entry, a memory item); changes flow live between paired devices.
+"Deploy now" pushes flagged items in one batch with a confirmation.
+
+#### Walkthrough — pair two devices
+
+On the **source device**:
+
+1. Open the workspace settings → "My Devices" panel.
+2. Click "Pair a new device". A QR code appears with a 6-digit code
+   below it. Both expire in 5 minutes.
+
+On the **target device**:
+
+3. Scan the QR (or click "Paste pairing payload" and paste the text
+   variant — useful when devices can't see each other's screens).
+4. Enter the 6-digit code. The bundle is decrypted with PBKDF2-SHA256
+   (100k iterations) → AES-GCM. The same payload can't be applied
+   twice on the same target (replay-id tracking).
+5. The target now has the same `did:key`. Both devices appear in the
+   "My Devices" list with last-sync timestamps.
+
+#### Flag an item for sync
+
+On any skill, workspace config row, or memory item:
+
+- A "Sync to my devices" toggle ships per row. Default off.
+- Tooltip: "Flagged items are encrypted in flight and only ever
+  reach devices you've paired."
+- Flag IDs are stored at `__sync_flags__` in OPFS as
+  `kind:id` (e.g. `skill:my-helper`, `config:autonomy`,
+  `memory:abc123`).
+
+#### Sync modes
+
+- **Always-sync (continuous).** Local changes to flagged items get
+  queued on the engine, debounced 500 ms, then dispatched to every
+  paired peer via `pod.sendMessage`. No additional UI — it just
+  happens.
+- **Manual deploy.** "Deploy now" button on the My Devices panel.
+  Builds an explicit batch from the current state of every flagged
+  item and ships it in one go. A confirmation dialog lists what
+  will be sent before you commit.
+
+#### Conflict resolution
+
+- **`lww` (last-write-wins) items** — configs, memory items: higher
+  timestamp wins; on equal timestamps, lex-greater `source` (device
+  id) wins. Deterministic and convergent across peers.
+- **`yjs` items** — Y.js docs (anything you'd expect to merge,
+  e.g. collaborative text). The sync engine delegates to a real
+  `YjsApplicatorRegistry` over the existing `YjsAdapter`, so two
+  peers each making concurrent edits converge to the same state.
+
+#### Atomicity
+
+Before applying any inbound batch, the target takes a snapshot via
+the existing snapshot tar feature. Every item is staged via
+`store.stageApply`, then `commit` runs. On any error: discard the
+staged writes AND `snapshot.restore`. Tested with simulated mid-
+apply crashes — partial state never persists.
+
+---
+
+### Remote deploy targets (signed packages with capability gating)
+
+**Status:** ✅ Implemented · **Category:** sync · **Since:** 2026-05-03
+
+The same engine that drives personal multi-device sync also accepts
+**signed deploy packages** from peers OTHER than your own paired
+devices. Sources sign with their `did:key`; targets verify, gate by
+ACL + manifest approval, sandbox, and audit.
+
+For the full protocol + threat model see
+[`docs/DEPLOY.md`](../docs/DEPLOY.md).
+
+#### Walkthrough — accept a deploy from a friend
+
+1. Friend (Alice) adds your `did:key` to her trusted-publishers list
+   on their end (off-platform: she shares your DID, you share hers).
+2. You add Alice's `did:key` to your **trusted sources ACL**:
+   Settings → Mesh → "Trusted publishers" → paste Alice's DID, give
+   it a label ("Alice's MBP").
+3. Alice runs `clawser deploy push my-skill` (or hits "Deploy now"
+   in her UI). Her source builds a signed package over her current
+   manifest:
+   ```json
+   {
+     "v": "clawser-deploy-v1",
+     "source": "did:key:z6Mk…",
+     "counter": 42,
+     "manifest": {
+       "items": [{"kind": "skill", "itemId": "code-review", "payloadHash": "<sha256>"}],
+       "capabilities": {
+         "fs":   ["/workspace/skills/"],
+         "net":  ["api.github.com"],
+         "mesh": []
+       },
+       "createdAt": 1714665600000
+     },
+     "payloads": { "code-review": "<bytes>" },
+     "signature": "<ed25519 sig>"
+   }
+   ```
+4. Your target receiver runs the pipeline:
+   - Verify signature against Alice's resolved public key.
+   - Check the replay counter (must be strictly greater than the
+     last counter you've seen from Alice).
+   - Confirm Alice is in the trusted-sources ACL.
+   - First time you see this manifest: a prompt shows you the full
+     manifest contents (items + declared capabilities). You approve
+     or reject. Approval is cached by `(source, manifestHash)`.
+   - Snapshot before apply. Items applied atomically. Audit-log
+     entry written.
+
+5. Future deploys from Alice with the same manifest hash auto-apply
+   without re-prompting. If Alice changes the manifest (new item,
+   new capability, anything), the hash changes and you re-prompt.
+
+#### Capability tokens — what skills are allowed to do
+
+When Alice's deployed skill runs on your machine, it gets a
+**capability token** built from her manifest's
+`{fs, net, mesh}` lists. The skill's runtime exposes
+gated `fetch` / `fs.readFile` / `mesh.call` callables that check
+each request against the token; on denial, the skill code throws:
+
+> Capability not granted: net access to "evil.com" was requested
+> by the skill but is not declared in the deploy manifest. Ask the
+> source to add "evil.com" to manifest.capabilities.net and
+> re-deploy.
+
+The error is shaped to be actionable — the user can hand the exact
+missing line back to Alice. Local (non-deployed) skills are
+unchanged: they keep running in the existing andbox Worker sandbox
+with no network/fs surface at all.
+
+Matching rules:
+
+- `fs` — prefix match. `'/tmp/'` allows `'/tmp/foo'`, denies `'/etc/passwd'`.
+- `net` — exact host or `*.suffix` glob. `'*.example.com'` allows
+  `'a.example.com'` but **not** the bare `'example.com'`.
+- `mesh` — exact-string match (e.g. `'mesh:peer-list'`).
+
+#### Audit log + rollback
+
+- Every deploy event writes one entry to `__deploy_audit__`. Status
+  is `applied`, `rolled-back`, `failed`, or `rejected` (with the
+  rejection reason).
+- Each successful deploy records its event id against a tagged
+  snapshot. Per-source retention: 5 events. Older snapshots are
+  pruned via the snapshot driver's `delete`.
+- "Deploy history" in the Mesh panel lists recent events; "Roll
+  back" button next to each `applied` entry restores the snapshot
+  taken just before that deploy.
+
+#### Source-compromise mitigation
+
+Alice's `did:key` is an Ed25519 keypair stored in her vault. If
+her device is compromised:
+
+- The attacker can forge signed packages indistinguishable from
+  legitimate Alice — signature checks pass.
+- They cannot bypass replay counters: a captured genuine package
+  cannot be re-applied once a higher counter has arrived.
+- They cannot forge a `manifestHash` collision (SHA-256), so they
+  can't piggyback on existing approvals.
+- Your mitigation: revoke Alice's DID in your trusted-sources ACL.
+  Past audits remain visible; the rollback ring lets you undo the
+  last 5 deploys per source if needed.
 
 ---
 

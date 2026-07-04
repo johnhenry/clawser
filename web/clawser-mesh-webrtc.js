@@ -13,6 +13,7 @@
  */
 
 import { MeshTransport } from './clawser-mesh-transport.js'
+import { silentCatch } from './clawser-silent-catch.mjs'
 
 // ---------------------------------------------------------------------------
 // Feature detection
@@ -237,11 +238,11 @@ export class WebRTCPeerConnection {
     if (this.#state === 'closed') return
     this.#state = 'closed'
     if (this.#dataChannel) {
-      try { this.#dataChannel.close() } catch { /* ignore */ }
+      try { this.#dataChannel.close() } catch (e) { silentCatch('clawser-mesh-webrtc', 'this', e) }
       this.#dataChannel = null
     }
     if (this.#pc) {
-      try { this.#pc.close() } catch { /* ignore */ }
+      try { this.#pc.close() } catch (e) { silentCatch('clawser-mesh-webrtc', 'this', e) }
       this.#pc = null
     }
     this.#fireClose()
@@ -260,7 +261,7 @@ export class WebRTCPeerConnection {
     this.#pc.onicecandidate = (event) => {
       if (event.candidate) {
         for (const cb of this.#iceCandidateCbs) {
-          try { cb(event.candidate) } catch { /* swallow */ }
+          try { cb(event.candidate) } catch (e) { silentCatch('clawser-mesh-webrtc', 'swallow', e) }
         }
       }
     }
@@ -287,7 +288,7 @@ export class WebRTCPeerConnection {
       let parsed = event.data
       try { parsed = JSON.parse(event.data) } catch { /* keep as string */ }
       for (const cb of this.#messageCbs) {
-        try { cb(parsed) } catch { /* swallow */ }
+        try { cb(parsed) } catch (e) { silentCatch('clawser-mesh-webrtc', 'swallow', e) }
       }
     }
     dc.onclose = () => {
@@ -307,13 +308,13 @@ export class WebRTCPeerConnection {
 
   #fireClose() {
     for (const cb of this.#closeCbs) {
-      try { cb() } catch { /* swallow */ }
+      try { cb() } catch (e) { silentCatch('clawser-mesh-webrtc', 'swallow', e) }
     }
   }
 
   #fireError(err) {
     for (const cb of this.#errorCbs) {
-      try { cb(err) } catch { /* swallow */ }
+      try { cb(err) } catch (e) { silentCatch('clawser-mesh-webrtc', 'swallow', e) }
     }
   }
 
@@ -383,7 +384,7 @@ export class WebRTCMeshManager {
     // Forward messages to manager-level listeners
     conn.onMessage((data) => {
       for (const cb of this.#messageCbs) {
-        try { cb(data, remotePodId) } catch { /* swallow */ }
+        try { cb(data, remotePodId) } catch (e) { silentCatch('clawser-mesh-webrtc', 'swallow', e) }
       }
     })
     // Auto-remove on close
@@ -464,7 +465,7 @@ export class WebRTCMeshManager {
    */
   closeAll() {
     for (const conn of this.#connections.values()) {
-      try { conn.close() } catch { /* ignore */ }
+      try { conn.close() } catch (e) { silentCatch('clawser-mesh-webrtc', 'conn.close', e) }
     }
     this.#connections.clear()
   }

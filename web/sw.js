@@ -1,3 +1,4 @@
+import { silentCatch } from './clawser-silent-catch.mjs'
 // sw.js — Service Worker for Clawser PWA (cache-first for app shell + virtual server)
 
 const CACHE_NAME = 'clawser-v2';
@@ -323,7 +324,7 @@ async function handleSWProxy(handler, path, request) {
         const replacement = handler.proxyRewrite.slice(arrowIdx + 2).trim();
         if (pattern) targetPath = path.replace(new RegExp(pattern), replacement);
       }
-    } catch { /* ignore bad rewrite rules */ }
+    } catch (e) { silentCatch('web/sw.js', 'ignore-bad-rewrite-rules', e) }
   }
 
   const targetUrl = handler.proxyTarget.replace(/\/$/, '') + targetPath;
@@ -592,7 +593,7 @@ self.addEventListener('periodicsync', (event) => {
       db.close();
     } catch (err) {
       console.warn('[clawser-sw] Periodic sync error:', err);
-      try { db?.close(); } catch { /* best-effort */ }
+      try { db?.close(); } catch (e) { silentCatch('web/sw.js', 'db', e) }
     }
   })());
 });

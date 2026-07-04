@@ -98,6 +98,17 @@ Examples:
 
   // ── save ────────────────────────────────────────────────────
 
+  /**
+   * Resolve a workspace fs adapter for tar snapshots.
+   * Prefers `shell.fs` (VirtualFs falls through to the real fs for
+   * non-virtual paths like `~/.local/share/clawser/snapshots/`).
+   * Returns null when no shell is available — caller falls back to IDB.
+   */
+  const getFs = () => {
+    const shell = getShell?.();
+    return shell?.fs || null;
+  };
+
   const cmdSave = async (args, json) => {
     const agent = getAgent();
     if (!agent) {
@@ -108,29 +119,49 @@ Examples:
     }
 
     const name = args.join(' ') || undefined;
+    const fs = getFs();
 
     try {
-      const meta = await mgr.createAtomicSnapshot({
-        agent,
-        routineEngine: getRoutineEngine?.(),
-        shell: getShell?.(),
-        skillRegistry: getSkillRegistry?.(),
-        name,
-        wsId: agent.getWorkspace?.(),
-      });
+      // Per UFS §2.4: tar to OPFS is the canonical path. Fall back to IDB
+      // only when no shell fs is available (early boot / disposable mode).
+      let meta;
+      if (fs) {
+        meta = await mgr.createTarSnapshot({
+          agent,
+          routineEngine: getRoutineEngine?.(),
+          shell: getShell?.(),
+          skillRegistry: getSkillRegistry?.(),
+          name,
+          wsId: agent.getWorkspace?.(),
+          fs,
+        });
+      } else {
+        meta = await mgr.createAtomicSnapshot({
+          agent,
+          routineEngine: getRoutineEngine?.(),
+          shell: getShell?.(),
+          skillRegistry: getSkillRegistry?.(),
+          name,
+          wsId: agent.getWorkspace?.(),
+        });
+      }
 
       if (json) {
         return { stdout: JSON.stringify(meta, null, 2), stderr: '', exitCode: 0 };
       }
 
+      const sizeLine = meta.compressedSize != null
+        ? `  Size:       ${fmtBytes(meta.size)} → ${fmtBytes(meta.compressedSize)} compressed`
+        : `  Size:       ${fmtBytes(meta.size)} (tar)`;
       const lines = [
         `Snapshot saved: ${meta.id}`,
         `  Name:       ${meta.name}`,
         `  Workspace:  ${meta.wsId}`,
-        `  Size:       ${fmtBytes(meta.size)} → ${fmtBytes(meta.compressedSize)} compressed`,
+        sizeLine,
         `  Subsystems: ${meta.subsystems.join(', ')}`,
         `  Created:    ${fmtTime(meta.timestamp)}`,
       ];
+      if (meta.path) lines.push(`  Path:       ${meta.path}`);
       return { stdout: lines.join('\n'), stderr: '', exitCode: 0 };
     } catch (e) {
       const msg = `Snapshot save failed: ${e.message}`;
@@ -159,14 +190,28 @@ Examples:
     }
 
     const id = args[0];
+    const fs = getFs();
 
     try {
-      const result = await mgr.restoreAtomicSnapshot(id, {
-        agent,
-        routineEngine: getRoutineEngine?.(),
-        shell: getShell?.(),
-        skillRegistry: getSkillRegistry?.(),
-      });
+      // Try tar-on-OPFS first; fall back to IDB for legacy snapshots.
+      let result = null;
+      if (fs) {
+        result = await mgr.restoreTarSnapshot(id, {
+          agent,
+          routineEngine: getRoutineEngine?.(),
+          shell: getShell?.(),
+          skillRegistry: getSkillRegistry?.(),
+          fs,
+        });
+      }
+      if (!result) {
+        result = await mgr.restoreAtomicSnapshot(id, {
+          agent,
+          routineEngine: getRoutineEngine?.(),
+          shell: getShell?.(),
+          skillRegistry: getSkillRegistry?.(),
+        });
+      }
 
       if (!result) {
         const msg = `Snapshot not found: ${id}`;
@@ -198,7 +243,15 @@ Examples:
 
   const cmdList = async (json) => {
     try {
-      const snapshots = await mgr.listSnapshots();
+      const fs = getFs();
+      // Merge tar (OPFS) and legacy IDB snapshot lists, deduping by id.
+      const tarList = fs ? await mgr.listTarSnapshots({ fs }).catch(() => []) : [];
+      const idbList = await mgr.listSnapshots().catch(() => []);
+      const seen = new Set(tarList.map(s => s.id));
+      const snapshots = [
+        ...tarList,
+        ...idbList.filter(s => !seen.has(s.id)),
+      ];
 
       if (json) {
         return { stdout: JSON.stringify(snapshots, null, 2), stderr: '', exitCode: 0 };
@@ -210,8 +263,11 @@ Examples:
 
       const lines = [`${snapshots.length} snapshot(s):\n`];
       for (const s of snapshots) {
+        const sizeStr = s.compressedSize != null
+          ? fmtBytes(s.compressedSize)
+          : fmtBytes(s.size);
         lines.push(`  ${s.id}  ${s.name}`);
-        lines.push(`    ${fmtTime(s.timestamp)}  ${fmtBytes(s.compressedSize)}  ws:${s.wsId}`);
+        lines.push(`    ${fmtTime(s.timestamp)}  ${sizeStr}  ws:${s.wsId}${s.path ? '  tar' : '  idb'}`);
       }
       return { stdout: lines.join('\n'), stderr: '', exitCode: 0 };
     } catch (e) {
@@ -233,9 +289,13 @@ Examples:
     }
 
     const id = args[0];
+    const fs = getFs();
 
     try {
-      const deleted = await mgr.deleteSnapshot(id);
+      // Try tar first, then IDB. Either backend may legitimately not have it.
+      let deleted = false;
+      if (fs) deleted = await mgr.deleteTarSnapshot(id, { fs });
+      if (!deleted) deleted = await mgr.deleteSnapshot(id);
       if (!deleted) {
         const msg = `Snapshot not found: ${id}`;
         return json

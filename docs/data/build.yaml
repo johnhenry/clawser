@@ -5,7 +5,7 @@
   status: implemented
   description: >
     No build step required. Pure ES modules served directly from the web/ directory.
-    All 148 modules are pre-compiled .js bundles with accompanying .d.ts type definitions.
+    All 240+ modules are pre-compiled .js bundles with accompanying .d.ts type definitions.
     External dependencies loaded via CDN (cdnjs.cloudflare.com). Zero npm runtime deps.
   files:
     - web/
@@ -35,12 +35,46 @@
   description: >
     Installable as a Progressive Web App. Service Worker (sw.js) provides offline
     caching and background sync. PWA manifest enables home screen installation
-    on mobile and desktop.
+    on mobile and desktop. Manifest fields: id, display, display_override
+    (window-controls-overlay / standalone / minimal-ui), categories
+    (developer/productivity/utilities), orientation, shortcuts (New chat,
+    Terminal), icons (192/512 + SVG, maskable).
   files:
     - web/sw.js
+    - web/manifest.json
   api: []
   category: pwa
   since: "1.0.0"
+
+- name: PWA Install Flow
+  status: implemented
+  description: >
+    Captures the browser-fired beforeinstallprompt event, exposes an
+    imperative tryInstall() to surface the native install prompt, and
+    notifies subscribers when the app becomes installable or installed.
+    Detects standalone mode (iOS Safari home-screen install or display-mode
+    standalone media query) and platform (iOS/Android/desktop). Wired in
+    clawser-app.js at boot.
+  files:
+    - web/clawser-pwa-install.js
+    - web/clawser-app.js
+    - web/manifest.json
+  api:
+    - initPwaInstall
+    - tryInstall
+    - getInstallState
+    - onInstallStateChange
+    - isStandalone
+    - detectPlatform
+  category: pwa
+  notes: >
+    Returned outcome from tryInstall(): 'accepted' | 'dismissed' | 'unavailable'.
+    iOS Safari has no beforeinstallprompt; getInstallState reports
+    installable=false there but isStandalone correctly detects
+    Add-to-Home-Screen.
+  since: "2.1.0"
+  see_also:
+    - PWA (Progressive Web App)
 
 - name: Docker Deployment
   status: implemented
@@ -68,9 +102,9 @@
 - name: Test Suite
   status: implemented
   description: >
-    Comprehensive test infrastructure with 253 test files and 7,127+ tests across
-    12 test groups. Custom test runner (run-tests.mjs) plus vitest for unit tests
-    and Playwright for E2E tests.
+    Comprehensive test infrastructure with 300+ test files and 8,800+ tests
+    across 12 test groups. Custom test runner (run-tests.mjs) plus vitest for
+    unit tests and Playwright for E2E tests.
   files:
     - web/test/
     - vitest.config.js
@@ -135,7 +169,7 @@
   api:
     - types.d.ts
   category: types
-  notes: 77 .d.ts files covering all 148 modules.
+  notes: 77+ .d.ts files covering all production modules.
   since: "1.0.0"
 
 - name: Package Ecosystem

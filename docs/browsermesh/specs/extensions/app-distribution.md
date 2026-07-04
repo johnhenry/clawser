@@ -101,12 +101,12 @@ Pub/sub event system scoped to an app.
 
 ## Implementation Status
 
-**Status: Implemented, not wired to app bootstrap.**
+**Status: Implemented and wired to app bootstrap.**
 
-- All seven classes are fully implemented with validation, serialization, state machines, and event callbacks.
-- Wire codes are defined but no transport integration sends or receives these message types.
-- No integration with `ClawserPod.initMesh()` or any bootstrap path.
-- The RPC layer stores outgoing messages and exposes `onCall()` for transport hookup, but no transport is connected.
+- All seven classes (`AppManifest`, `AppInstance`, `AppPermissionChecker`, `AppRegistry`, `AppStore`, `AppRPC`, `AppEventBus`) are fully implemented with validation, serialization, state machines, and event callbacks.
+- `AppRegistry` and `AppStore` are instantiated in `ClawserPod.initMesh()` and exposed via `pod.appRegistry` / `pod.appStore` getters.
+- Wire codes are defined and available via the namespace re-exports.
+- The RPC layer is implemented but transport integration for `APP_RPC` is not yet pumped through the mesh routing layer — this is a tighter follow-up than full wiring.
 - Test file: `web/test/clawser-mesh-apps.test.mjs`
 
 ## Source File Reference

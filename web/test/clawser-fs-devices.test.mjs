@@ -66,10 +66,18 @@ class MockProviderRegistry {
 /** Mock ChannelManager. */
 class MockChannelManager {
   sent = [];
+  history = [];
   send(channel, channelId, message) {
     this.sent.push({ channel, channelId, message });
     return true;
   }
+  /** Mirrors the real ChannelManager.getHistory shape. */
+  getHistory({ channel, limit = 20 } = {}) {
+    const filtered = channel ? this.history.filter(m => m.channel === channel) : this.history;
+    return filtered.slice(-limit);
+  }
+  /** Test helper to push a fake inbound message. */
+  pushInbound(msg) { this.history.push(msg); }
 }
 
 /** Mock hardware adapter. */
@@ -359,15 +367,24 @@ describe('registerChannelDevice', () => {
     assert.equal(result, '');
   });
 
-  it('read returns lastReceived when set', async () => {
+  it('read returns most-recent inbound from channel manager history', async () => {
     registerChannelDevice(handler, 'slack', channelManager);
 
-    // Simulate receiving a message by setting state directly
-    const state = handler.getState('/dev/clawser/channels/slack');
-    state.lastReceived = 'incoming message';
+    // Simulate inbound — the device pulls from manager.getHistory
+    channelManager.pushInbound({ channel: 'slack', sender: { name: 'alice' }, text: 'incoming' });
 
     const result = await handler.handleRead('/dev/clawser/channels/slack');
-    assert.equal(result, 'incoming message');
+    assert.equal(result, 'alice\tincoming\n');
+
+    // A newer message wins
+    channelManager.pushInbound({ channel: 'slack', sender: { name: 'bob' }, text: 'newer' });
+    const result2 = await handler.handleRead('/dev/clawser/channels/slack');
+    assert.equal(result2, 'bob\tnewer\n');
+
+    // Other channels are filtered out
+    channelManager.pushInbound({ channel: 'discord', sender: { name: 'eve' }, text: 'wrong' });
+    const result3 = await handler.handleRead('/dev/clawser/channels/slack');
+    assert.equal(result3, 'bob\tnewer\n');
   });
 
   it('tracks lastSent in state', async () => {

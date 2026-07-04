@@ -118,6 +118,22 @@
   category: globs
   since: "1.0.0"
 
+- name: Tab Completion
+  status: implemented
+  description: >
+    Pressing Tab in the terminal panel completes the current word against
+    builtin command names (in command position) or directory entries (in path
+    position). A second Tab on the same input cycles through multiple matches.
+    Smart token-position detection: command vs. path inferred from cursor
+    position relative to whitespace.
+  files:
+    - web/clawser-shell.js
+    - web/clawser-ui-panels.js
+  api:
+    - getCompletions
+  category: completion
+  since: "1.1.0"
+
 # ─── BUILTINS ─────────────────────────────────────────────────────────
 
 - name: "cd"

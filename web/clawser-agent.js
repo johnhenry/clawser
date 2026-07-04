@@ -26,6 +26,8 @@ import { lsKey } from './clawser-state.js';
 import { Codex } from './clawser-codex.js';
 import { SafetyPipeline } from './clawser-safety.js';
 import { SemanticMemory } from './clawser-memory.js';
+import { silentCatch } from './clawser-silent-catch.mjs'
+import { redactArgs, redactEventLog } from './clawser-redaction.mjs';
 
 let _providersModule = null;
 async function getProvidersModule() {
@@ -40,6 +42,41 @@ const TEXT_DECODER = new TextDecoder();
 // Append-only event log for event-sourced persistence.
 // All conversation state (messages, tool calls, goals) can be derived
 // from this single stream. Serialized as JSONL for OPFS storage.
+//
+// Event-type registry. Adding a new event type? Add it to one of the
+// categories below AND make sure it's handled by every relevant
+// `derive*` function (or explicitly noted as audit-only). Two prior
+// silent-skip bugs (`goal_edited`, `goal_removed`) shipped because the
+// replay function was never updated when the new event type was added.
+//
+//   Replayed by deriveSessionHistory: user_message, agent_message,
+//     tool_call, tool_result.
+//   Replayed by deriveToolCallLog:    tool_call, tool_result.
+//   Replayed by deriveGoals:          goal_added, goal_updated,
+//     goal_edited, goal_removed.
+//   Audit-only (intentional non-replay; canonical state lives elsewhere):
+//     memory_stored, memory_forgotten (memory backend persists separately),
+//     scheduler_added, scheduler_fired, scheduler_removed (scheduler in
+//     checkpoint), cache_hit, error, provider_error, stream_error,
+//     autonomy_blocked, idle_resume, context_compacted,
+//     safety_input_flag, safety_tool_blocked, safety_output_blocked,
+//     safety_output_redacted, tool_result_truncated.
+//
+// `KNOWN_EVENT_TYPES` is exported so a test can assert no event type
+// slips into `append()` without entering one of the buckets above.
+export const KNOWN_EVENT_TYPES = Object.freeze(new Set([
+  // Replayed
+  'user_message', 'agent_message', 'tool_call', 'tool_result',
+  'goal_added', 'goal_updated', 'goal_edited', 'goal_removed',
+  // Audit-only
+  'memory_stored', 'memory_forgotten',
+  'scheduler_added', 'scheduler_fired', 'scheduler_removed',
+  'cache_hit', 'error', 'provider_error', 'stream_error',
+  'autonomy_blocked', 'idle_resume', 'context_compacted',
+  'safety_input_flag', 'safety_tool_blocked',
+  'safety_output_blocked', 'safety_output_redacted',
+  'tool_result_truncated',
+]));
 
 export class EventLog {
   #events = [];
@@ -267,6 +304,15 @@ export class EventLog {
           g.status = evt.data.status;
           g.updated_at = evt.timestamp;
         }
+      } else if (evt.type === 'goal_edited') {
+        const g = goals.get(evt.data.id);
+        if (g) {
+          if (typeof evt.data.description === 'string') g.description = evt.data.description;
+          if (typeof evt.data.priority === 'string') g.priority = evt.data.priority;
+          g.updated_at = evt.timestamp;
+        }
+      } else if (evt.type === 'goal_removed') {
+        goals.delete(evt.data.id);
       }
     }
 
@@ -745,6 +791,8 @@ export class ClawserAgent {
   #apiKey = '';
   #model = null;
   #providerBaseUrl = '';
+  /** Per-agent default max_tokens applied to provider.chat options. null = provider default. */
+  #defaultMaxTokens = null;
 
   // ── Event log ────────────────────────────────────────────────
   #eventLog = new EventLog();
@@ -819,6 +867,47 @@ export class ClawserAgent {
 
   /** @returns {boolean} Whether the agent is currently running. */
   get isRunning() { return this.#runAbort !== null; }
+
+  /**
+   * Wait for the current turn to settle. Resolves immediately when
+   * idle. Polls `isRunning` because run() / runStream() are large
+   * existing functions whose body would need restructuring to
+   * expose a deferred Promise; polling at 50ms is cheap and
+   * deterministic for the cleanup-on-workspace-switch case.
+   *
+   * The optional `onWaiting` callback fires once after a brief grace
+   * period so UI can surface "finishing current turn..." without
+   * flashing for fast turns.
+   *
+   * @param {object} [opts]
+   * @param {number} [opts.timeoutMs=5000]
+   * @param {Function} [opts.onWaiting]
+   * @param {number} [opts.gracePeriodMs=150]
+   * @param {number} [opts.pollMs=50]
+   * @returns {Promise<{settled:boolean, timedOut?:boolean}>}
+   */
+  async awaitRun(opts = {}) {
+    if (!this.isRunning) return { settled: true };
+    const timeoutMs = opts.timeoutMs ?? 5000;
+    const gracePeriodMs = opts.gracePeriodMs ?? 150;
+    const pollMs = opts.pollMs ?? 50;
+    let waitingTimer = null;
+    if (opts.onWaiting) {
+      waitingTimer = setTimeout(() => {
+        try { opts.onWaiting(); } catch { /* ignore */ }
+      }, gracePeriodMs);
+    }
+    const deadline = Date.now() + timeoutMs;
+    try {
+      while (this.isRunning) {
+        if (Date.now() >= deadline) return { settled: false, timedOut: true };
+        await new Promise(r => setTimeout(r, pollMs));
+      }
+      return { settled: true };
+    } finally {
+      if (waitingTimer) clearTimeout(waitingTimer);
+    }
+  }
 
   // ── Callbacks ────────────────────────────────────────────────
   #onEvent = () => {};
@@ -1087,6 +1176,27 @@ export class ClawserAgent {
   }
 
   /**
+   * Redact tool arguments before they're written to the eventlog.
+   * Looks up the tool's `redactedFields` declaration; falls back to
+   * the regex defaults in `clawser-redaction.mjs`.
+   *
+   * @param {string} toolName
+   * @param {*} args                — object or pre-stringified JSON
+   * @returns {*}                   — same shape, with secrets masked
+   * @internal
+   */
+  #redactToolArgs(toolName, args) {
+    let declared = [];
+    try {
+      const tool = this.#browserTools?.get?.(toolName);
+      if (tool && Array.isArray(tool.redactedFields)) {
+        declared = tool.redactedFields;
+      }
+    } catch { /* fall through to regex defaults */ }
+    return redactArgs(args, declared);
+  }
+
+  /**
    * Re-scan browser tools and MCP tools to pick up any newly registered tools.
    * Use instead of calling init() a second time.
    */
@@ -1113,6 +1223,23 @@ export class ClawserAgent {
 
   /** Set the model override (null = use provider default) */
   setModel(model) { this.#model = model || null; }
+
+  /**
+   * Set or clear the default `max_tokens` applied to every
+   * `provider.chat`/`chatStream` request. Persisted via
+   * `persistConfig` so it survives reloads. Pass `null` (or 0) to
+   * remove the override and let the provider default win.
+   *
+   * @param {number|null} n
+   */
+  setDefaultMaxTokens(n) {
+    if (n == null || n === 0) { this.#defaultMaxTokens = null; return; }
+    if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) {
+      throw new Error('max_tokens must be a non-negative number');
+    }
+    this.#defaultMaxTokens = Math.floor(n);
+  }
+  getDefaultMaxTokens() { return this.#defaultMaxTokens; }
 
   /** Get the current model override */
   getModel() { return this.#model; }
@@ -1422,7 +1549,7 @@ export class ClawserAgent {
           const goal = this.#goals.find(g => g.id === goalId);
           if (goal) _undoPrev = { previousStatus: goal.status };
         }
-      } catch { /* best-effort */ }
+      } catch (e) { silentCatch('clawser-agent', 'best-effort', e) }
     }
 
     // Tool timeout wrapper
@@ -1614,11 +1741,12 @@ export class ClawserAgent {
         function: { name: tc.name, arguments: tc.arguments },
       });
 
-      // Record tool_call event
+      // Record tool_call event (with arg redaction so secrets don't
+      // persist to the eventlog).
       this.#eventLog.append('tool_call', {
         call_id: tc.id,
         name: tc.name,
-        arguments: tc.arguments,
+        arguments: this.#redactToolArgs(tc.name, tc.arguments),
       }, 'agent');
     }
 
@@ -1823,6 +1951,7 @@ export class ClawserAgent {
       }
 
       const _providerOpts = this.#providerBaseUrl ? { baseUrl: this.#providerBaseUrl } : {};
+      if (this.#defaultMaxTokens != null) _providerOpts.max_tokens = this.#defaultMaxTokens;
       let response;
       try {
         if (this.#fallbackExecutor) {
@@ -1992,7 +2121,7 @@ export class ClawserAgent {
         this.#eventLog.append('tool_call', {
           call_id: tc.id,
           name,
-          arguments: args,
+          arguments: this.#redactToolArgs(name, args),
         }, 'agent');
       }
 
@@ -2139,6 +2268,7 @@ export class ClawserAgent {
       const provider = this.#providers.get(this.#activeProvider);
       if (!provider) throw new Error(`Provider not found: ${this.#activeProvider}`);
       const _providerOpts = this.#providerBaseUrl ? { baseUrl: this.#providerBaseUrl } : {};
+      if (this.#defaultMaxTokens != null) _providerOpts.max_tokens = this.#defaultMaxTokens;
 
       // Response cache lookup
       let cacheKey = null;
@@ -2237,7 +2367,7 @@ export class ClawserAgent {
             this.#autonomy.recordCost(Math.round(cost * 100));
             this.#costLedger?.record({ model: response.model, provider: this.#activeProvider, inputTokens: response.usage.input_tokens || 0, outputTokens: response.usage.output_tokens || 0, costUsd: cost });
             this.#metrics?.observe('llm.cost_cents', cost * 100);
-          } catch { /* best-effort */ }
+          } catch (e) { silentCatch('clawser-agent', 'best-effort', e) }
         }
 
         // Codex path
@@ -2324,7 +2454,7 @@ export class ClawserAgent {
           const name = tc.function?.name || tc.name;
           const args = tc.function?.arguments || tc.arguments || '{}';
           yield { type: 'tool_start', name, id: tc.id, args };
-          this.#eventLog.append('tool_call', { call_id: tc.id, name, arguments: args }, 'agent');
+          this.#eventLog.append('tool_call', { call_id: tc.id, name, arguments: this.#redactToolArgs(name, args) }, 'agent');
         }
 
         const toolResults = await this.#executeToolCalls(response.tool_calls);
@@ -2445,7 +2575,7 @@ export class ClawserAgent {
           this.#autonomy.recordCost(Math.round(cost * 100));
           this.#costLedger?.record({ model: fullResponse.model, provider: this.#activeProvider, inputTokens: fullResponse.usage.input_tokens || 0, outputTokens: fullResponse.usage.output_tokens || 0, costUsd: cost });
           this.#metrics?.observe('llm.cost_cents', cost * 100);
-        } catch { /* best-effort */ }
+        } catch (e) { silentCatch('clawser-agent', 'best-effort', e) }
       }
 
       // Codex path for non-native providers
@@ -2537,7 +2667,7 @@ export class ClawserAgent {
         const name = tc.function?.name || tc.name;
         const args = tc.function?.arguments || tc.arguments || '{}';
         yield { type: 'tool_start', name, id: tc.id, args };
-        this.#eventLog.append('tool_call', { call_id: tc.id, name, arguments: args }, 'agent');
+        this.#eventLog.append('tool_call', { call_id: tc.id, name, arguments: this.#redactToolArgs(name, args) }, 'agent');
       }
 
       const toolResults = await this.#executeToolCalls(fullToolCalls);
@@ -3084,6 +3214,41 @@ export class ClawserAgent {
     return true;
   }
 
+  /**
+   * Look up a goal by id.
+   * @param {string} id
+   * @returns {object|null}
+   */
+  getGoal(id) {
+    return this.#goals.find(g => g.id === id) || null;
+  }
+
+  /**
+   * Patch a goal's mutable fields (description, priority). Logs a
+   * `goal_edited` event so event-log replay reproduces the change.
+   * @param {string} id
+   * @param {{description?:string, priority?:string}} patch
+   * @returns {boolean} true if found and updated
+   */
+  editGoal(id, patch) {
+    const goal = this.#goals.find(g => g.id === id);
+    if (!goal) return false;
+    const changes = {};
+    if (typeof patch?.description === 'string' && patch.description.length > 0) {
+      goal.description = patch.description;
+      changes.description = patch.description;
+    }
+    if (typeof patch?.priority === 'string' && patch.priority.length > 0) {
+      goal.priority = patch.priority;
+      changes.priority = patch.priority;
+    }
+    if (Object.keys(changes).length === 0) return false;
+    goal.updated_at = Date.now();
+    this.#onEvent('goal.edited', goal.description);
+    this.#eventLog.append('goal_edited', { id, ...changes }, 'system');
+    return true;
+  }
+
   // ── Scheduler ───────────────────────────────────────────────
 
   /**
@@ -3478,6 +3643,52 @@ export class ClawserAgent {
   /** Register a hook on the agent's HookPipeline. */
   registerHook(hook) { this.#hooks.register(hook); }
 
+  /**
+   * Convenience alias used by the Hooks settings panel. Accepts a
+   * hook spec with either `execute` or `handler` (the panel uses
+   * `handler`, the pipeline expects `execute`); normalizes before
+   * registering.
+   * @param {{name:string, point:string, priority?:number, enabled?:boolean, execute?:Function, handler?:Function}} hook
+   */
+  addHook(hook) {
+    const spec = { ...hook, execute: hook?.execute || hook?.handler };
+    this.#hooks.register(spec);
+  }
+
+  /**
+   * Remove a hook by name across all pipeline points. The settings
+   * panel doesn't track which point a hook was registered at, so
+   * this convenience method searches all points.
+   * @param {string} name
+   * @returns {boolean} true if at least one hook was removed
+   */
+  removeHook(name) {
+    let removed = false;
+    for (const list of this.#hooks._points?.values?.() || []) {
+      // Direct internals not exposed; fall back to public API below.
+      void list;
+    }
+    // HookPipeline doesn't expose `_points`; iterate the canonical
+    // list and unregister each match. `unregister(name, point)` is
+    // safe to call repeatedly.
+    for (const h of this.#hooks.list()) {
+      if (h.name === name) {
+        this.#hooks.unregister(name, h.point);
+        removed = true;
+      }
+    }
+    return removed;
+  }
+
+  /**
+   * Enable or disable a hook by name (across all points).
+   * @param {string} name
+   * @param {boolean} enabled
+   */
+  enableHook(name, enabled) {
+    this.#hooks.setEnabled(name, !!enabled);
+  }
+
   /** List all registered hooks. */
   listHooks() { return this.#hooks.list(); }
 
@@ -3496,7 +3707,7 @@ export class ClawserAgent {
     try {
       const data = JSON.parse(raw);
       this.#hooks.deserialize(data, factories);
-    } catch { /* ignore invalid stored data */ }
+    } catch (e) { silentCatch('clawser-agent', 'ignore-invalid-stored-data', e) }
   }
 
   /** Get the event log for kernel integration (Step 29). */
@@ -3619,6 +3830,8 @@ export class ClawserAgent {
       const config = raw ? JSON.parse(raw) : {};
       config.provider = this.#activeProvider;
       config.model = this.#model;
+      if (this.#defaultMaxTokens != null) config.maxTokens = this.#defaultMaxTokens;
+      else delete config.maxTokens;
       delete config.apiKey; // never persist API keys in localStorage
       localStorage.setItem(lsKey.config(this.#workspaceId), JSON.stringify(config));
     } catch (e) { console.warn('[clawser] failed to persist config', e); }
@@ -3702,6 +3915,21 @@ export class ClawserAgent {
         const eventsFile = await convIdDir.getFileHandle('events.jsonl');
         const eventsText = await (await eventsFile.getFile()).text();
         this.#eventLog = EventLog.fromJSONL(eventsText);
+
+        // One-time redaction migration for legacy event entries that
+        // recorded tool-call arguments before redaction shipped. Idempotent:
+        // already-redacted entries pass through unchanged. We rewrite the
+        // file iff anything was actually scrubbed, so users without legacy
+        // data don't pay an OPFS write per restore.
+        try {
+          const { scrubbed } = redactEventLog(this.#eventLog.events);
+          if (scrubbed > 0) {
+            this.#onLog(2, `redacted ${scrubbed} legacy tool_call event(s) on restore`);
+            const writable = await eventsFile.createWritable();
+            await writable.write(this.#eventLog.toJSONL());
+            await writable.close();
+          }
+        } catch (e) { this.#onLog(3, `eventlog redaction migration failed: ${e?.message || e}`); }
 
         // Derive session history and goals from events
         this.#history = this.#eventLog.deriveSessionHistory(this.#systemPrompt);
@@ -3794,7 +4022,7 @@ export class ClawserAgent {
             this.#eventLog.append('tool_call', {
               call_id: tc.id,
               name,
-              arguments: args,
+              arguments: this.#redactToolArgs(name, args),
             }, 'agent');
           }
         }

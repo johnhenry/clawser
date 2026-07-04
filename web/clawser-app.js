@@ -13,7 +13,7 @@
  * All cross-module coordination flows through the event bus (on/emit).
  */
 import { $, state, lsKey, on, emit, migrateLocalStorageKeys, configCache } from './clawser-state.js';
-import { ensureDefaultWorkspace } from './clawser-workspaces.js';
+import { ensureDefaultWorkspace, initWorkspacesCache } from './clawser-workspaces.js';
 import { bootstrapFilesystem } from './clawser-fs-bootstrap.mjs';
 import { initAccountListeners } from './clawser-accounts.js';
 import { initRouterListeners } from './clawser-router.js';
@@ -40,7 +40,7 @@ import { UndoManager } from './clawser-undo.js';
 import { HeartbeatRunner } from './clawser-heartbeat.js';
 import { AuthProfileManager } from './clawser-auth-profiles.js';
 import { MetricsCollector, RingBufferLog } from './clawser-metrics.js';
-import { DaemonController, CheckpointManager, AwaySummaryBuilder } from './clawser-daemon.js';
+import { DaemonController, CheckpointManager, AwaySummaryBuilder, DaemonState } from './clawser-daemon.js';
 import { RoutineEngine } from './clawser-routines.js';
 import { CheckpointIndexedDB } from './clawser-checkpoint-idb.js';
 import { OAuthManager } from './clawser-oauth.js';
@@ -51,6 +51,8 @@ import { GitBehavior, GitEpisodicMemory } from './clawser-git.js';
 import { AutomationManager } from './clawser-browser-auto.js';
 import { SandboxManager } from './clawser-sandbox.js';
 import { PeripheralManager } from './clawser-hardware.js';
+import { TunnelManager, CloudflareTunnel, NgrokTunnel } from './clawser-tunnel.js';
+import { initPwaInstall } from './clawser-pwa-install.js';
 import { PairingManager } from './clawser-remote.js';
 import { GoalManager } from './clawser-goals.js';
 import { addEvent } from './clawser-ui-chat.js';
@@ -60,11 +62,12 @@ import { executeRoutineAction } from './clawser-routine-runtime.js';
 import { createShellSession, setKernelIntegration } from './clawser-workspace-lifecycle.js';
 import { handleRoute } from './clawser-route-handler.js';
 import { initHomeListeners } from './clawser-home-views.js';
-import { initVaultSettings } from './clawser-vault-settings.js';
+import { initVaultSettings, updatePasskeyUnlockButton } from './clawser-vault-settings.js';
 
 // Kernel integration (Phase 12 — Steps 23-30)
 import { Kernel } from './packages-kernel.js';
 import { KernelIntegration } from './clawser-kernel-integration.js';
+import { silentCatch } from './clawser-silent-catch.mjs'
 
 // ── Migrate localStorage keys to versioned format (Gap 13.3) ────
 migrateLocalStorageKeys();
@@ -216,7 +219,14 @@ state.mcpManager._kernelIntegration = _kernelIntegration;
 console.log('[clawser] Kernel initialized — integration active');
 
 state.checkpointIDB = state.disposableMode ? new NullCheckpointIDB() : new CheckpointIndexedDB();
+// DaemonState with onChange wired to the header badge so phase
+// transitions (RUNNING → PAUSED → ERROR → STOPPED) update the UI
+// reactively. Previously the badge only refreshed at workspace
+// switch, so mid-session phase changes left it stale.
 state.daemonController = new DaemonController({
+  state: new DaemonState({
+    onChange: (newPhase) => emit('updateDaemon', newPhase),
+  }),
   getStateFn: () => state.agent?.getState(),
   checkpoints: new CheckpointManager({
     writeFn: (key, data) => state.checkpointIDB.write(key, data),
@@ -263,6 +273,14 @@ state.oauthManager = new OAuthManager({
     }, 120_000);
 
     function handler(event) {
+      // Origin/source filter: only accept messages from the popup we
+      // opened, AND only from our own origin (the oauth-callback.html
+      // page that posts back to us). Without this, any page that can
+      // get a reference to our window (e.g., via iframing us) could
+      // forge a fake OAuth callback by sending the magic message
+      // type — letting an attacker substitute their own auth `code`.
+      if (event.source !== popup) return;
+      if (event.origin !== location.origin) return;
       if (event.data?.type !== '__clawser_oauth_callback__') return;
       clearTimeout(timeout);
       window.removeEventListener('message', handler);
@@ -273,7 +291,7 @@ state.oauthManager = new OAuthManager({
 
     // Also poll in case postMessage fails (popup on different origin)
     const pollInterval = setInterval(() => {
-      try { if (popup.closed) { clearInterval(pollInterval); clearTimeout(timeout); window.removeEventListener('message', handler); reject(new Error('OAuth popup closed by user.')); } } catch { /* cross-origin — ignore */ }
+      try { if (popup.closed) { clearInterval(pollInterval); clearTimeout(timeout); window.removeEventListener('message', handler); reject(new Error('OAuth popup closed by user.')); } } catch (e) { silentCatch('clawser-app', 'cross-origin-ignore', e) }
     }, 500);
   }),
 
@@ -374,6 +392,21 @@ state.gitMemory = new GitEpisodicMemory(state.gitBehavior);
 state.automationManager = new AutomationManager({ onLog: _onLog });
 state.sandboxManager = new SandboxManager({ onLog: _onLog });
 state.peripheralManager = new PeripheralManager({ onLog: _onLog });
+
+// Tunnel Manager — Cloudflare quick tunnels + ngrok via the wsh_exec tool.
+// Providers are registered eagerly; activation only happens when the user
+// invokes a tunnel start. The exec callback resolves lazily so the wsh tool
+// has time to register itself before any tunnel is actually started.
+state.tunnelManager = new TunnelManager();
+const tunnelExec = async (cmd, args) => {
+  const tool = state.browserTools?.get?.('wsh_exec');
+  if (!tool || typeof tool.execute !== 'function') {
+    throw new Error('wsh_exec tool not available — connect to a wsh server first');
+  }
+  return tool.execute({ cmd, args });
+};
+state.tunnelManager.registerProvider('cloudflare', new CloudflareTunnel({ exec: tunnelExec }));
+state.tunnelManager.registerProvider('ngrok', new NgrokTunnel({ exec: tunnelExec }));
 state.pairingManager = new PairingManager({ onLog: _onLog });
 state.goalManager = new GoalManager();
 state.skillRegistryClient = new SkillRegistryClient();
@@ -452,6 +485,9 @@ async function showVaultModal(vault) {
     submit.textContent = 'Unlock';
   }
 
+  // Show "Unlock with passkey" if any passkey wraps exist for this vault.
+  await updatePasskeyUnlockButton(vault);
+
   return new Promise((resolve) => {
     const ac = new AbortController();
     const form = modal.querySelector('form');
@@ -461,6 +497,17 @@ async function showVaultModal(vault) {
     input.focus();
     modal.addEventListener('cancel', (e) => {
       e.preventDefault(); // prevent Escape from closing — user must submit
+    }, { signal: ac.signal });
+    // If the modal is closed via passkey unlock (which calls modal.close()
+    // directly from outside the form-submit path), resolve the boot
+    // Promise once we observe the vault is unlocked.
+    modal.addEventListener('close', () => {
+      if (!vault.isLocked) {
+        ac.abort();
+        input.value = '';
+        confirm.value = '';
+        resolve();
+      }
     }, { signal: ac.signal });
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -508,7 +555,7 @@ export async function shutdown() {
   if (state.shuttingDown) return;
   state.shuttingDown = true;
 
-  const quiet = async (fn) => { try { await fn(); } catch { /* best-effort */ } };
+  const quiet = async (fn) => { try { await fn(); } catch (e) { silentCatch('clawser-app', 'fn', e) } };
 
   // Stop daemon
   if (state.daemonController) await quiet(() => state.daemonController.stop());
@@ -583,14 +630,24 @@ initHomeListeners();
     console.log('[clawser] Disposable mode — nothing will persist after tab close');
   }
 
-  ensureDefaultWorkspace();
-
-  // Phase 0: bootstrap OPFS directory structure + default configs
+  // Phase 0: bootstrap OPFS directory structure + default configs.
+  // Must run BEFORE initWorkspacesCache so /etc/clawser/ exists for writes.
   try {
     await bootstrapFilesystem();
   } catch (e) {
     console.warn('[clawser] filesystem bootstrap failed (OPFS may be unavailable):', e);
   }
+
+  // Prime the workspace cache from OPFS (with one-time migration from
+  // localStorage if OPFS is empty). After this, synchronous workspace
+  // accessors hit the in-memory cache.
+  try {
+    await initWorkspacesCache();
+  } catch (e) {
+    console.warn('[clawser] workspaces cache init failed:', e);
+  }
+
+  ensureDefaultWorkspace();
 
   handleRoute();
 
@@ -601,6 +658,9 @@ initHomeListeners();
       await reg.periodicSync.register('clawser-scheduler', { minInterval: 60 * 60 * 1000 });
     }
   } catch { /* periodicSync not available or permission denied — Tiers 1/2 still work */ }
+
+  // ── PWA install flow: capture beforeinstallprompt for later trigger ──
+  try { initPwaInstall(); } catch (e) { silentCatch('clawser-app', 'initPwaInstall', e) }
 
   // ── "While you were away" summary from background execution log ──
   try {
@@ -620,7 +680,7 @@ initHomeListeners();
       // Clear the log after presenting it
       await state.checkpointIDB.delete('background_execution_log');
     }
-  } catch { /* IDB not available or empty — ignore */ }
+  } catch (e) { silentCatch('clawser-app', 'idb-not-available-or-empty-ignore', e) }
 })();
 
 // Auto-save on page unload.
@@ -631,19 +691,19 @@ window.addEventListener('beforeunload', () => {
   state.shuttingDown = true;
   if (state.disposableMode) return; // nothing to persist
   // Sync-safe: persistMemories writes to localStorage (synchronous)
-  try { state.agent?.persistMemories(); } catch { /* best-effort */ }
+  try { state.agent?.persistMemories(); } catch (e) { silentCatch('clawser-app', 'state.agent', e) }
   // Sync-safe: vault lock clears in-memory key (no I/O)
-  try { state.vault?.lock(); } catch { /* best-effort */ }
+  try { state.vault?.lock(); } catch (e) { silentCatch('clawser-app', 'state.vault', e) }
   // Sync-safe: persistConfig writes to localStorage (synchronous)
-  try { state.agent?.persistConfig?.(); } catch { /* best-effort */ }
+  try { state.agent?.persistConfig?.(); } catch (e) { silentCatch('clawser-app', 'state.agent', e) }
 });
 
 // Primary save trigger — visibilitychange fires reliably and supports async.
 document.addEventListener('visibilitychange', () => {
   if (state.shuttingDown || state.disposableMode) return;
   if (document.visibilityState === 'hidden' && state.agent) {
-    try { state.agent.persistMemories(); } catch { /* ignore */ }
+    try { state.agent.persistMemories(); } catch (e) { silentCatch('clawser-app', 'state.agent.persistMemories', e) }
     state.agent.persistCheckpoint().catch(e => console.warn('[clawser] Checkpoint save:', e.message));
-    try { state.agent.persistConfig?.(); } catch { /* ignore */ }
+    try { state.agent.persistConfig?.(); } catch (e) { silentCatch('clawser-app', 'state.agent.persistConfig', e) }
   }
 });

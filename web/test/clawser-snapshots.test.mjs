@@ -393,6 +393,126 @@ describe('SnapshotManager', () => {
     assert.equal(typeof mgr.getSnapshotMeta, 'function');
     assert.equal(typeof mgr.clearAll, 'function');
   });
+
+  it('exposes tar-on-OPFS methods', () => {
+    const mgr = new SnapshotManager();
+    assert.equal(typeof mgr.createTarSnapshot, 'function');
+    assert.equal(typeof mgr.restoreTarSnapshot, 'function');
+    assert.equal(typeof mgr.listTarSnapshots, 'function');
+    assert.equal(typeof mgr.deleteTarSnapshot, 'function');
+  });
+});
+
+// ── Tar-on-OPFS snapshot integration ──────────────────────────
+
+/**
+ * In-memory fs adapter satisfying the snapshot tar API: readFile,
+ * writeFile, listDir, delete, mkdir.
+ */
+const makeMemFs = () => {
+  /** @type {Map<string, Uint8Array|string>} */
+  const files = new Map();
+  /** @type {Set<string>} */
+  const dirs = new Set(['~', '~/.local', '~/.local/share', '~/.local/share/clawser', '~/.local/share/clawser/snapshots']);
+  return {
+    files, dirs,
+    async readFile(path) {
+      if (!files.has(path)) throw new Error(`ENOENT: ${path}`);
+      return files.get(path);
+    },
+    async writeFile(path, content) {
+      files.set(path, content);
+    },
+    async listDir(path) {
+      const prefix = path.endsWith('/') ? path : path + '/';
+      const seen = new Set();
+      const entries = [];
+      for (const k of files.keys()) {
+        if (k.startsWith(prefix)) {
+          const rest = k.slice(prefix.length);
+          const name = rest.split('/')[0];
+          if (seen.has(name)) continue;
+          seen.add(name);
+          entries.push({ name, kind: rest.includes('/') ? 'directory' : 'file' });
+        }
+      }
+      return entries;
+    },
+    async mkdir(path) { dirs.add(path); },
+    async delete(path) {
+      if (files.has(path)) { files.delete(path); return; }
+      throw new Error(`ENOENT: ${path}`);
+    },
+  };
+};
+
+describe('SnapshotManager — tar-on-OPFS round trip', () => {
+  it('creates a tar snapshot, lists it, restores it, and deletes it', async () => {
+    const fs = makeMemFs();
+    const mgr = new SnapshotManager();
+    const agent = makeAgent();
+
+    const meta = await mgr.createTarSnapshot({ agent, fs, name: 'before-edit' });
+
+    assert.match(meta.id, /^snap_/);
+    assert.equal(meta.wsId, 'test-ws');
+    assert.equal(meta.name, 'before-edit');
+    assert.ok(meta.size > 0);
+    assert.match(meta.path, /\.tar$/);
+    assert.ok(fs.files.has(meta.path), 'tar file should be in OPFS');
+
+    // List
+    const list = await mgr.listTarSnapshots({ fs });
+    assert.equal(list.length, 1);
+    assert.equal(list[0].id, meta.id);
+    assert.equal(list[0].name, 'before-edit');
+
+    // Restore
+    const restoreAgent = makeAgent({ memories: [] });
+    const result = await mgr.restoreTarSnapshot(meta.id, { agent: restoreAgent, fs });
+    assert.ok(result, 'restore should return a result');
+    assert.ok(result.restored.includes('memories'));
+
+    // Delete
+    const deleted = await mgr.deleteTarSnapshot(meta.id, { fs });
+    assert.equal(deleted, true);
+    const after = await mgr.listTarSnapshots({ fs });
+    assert.equal(after.length, 0);
+  });
+
+  it('rejects if fs is missing', async () => {
+    const mgr = new SnapshotManager();
+    await assert.rejects(
+      () => mgr.createTarSnapshot({ agent: makeAgent() }),
+      /opts\.fs is required/,
+    );
+    await assert.rejects(
+      () => mgr.restoreTarSnapshot('snap_x', { agent: makeAgent() }),
+      /opts\.fs is required/,
+    );
+    await assert.rejects(
+      () => mgr.listTarSnapshots(),
+      /opts\.fs is required/,
+    );
+  });
+
+  it('returns null when restoring a missing snapshot', async () => {
+    const fs = makeMemFs();
+    const mgr = new SnapshotManager();
+    const result = await mgr.restoreTarSnapshot('snap_doesnotexist', { agent: makeAgent(), fs });
+    assert.equal(result, null);
+  });
+
+  it('filters list by wsId', async () => {
+    const fs = makeMemFs();
+    const mgr = new SnapshotManager();
+    await mgr.createTarSnapshot({ agent: makeAgent({ wsId: 'ws-a' }), fs, name: 'a' });
+    await mgr.createTarSnapshot({ agent: makeAgent({ wsId: 'ws-b' }), fs, name: 'b' });
+
+    const onlyA = await mgr.listTarSnapshots({ fs, wsId: 'ws-a' });
+    assert.equal(onlyA.length, 1);
+    assert.equal(onlyA[0].wsId, 'ws-a');
+  });
 });
 
 // ── SNAPSHOT_VERSION ───────────────────────────────────────────

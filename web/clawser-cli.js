@@ -116,8 +116,10 @@ Usage:
   clawser memory add KEY VALUE  Add a memory entry
   clawser memory remove KEY     Remove a memory entry
   clawser mcp                   Show MCP server status
-  clawser rpc                    Start JSON-RPC 2.0 server on stdin/stdout
-  clawser rpc --rpc-socket PATH  Start JSON-RPC 2.0 server on Unix socket
+  clawser rpc                          Start JSON-RPC 2.0 server on stdin/stdout
+  clawser rpc --rpc-socket PATH        Start JSON-RPC 2.0 server on Unix socket
+  clawser rpc --rpc-http :8422         Start JSON-RPC 2.0 server on HTTP (localhost)
+  clawser rpc --rpc-http 8422 --rpc-host 0.0.0.0 --rpc-token T  HTTP with explicit token
   clawser session                List terminal sessions
   clawser session new [name]     Create new terminal session
   clawser session switch <name>  Switch to a session
@@ -335,6 +337,10 @@ export function registerClawserCli(registry, getAgent, getShell) {
       switch (key) {
         case 'model':
           agent.setModel(value);
+          // Persist so the change survives reloads — without this, the
+          // selection only lives in memory and the next session restores
+          // the previously-saved model. (Issue 2026-05-04#3.)
+          try { agent.persistConfig?.(); } catch { /* persist is best-effort */ }
           if (json) return jsonOut({ key: 'model', value }, 'clawser config set');
           return { stdout: `Model set to: ${value}\n`, stderr: '', exitCode: 0 };
         case 'max_tokens':
@@ -344,8 +350,15 @@ export function registerClawserCli(registry, getAgent, getShell) {
             if (json) return jsonErr({ code: 'INVALID_VALUE', message: 'Invalid max_tokens value' }, 'clawser config set');
             return { stdout: '', stderr: 'Invalid max_tokens value', exitCode: 1 };
           }
+          // Actually wire the value to the agent. Previously the CLI
+          // only echoed "max_tokens noted" without persisting — issue
+          // 2026-05-04 bug-hunt finding #1.
+          if (typeof agent.setDefaultMaxTokens === 'function') {
+            agent.setDefaultMaxTokens(n);
+            try { agent.persistConfig?.(); } catch { /* best-effort */ }
+          }
           if (json) return jsonOut({ key: 'max_tokens', value: n }, 'clawser config set');
-          return { stdout: `max_tokens noted: ${n} (applied at request time)\n`, stderr: '', exitCode: 0 };
+          return { stdout: `max_tokens set to: ${n}\n`, stderr: '', exitCode: 0 };
         }
         case 'system_prompt':
         case 'system':
@@ -513,6 +526,9 @@ export function registerClawserCli(registry, getAgent, getShell) {
 
     const newModel = subArgs.join(' ').trim();
     agent.setModel(newModel);
+    // Persist so the change survives reloads — see clawser-cli.js
+    // `cmdConfig` set:model for the rationale (issue 2026-05-04#3).
+    try { agent.persistConfig?.(); } catch { /* best-effort */ }
     if (json) return jsonOut({ model: newModel }, 'clawser model');
     return { stdout: `Model set to: ${newModel}\n`, stderr: '', exitCode: 0 };
   }
@@ -881,8 +897,43 @@ export function registerClawserCli(registry, getAgent, getShell) {
       return { stdout: '', stderr: 'No agent available', exitCode: 1 };
     }
 
-    const { flags } = parseFlags(subArgs, { 'rpc-socket': false });
+    const { flags } = parseFlags(subArgs, {
+      'rpc-socket': false,
+      'rpc-http': false,
+      'rpc-host': false,
+      'rpc-token': false,
+      stdio: true,
+    });
     const socketPath = flags['rpc-socket'];
+    const httpSpec = flags['rpc-http'];
+    const httpHost = flags['rpc-host'] || '127.0.0.1';
+    const bearerToken = flags['rpc-token'];
+
+    if (httpSpec) {
+      // HTTP transport — `--rpc-http :8422` or `--rpc-http 8422`
+      const portStr = String(httpSpec).replace(/^:/, '');
+      const port = parseInt(portStr, 10);
+      if (Number.isNaN(port) || port <= 0 || port > 65535) {
+        if (json) return jsonErr({ code: 'INVALID_PORT', message: `Invalid port: ${httpSpec}` }, 'clawser rpc');
+        return { stdout: '', stderr: `Invalid port: ${httpSpec}`, exitCode: 1 };
+      }
+      const { startHttpRpc } = await import('./clawser-rpc.mjs');
+      const handle = await startHttpRpc({
+        getAgent, port, host: httpHost, bearerToken,
+        onLog: (msg) => process.stderr?.write?.(`[rpc] ${msg}\n`),
+      });
+      // Print the bearer token to stderr per the plan so scripts can capture it
+      process.stderr?.write?.(`[rpc] bearer token: ${handle.bearerToken}\n`);
+      if (json) return jsonOut({
+        transport: 'http', host: handle.host, port: handle.port, bearerToken: handle.bearerToken,
+      }, 'clawser rpc');
+      return {
+        stdout: `RPC server listening on http://${handle.host}:${handle.port}\nBearer token written to stderr.\n`,
+        stderr: '',
+        exitCode: 0,
+        __rpcHandle: handle,
+      };
+    }
 
     if (socketPath) {
       // Unix domain socket transport
@@ -899,7 +950,7 @@ export function registerClawserCli(registry, getAgent, getShell) {
       };
     }
 
-    // Default: stdio transport
+    // Default: stdio transport (`--stdio` flag is accepted but optional)
     const { startStdioRpc } = await import('./clawser-rpc.mjs');
     const handle = startStdioRpc(getAgent, {
       onLog: (msg) => process.stderr?.write?.(`[rpc] ${msg}\n`),

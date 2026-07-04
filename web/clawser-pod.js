@@ -3,6 +3,7 @@
 // Extends Pod with mesh networking (PeerNode, SwarmCoordinator, etc.)
 // Used by clawser-workspace-lifecycle.js to initialize the mesh subsystem.
 
+import { silentCatch } from './clawser-silent-catch.mjs'
 import { Pod } from './packages-pod.js'
 import { MeshIdentityManager } from './clawser-mesh-identity.js'
 import { IdentityWallet } from './clawser-identity-wallet.js'
@@ -198,6 +199,38 @@ export class ClawserPod extends Pod {
   get creditLedger() { return this.#creditLedger }
   get groupKeyManager() { return this.#groupKeyManager }
   get pbftConsensus() { return this.#pbftConsensus }
+
+  /**
+   * Send a message envelope to a single peer.
+   *
+   * Wraps `peerNode.sendTo(peerId, ...)` — the lowest-level unicast
+   * primitive available on the Pod. The envelope is JSON-stringified
+   * before being handed to the transport.
+   *
+   * Throws when no active session exists for the peer (caller should
+   * connect via `peerNode.connectToPeer()` first).
+   *
+   * @param {string} peerId - Target pod identifier (pubKey hash)
+   * @param {object} envelope - Application-defined message
+   *   `{type: string, payload: any, timeout?: number}` per UFS §2.7
+   * @returns {Promise<void>}
+   *
+   * @example
+   *   await pod.sendMessage('pod_abc', { type: 'ping', payload: 'hi' });
+   */
+  async sendMessage(peerId, envelope) {
+    if (!peerId || typeof peerId !== 'string') {
+      throw new Error('ClawserPod.sendMessage: peerId required');
+    }
+    if (!this.#peerNode) {
+      throw new Error('ClawserPod.sendMessage: peerNode not initialized — call initMesh() first');
+    }
+    if (typeof this.#peerNode.sendTo !== 'function') {
+      throw new Error('ClawserPod.sendMessage: peerNode.sendTo not available (legacy build?)');
+    }
+    const data = typeof envelope === 'string' ? envelope : JSON.stringify(envelope);
+    return this.#peerNode.sendTo(peerId, data);
+  }
 
   /**
    * Initialize the full mesh subsystem on top of the Pod's identity.
@@ -821,9 +854,42 @@ export class ClawserPod extends Pod {
     }
   }
 
+  /**
+   * Subscribe to pod-level inbound envelopes. The handler is called
+   * for every message received on any active session's transport,
+   * with `(envelope, fromPeerId, meta)` — `envelope` is the parsed
+   * JSON object the source sent via `pod.sendMessage`, `fromPeerId`
+   * is the sender's pubKey, `meta` carries `{sessionId, transport}`.
+   *
+   * Workspace consumers (sync engine, deploy-target dispatcher) use
+   * this to route by `envelope.type` without each subsystem wiring
+   * its own per-session handler.
+   *
+   * @param {(envelope:object, fromPeerId:string, meta:object) => void} handler
+   * @returns {() => void} unsubscribe
+   */
+  onMessage(handler) {
+    if (typeof handler !== 'function') return () => {}
+    if (!this.#peerNode || typeof this.#peerNode.onIncomingData !== 'function') {
+      // PeerNode without onIncomingData — legacy build; degrade silently.
+      return () => {}
+    }
+    return this.#peerNode.onIncomingData((pubKey, data, meta) => {
+      let envelope
+      try { envelope = typeof data === 'string' ? JSON.parse(data) : data }
+      catch { return /* drop malformed payload */ }
+      if (!envelope || typeof envelope !== 'object') return
+      try { handler(envelope, pubKey, meta) }
+      catch (err) {
+        if (typeof console !== 'undefined') console.warn('[clawser-pod] onMessage handler threw:', err?.message || err)
+      }
+    })
+  }
+
   _onMessage(msg) {
     // Forward pod-level messages as events
     // Listeners can subscribe via pod.on('pod:message', ...)
+    // Kept as a no-op for backward compatibility; new code uses onMessage().
   }
 
   /**
@@ -839,19 +905,19 @@ export class ClawserPod extends Pod {
    */
   async shutdown(opts = {}) {
     if (this.#peerNode && this.#peerNode.state === 'running') {
-      try { await this.#peerNode.shutdown() } catch { /* non-fatal */ }
+      try { await this.#peerNode.shutdown() } catch (e) { silentCatch('clawser-pod', 'peerNode.shutdown', e) }
     }
     if (this.#syncEngine) {
-      try { this.#syncEngine.stopAllAutoSync() } catch { /* non-fatal */ }
+      try { this.#syncEngine.stopAllAutoSync() } catch (e) { silentCatch('clawser-pod', 'syncEngine.stopAllAutoSync', e) }
     }
     if (this.#signalingClient) {
-      try { this.#signalingClient.disconnect() } catch { /* non-fatal */ }
+      try { this.#signalingClient.disconnect() } catch (e) { silentCatch('clawser-pod', 'signalingClient.disconnect', e) }
     }
     if (this.#relayClient) {
-      try { this.#relayClient.disconnect() } catch { /* non-fatal */ }
+      try { this.#relayClient.disconnect() } catch (e) { silentCatch('clawser-pod', 'relayClient.disconnect', e) }
     }
     if (this.#remoteWshConnectors?.disconnectAll) {
-      try { await this.#remoteWshConnectors.disconnectAll() } catch { /* non-fatal */ }
+      try { await this.#remoteWshConnectors.disconnectAll() } catch (e) { silentCatch('clawser-pod', 'remoteWshConnectors.disconnectAll', e) }
     }
     this.#peerNode = null
     this.#swarmCoordinator = null
@@ -917,7 +983,7 @@ export class ClawserPod extends Pod {
     this.#creditLedger = null
     this.#groupKeyManager = null
     if (this.#pbftConsensus) {
-      try { this.#pbftConsensus.stop() } catch { /* non-fatal */ }
+      try { this.#pbftConsensus.stop() } catch (e) { silentCatch('clawser-pod', 'pbftConsensus.stop', e) }
     }
     this.#pbftConsensus = null
     await super.shutdown(opts)

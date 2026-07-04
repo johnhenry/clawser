@@ -1,6 +1,23 @@
 # Clawser Configuration Guide
 
-All configuration is managed through the Config panel (Cmd+9). Settings are persisted per-workspace in localStorage.
+All configuration is managed through the Config panel (Cmd+9). Settings are
+persisted per-workspace.
+
+As of the 2026-05-02 gap-closure pass, the persistence story is:
+
+- **Workspace registry** — OPFS-first at `/etc/clawser/workspaces.json`,
+  with one-time migration from localStorage. localStorage is a read-only
+  fallback for one release. See `clawser-workspaces.js`.
+- **Per-workspace config domains** (autonomy / identity / security / daemon /
+  terminal / hooks) — Saves write through to OPFS at
+  `~/.config/clawser/{domain}.json` via `state.fsUiSync.saveValue()`, in
+  addition to the legacy localStorage write under
+  `clawser_v1_{domain}_{wsId}`. Reads still come from localStorage for
+  speed; the OPFS file is canonical for cross-tab and external-edit
+  reactivity via `FileWatcher` + `ReactiveConfigStore`.
+- **All other domains** in the table below — still localStorage-only at the
+  documented keys until the panel is migrated. Tracking in
+  `docs/implementation-status.md`.
 
 ---
 

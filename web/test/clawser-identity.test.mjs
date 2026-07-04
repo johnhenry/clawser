@@ -209,6 +209,24 @@ describe('IdentityManager', () => {
     assert.ok(templates.length >= 4);
     assert.ok(templates.every(t => t.key && t.name && t.description));
   });
+
+  it('getCurrent() returns the in-memory identity (method-form alias)', () => {
+    // Closes the silent ghost-method bug: clawser-ui-chat.js read the
+    // active identity via `state.identityManager?.getCurrent?.()` to
+    // pull the agent-message avatar URL, but `getCurrent` did not
+    // exist — every agent message rendered without the avatar.
+    const mgr = new IdentityManager({
+      version: '1.1',
+      names: { display: 'TestBot' },
+      physicality: { avatar_url: 'https://example.com/a.png' },
+    });
+    const cur = mgr.getCurrent();
+    assert.ok(cur);
+    assert.equal(cur.names.display, 'TestBot');
+    assert.equal(cur.physicality.avatar_url, 'https://example.com/a.png');
+    // It should reference the same object as the `identity` getter.
+    assert.equal(mgr.getCurrent(), mgr.identity);
+  });
 });
 
 // ── IDENTITY_TEMPLATES ──────────────────────────────────────────

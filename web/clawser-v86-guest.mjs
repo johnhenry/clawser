@@ -1,3 +1,4 @@
+import { silentCatch } from './clawser-silent-catch.mjs'
 /**
  * clawser-v86-guest.mjs — v86-backed Linux guest emulator
  *
@@ -400,13 +401,13 @@ export class LinuxGuest {
   #setState = (state) => {
     this.#state = state;
     for (const cb of this.#stateCallbacks) {
-      try { cb(state); } catch { /* swallow */ }
+      try { cb(state); } catch (e) { silentCatch('clawser-v86-guest', 'swallow', e) }
     }
   };
 
   #emitOutput = (text) => {
     for (const cb of this.#outputCallbacks) {
-      try { cb(text); } catch { /* swallow */ }
+      try { cb(text); } catch (e) { silentCatch('clawser-v86-guest', 'swallow', e) }
     }
   };
 

@@ -12,7 +12,7 @@
  *   - Panel event listeners (initPanelListeners)
  *   - Slash command autocomplete on the chat input
  */
-import { $, esc, state, lsKey } from './clawser-state.js';
+import { $, esc, state, lsKey, emit } from './clawser-state.js';
 import { modal } from './clawser-modal.js';
 import { addMsg, addErrorMsg, updateState, resetToolAndEventState } from './clawser-ui-chat.js';
 import { loadWorkspaces, getActiveWorkspaceId, renameWorkspace, deleteWorkspace, createWorkspace, getWorkspaceName } from './clawser-workspaces.js';
@@ -36,6 +36,9 @@ export { renderGuestFsPanel, parseLsOutput, parseStatOutput, createGuestFsState,
 export { renderSharedWorkerSection, handleSharedWorkerToggle, initSharedWorkerFromConfig } from './clawser-ui-config-shared-worker.js';
 export {
   applySecuritySettings,
+  renderSecuritySection,
+  renderMeshRelaySection,
+  applyMeshRelaySettings,
   renderAutonomySection,
   saveAutonomySettings,
   renderIdentitySection,
@@ -78,8 +81,11 @@ import { renderGoals } from './clawser-ui-goals.js';
 import { renderMarketplace } from './clawser-ui-marketplace.js';
 import { initChannelPanelListeners } from './clawser-ui-channels.js';
 import { handleSharedWorkerToggle, renderSharedWorkerSection } from './clawser-ui-config-shared-worker.js';
+import { silentCatch } from './clawser-silent-catch.mjs'
 import {
   applySecuritySettings,
+  renderMeshRelaySection,
+  applyMeshRelaySettings,
   renderAutonomySection,
   saveAutonomySettings,
   renderIdentitySection,
@@ -568,6 +574,35 @@ export const getTerminalRendererConfig = (wsId) => {
  */
 export const saveTerminalRendererConfig = (wsId, config) => {
   localStorage.setItem(lsKey.terminalRenderer(wsId), JSON.stringify(config));
+  // Phase 7: also write through to ~/.config/clawser/terminal.json
+  if (state.fsUiSync) {
+    state.fsUiSync.saveValue('terminal', config).catch(e =>
+      console.warn('[clawser] FsUiSync terminal save failed:', e?.message || e));
+  }
+};
+
+/**
+ * Render terminal section. Phase 7 read-side helper. The terminal panel
+ * has no live form widget — the renderer is selected at session-start
+ * via `detectAdapterType`. So when an external config change arrives,
+ * we update the cached value (via `saveTerminalRendererConfig` would
+ * loop) and emit `terminalSettingsChanged` so `clawser-reactive-config.mjs`
+ * subscribers (and any future UI) can react.
+ *
+ * @param {object} [config]
+ */
+export const renderTerminalSection = (config) => {
+  if (!state.agent) return;
+  const wsId = state.agent.getWorkspace?.() || 'default';
+  const cfg = config ?? getTerminalRendererConfig(wsId);
+  // Stash to localStorage WITHOUT going through the FsUiSync write-through
+  // path (it's already what triggered us; would loop).
+  try {
+    localStorage.setItem(lsKey.terminalRenderer(wsId), JSON.stringify(cfg));
+  } catch { /* quota / shadow DOM */ }
+  // Existing reactive listener fires `terminalSettingsChanged`; mirror
+  // for direct callers here.
+  emit('terminalSettingsChanged', cfg);
 };
 
 /**
@@ -1391,7 +1426,7 @@ function renderAgentPickerDropdown(agents, activeId, accts = []) {
       try {
         const { saveConfig } = await import('./clawser-accounts.js');
         saveConfig();
-      } catch { /* non-fatal */ }
+      } catch (e) { silentCatch('clawser-ui-panels', 'non-fatal', e) }
 
       // Show credential warning if agent needs an API key
       const warning = state.agent.agentCredentialWarning;
@@ -1420,9 +1455,15 @@ function renderAgentPickerDropdown(agents, activeId, accts = []) {
 
   picker.querySelector('.agent-pick-new')?.addEventListener('click', () => {
     closeAgentPicker();
+    // Set the "new agent" intent BEFORE clicking the panel button. The
+    // click fires the panel:firstrender event which calls renderAgentPanel;
+    // renderAgentPanel reads agentEditingId synchronously at the top of
+    // its body and immediately delegates to renderAgentEditor when set.
+    // The previous setTimeout(...100ms)→dispatchEvent dance was racing
+    // against `await state.agentStorage.listAll()` inside renderAgentPanel.
+    agentEditingId = '__new__';
     const btn = document.querySelector('nav.sidebar button[data-panel="agents"]');
     if (btn) btn.click();
-    setTimeout(() => document.dispatchEvent(new CustomEvent('agent:edit', { detail: { new: true } })), 100);
   });
   picker.querySelector('.agent-pick-manage')?.addEventListener('click', () => {
     closeAgentPicker();
@@ -1519,10 +1560,11 @@ export async function renderAgentPanel() {
     }
   });
 
-  // Listen for new-agent event from picker
-  document.addEventListener('agent:edit', (e) => {
-    if (e.detail?.new) { agentEditingId = '__new__'; renderAgentPanel(); }
-  }, { once: true });
+  // (Previously this registered a one-shot `agent:edit` listener as part
+  //  of a setTimeout→dispatchEvent dance from the agent-picker. The
+  //  picker now sets `agentEditingId = '__new__'` directly before
+  //  clicking the panel button, so the listener is no longer needed.
+  //  Each renderAgentPanel() call would otherwise leak a listener.)
 }
 
 async function renderAgentEditor(panelBody, agentId) {
@@ -1671,6 +1713,9 @@ export function initPanelListeners() {
   // File browser
   $('refreshFiles').addEventListener('click', () => refreshFiles());
   $('mountFolder').addEventListener('click', () => mountLocalFolder());
+  // Drag-drop folder mounting via DropHandler (clawser-ui-drop.js).
+  // Lazy import keeps the cost off the critical path.
+  import('./clawser-ui-files.js').then(m => m.installFileDropHandler?.()).catch(() => {});
   $('toggleDotfiles').addEventListener('click', () => {
     const wsId = state.agent?.getWorkspace() || 'default';
     const current = localStorage.getItem(lsKey.showDotfiles(wsId)) === 'true';
@@ -1771,6 +1816,48 @@ export function initPanelListeners() {
   $('btnApplySecurity').addEventListener('click', () => {
     applySecuritySettings();
     addMsg('system', 'Security settings applied.');
+  });
+
+  // Mesh / Relay
+  $('meshRelayToggle')?.addEventListener('click', () => {
+    const section = $('meshRelaySection');
+    const arrow = $('meshRelayArrow');
+    if (!section || !arrow) return;
+    section.classList.toggle('visible');
+    arrow.innerHTML = section.classList.contains('visible') ? '&#x25BC;' : '&#x25B6;';
+    if (section.classList.contains('visible')) renderMeshRelaySection();
+  });
+
+  $('btnApplyMeshRelay')?.addEventListener('click', () => {
+    applyMeshRelaySettings();
+    addMsg('system', 'Mesh / Relay settings saved. Restart the workspace to reconnect with new endpoints.');
+  });
+
+  // My Devices + Trusted Publishers — wired via clawser-multi-device-panels.mjs.
+  // Lazily initialize on first toggle so we don't mount the panels for
+  // workspaces that never open them.
+  $('myDevicesToggle')?.addEventListener('click', async () => {
+    const section = $('myDevicesSection');
+    const arrow = $('myDevicesArrow');
+    if (!section || !arrow) return;
+    section.classList.toggle('visible');
+    arrow.innerHTML = section.classList.contains('visible') ? '&#x25BC;' : '&#x25B6;';
+    if (section.classList.contains('visible')) {
+      const { mountMyDevicesPanel } = await import('./clawser-multi-device-panels.mjs');
+      await mountMyDevicesPanel(state);
+    }
+  });
+
+  $('trustedPubsToggle')?.addEventListener('click', async () => {
+    const section = $('trustedPubsSection');
+    const arrow = $('trustedPubsArrow');
+    if (!section || !arrow) return;
+    section.classList.toggle('visible');
+    arrow.innerHTML = section.classList.contains('visible') ? '&#x25BC;' : '&#x25B6;';
+    if (section.classList.contains('visible')) {
+      const { mountTrustedPublishersPanel } = await import('./clawser-multi-device-panels.mjs');
+      await mountTrustedPublishersPanel(state);
+    }
   });
 
   // Clear data
@@ -1989,10 +2076,13 @@ export function initPanelListeners() {
   });
 
   // ── Batch 4: Terminal panel ──
+  let _tabCycleIdx = 0;
+  let _lastTabCompletion = null;
   $('terminalInput')?.addEventListener('keydown', async (e) => {
     if (e.key === 'Enter') {
       const cmd = $('terminalInput').value;
       $('terminalInput').value = '';
+      _lastTabCompletion = null;
       await terminalExec(cmd);
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
@@ -2002,6 +2092,53 @@ export function initPanelListeners() {
       e.preventDefault();
       termHistoryIdx = Math.max(termHistoryIdx - 1, -1);
       $('terminalInput').value = termHistoryIdx >= 0 ? terminalHistory[termHistoryIdx] : '';
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      const inputEl = $('terminalInput');
+      if (!inputEl || !state.shell) return;
+      const value = inputEl.value;
+      const cursor = inputEl.selectionStart ?? value.length;
+      const { getCompletions } = await import('./clawser-shell.js');
+      const result = await getCompletions(value, cursor, {
+        registry: state.shell.registry,
+        fs: state.shell.fs,
+        cwd: state.shell.state?.cwd || '/',
+      });
+      if (!result.suggestions.length) return;
+
+      // Cache the completion set for cycle behaviour: second Tab on the
+      // same input cycles to the next match.
+      const sameAsLast = _lastTabCompletion
+        && _lastTabCompletion.value === value
+        && _lastTabCompletion.cursor === cursor;
+      if (!sameAsLast) {
+        _tabCycleIdx = 0;
+        _lastTabCompletion = { value, cursor, suggestions: result.suggestions };
+      } else {
+        _tabCycleIdx = (_tabCycleIdx + 1) % _lastTabCompletion.suggestions.length;
+      }
+
+      // If a unique match, complete directly. Otherwise cycle through.
+      const replacement = result.suggestions.length === 1
+        ? result.suggestions[0]
+        : _lastTabCompletion.suggestions[_tabCycleIdx];
+
+      const prefix = value.slice(0, result.start);
+      const suffix = value.slice(result.end);
+      const newValue = prefix + replacement + suffix;
+      inputEl.value = newValue;
+      const newCursor = (prefix + replacement).length;
+      inputEl.setSelectionRange(newCursor, newCursor);
+
+      // Reset the cycle cache after we apply, but keep it tied to the
+      // resulting value so a second Tab immediately cycles further.
+      _lastTabCompletion = {
+        value: newValue,
+        cursor: newCursor,
+        suggestions: result.suggestions,
+      };
+    } else {
+      _lastTabCompletion = null;
     }
   });
 

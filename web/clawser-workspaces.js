@@ -1,26 +1,178 @@
-// clawser-workspaces.js — Pure localStorage CRUD for workspaces (no DOM, no agent)
+// clawser-workspaces.js — Workspace registry with OPFS-first persistence
+//
+// Per UFS §2.2, the canonical source of truth for the workspace registry is
+// `/etc/clawser/workspaces.json` in OPFS, with `/etc/clawser/active-workspace`
+// holding the active workspace ID. localStorage is a one-time migration
+// source on first run and a read-only fallback for one release.
+//
+// Synchronous accessors (`loadWorkspaces`, `getActiveWorkspaceId`,
+// `getWorkspaceName`, etc.) read from an in-memory cache. The cache must be
+// primed by awaiting `initWorkspacesCache()` at app init. Writes update the
+// cache synchronously and schedule an async OPFS write in the background.
+//
+// Disposable mode skips OPFS entirely and uses the existing sessionStorage
+// adapter.
+
 import { lsKey } from './clawser-state.js';
 import { getStorage } from './clawser-disposable.js';
 
 export const WS_KEY = 'clawser_workspaces';
 export const WS_ACTIVE_KEY = 'clawser_active_workspace';
 
-/** Load all workspaces from storage (sessionStorage in disposable mode). @returns {Array<Object>} */
+const OPFS_WORKSPACES_PATH = 'clawser/etc/clawser/workspaces.json';
+const OPFS_ACTIVE_PATH = 'clawser/etc/clawser/active-workspace';
+
+// ── In-memory cache ────────────────────────────────────────────────
+
+let _workspaces = null; // Array<Workspace> or null until init
+let _activeId = null;   // string or null until init
+let _initialised = false;
+
+const isDisposable = () => {
+  try {
+    if (typeof window === 'undefined') return false;
+    const params = new URL(window.location.href).searchParams;
+    return params.has('disposable') && params.get('disposable') !== 'false';
+  } catch { return false; }
+};
+
+// ── OPFS helpers ───────────────────────────────────────────────────
+
+const readOpfsFile = async (path) => {
+  if (typeof navigator === 'undefined' || !navigator.storage?.getDirectory) return null;
+  const root = await navigator.storage.getDirectory();
+  const parts = path.split('/').filter(Boolean);
+  let dir = root;
+  for (let i = 0; i < parts.length - 1; i++) {
+    try { dir = await dir.getDirectoryHandle(parts[i]); } catch { return null; }
+  }
+  try {
+    const fh = await dir.getFileHandle(parts[parts.length - 1]);
+    const file = await fh.getFile();
+    return await file.text();
+  } catch { return null; }
+};
+
+const writeOpfsFile = async (path, content) => {
+  if (typeof navigator === 'undefined' || !navigator.storage?.getDirectory) return;
+  const root = await navigator.storage.getDirectory();
+  const parts = path.split('/').filter(Boolean);
+  let dir = root;
+  for (let i = 0; i < parts.length - 1; i++) {
+    dir = await dir.getDirectoryHandle(parts[i], { create: true });
+  }
+  const fh = await dir.getFileHandle(parts[parts.length - 1], { create: true });
+  const writable = await fh.createWritable();
+  await writable.write(content);
+  await writable.close();
+};
+
+// ── Initialisation ─────────────────────────────────────────────────
+
+/**
+ * Prime the in-memory cache from OPFS, falling back to a one-time migration
+ * from localStorage if OPFS is empty. Idempotent.
+ *
+ * @returns {Promise<void>}
+ *
+ * @example
+ *   await initWorkspacesCache();
+ *   const list = loadWorkspaces();
+ */
+export async function initWorkspacesCache() {
+  if (_initialised) return;
+  _initialised = true;
+
+  // Disposable mode never touches OPFS.
+  if (isDisposable()) {
+    try { _workspaces = JSON.parse(getStorage().getItem(WS_KEY)) || []; } catch { _workspaces = []; }
+    _activeId = getStorage().getItem(WS_ACTIVE_KEY) || 'default';
+    return;
+  }
+
+  // Try OPFS first.
+  try {
+    const opfsText = await readOpfsFile(OPFS_WORKSPACES_PATH);
+    if (opfsText) {
+      _workspaces = JSON.parse(opfsText);
+      const activeText = await readOpfsFile(OPFS_ACTIVE_PATH);
+      _activeId = (activeText || '').trim() || 'default';
+      return;
+    }
+  } catch {
+    // OPFS read failed — fall through to localStorage.
+  }
+
+  // OPFS empty: migrate from localStorage if present.
+  let lsList = [];
+  try { lsList = JSON.parse(localStorage.getItem(WS_KEY)) || []; } catch {}
+  const lsActive = localStorage.getItem(WS_ACTIVE_KEY) || 'default';
+
+  _workspaces = lsList;
+  _activeId = lsActive;
+
+  if (lsList.length > 0) {
+    // One-time migration: write to OPFS so subsequent runs read from there.
+    persistAsync();
+  }
+}
+
+const persistAsync = () => {
+  if (isDisposable()) {
+    try { getStorage().setItem(WS_KEY, JSON.stringify(_workspaces || [])); } catch {}
+    try { getStorage().setItem(WS_ACTIVE_KEY, _activeId || 'default'); } catch {}
+    return;
+  }
+  // Background OPFS write — never throw.
+  Promise.resolve().then(async () => {
+    try {
+      await writeOpfsFile(OPFS_WORKSPACES_PATH, JSON.stringify(_workspaces || []));
+      await writeOpfsFile(OPFS_ACTIVE_PATH, _activeId || 'default');
+    } catch (e) {
+      console.warn('[clawser] workspaces OPFS write failed:', e?.message || e);
+    }
+  });
+};
+
+/** Reset internal state — for tests only. @internal */
+export const __resetForTests = () => {
+  _workspaces = null;
+  _activeId = null;
+  _initialised = false;
+};
+
+// ── Synchronous accessors (cache-backed) ───────────────────────────
+
+/**
+ * Load all workspaces from the cache. Falls back to a synchronous
+ * localStorage read if the cache has never been touched — legacy
+ * behaviour preserved for early-boot callers.
+ *
+ * @returns {Array<Object>}
+ */
 export function loadWorkspaces() {
+  if (_workspaces !== null) return [..._workspaces];
   try { return JSON.parse(getStorage().getItem(WS_KEY)) || []; } catch { return []; }
 }
 
-/** Persist the workspace list to storage. @param {Array<Object>} list */
+/**
+ * Persist the workspace list. Updates the cache synchronously and schedules
+ * an async OPFS write.
+ * @param {Array<Object>} list
+ */
 export function saveWorkspaces(list) {
-  getStorage().setItem(WS_KEY, JSON.stringify(list));
+  _workspaces = [...list];
+  persistAsync();
 }
 
 export function getActiveWorkspaceId() {
+  if (_activeId !== null) return _activeId;
   return getStorage().getItem(WS_ACTIVE_KEY) || 'default';
 }
 
 export function setActiveWorkspaceId(id) {
-  getStorage().setItem(WS_ACTIVE_KEY, id);
+  _activeId = id;
+  persistAsync();
 }
 
 /** Ensure a 'default' workspace exists, migrating legacy data if needed. @returns {Array<Object>} */

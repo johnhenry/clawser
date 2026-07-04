@@ -189,6 +189,11 @@ export class SkillHotReloader {
   }
 
   async #doPoll() {
+    // Capture wsId at the start of the poll. If a workspace switch
+    // happens mid-poll (cleanupWorkspace → stop, then setWorkspace),
+    // we must not overwrite the new workspace's #hashes/#timestamps
+    // with the old workspace's scan results.
+    const startWsId = this.#wsId;
     const currentHashes = new Map();
     const currentTimestamps = new Map();
     const changed = [];
@@ -204,6 +209,15 @@ export class SkillHotReloader {
       const wsDir = await SkillStorage.getWorkspaceSkillsDir(this.#wsId);
       await this.#scanDir(wsDir, currentHashes, currentTimestamps);
     } catch { /* workspace dir may not exist yet */ }
+
+    // If a workspace switch happened mid-scan, abort — the next poll
+    // (after setWorkspace clears state) will rebuild correctly.
+    // (We only check wsId, not #running, because pollNow() is a valid
+    //  external entry point that may run with #running=false.)
+    if (this.#wsId !== startWsId) {
+      this.#onLog(3, `[hot-reload] Aborting stale poll (wsId changed mid-poll)`);
+      return [];
+    }
 
     // Detect removed skills (in old hashes but not in current)
     for (const name of this.#hashes.keys()) {

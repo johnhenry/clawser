@@ -1,5 +1,14 @@
 # Clawser Mesh-Native Rollup — Full Plan
 
+> **Status: not implemented.** This is an aspirational design. No
+> `clawser-rollup-*.js` files exist; the implementation work is multi-month
+> research-grade scope (browser-friendly PBFT, on-chain settlement,
+> data-availability layer). The 2026-05-02 audit recommended skipping this
+> outright; the existing `clawser-mesh-audit.js`,
+> `clawser-mesh-payments.js`, and `clawser-mesh-consensus.js` already cover
+> ~80% of the underlying capabilities at <5% of the cost. See
+> `docs/implementation-status.md` H1.
+
 > A rollup where Clawser's P2P mesh peers collectively sequence transactions.
 > No Coinbase. No OP Labs. No centralized sequencer. The mesh IS the sequencer.
 

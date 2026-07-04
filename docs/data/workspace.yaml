@@ -191,9 +191,11 @@
     - bootstrapFilesystem
   category: filesystem
   notes: >
-    Phase 0 (bootstrap), Phase 1 (config reactivity), Phase 2 (/proc),
-    Phase 3 (/run), Phase 4 (chmod), Phase 5 (device files), Phase 6 (clsh),
-    Phase 7 (.env loading), Phase 8 (motd + profile), Phase 9 (guest mounts).
+    Phase 0 (OPFS adapter rewrite), Phase 1 (filesystem layout + bootstrap),
+    Phase 2 (config file reactivity), Phase 3 (/proc and /run), Phase 4
+    (chmod support), Phase 5 (device files), Phase 6 (shell profile + .env
+    loading), Phase 7 (UI ↔ file sync via FsUiSync), Phase 8 (kernel
+    filesystem integration), Phase 9 (v86 guest mount points).
   since: "2.1.0"
   see_also:
     - OPFS Persistence
@@ -274,15 +276,54 @@
     an action; reading returns the result. Sub-trees for providers
     (/dev/clawser/providers/), channels (/dev/clawser/channels/), hardware
     (/dev/clawser/hardware/), and mesh peers (/dev/clawser/mesh/peers/).
+    Plus special devices: /dev/clawser/null, /random, /zero.
   files:
     - web/clawser-fs-devices.mjs
+    - web/clawser-runtime.js
   api:
     - DeviceFileHandler
+    - registerProviderDevice
+    - registerChannelDevice
+    - registerHardwareDevice
+    - registerMeshPeerDevice
+    - unregisterMeshPeerDevice
+    - registerSpecialDevices
+    - addMeshPeerDevice
+    - removeMeshPeerDevice
   category: filesystem
   notes: >
     Phase 5 of Unix filesystem architecture. echo "hello" > /dev/clawser/channels/slack
     sends a message via the Slack channel adapter.
   since: "2.1.0"
+
+- name: Mesh Peer Device Files
+  status: implemented
+  description: >
+    Per-peer device files at /dev/clawser/mesh/peers/{peerId}. Read returns peer
+    metadata as JSON ({podId, status, lastSeen, capabilities, peerType, lastMessage}).
+    Write parses a JSON envelope ({type, payload, timeout?}) and dispatches via
+    pod.sendMessage(peerId, envelope), which routes through PeerNode.sendTo using
+    the peer's currently active transport session. Devices register/unregister
+    automatically on discovery events.
+  files:
+    - web/clawser-fs-devices.mjs
+    - web/clawser-workspace-init-mesh.js
+    - web/clawser-pod.js
+    - web/clawser-peer-node.js
+  api:
+    - registerMeshPeerDevice
+    - unregisterMeshPeerDevice
+    - sendMessage
+    - sendTo
+    - hasActiveSession
+  category: filesystem
+  notes: >
+    UFS §2.7. Documented envelope shape passes type verbatim; unknown types
+    are forwarded to the peer for opt-in handling. Throws "no active session"
+    if the peer hasn't been connected.
+  since: "2.1.0"
+  see_also:
+    - Device Files
 
 - name: .env File Loading
   status: implemented
@@ -338,12 +379,47 @@
 - name: Atomic Workspace Snapshots
   status: implemented
   description: >
-    Save and restore the complete workspace state (shell history, filesystem, memory,
-    agent state, goals, scheduler) as a single atomic blob in IndexedDB. Instant boot
-    to exact previous state.
+    Save and restore the complete workspace state (event log, checkpoint, memories,
+    routines, shell state, skill activations, hooks, localStorage settings) as a
+    single atomic snapshot. Two backends: tar-on-OPFS (default) writes USTAR
+    archives to ~/.local/share/clawser/snapshots/{id}.tar; legacy IndexedDB
+    backend retained for one release for backward compatibility. Top-level shell
+    commands: snapshot save/restore/list/delete/info.
   files:
-    - web/clawser-fs-bootstrap.mjs
-  notes: >
-    Extends existing checkpoint system to be comprehensive and atomic.
+    - web/clawser-snapshots.js
+    - web/clawser-snapshot-cli.js
+    - web/clawser-tar.mjs
+  api:
+    - SnapshotManager
+    - createTarSnapshot
+    - restoreTarSnapshot
+    - listTarSnapshots
+    - deleteTarSnapshot
+    - createAtomicSnapshot
+    - restoreAtomicSnapshot
+    - listSnapshots
+    - deleteSnapshot
   category: checkpoint
+  notes: >
+    Each subsystem becomes one tar entry; meta.json is the self-describing header.
+    snapshot list merges OPFS-tar and legacy-IDB sources.
   since: "2.1.0"
+
+- name: USTAR Tar Format
+  status: implemented
+  description: >
+    Pure-JS POSIX USTAR tar writer/reader. Used by the snapshot system and
+    available for any future export/import flow. Round-trips files with
+    arbitrary content sizes, UTF-8, mtime, mode, and prefix splitting for
+    long names (up to 255 bytes). Validates checksums on read.
+  files:
+    - web/clawser-tar.mjs
+  api:
+    - writeTar
+    - readTar
+    - writeTarFromObject
+    - readTarToObject
+  category: filesystem
+  since: "2.1.0"
+  see_also:
+    - Atomic Workspace Snapshots

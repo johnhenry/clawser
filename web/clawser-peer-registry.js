@@ -1,3 +1,4 @@
+import { silentCatch } from './clawser-silent-catch.mjs'
 /**
  * clawser-peer-registry.js -- Unified peer registry with permission management.
  *
@@ -431,7 +432,7 @@ export class PeerRegistry {
 
     const fire = (event, data) => {
       for (const cb of [...(callbacks[event] || [])]) {
-        try { cb(data) } catch { /* swallow */ }
+        try { cb(data) } catch (e) { silentCatch('clawser-peer-registry', 'swallow', e) }
       }
     }
 

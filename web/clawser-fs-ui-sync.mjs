@@ -1,3 +1,4 @@
+import { silentCatch } from './clawser-silent-catch.mjs'
 /**
  * clawser-fs-ui-sync.mjs — Phase 7: Bidirectional UI ↔ File Sync
  *
@@ -226,7 +227,7 @@ export class FsUiSync {
 
   #notify(event) {
     for (const cb of this.#listeners) {
-      try { cb(event); } catch { /* swallow */ }
+      try { cb(event); } catch (e) { silentCatch('clawser-fs-ui-sync', 'swallow', e) }
     }
   }
 }

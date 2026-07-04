@@ -12,8 +12,8 @@ import {
   TabCoordinator,
   InputLockManager,
   AgentBusyIndicator,
+  /* CrossTabToolBridge — deleted 2026-05-06 (unused orphan) */
   WorkerProtocol,
-  CrossTabToolBridge,
   HeadlessRunner,
   AwaySummaryBuilder,
   NotificationCenter,
@@ -212,6 +212,32 @@ describe('TabCoordinator', () => {
     // After stop, only self remains (tabs map cleared, but activeTabs still shows self)
     assert.equal(coord.tabCount, 1);
   });
+
+  it('isLeader: only one of two coordinators wins, and it is the older one', () => {
+    // Build a paired BroadcastChannel mock so two coordinators can talk.
+    const subA = []; const subB = [];
+    const chA = {
+      postMessage(msg) { for (const fn of subB) fn({ data: msg }); },
+      close() {}, set onmessage(fn) { subA.push(fn); },
+    };
+    const chB = {
+      postMessage(msg) { for (const fn of subA) fn({ data: msg }); },
+      close() {}, set onmessage(fn) { subB.push(fn); },
+    };
+    const oldCoord = new TabCoordinator({ channel: chA });
+    // Force a deterministic earlier joinedAt for `oldCoord` by reaching
+    // through to the private field via the broadcast contract instead:
+    // run start() so broadcasts go out, then a fresh coordinator joins.
+    oldCoord.start();
+    // sleep-ish: spin Date.now forward a hair to ensure a different ts
+    const newCoord = new TabCoordinator({ channel: chB });
+    newCoord.start();
+    // Both should now have learned of each other via the swap.
+    assert.equal(oldCoord.isLeader, true, 'older coordinator wins');
+    assert.equal(newCoord.isLeader, false, 'newer coordinator does NOT also claim leader');
+    oldCoord.stop();
+    newCoord.stop();
+  });
 });
 
 // ── InputLockManager ────────────────────────────────────────────
@@ -293,6 +319,75 @@ describe('AgentBusyIndicator', () => {
     assert.ok(typeof s.since === 'number');
     assert.ok(s.since > 0);
   });
+
+  it('subscribe receives remote-tab busy state via paired channel', () => {
+    // Build a paired BroadcastChannel mock so two indicators talk.
+    let aHandler = null;
+    let bHandler = null;
+    const chA = {
+      postMessage(msg) { if (bHandler) bHandler({ data: msg }); },
+      close() {}, set onmessage(fn) { aHandler = fn; },
+    };
+    const chB = {
+      postMessage(msg) { if (aHandler) aHandler({ data: msg }); },
+      close() {}, set onmessage(fn) { bHandler = fn; },
+    };
+    const a = new AgentBusyIndicator({ channel: chA });
+    const b = new AgentBusyIndicator({ channel: chB });
+    const events = [];
+    b.subscribe((e) => events.push(e));
+    a.setBusy(true, 'thinking');
+    assert.equal(events.length, 1);
+    assert.equal(events[0].busy, true);
+    assert.equal(events[0].reason, 'thinking');
+    assert.equal(events[0].tabId, a.tabId);
+    assert.equal(b.isAnyPeerBusy(), true);
+    a.setBusy(false);
+    assert.equal(events.length, 2);
+    assert.equal(events[1].busy, false);
+    assert.equal(b.isAnyPeerBusy(), false);
+    a.close();
+    b.close();
+  });
+
+  it('peerStates() returns a snapshot of remote tabs', () => {
+    let aHandler = null;
+    let bHandler = null;
+    const chA = {
+      postMessage(msg) { if (bHandler) bHandler({ data: msg }); },
+      close() {}, set onmessage(fn) { aHandler = fn; },
+    };
+    const chB = {
+      postMessage(msg) { if (aHandler) aHandler({ data: msg }); },
+      close() {}, set onmessage(fn) { bHandler = fn; },
+    };
+    const a = new AgentBusyIndicator({ channel: chA });
+    const b = new AgentBusyIndicator({ channel: chB });
+    a.setBusy(true, 'r1');
+    const peers = b.peerStates();
+    assert.equal(peers.length, 1);
+    assert.equal(peers[0].tabId, a.tabId);
+    assert.equal(peers[0].busy, true);
+    a.close();
+    b.close();
+  });
+
+  it('ignores echoes of own broadcasts (tabId match)', () => {
+    // BroadcastChannel doesn't deliver to sender, but the unit test
+    // can simulate an explicit echo and verify the guard.
+    let handler = null;
+    const ch = {
+      postMessage() {},
+      close() {},
+      set onmessage(fn) { handler = fn; },
+    };
+    const ind = new AgentBusyIndicator({ channel: ch });
+    let called = 0;
+    ind.subscribe(() => called++);
+    handler({ data: { type: 'agent_busy', tabId: ind.tabId, busy: true, reason: 'self', since: 1 } });
+    assert.equal(called, 0, 'self-message must be ignored');
+    ind.close();
+  });
 });
 
 // ── WorkerProtocol ──────────────────────────────────────────────
@@ -330,41 +425,9 @@ describe('WorkerProtocol', () => {
   });
 });
 
-// ── CrossTabToolBridge ──────────────────────────────────────────
-
-describe('CrossTabToolBridge', () => {
-  let bridge;
-
-  beforeEach(() => {
-    const ch = { postMessage() {}, close() {} };
-    bridge = new CrossTabToolBridge({ channel: ch });
-  });
-
-  it('registerTool + listTools', () => {
-    bridge.registerTool('ping', async () => ({ success: true, output: 'pong' }));
-    assert.deepEqual(bridge.listTools(), ['ping']);
-  });
-
-  it('invoke returns result from registered tool', async () => {
-    bridge.registerTool('echo', async (args) => ({ success: true, output: args.msg }));
-    const result = await bridge.invoke('echo', { msg: 'hello' });
-    assert.equal(result.success, true);
-    assert.equal(result.output, 'hello');
-  });
-
-  it('invoke returns error for unknown tool', async () => {
-    const result = await bridge.invoke('nonexistent', {});
-    assert.equal(result.success, false);
-    assert.ok(result.error.includes('not found'));
-  });
-
-  it('unregisterTool removes', () => {
-    bridge.registerTool('temp', async () => ({ success: true, output: '' }));
-    assert.deepEqual(bridge.listTools(), ['temp']);
-    bridge.unregisterTool('temp');
-    assert.deepEqual(bridge.listTools(), []);
-  });
-});
+// CrossTabToolBridge tests removed 2026-05-06 — class was deleted as
+// an unused orphan with a half-implemented receive side. See the
+// note in clawser-daemon.js where the export used to live.
 
 // ── HeadlessRunner ──────────────────────────────────────────────
 
