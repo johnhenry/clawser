@@ -474,6 +474,8 @@ async function showVaultModal(vault) {
   const input = document.getElementById('vaultPassphrase');
 
   const recoverBtn = document.getElementById('vaultRecoverBtn');
+  const destroyBtn = document.getElementById('vaultDestroyBtn');
+  if (destroyBtn) destroyBtn.style.display = 'none'; // revealed after a failed unlock
 
   if (isNew) {
     title.textContent = 'Create Vault';
@@ -542,6 +544,28 @@ async function showVaultModal(vault) {
         error.style.display = '';
       }
     }, { signal: ac.signal });
+    // Last-resort escape hatch for a corrupted or fully inaccessible vault:
+    // destroys all secrets and restarts the flow in create mode.
+    destroyBtn?.addEventListener('click', async () => {
+      try {
+        const { modal: dialogs } = await import('./clawser-modal.js');
+        const sure = await dialogs.confirm(
+          'Reset the vault? ALL stored secrets (API keys, credentials) will be permanently deleted. This cannot be undone.',
+          { title: 'Reset Vault', danger: true, okLabel: 'Delete everything' },
+        );
+        if (!sure) return;
+        await vault.destroy();
+        modal.close();
+        ac.abort();
+        input.value = '';
+        confirm.value = '';
+        // Restart the flow — vault no longer exists, so this runs create mode
+        resolve(showVaultModal(vault));
+      } catch (err) {
+        error.textContent = err.message || 'Vault reset failed';
+        error.style.display = '';
+      }
+    }, { signal: ac.signal });
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       error.style.display = 'none';
@@ -564,6 +588,8 @@ async function showVaultModal(vault) {
         if (!ok) {
           error.textContent = 'Invalid passphrase';
           error.style.display = '';
+          // Reveal the destructive escape hatch after a failed unlock
+          if (!isNew && destroyBtn) destroyBtn.style.display = '';
           return;
         }
         // verify() leaves the vault unlocked with the correct key
@@ -592,6 +618,8 @@ async function showVaultModal(vault) {
         confirm.value = '';
         error.textContent = err.message || 'Invalid passphrase';
         error.style.display = '';
+        // Decrypt errors on an existing vault may mean corruption — offer reset
+        if (!isNew && destroyBtn) destroyBtn.style.display = '';
       }
     }, { signal: ac.signal });
   });

@@ -1605,12 +1605,40 @@ async function renderAgentEditor(panelBody, agentId) {
       <div class="config-group"><label>Max Tokens</label><input id="aeditMaxTok" type="number" value="${agent.maxTokens || 4096}" ${isBuiltin ? 'disabled' : ''} /></div>
       <div class="config-group"><label>Autonomy</label><select id="aeditAutonomy" ${isBuiltin ? 'disabled' : ''}><option value="full" ${agent.autonomy === 'full' ? 'selected' : ''}>Full</option><option value="balanced" ${agent.autonomy === 'balanced' ? 'selected' : ''}>Balanced</option><option value="cautious" ${agent.autonomy === 'cautious' ? 'selected' : ''}>Cautious</option><option value="manual" ${agent.autonomy === 'manual' ? 'selected' : ''}>Manual</option></select></div>
       <div class="config-group"><label>Tool Mode</label><select id="aeditToolMode" ${isBuiltin ? 'disabled' : ''}><option value="all" ${agent.tools?.mode === 'all' ? 'selected' : ''}>All tools</option><option value="none" ${agent.tools?.mode === 'none' ? 'selected' : ''}>No tools</option><option value="allowlist" ${agent.tools?.mode === 'allowlist' ? 'selected' : ''}>Allowlist</option><option value="blocklist" ${agent.tools?.mode === 'blocklist' ? 'selected' : ''}>Blocklist</option></select></div>
+      <div class="config-group" id="aeditToolListWrap" style="display:none"><label>Tools <span style="font-size:9px;color:var(--dim);" id="aeditToolListHint"></span></label><div id="aeditToolList" class="tool-picker"></div></div>
       <div class="config-group"><label>Max Turns/Run</label><input id="aeditMaxTurns" type="number" value="${agent.maxTurnsPerRun || 20}" ${isBuiltin ? 'disabled' : ''} /></div>
       ${!isBuiltin ? `<div class="btn-row"><button class="btn-sm" id="agentSaveBtn">Save</button><button class="btn-sm btn-surface2" id="agentCancelBtn">Cancel</button>${agentId !== '__new__' ? `<button class="btn-sm btn-danger" id="agentDeleteBtn">Delete</button>` : ''}</div>` : `<div class="btn-row"><button class="btn-sm" id="agentSaveBuiltinBtn">Save as Custom Copy</button><button class="btn-sm btn-surface2" id="agentCancelBtn">Back</button></div>`}
     </div>
   `;
 
   panelBody.querySelector('#aeditTemp')?.addEventListener('input', (e) => { panelBody.querySelector('#aeditTempVal').textContent = e.target.value; });
+
+  // Tool picker — visible only for allowlist/blocklist modes (a bare
+  // allowlist with an empty list silently denies the agent every tool)
+  {
+    const { buildToolPickerModel, renderToolPickerHtml } = await import('./clawser-tool-picker.mjs');
+    const wrap = panelBody.querySelector('#aeditToolListWrap');
+    const listEl = panelBody.querySelector('#aeditToolList');
+    const hintEl = panelBody.querySelector('#aeditToolListHint');
+    const modeSel = panelBody.querySelector('#aeditToolMode');
+    const syncPicker = () => {
+      const mode = modeSel.value;
+      const showList = mode === 'allowlist' || mode === 'blocklist';
+      wrap.style.display = showList ? '' : 'none';
+      if (showList && !listEl.dataset.rendered) {
+        const model = buildToolPickerModel(state.browserTools.allSpecs(), agent.tools?.list || []);
+        listEl.innerHTML = renderToolPickerHtml(model);
+        listEl.dataset.rendered = '1';
+      }
+      if (showList) {
+        hintEl.textContent = mode === 'allowlist'
+          ? '(checked tools are ALLOWED — an empty list denies everything)'
+          : '(checked tools are BLOCKED)';
+      }
+    };
+    modeSel?.addEventListener('change', syncPicker);
+    syncPicker();
+  }
   panelBody.querySelector('#aeditAccount')?.addEventListener('change', (e) => {
     const acct = allAccounts.find(a => a.id === e.target.value);
     if (acct && !$('aeditModel').value.trim()) $('aeditModel').value = acct.model || '';
@@ -1637,9 +1665,18 @@ async function renderAgentEditor(panelBody, agentId) {
       temperature: parseFloat($('aeditTemp').value) || 0.7,
       maxTokens: parseInt($('aeditMaxTok').value) || 4096,
       autonomy: $('aeditAutonomy').value,
-      tools: { ...agent.tools, mode: $('aeditToolMode').value },
+      tools: {
+        ...agent.tools,
+        mode: $('aeditToolMode').value,
+        list: (await import('./clawser-tool-picker.mjs'))
+          .collectToolPickerSelection(panelBody.querySelector('#aeditToolList')) ,
+      },
       maxTurnsPerRun: parseInt($('aeditMaxTurns').value) || 20,
     };
+    // Preserve the existing list when the picker was never rendered (mode all/none)
+    if (!panelBody.querySelector('#aeditToolList')?.dataset.rendered) {
+      updated.tools.list = agent.tools?.list || [];
+    }
     await state.agentStorage.save(updated);
     agentEditingId = null;
     renderAgentPanel();
@@ -1844,7 +1881,8 @@ export function initPanelListeners() {
     arrow.innerHTML = section.classList.contains('visible') ? '&#x25BC;' : '&#x25B6;';
     if (section.classList.contains('visible')) {
       const { mountMyDevicesPanel } = await import('./clawser-multi-device-panels.mjs');
-      await mountMyDevicesPanel(state);
+      const { buildDeployFlowOpts } = await import('./clawser-deploy-flow.mjs');
+      await mountMyDevicesPanel(state, buildDeployFlowOpts(state));
     }
   });
 

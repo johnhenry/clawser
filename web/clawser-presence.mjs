@@ -211,3 +211,27 @@ export class PresenceService {
     }
   }
 }
+
+// ── Presence → user notification mapping ─────────────────────────
+
+/**
+ * Map a presence transition to a user-facing system message, or null
+ * when the transition shouldn't be announced.
+ *
+ * Policy: announce sustained state changes only — offline (which the
+ * service already debounces via offlineAfterMs) and recovery back to
+ * online from offline. online→idle and idle→online flapping stays quiet.
+ *
+ * @param {{peerId: string, status: string, prevStatus: string|null}} change
+ * @returns {string|null}
+ */
+export function presenceChangeMessage(change) {
+  const shortId = String(change.peerId || '').slice(0, 12);
+  if (change.status === 'offline' && change.prevStatus && change.prevStatus !== 'offline') {
+    return `Peer ${shortId}… went offline.`;
+  }
+  if (change.status === 'online' && change.prevStatus === 'offline') {
+    return `Peer ${shortId}… reconnected.`;
+  }
+  return null;
+}

@@ -206,6 +206,16 @@ export class UndoManager {
   /** Whether undo is possible. */
   get canUndo() { return this.#checkpoints.length > 0; }
 
+  /**
+   * File ops of the most recent undoable checkpoint (copies), for the
+   * undo UI's "view changes" diff preview.
+   * @returns {Array<object>}
+   */
+  latestFileOps() {
+    const cp = this.#checkpoints[this.#checkpoints.length - 1];
+    return cp ? cp.snapshot.fileOps.map(op => ({ ...op })) : [];
+  }
+
   /** Number of undoable turns. */
   get undoDepth() { return this.#checkpoints.length; }
 

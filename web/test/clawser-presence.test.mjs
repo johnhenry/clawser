@@ -303,3 +303,27 @@ describe('PresenceService — PeerNode wiring', () => {
     svc.stop()
   })
 })
+
+// ── presenceChangeMessage ─────────────────────────────────────────
+
+describe('presenceChangeMessage', () => {
+  it('announces sustained offline transitions', async () => {
+    const { presenceChangeMessage } = await import('../clawser-presence.mjs');
+    const msg = presenceChangeMessage({ peerId: 'pod-abcdef123456789', status: 'offline', prevStatus: 'online' });
+    assert.match(msg, /pod-abcdef12.*went offline/);
+  });
+
+  it('announces recovery from offline', async () => {
+    const { presenceChangeMessage } = await import('../clawser-presence.mjs');
+    const msg = presenceChangeMessage({ peerId: 'p1', status: 'online', prevStatus: 'offline' });
+    assert.match(msg, /reconnected/);
+  });
+
+  it('stays quiet for idle flapping and initial discovery', async () => {
+    const { presenceChangeMessage } = await import('../clawser-presence.mjs');
+    assert.equal(presenceChangeMessage({ peerId: 'p', status: 'idle', prevStatus: 'online' }), null);
+    assert.equal(presenceChangeMessage({ peerId: 'p', status: 'online', prevStatus: 'idle' }), null);
+    assert.equal(presenceChangeMessage({ peerId: 'p', status: 'online', prevStatus: null }), null);
+    assert.equal(presenceChangeMessage({ peerId: 'p', status: 'offline', prevStatus: 'offline' }), null);
+  });
+});

@@ -683,6 +683,12 @@ export async function initWorkspace(wsId, convId) {
     const savedConfig = state.agent.restoreConfig();
     const memCount = state.agent.restoreMemories();
 
+    // Rebuild user-created hooks from their persisted source text
+    try {
+      const { defaultHookFactories } = await import('./clawser-agent.js');
+      state.agent.restoreHooks(defaultHookFactories());
+    } catch (e) { console.warn('[clawser] hook restore failed:', e.message); }
+
     state.agent.memoryHygiene();
 
     state.agent.setSystemPrompt($('systemPrompt').value);

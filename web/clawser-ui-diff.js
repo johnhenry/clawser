@@ -68,3 +68,22 @@ export function renderDiff(el, oldCode, newCode) {
 function esc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
+
+/**
+ * Build a diff model from UndoManager file ops so the undo UI can show
+ * what a turn changed before reverting it.
+ *
+ * @param {Array<{action: string, path: string, content?: string, previousContent?: string}>|null} fileOps
+ * @returns {Array<{path: string, action: string, oldText: string, newText: string}>}
+ */
+export function buildUndoDiffModel(fileOps) {
+  if (!Array.isArray(fileOps)) return [];
+  const model = [];
+  for (const op of fileOps) {
+    const oldText = op.previousContent ?? '';
+    const newText = op.action === 'delete' ? '' : (op.content ?? '');
+    if (!oldText && !newText) continue; // nothing recorded to diff
+    model.push({ path: op.path, action: op.action, oldText, newText });
+  }
+  return model;
+}

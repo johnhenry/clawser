@@ -827,6 +827,22 @@ export class SecretVault {
   }
 
   /**
+   * Destroy the vault entirely: remove every storage entry (secrets AND
+   * internal meta/salt/recovery blobs) and lock. Unrecoverable — the DEK
+   * dies with the meta. Used by the "reset vault" flow when the wrapped
+   * DEK can no longer be decrypted (corruption / all unlock paths lost).
+   *
+   * @returns {Promise<void>}
+   */
+  async destroy() {
+    const names = await this.#storage.list();
+    for (const name of names) {
+      await this.#storage.remove(name);
+    }
+    this.lock();
+  }
+
+  /**
    * Set up (or replace) recovery-code unlock. Wraps the DEK under a KEK
    * derived from a freshly generated recovery code. Show the returned
    * code to the user ONCE — it is not stored in plaintext anywhere.

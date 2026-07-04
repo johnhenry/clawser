@@ -87,3 +87,31 @@ describe('SecretVault recovery codes', () => {
     assert.deepEqual(names, ['apikey-openai']);
   });
 });
+
+describe('SecretVault.destroy', () => {
+  it('removes every entry including internal ones and locks the vault', async () => {
+    const storage = new MemoryVaultStorage();
+    const vault = new SecretVault(storage);
+    await vault.verify('some-passphrase-1!');
+    await vault.store('apikey-a', 'secret-a');
+    await vault.setupRecovery();
+
+    await vault.destroy();
+
+    assert.equal(vault.isLocked, true);
+    assert.deepEqual(await storage.list(), []);
+    assert.equal(await vault.exists(), false);
+  });
+
+  it('allows creating a fresh vault afterwards', async () => {
+    const storage = new MemoryVaultStorage();
+    const vault = new SecretVault(storage);
+    await vault.verify('first-pass-9$');
+    await vault.store('k', 'v');
+    await vault.destroy();
+
+    // New passphrase creates a brand-new vault; old secrets are gone
+    assert.equal(await vault.verify('second-pass-3#'), true);
+    await assert.rejects(() => vault.retrieve('k'), /not found/i);
+  });
+});

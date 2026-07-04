@@ -416,20 +416,41 @@ export function renderAuthProfilesSection() {
   list.innerHTML = '';
 
   if (state.authProfileManager) {
-    const profiles = state.authProfileManager.listProfiles();
+    const mgr = state.authProfileManager;
+    const profiles = mgr.listProfiles();
     for (const p of profiles) {
       const d = document.createElement('div');
       d.className = 'auth-profile-item';
-      const active = state.authProfileManager.isActive(p.id);
+      const active = mgr.isActive(p.id);
       d.innerHTML = `
         <span class="profile-active ${active ? 'on' : 'off'}"></span>
         <span class="profile-name">${esc(p.name)}</span>
         <span class="profile-provider">${esc(p.provider || '')}</span>
         <span class="profile-actions">
+          <button class="profile-creds" title="Set credentials">\u{1F511}</button>
           <button class="profile-switch" title="Switch">${active ? '\u25CF' : '\u25CB'}</button>
           <button class="profile-del" title="Delete">\u2715</button>
         </span>
       `;
+      d.querySelector('.profile-creds').addEventListener('click', async () => {
+        if (state.vault?.isLocked) { addErrorMsg('Unlock the vault first to store credentials.'); return; }
+        const apiKey = await modal.prompt(`API key for "${p.name}" (${p.provider}):`, '', { title: 'Set Credentials' });
+        if (apiKey == null || !apiKey.trim()) return;
+        const baseUrl = await modal.prompt('Base URL (optional \u2014 leave blank for provider default):', p.baseUrl || '', { title: 'Set Credentials' });
+        const credentials = { apiKey: apiKey.trim(), ...(baseUrl?.trim() ? { baseUrl: baseUrl.trim() } : {}) };
+        const ok = await mgr.updateCredentials(p.id, credentials);
+        if (ok) addMsg('system', `Credentials saved for profile "${p.name}".`);
+        else addErrorMsg('Profile not found.');
+      });
+      d.querySelector('.profile-switch').addEventListener('click', () => {
+        mgr.switchProfile(p.provider, p.id);
+        renderAuthProfilesSection();
+      });
+      d.querySelector('.profile-del').addEventListener('click', async () => {
+        if (!await modal.confirm(`Delete auth profile "${p.name}"? Its stored credentials are removed from the vault.`, { danger: true })) return;
+        await mgr.removeProfile(p.id);
+        renderAuthProfilesSection();
+      });
       list.appendChild(d);
     }
   }
@@ -1173,9 +1194,11 @@ export function renderHooksSection(config) {
     `;
     d.querySelector('.hook-toggle').addEventListener('change', (e) => {
       if (state.agent.enableHook) state.agent.enableHook(hook.id || hook.name, e.target.checked);
+      state.agent.persistHooks?.();
     });
     d.querySelector('.hook-remove').addEventListener('click', () => {
       if (state.agent.removeHook) state.agent.removeHook(hook.id || hook.name);
+      state.agent.persistHooks?.();
       renderHooksSection();
     });
     list.appendChild(d);
@@ -1202,7 +1225,9 @@ export function renderHooksSection(config) {
       try {
         const fn = new Function('return ' + body)();
         if (state.agent.addHook) {
-          state.agent.addHook({ name, point, priority, handler: fn, enabled: true });
+          // factoryName + body let restoreHooks() rebuild this hook after reload
+          state.agent.addHook({ name, point, priority, handler: fn, enabled: true, factoryName: 'user-hook', body });
+          state.agent.persistHooks?.();
           addMsg('system', `Hook "${name}" added.`);
           if (addForm) addForm.style.display = 'none';
           renderHooksSection();

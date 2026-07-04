@@ -355,6 +355,7 @@ export class HookPipeline {
       enabled: hook.enabled !== false,
       execute: hook.execute,
       factoryName: hook.factoryName || null,
+      body: hook.body ?? null, // source text for user hooks (persistence)
     };
     const list = this.#hooks.get(hook.point) || [];
     list.push(entry);
@@ -470,6 +471,7 @@ export class HookPipeline {
           priority: h.priority,
           enabled: h.enabled,
           factoryName: h.factoryName || null,
+          body: h.body ?? null,
         });
       }
     }
@@ -487,7 +489,11 @@ export class HookPipeline {
     for (const entry of data.hooks) {
       const factory = factories[entry.factoryName];
       if (!factory) continue;
-      const hookDef = factory(entry);
+      let hookDef;
+      try {
+        hookDef = factory(entry);
+      } catch { continue; } // corrupted persisted body — skip rather than break restore
+      if (!hookDef) continue;
       this.register({
         ...hookDef,
         priority: entry.priority,
@@ -511,6 +517,31 @@ export function createAuditLoggerHook(onLog) {
     execute: async (ctx) => {
       onLog(ctx.toolName, ctx.args, Date.now());
       return { action: 'continue' };
+    },
+  };
+}
+
+/**
+ * Default factories for `restoreHooks()`. The `user-hook` factory rebuilds
+ * hooks created in the settings UI from their persisted source text —
+ * the same `new Function('return ' + body)` construction the UI uses.
+ *
+ * @returns {Object<string, Function>} factoryName → (entry) => hook def
+ */
+export function defaultHookFactories() {
+  return {
+    'user-hook': (entry) => {
+      if (!entry.body) return null; // nothing to rebuild from — skipped by deserialize
+      const fn = new Function('return ' + entry.body)();
+      return {
+        name: entry.name,
+        point: entry.point,
+        priority: entry.priority,
+        enabled: entry.enabled,
+        factoryName: 'user-hook',
+        body: entry.body,
+        execute: fn,
+      };
     },
   };
 }

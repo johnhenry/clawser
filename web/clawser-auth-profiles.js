@@ -111,6 +111,41 @@ export class AuthProfileManager {
   }
 
   /**
+   * Set or replace the credentials for an existing profile.
+   * Encrypts through the vault (same `auth_${id}` naming as addProfile),
+   * so profiles created empty via "+ New Profile" can be completed later.
+   *
+   * @param {string} id - Profile ID
+   * @param {object|string} credentials - Credentials to encrypt
+   * @returns {Promise<boolean>} false if the profile doesn't exist
+   */
+  async updateCredentials(id, credentials) {
+    const profile = this.#profiles.get(id);
+    if (!profile) return false;
+    if (this.#vault) {
+      const secret = typeof credentials === 'string' ? credentials : JSON.stringify(credentials);
+      await this.#vault.store(`auth_${id}`, secret);
+    }
+    profile.metadata = { ...profile.metadata, credentialsSetAt: Date.now() };
+    return true;
+  }
+
+  /**
+   * Whether a profile has credentials stored in the vault.
+   * @param {string} id - Profile ID
+   * @returns {Promise<boolean>}
+   */
+  async hasCredentials(id) {
+    if (!this.#vault || !this.#profiles.has(id)) return false;
+    try {
+      const secret = await this.#vault.retrieve(`auth_${id}`);
+      return secret != null && secret !== '' && secret !== '{}';
+    } catch {
+      return false; // not stored (or vault locked) — treat as missing
+    }
+  }
+
+  /**
    * Remove a profile.
    * @param {string} id - Profile ID
    * @returns {Promise<boolean>}

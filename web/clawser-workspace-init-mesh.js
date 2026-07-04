@@ -20,7 +20,7 @@ import { bridgePeerAgent } from './clawser-peer-agent.js';
 import { ChannelGateway } from './clawser-gateway.js';
 import { ClawserPod } from './clawser-pod.js';
 import { registerMeshTools } from './clawser-mesh-tools.js';
-import { PresenceService } from './clawser-presence.mjs';
+import { PresenceService, presenceChangeMessage } from './clawser-presence.mjs';
 import { installMultiDeviceWiring, uninstallMultiDeviceWiring } from './clawser-multi-device.mjs';
 import { SkillStorage } from './clawser-skills.js';
 import { writeConfig as writeFsConfig } from './clawser-fs-config.mjs';
@@ -504,10 +504,18 @@ export function refreshMeshWorkspacePanel() {
       return { target, cmd };
     },
     deploySkillFlow: async () => {
-      // The full deploy-skill picker lives under My Devices; surface a
-      // hint rather than re-implementing the picker here.
-      addMsg('system', 'Deploy a skill from Settings → My Devices → Deploy now.');
-      return { ok: false, error: 'open My Devices to deploy' };
+      const { runMeshDeployFlow } = await import('./clawser-deploy-flow.mjs');
+      const result = await runMeshDeployFlow(state, {
+        pickDevice: async (devices) => {
+          const names = devices.map((d, i) => `${i + 1}. ${d.label || d.id}`).join('\n');
+          const answer = await modal.prompt(`Deploy to which device?\n${names}\n\nEnter a number:`, '1');
+          if (!answer) return null;
+          return devices[parseInt(answer, 10) - 1] || null;
+        },
+      });
+      if (result.ok) addMsg('system', `Deployed to device ${result.deviceId}.`);
+      else if (result.error && result.error !== 'cancelled') addErrorMsg(`Deploy failed: ${result.error}`);
+      return result;
     },
     onLog: (m) => addMsg('system', m),
     onError: (e) => addErrorMsg(`Mesh action failed: ${e?.message || e}`),
@@ -674,6 +682,14 @@ export async function initMeshSubsystem() {
     }
     state.presenceService = new PresenceService({ peerNode: state.peerNode });
     state.presenceService.start();
+    // Surface sustained disconnects/reconnects as system messages
+    // (offline is already debounced by offlineAfterMs, so this is quiet
+    // for transient blips — see presenceChangeMessage policy).
+    state.presenceService.subscribe((change) => {
+      const msg = presenceChangeMessage(change);
+      if (msg) addMsg('system', msg);
+      updatePeerBadge();
+    });
 
     // Per-workspace sync-flags + deploy-target wiring. Subscribes to
     // pod.onMessage so inbound `{type:'sync'}` and `{type:'deploy'}`
