@@ -156,5 +156,7 @@ export async function importConversation(wsId, data) {
 
 /** Generate a unique conversation ID using timestamp + random suffix. @returns {string} */
 export function generateConvId() {
-  return `conv_${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 4)}`;
+  // 8 hex chars (~4.3B values) — 4 chars was little enough entropy to
+  // collide when many IDs were generated within the same millisecond
+  return `conv_${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 8)}`;
 }

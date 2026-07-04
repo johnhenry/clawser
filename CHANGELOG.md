@@ -6,6 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added (2026-07-04 audit pass + session recovery merge)
+- **Recovered 2026-05-04 session merged into main.** ~30K lines of
+  finished, QA'd work (multi-device sync/pairing, deploy system,
+  vault v2, passkeys, presence, Y.js collab, PWA install, fs/UI
+  sync, ~20 audit docs) sat uncommitted in a git worktree since
+  May 4 — committed, merged, and reconciled with the fixes below.
+- **Vault recovery codes** on the v2 wrapped-DEK model:
+  `setupRecovery()` / `hasRecovery()` / `recoverWithCode()` add a
+  `recovery`-kind KEK wrap; code shown once at vault creation, and
+  a "Forgot passphrase?" flow in the unlock modal rotates the code
+  on use. Complements the passkey wrap as a second recovery path.
+- **.env loading wired**: `sourceProfiles()` now loads
+  `~/.config/clawser/.env` between the system and user profiles
+  (module existed since Phase 5 but was never called).
+- **MOTD**: `/etc/clawser/motd` displayed as a system message on
+  workspace init and switch.
+- **EventLog rotation**: new `RotatingLogWriter`
+  (`clawser-fs-logs.mjs`) streams agent events to
+  `/var/log/clawser/events.jsonl` with 5 MB / keep-3 rotation per
+  design §2.5; `EventLog` gains an `onAppend` observer.
+- **/sys/kernel/trace is writable**: write `1`/`0` to toggle the
+  kernel Tracer (new enable/disable on Tracer, `{read, write}`
+  descriptors on ProcFileHandler, permission carve-out).
+- **ClawserShell.complete()**: instance-level tab completion
+  (aliases, functions, pipe-aware command position, common-prefix
+  insert) alongside the standalone `getCompletions()`.
+
+### Fixed (2026-07-04)
+- Reactive config applies are deduped by content hash — duplicate
+  multi-tab file-watcher notifications no longer re-apply; watcher
+  self-write suppression is content-aware (also fixes a flaky test).
+- Channel device reads fall back to gateway-delivered messages
+  (`deliverToChannel`) when ChannelManager history is absent.
+- Silent catch blocks: remaining empty catches annotated
+  (best-effort cleanup) or converted to logging; hardware listener
+  errors now logged; manual routine-run failures surface in chat.
+
 ### Security (2026-05-08 comprehensive audit privacy fix — eventlog redaction)
 - **EventLog tool-arg redaction shipped.** When an agent called a
   tool with sensitive arguments (e.g., `auth_set_credentials({

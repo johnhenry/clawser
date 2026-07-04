@@ -1,7 +1,17 @@
 # Clawser — Outstanding Work
 
-> Last updated 2026-05-08 (comprehensive audit Rounds 1-4 complete).
-> **9,428 tests passing, 0 failing — stable across runs.**
+> Last updated 2026-07-04 (audit pass + recovered-session merge).
+> **9,490 tests passing, 0 failing — stable across runs.**
+>
+> 2026-07-04: the uncommitted 2026-05-04 session (~30K lines:
+> multi-device, deploy system, vault v2, passkeys, presence, Y.js
+> sync, PWA install, redaction — everything referenced below) was
+> found sitting in a git worktree, committed, and merged into main.
+> Same pass closed: .env loading wiring, MOTD display, EventLog
+> rotation to /var/log/clawser (design §2.5), writable
+> /sys/kernel/trace, vault recovery codes (on v2 wraps),
+> ClawserShell.complete(), reactive-config content-hash dedupe,
+> channel-device gateway fallback. See CHANGELOG [Unreleased].
 > Privacy fix shipped: EventLog tool-arg redaction module
 > (`web/clawser-redaction.mjs`) wired into all 5 agent
 > `eventLog.append('tool_call', ...)` sites. Migration on restore
@@ -300,11 +310,13 @@ below.
       the 2026-05-03 vault Option F pass. The vault was refactored from
       direct passphrase encryption to a wrapped-DEK model
       (`web/clawser-vault.js`); users can now enroll a WebAuthn passkey
-      (PRF extension) as a second unlock path. Recovery codes were
-      explicitly *not* shipped — see `docs/VAULT.md` for the rationale.
-      Includes a "Change passphrase" UI surface in the vault modal
-      (gear → Change passphrase) and atomic v1 → v2 migration on first
-      unlock of an existing vault.
+      (PRF extension) as a second unlock path. Includes a "Change
+      passphrase" UI surface in the vault modal (gear → Change
+      passphrase) and atomic v1 → v2 migration on first unlock of an
+      existing vault. **Update 2026-07-04:** recovery codes shipped as
+      a `recovery`-kind KEK wrap (`setupRecovery`/`recoverWithCode`) —
+      code shown once at vault creation; "Forgot passphrase?" flow in
+      the unlock modal; code rotates on use.
 - [x] **126 silent catch blocks** — Closed in the 2026-05-03 quick-wins
       pass. Replaced with `silentCatch(module, op, err, ctx?)` calls
       (debug-gated, opt-in via `clawserDebug.enable()`). Helper in

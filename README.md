@@ -521,7 +521,7 @@ No build step required. Edit JS files in `web/` and reload the browser.
 
 **Running tests:**
 ```bash
-npm test              # All 253 test files
+npm test              # All 347+ test files
 npm run test:fast     # Core + channels
 npm run test:core     # Agent, tools, providers, shell
 npm run test:mesh     # Mesh networking

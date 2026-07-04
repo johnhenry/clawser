@@ -1,9 +1,28 @@
 # Unix Filesystem Architecture for Clawser
 
-**Status:** Proposed  
+**Status:** Implemented (Phases 0–9 shipped; see delivery notes below)  
 **Author:** Design System  
-**Date:** 2026-04-30  
+**Date:** 2026-04-30 (delivery notes updated 2026-07-04)  
 **Scope:** Replace localStorage/IndexedDB state management with OPFS-backed Unix-conventional filesystem as single source of truth
+
+> **Delivery notes (2026-07-04):** All phases are implemented and wired.
+> Where the implementation diverged from or completed this design later:
+> - **Log rotation (§2.5)** — shipped via `RotatingLogWriter`
+>   (`web/clawser-fs-logs.mjs`): 5 MB max, keeps 3 rotations
+>   (copy+truncate — OPFS has no atomic rename), check on init and
+>   every 100th append. Agent events stream to
+>   `/var/log/clawser/events.jsonl` through `EventLog.onAppend`.
+> - **`/sys/kernel/trace` (§8.3)** — writable as designed: write `1`/`0`
+>   to toggle the kernel Tracer. Other `/sys/` paths remain read-only.
+> - **Multi-tab FileWatcher (§8.1)** — resolved by content-hash dedupe in
+>   `ReactiveConfigStore` (duplicate detections apply once) plus
+>   content-aware self-write suppression in `FileWatcher.markWrittenByMe`,
+>   rather than leader election.
+> - **Profiles + .env (§5)** — `sourceProfiles()` runs
+>   `/etc/clawser/profile` → `~/.config/clawser/.env` →
+>   `~/.config/clawser/profile`; MOTD is shown on workspace entry.
+> - **UI ↔ file sync (§7)** — bidirectional via `FsUiSync` +
+>   `registerDefaultDomains` (all six config domains).
 
 ---
 
