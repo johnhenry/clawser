@@ -377,6 +377,30 @@ describe('registerChannelDevice', () => {
     const state = handler.getState('/dev/clawser/channels/discord');
     assert.equal(state.lastSent, 'hello');
   });
+
+  it('deliverToChannel makes an inbound message readable', async () => {
+    registerChannelDevice(handler, 'slack', channelManager);
+
+    const delivered = handler.deliverToChannel('slack', 'incoming from slack');
+    assert.equal(delivered, true);
+
+    const result = await handler.handleRead('/dev/clawser/channels/slack');
+    assert.equal(result, 'incoming from slack');
+  });
+
+  it('deliverToChannel returns false for an unregistered channel', () => {
+    assert.equal(handler.deliverToChannel('nope', 'msg'), false);
+  });
+
+  it('deliverToChannel overwrites the previous message', async () => {
+    registerChannelDevice(handler, 'slack', channelManager);
+
+    handler.deliverToChannel('slack', 'first');
+    handler.deliverToChannel('slack', 'second');
+
+    const result = await handler.handleRead('/dev/clawser/channels/slack');
+    assert.equal(result, 'second');
+  });
 });
 
 // ── Hardware Device Files ─────────────────────────────────────────

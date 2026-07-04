@@ -143,14 +143,28 @@ export class FileWatcher {
    * The next poll cycle will suppress the notification for this path
    * if the detected mtime is within the debounce window of the write.
    *
+   * When the written content is provided, it is stored in the watch entry
+   * so the poll's content-hash check suppresses the notification
+   * deterministically — even if the poll runs after the time window expires.
+   *
    * @param {string} path - Virtual path that was written
+   * @param {string} [content] - The content that was written (for exact suppression)
    *
    * @example
    *   await fs.writeFile(path, content);
-   *   watcher.markWrittenByMe(path);
+   *   watcher.markWrittenByMe(path, content);
    */
-  markWrittenByMe(path) {
+  markWrittenByMe(path, content) {
     this.#lastWrittenByMe.set(path, Date.now());
+    if (content === undefined) return;
+    const entry = this.#watches.get(path);
+    if (!entry) return;
+    entry.lastContent = content;
+    if (entry.parseJson) {
+      try { entry.lastValidParsed = JSON.parse(content); } catch { /* keep previous */ }
+    } else {
+      entry.lastValidParsed = content;
+    }
   }
 
   /**

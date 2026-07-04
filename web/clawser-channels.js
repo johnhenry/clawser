@@ -255,7 +255,7 @@ export class ChannelManager {
    */
   disconnect() {
     if (this.#ws) {
-      try { this.#ws.close(); } catch {}
+      try { this.#ws.close(); } catch { /* best-effort cleanup */ }
       this.#ws = null;
     }
     this.#connected = false;

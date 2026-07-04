@@ -202,6 +202,30 @@ describe('clawser-fs-kernel — Kernel Proc Generators', () => {
       assert.ok(content.includes('tracer not active'));
     });
 
+    it('/sys/kernel/trace accepts writes to toggle tracing', async () => {
+      const calls = [];
+      kernel.tracer.enable = () => calls.push('enable');
+      kernel.tracer.disable = () => calls.push('disable');
+      registerKernelSysGenerators(handler, ki);
+
+      assert.equal(handler.canWrite('/sys/kernel/trace'), true);
+      await handler.writeFile('/sys/kernel/trace', '1');
+      await handler.writeFile('/sys/kernel/trace', '0\n');
+      assert.deepEqual(calls, ['enable', 'disable']);
+    });
+
+    it('/sys/kernel/trace rejects invalid write values', async () => {
+      registerKernelSysGenerators(handler, ki);
+      await assert.rejects(() => handler.writeFile('/sys/kernel/trace', 'banana'), /0 or 1/);
+    });
+
+    it('/sys/kernel/trace write is a no-op without a tracer', async () => {
+      kernel.tracer = null;
+      registerKernelSysGenerators(handler, ki);
+      // Must not throw even with no kernel tracer
+      await handler.writeFile('/sys/kernel/trace', '1');
+    });
+
     it('registers /sys/kernel/signals', async () => {
       kernel.signals = { TERM: { pending: true }, HUP: { pending: false } };
       registerKernelSysGenerators(handler, ki);

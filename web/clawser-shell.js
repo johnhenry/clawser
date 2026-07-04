@@ -24,6 +24,7 @@ import { opfsWalk, opfsWalkDir, resolveVirtualPath } from './clawser-opfs.js';
 import { registerExtendedBuiltins, registerJqBuiltin } from './clawser-shell-builtins.js';
 import { VirtualFs, ProcFileHandler } from './clawser-proc.js';
 import { PermissionManager, registerChmodBuiltin } from './clawser-permissions.js';
+import { parseEnvFile } from './clawser-fs-env.mjs';
 
 // ── Token Types ─────────────────────────────────────────────────
 
@@ -1154,7 +1155,6 @@ export class CommandRegistry {
  * @param {object} [opts] - { stdin, fs }
  * @returns {Promise<{stdout: string, stderr: string, exitCode: number}>}
  */
-// TODO: tab completion for commands and file paths
 export async function execute(node, state, registry, opts = {}) {
   if (!node) return { stdout: '', stderr: '', exitCode: 0 };
 
@@ -2511,11 +2511,107 @@ export class ClawserShell {
   }
 
   /**
+   * Load a .env file into shell environment variables.
+   *
+   * @param {string} [path='~/.config/clawser/.env'] - Virtual path to the .env file
+   * @returns {Promise<Record<string, string>>} The loaded env vars ({} if file absent)
+   */
+  async loadEnv(path = '~/.config/clawser/.env') {
+    if (!this.fs) return {};
+    try {
+      const content = await this.fs.readFile(path);
+      const env = parseEnvFile(content);
+      for (const [key, value] of Object.entries(env)) this.state.env.set(key, value);
+      return env;
+    } catch {
+      // .env not present is fine — not an error
+      return {};
+    }
+  }
+
+  /**
+   * Compute tab completions for the text before cursorPos.
+   *
+   * First-word tokens complete against command names (registry, aliases,
+   * functions); other tokens complete against file paths via the shell fs.
+   * Directory candidates get a trailing `/`, everything else a trailing space.
+   *
+   * @param {string} line - Current input line
+   * @param {number} [cursorPos=line.length] - Cursor position within the line
+   * @returns {Promise<{token: string, replaceStart: number, completions: string[], insert: string}>}
+   *   `insert` is the text to replace the token with: the sole candidate, or
+   *   the longest common prefix, or the unchanged token when nothing matches.
+   */
+  async complete(line, cursorPos = line.length) {
+    const before = line.slice(0, cursorPos);
+    const token = (before.match(/[^\s|;&<>()]*$/) || [''])[0];
+    const replaceStart = cursorPos - token.length;
+    const beforeToken = before.slice(0, replaceStart);
+    const isCommandPosition = /^\s*$/.test(beforeToken) || /(\||&&?|;|\(|\$\()\s*$/.test(beforeToken);
+
+    let completions;
+    if (isCommandPosition && !token.includes('/')) {
+      const names = new Set([
+        ...this.registry.names(),
+        ...(this.state.aliases?.keys() ?? []),
+        ...(this.state.functions?.keys() ?? []),
+      ]);
+      completions = [...names]
+        .filter(n => n.startsWith(token))
+        .sort()
+        .map(n => n + ' ');
+    } else {
+      completions = await this.#completePath(token);
+    }
+
+    let insert = token;
+    if (completions.length === 1) {
+      insert = completions[0];
+    } else if (completions.length > 1) {
+      let prefix = completions[0];
+      for (const c of completions) {
+        while (!c.startsWith(prefix)) prefix = prefix.slice(0, -1);
+      }
+      if (prefix.length > token.length) insert = prefix;
+    }
+
+    return { token, replaceStart, completions, insert };
+  }
+
+  /**
+   * Complete a path token against the shell filesystem.
+   * @param {string} token - Path fragment (may be relative, absolute, or ~-prefixed)
+   * @returns {Promise<string[]>}
+   */
+  async #completePath(token) {
+    if (!this.fs) return [];
+    const slashIdx = token.lastIndexOf('/');
+    const dirToken = slashIdx >= 0 ? token.slice(0, slashIdx + 1) : '';
+    const baseToken = slashIdx >= 0 ? token.slice(slashIdx + 1) : token;
+    const dirPath = this.state.resolvePath(dirToken);
+
+    let entries;
+    try {
+      entries = await this.fs.listDir(dirPath, { showDotfiles: baseToken.startsWith('.') });
+    } catch {
+      return []; // directory doesn't exist — no completions
+    }
+
+    return entries
+      .filter(e => e.name.startsWith(baseToken))
+      .filter(e => baseToken.startsWith('.') || !e.name.startsWith('.'))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(e => dirToken + e.name + (e.kind === 'directory' ? '/' : ' '));
+  }
+
+  /**
    * Source profile scripts on workspace init.
-   * Order: /etc/clawser/profile → ~/.config/clawser/profile
+   * Order: /etc/clawser/profile → ~/.config/clawser/.env → ~/.config/clawser/profile
+   * (user profile can override .env values)
    */
   async sourceProfiles() {
     await this.source('/etc/clawser/profile');
+    await this.loadEnv();
     await this.source('~/.config/clawser/profile');
   }
 }

@@ -225,9 +225,40 @@ function unpack(packed) {
   };
 }
 
+// ── Recovery codes ───────────────────────────────────────────────
+
+const RECOVERY_KEY = '__vault_recovery__';
+// No 0/O/1/I/L to keep hand-typed codes unambiguous
+const RECOVERY_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const RECOVERY_GROUPS = 5;
+const RECOVERY_GROUP_LEN = 4;
+
+/**
+ * Generate a random recovery code like "K3PF-9XQW-M2VH-T7RD-J4NB".
+ * ~99 bits of entropy across 20 characters.
+ * @returns {string}
+ */
+export function generateRecoveryCode() {
+  const bytes = crypto.getRandomValues(new Uint8Array(RECOVERY_GROUPS * RECOVERY_GROUP_LEN));
+  const groups = [];
+  for (let g = 0; g < RECOVERY_GROUPS; g++) {
+    let group = '';
+    for (let i = 0; i < RECOVERY_GROUP_LEN; i++) {
+      group += RECOVERY_ALPHABET[bytes[g * RECOVERY_GROUP_LEN + i] % RECOVERY_ALPHABET.length];
+    }
+    groups.push(group);
+  }
+  return groups.join('-');
+}
+
+/** Normalize user input: uppercase, strip separators. */
+const normalizeRecoveryCode = (code) => String(code).toUpperCase().replace(/[^A-Z0-9]/g, '');
+
 // ── SecretVault ──────────────────────────────────────────────────
 
 const SALT_KEY = '__vault_salt__';
+const CANARY_KEY = '__vault_canary__';
+const CANARY_VALUE = 'clawser-vault-ok';
 
 /**
  * Encrypted secret storage using Web Crypto (PBKDF2 + AES-GCM).
@@ -248,7 +279,6 @@ export class SecretVault {
   /**
    * @param {MemoryVaultStorage|OPFSVaultStorage} storage - Storage backend
    */
-  // TODO: vault recovery codes — export encrypted backup key on creation
   constructor(storage) {
     this.#storage = storage;
   }
@@ -340,12 +370,77 @@ export class SecretVault {
   }
 
   /**
-   * List all stored secret names (excluding internal entries like salt).
+   * List all stored secret names (excluding internal `__vault_*__` entries
+   * like the salt, canary, and recovery blob).
    * @returns {Promise<string[]>}
    */
   async list() {
     const all = await this.#storage.list();
-    return all.filter(n => n !== SALT_KEY);
+    return all.filter(n => !/^__vault_.*__$/.test(n));
+  }
+
+  /**
+   * Set up (or replace) passphrase recovery. Encrypts the passphrase under
+   * a key derived from a freshly generated recovery code and stores the
+   * blob alongside the vault. Show the returned code to the user ONCE —
+   * it is not stored in plaintext anywhere.
+   *
+   * @param {string} passphrase - The current vault passphrase
+   * @returns {Promise<string>} The recovery code
+   */
+  async setupRecovery(passphrase) {
+    const code = generateRecoveryCode();
+    const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
+    const key = await deriveKey(normalizeRecoveryCode(code), salt);
+    const { iv, ciphertext } = await encryptSecret(passphrase, key);
+    // Blob layout: [salt (16)] [iv (12)] [ciphertext]
+    const blob = new Uint8Array(SALT_BYTES + IV_BYTES + ciphertext.length);
+    blob.set(salt, 0);
+    blob.set(iv, SALT_BYTES);
+    blob.set(ciphertext, SALT_BYTES + IV_BYTES);
+    await this.#storage.write(RECOVERY_KEY, blob);
+    return code;
+  }
+
+  /**
+   * Whether a recovery code has been configured for this vault.
+   * @returns {Promise<boolean>}
+   */
+  async hasRecovery() {
+    return (await this.#storage.read(RECOVERY_KEY)) !== null;
+  }
+
+  /**
+   * Recover access with a recovery code: decrypts the stored passphrase,
+   * rekeys the vault to `newPassphrase`, and issues a fresh recovery code
+   * (the used one becomes invalid because the old passphrase is retired).
+   *
+   * @param {string} code - Recovery code (case/dash-insensitive)
+   * @param {string} newPassphrase - New vault passphrase
+   * @returns {Promise<{success: boolean, rekeyed?: number, recoveryCode?: string, error?: string}>}
+   */
+  async recoverWithCode(code, newPassphrase) {
+    const blob = await this.#storage.read(RECOVERY_KEY);
+    if (!blob) return { success: false, error: 'No recovery code configured for this vault' };
+
+    const salt = blob.slice(0, SALT_BYTES);
+    const iv = blob.slice(SALT_BYTES, SALT_BYTES + IV_BYTES);
+    const ciphertext = blob.slice(SALT_BYTES + IV_BYTES);
+
+    let oldPassphrase;
+    try {
+      const key = await deriveKey(normalizeRecoveryCode(code), salt);
+      oldPassphrase = await decryptSecret({ iv, ciphertext }, key);
+    } catch {
+      return { success: false, error: 'Invalid recovery code' };
+    }
+
+    await this.unlock(oldPassphrase);
+    const result = await new VaultRekeyer(this).execute(oldPassphrase, newPassphrase);
+    if (!result.success) return { success: false, error: result.error };
+
+    const recoveryCode = await this.setupRecovery(newPassphrase);
+    return { success: true, rekeyed: result.rekeyed, recoveryCode };
   }
 
   /**
@@ -364,9 +459,6 @@ export class SecretVault {
    * @returns {Promise<boolean>}
    */
   async verify(passphrase) {
-    const CANARY_KEY = '__vault_canary__';
-    const CANARY_VALUE = 'clawser-vault-ok';
-
     // Save current state
     const prevKey = this.#derivedKey;
 
@@ -451,6 +543,9 @@ export class VaultRekeyer {
         await this.#vault.store(name, value);
         rekeyed++;
       }
+
+      // Refresh the verify() canary under the new key (list() excludes it)
+      await this.#vault.store(CANARY_KEY, CANARY_VALUE);
 
       return { success: true, rekeyed };
     } catch (e) {

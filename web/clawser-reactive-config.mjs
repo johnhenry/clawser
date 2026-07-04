@@ -39,6 +39,7 @@ import { emit } from './clawser-state.js';
  * @property {(config: *) => string[]} [validate]
  * @property {string} domain
  * @property {Set<(event: import('./clawser-file-watcher.mjs').FileChangeEvent) => void>} subscribers
+ * @property {string|undefined} lastAppliedKey - Serialized form of the last applied config (dedupe)
  */
 
 export class ReactiveConfigStore {
@@ -173,8 +174,9 @@ export class ReactiveConfigStore {
       await this.#fs.writeFile(entry.path, json);
     });
 
-    // Mark as self-written so watcher skips notification for this tab
-    this.#watcher.markWrittenByMe(entry.path);
+    // Mark as self-written (with content, for deterministic suppression)
+    // so the watcher skips notification for this tab
+    this.#watcher.markWrittenByMe(entry.path, json);
   }
 
   /**
@@ -224,10 +226,19 @@ export class ReactiveConfigStore {
       }
     }
 
+    // Dedupe: watchers in multiple tabs poll the same OPFS files, so the
+    // same change can be detected more than once. Skip if content is
+    // identical to what was last applied.
+    const contentKey = newValue != null ? JSON.stringify(newValue) : undefined;
+    if (contentKey !== undefined && contentKey === entry.lastAppliedKey) {
+      return;
+    }
+
     // Apply to subsystem
     try {
       if (newValue != null) {
         entry.apply(newValue);
+        entry.lastAppliedKey = contentKey;
       }
     } catch (e) {
       console.error(`[ReactiveConfig] Error applying ${domain} config:`, e);
@@ -282,7 +293,10 @@ export const registerDefaultDomains = (store, state) => {
 
   store.register('identity', '~/.config/clawser/identity.json', {
     apply: (config) => {
-      state.identityManager?.update?.(config);
+      if (config.systemPrompt) {
+        state.agent?.setSystemPrompt?.(config.systemPrompt);
+      }
+      emit('identityConfigChanged', config);
       emit('refreshDashboard');
     },
     validate: (config) => {
@@ -297,7 +311,16 @@ export const registerDefaultDomains = (store, state) => {
 
   store.register('security', '~/.config/clawser/security.json', {
     apply: (config) => {
-      state.safetyPipeline?.updatePolicy?.(config);
+      const pipeline = state.safetyPipeline;
+      if (pipeline) {
+        const anyOn = ['inputSanitization', 'outputScanning', 'xssPrevention']
+          .some((key) => config[key] !== false);
+        // Only ever re-enable from a file change. Disabling the safety
+        // pipeline requires explicit confirmation through the UI — a
+        // watched file must not be able to bypass confirmDisable().
+        if (anyOn && !pipeline.enabled) pipeline.confirmEnable?.();
+      }
+      emit('securityConfigChanged', config);
     },
     validate: (config) => {
       const errors = [];
@@ -311,7 +334,13 @@ export const registerDefaultDomains = (store, state) => {
 
   store.register('daemon', '~/.config/clawser/daemon.json', {
     apply: (config) => {
-      state.daemon?.updateSettings?.(config);
+      // DaemonController.start()/stop() are state-machine guarded, so
+      // repeated calls with the same enabled value are safe no-ops.
+      const daemon = state.daemonController;
+      if (daemon) {
+        if (config.enabled === true) daemon.start?.();
+        else if (config.enabled === false) daemon.stop?.();
+      }
       // If reactiveConfig is explicitly toggled, emit so the app layer can respond
       if (config.reactiveConfig != null) {
         emit('reactiveConfigToggled', { enabled: !!config.reactiveConfig });
@@ -328,12 +357,13 @@ export const registerDefaultDomains = (store, state) => {
 
   store.register('terminal', '~/.config/clawser/terminal.json', {
     apply: (config) => {
-      state.terminalRenderer?.update?.(config);
+      // Terminal adapter swaps are handled by the UI layer listening for
+      // this event (see initTerminalAdapter in clawser-ui-panels.js).
       emit('terminalSettingsChanged', config);
     },
     validate: (config) => {
       const errors = [];
-      if (config.renderer && !['auto', 'dom', 'canvas', 'webgl'].includes(config.renderer))
+      if (config.renderer && !['auto', 'custom-dom', 'wterm'].includes(config.renderer))
         errors.push('Invalid renderer value');
       return errors;
     },
@@ -341,7 +371,6 @@ export const registerDefaultDomains = (store, state) => {
 
   store.register('hooks', '~/.config/clawser/hooks.json', {
     apply: (config) => {
-      state.hookPipeline?.reload?.(config);
       emit('hooksReloaded', config);
     },
     validate: (config) => {

@@ -46,6 +46,9 @@ export class EventLog {
   #seq = 0;
   #maxSize;
 
+  /** @type {((event: object) => void)|null} Observer called after each append (e.g. rotating log writer) */
+  onAppend = null;
+
   /**
    * @param {object} [opts]
    * @param {number} [opts.maxSize] - Maximum number of events to retain (oldest dropped)
@@ -73,6 +76,9 @@ export class EventLog {
     if (this.#maxSize > 0 && this.#events.length > this.#maxSize) {
       this.#events.splice(0, this.#events.length - this.#maxSize);
     }
+    try {
+      this.onAppend?.(event);
+    } catch { /* observer errors must not break the event log */ }
     return event;
   }
 

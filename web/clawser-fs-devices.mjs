@@ -114,6 +114,21 @@ export class DeviceFileHandler {
   }
 
   /**
+   * Deliver an inbound channel message to /dev/clawser/channels/{name}.
+   * Makes the message readable via handleRead (e.g. `cat /dev/clawser/channels/slack`).
+   *
+   * @param {string} channelName - Channel device name (e.g. 'slack')
+   * @param {string} message - Message content
+   * @returns {boolean} true if the channel device exists and received the message
+   */
+  deliverToChannel(channelName, message) {
+    const state = this.getState(`/dev/clawser/channels/${channelName}`);
+    if (!state) return false;
+    state.lastReceived = message;
+    return true;
+  }
+
+  /**
    * List entries in a device directory.
    * @param {string} path
    * @returns {Array<{name: string, kind: 'file'|'directory'}>}

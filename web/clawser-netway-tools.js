@@ -670,7 +670,7 @@ export async function resetNetwayToolsForTests() {
       if (entry.type === 'stream') await entry.socket.close();
       else if (entry.type === 'listener') entry.listener.close();
       else if (entry.type === 'datagram') entry.socket.close();
-    } catch {}
+    } catch { /* best-effort cleanup — handles may already be closed */ }
   }
   handles.clear();
   handleCounter = 0;

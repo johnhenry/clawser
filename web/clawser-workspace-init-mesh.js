@@ -715,7 +715,7 @@ export async function initMeshSubsystem() {
       auditRecorder: state.pod.remoteAuditRecorder,
     });
     if (state.serverServiceSyncCleanup) {
-      try { state.serverServiceSyncCleanup() } catch {}
+      try { state.serverServiceSyncCleanup() } catch { /* best-effort cleanup */ }
       state.serverServiceSyncCleanup = null
     }
     try {
@@ -955,7 +955,7 @@ export async function initMeshSubsystem() {
     state.serviceAdvertiser = null;
     state.serviceBrowser = null;
     if (state.serverServiceSyncCleanup) {
-      try { state.serverServiceSyncCleanup() } catch {}
+      try { state.serverServiceSyncCleanup() } catch { /* best-effort cleanup */ }
       state.serverServiceSyncCleanup = null
     }
     state.syncEngine = null;
@@ -1026,6 +1026,7 @@ export function createChannelGateway(wsId, kernelIntegration) {
   return new ChannelGateway({
     agent: state.agent,
     tenantId: kernelIntegration?.getWorkspaceTenantId(wsId) || null,
+    deviceHandler: state.deviceHandler || null,
     onIngest: (channelId, msg) => {
       addMsg('user', msg.content, null, channelId);
     },

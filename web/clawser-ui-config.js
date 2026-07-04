@@ -36,6 +36,28 @@ export function applySecuritySettings() {
   }
 }
 
+// ── Mesh connectivity settings ─────────────────────────────────
+/** Populate relay/signaling URL fields from localStorage. */
+export function renderMeshConnSection() {
+  $('cfgRelayUrl').value = localStorage.getItem('clawser_relay_url') || '';
+  $('cfgSignalingUrl').value = localStorage.getItem('clawser_signaling_url') || '';
+}
+
+/**
+ * Persist relay/signaling URL overrides. Blank clears the override so the
+ * DEFAULTS value applies again. Takes effect on next workspace init/switch.
+ */
+export function applyMeshConnSettings() {
+  const relayUrl = $('cfgRelayUrl').value.trim();
+  const signalingUrl = $('cfgSignalingUrl').value.trim();
+
+  if (relayUrl) localStorage.setItem('clawser_relay_url', relayUrl);
+  else localStorage.removeItem('clawser_relay_url');
+
+  if (signalingUrl) localStorage.setItem('clawser_signaling_url', signalingUrl);
+  else localStorage.removeItem('clawser_signaling_url');
+}
+
 // ── Config sections (Batch 1) ────────────────────────────────────
 
 /** Render autonomy & costs section (Block 6). */
@@ -872,7 +894,7 @@ export function renderSchedulerDashboard() {
   el.querySelectorAll('[data-sched-run]').forEach(btn => {
     btn.addEventListener('click', async () => {
       const id = btn.dataset.schedRun;
-      try { await state.routineEngine.triggerManual(id); } catch {}
+      try { await state.routineEngine.triggerManual(id); } catch (e) { addErrorMsg(`Routine run failed: ${e.message}`); }
       renderSchedulerDashboard();
     });
   });

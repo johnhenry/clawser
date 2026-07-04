@@ -27,12 +27,41 @@ export class ProcFileHandler {
 
   /**
    * Register a virtual file generator.
+   *
+   * Pass a function for a read-only file, or a `{ read, write }` descriptor
+   * for a writable file (sysfs semantics, e.g. `/sys/kernel/trace`).
+   *
    * @param {string} path - Virtual path (e.g. '/proc/clawser/tools')
-   * @param {ProcGenerator} generator - Function returning file content
+   * @param {ProcGenerator|{read: ProcGenerator, write: (content: string) => string|Promise<string>}} generator
    */
   register(path, generator) {
     const norm = this.#normalize(path);
     this.#generators.set(norm, generator);
+  }
+
+  /**
+   * Check whether a registered virtual file accepts writes.
+   * @param {string} path
+   * @returns {boolean}
+   */
+  canWrite(path) {
+    const gen = this.#generators.get(this.#normalize(path));
+    return typeof gen?.write === 'function';
+  }
+
+  /**
+   * Write to a writable virtual file.
+   * @param {string} path
+   * @param {string} content
+   * @returns {Promise<string>}
+   * @throws {Error} If the path is not registered or not writable
+   */
+  async writeFile(path, content) {
+    const norm = this.#normalize(path);
+    const gen = this.#generators.get(norm);
+    if (!gen) throw new Error(`ENOENT: ${path}`);
+    if (typeof gen.write !== 'function') throw new Error(`Read-only: ${path} is not writable`);
+    return gen.write(content);
   }
 
   /**
@@ -70,7 +99,7 @@ export class ProcFileHandler {
     const norm = this.#normalize(path);
     const gen = this.#generators.get(norm);
     if (!gen) throw new Error(`ENOENT: ${path}`);
-    return gen();
+    return typeof gen === 'function' ? gen() : gen.read();
   }
 
   /**
@@ -399,7 +428,11 @@ export class VirtualFs {
     if (this.#devices && this.#devices.isDevice(path)) {
       return this.#devices.handleWrite(path, content);
     }
-    // Virtual paths are read-only
+    // Writable virtual files (sysfs semantics, e.g. /sys/kernel/trace)
+    if (this.#proc.canWrite(path)) {
+      return this.#proc.writeFile(path, content);
+    }
+    // All other virtual paths are read-only
     if (this.#proc.handles(path) || this.#isVirtualRoot(path)) {
       throw new Error(`Read-only: ${path} is a virtual file`);
     }

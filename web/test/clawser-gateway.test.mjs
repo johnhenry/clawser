@@ -317,6 +317,38 @@ describe('ChannelGateway', () => {
       assert.equal(sendCall.opts.source, 'telegram');
     });
 
+    it('delivers inbound messages to the device handler', async () => {
+      const delivered = [];
+      const deviceHandler = {
+        deliverToChannel(name, content) { delivered.push([name, content]); return true; },
+      };
+      gw.setDeviceHandler(deviceHandler);
+
+      const plugin = mockPlugin();
+      gw.register('telegram', plugin);
+
+      await gw.ingest({
+        id: 'msg_1',
+        channel: 'telegram',
+        channelId: '12345',
+        sender: { id: '1', name: 'Alice', username: 'alice' },
+        content: 'Hello device',
+        attachments: [],
+        replyTo: null,
+        timestamp: Date.now(),
+      }, 'telegram');
+
+      assert.deepEqual(delivered, [['telegram', 'Hello device']]);
+    });
+
+    it('ingest works without a device handler', async () => {
+      const plugin = mockPlugin();
+      gw.register('telegram', plugin);
+
+      const response = await gw.ingest({ content: 'no device' }, 'telegram');
+      assert.equal(response, 'test response');
+    });
+
     it('routes response back to plugin', async () => {
       const plugin = mockPlugin();
       gw.register('telegram', plugin);

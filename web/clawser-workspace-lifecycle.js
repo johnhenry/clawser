@@ -31,7 +31,8 @@ import { SkillHotReloader } from './clawser-skill-hot-reload.js';
 import { initRuntimeFs, initDeviceFs } from './clawser-runtime.js';
 import { PermissionManager } from './clawser-permissions.js';
 import { FileWatcher } from './clawser-file-watcher.mjs';
-import { ReactiveConfigStore } from './clawser-reactive-config.mjs';
+import { ReactiveConfigStore, registerDefaultDomains } from './clawser-reactive-config.mjs';
+import { RotatingLogWriter } from './clawser-fs-logs.mjs';
 
 // Fallback chain
 import { FallbackChain, FallbackExecutor } from './clawser-fallback.js';
@@ -85,6 +86,19 @@ async function syncRoutinesToIDB() {
 // Export for use by other modules (e.g., routine UI after changes)
 export { syncRoutinesToIDB };
 
+// ── MOTD ─────────────────────────────────────────────────────────
+/**
+ * Read /etc/clawser/motd and display it as a system message.
+ * Called on workspace entry (init + switch). Silent when missing or empty.
+ * @param {{ shell?: object|null, notify?: Function }} [deps] - Injectable for tests
+ */
+export async function displayMotd({ shell = state.shell, notify = addMsg } = {}) {
+  try {
+    const motd = await shell?.fs?.readFile('/etc/clawser/motd');
+    if (motd?.trim()) notify('system', motd.trim());
+  } catch { /* motd missing is fine — nothing to display */ }
+}
+
 // ── Shell session management ─────────────────────────────────────
 /** Create a fresh shell session for the current workspace. Sources .clawserrc and registers CLI. */
 export async function createShellSession() {
@@ -135,12 +149,9 @@ export async function createShellSession() {
     if (state.shell?.fs) {
       const watcher = new FileWatcher(state.shell.fs, { intervalMs: 3000 });
       const configStore = new ReactiveConfigStore(watcher, state.shell.fs);
-      // Register autonomy config domain
-      configStore.register('autonomy', '~/.config/clawser/autonomy.json', {
-        apply: (config) => {
-          if (state.agent?.updateAutonomy) state.agent.updateAutonomy(config);
-        },
-      });
+      // Register all standard config domains (autonomy, identity, security,
+      // daemon, terminal, hooks) so edits to ~/.config/clawser/*.json apply live.
+      registerDefaultDomains(configStore, state);
       watcher.start();
       state.fileWatcher = watcher;
       state.reactiveConfigStore = configStore;
@@ -172,6 +183,13 @@ export async function cleanupWorkspace() {
   // Persist terminal session before switching
   if (state.terminalSessions) {
     await state.terminalSessions.persist().catch(e => console.warn('[clawser] Terminal persist:', e.message));
+  }
+
+  // Flush and detach the rotating event log writer
+  if (state.eventLogWriter) {
+    if (state.agent?.eventLog) state.agent.eventLog.onAppend = null;
+    await state.eventLogWriter.close().catch(e => console.warn('[clawser] Event log flush:', e.message));
+    state.eventLogWriter = null;
   }
 
   // Destroy kernel tenant for outgoing workspace
@@ -378,6 +396,8 @@ export async function switchWorkspace(newId, convId) {
   // Sync routine state to IndexedDB for background runners (Tier 1/3)
   await syncRoutinesToIDB();
 
+  await displayMotd();
+
   const parts = [`Switched to "${wsName}".`];
   if (wsRestored) parts.push(`Session restored (${$('messages').querySelectorAll('.msg.user, .msg.agent').length} messages).`);
   if (memCount > 0) parts.push(`${memCount} memories loaded.`);
@@ -523,6 +543,16 @@ export async function initWorkspace(wsId, convId) {
 
     // Create initial shell session for this workspace (includes CLI registration)
     await createShellSession();
+
+    // Global event log → /var/log/clawser/events.jsonl with size-based rotation (design §2.5)
+    try {
+      if (state.shell?.fs && state.agent?.eventLog) {
+        const logWriter = new RotatingLogWriter(state.shell.fs, '/var/log/clawser/events.jsonl');
+        await logWriter.init();
+        state.agent.eventLog.onAppend = (event) => logWriter.append(JSON.stringify(event));
+        state.eventLogWriter = logWriter;
+      }
+    } catch (e) { console.warn('[clawser] event log writer init failed:', e.message); }
 
     // Create terminal session manager (Block 35)
     state.terminalSessions = new TerminalSessionManager({
@@ -721,6 +751,8 @@ export async function initWorkspace(wsId, convId) {
     initAgentPicker();
 
     const toolCount = state.browserTools.names().length;
+
+    await displayMotd();
 
     const parts = [`Agent ready — ${toolCount} browser tools, workspace "${wsName}".`];
     if (restored) parts.push(`Session restored (${$('messages').querySelectorAll('.msg.user, .msg.agent').length} messages).`);

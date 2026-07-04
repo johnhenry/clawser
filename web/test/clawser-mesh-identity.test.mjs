@@ -13,6 +13,9 @@ import {
   PodIdentity,
   encodeBase64url,
   decodeBase64url,
+  base58btcEncode,
+  base58btcDecode,
+  parseDIDKey,
 } from '../clawser-mesh-identity.js';
 
 // ---------------------------------------------------------------------------
@@ -263,15 +266,44 @@ describe('MeshIdentityManager', () => {
   // -- toDID --------------------------------------------------------------
 
   describe('toDID', () => {
-    it('returns a did:key URI', async () => {
+    it('returns a W3C multicodec did:key URI (z6Mk prefix for Ed25519)', async () => {
       const s = await mgr.create('did-test');
       const did = mgr.toDID(s.podId);
-      assert.ok(did.startsWith('did:key:z'));
-      assert.ok(did.includes(s.podId));
+      // base58btc(0xed01 + 32-byte ed25519 key) always starts with 6Mk
+      assert.match(did, /^did:key:z6Mk/);
+    });
+
+    it('round-trips the public key through parseDIDKey', async () => {
+      const s = await mgr.create('did-roundtrip');
+      const did = mgr.toDID(s.podId);
+      const parsed = parseDIDKey(did);
+      assert.ok(parsed.publicKeyBytes instanceof Uint8Array);
+      assert.equal(parsed.publicKeyBytes.length, 32);
+
+      const expected = await mgr.getPublicKeyBytes(s.podId);
+      assert.deepEqual(parsed.publicKeyBytes, expected);
+    });
+
+    it('parseDIDKey accepts the legacy MVP form', () => {
+      const parsed = parseDIDKey('did:key:zSomeLegacyPodId_base64url');
+      assert.equal(parsed.legacyId, 'SomeLegacyPodId_base64url');
     });
 
     it('throws for unknown identity', () => {
       assert.throws(() => mgr.toDID('unknown'), /Unknown identity/);
+    });
+  });
+
+  describe('base58btc', () => {
+    it('encodes and decodes round-trip', () => {
+      const bytes = new Uint8Array([0, 0, 255, 1, 128, 42, 7]);
+      const encoded = base58btcEncode(bytes);
+      assert.match(encoded, /^11/); // two leading zero bytes → two '1's
+      assert.deepEqual(base58btcDecode(encoded), bytes);
+    });
+
+    it('rejects invalid base58 characters', () => {
+      assert.throws(() => base58btcDecode('0OIl'), /Invalid base58/);
     });
   });
 

@@ -27,6 +27,9 @@
  * @type {Array<[string, string]>}
  */
 const DEFAULT_RULES = Object.freeze([
+  // Writable sysfs toggles (must precede the /sys/ read-only rule)
+  ['/sys/kernel/trace', 'rw'],
+
   // Read-only system paths
   ['/etc/clawser/',     'r'],
   ['/proc/clawser/',    'r'],

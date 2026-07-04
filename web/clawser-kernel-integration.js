@@ -340,7 +340,7 @@ export class KernelIntegration {
     if (!this.#kernel) return;
     const svcName = this.#serverServices.get(routeId);
     if (svcName) {
-      try { this.#kernel.services.unregister(svcName); } catch {}
+      try { this.#kernel.services.unregister(svcName); } catch { /* service may already be gone */ }
       this.#serverServices.delete(routeId);
     }
   }
@@ -352,7 +352,7 @@ export class KernelIntegration {
     // Destroy all workspace tenants
     for (const [wsId, tenantId] of this.#workspaceTenants) {
       if (this.#kernel) {
-        try { this.#kernel.destroyTenant(tenantId); } catch {}
+        try { this.#kernel.destroyTenant(tenantId); } catch { /* tenant may already be gone */ }
       }
     }
     this.#workspaceTenants.clear();
@@ -360,7 +360,7 @@ export class KernelIntegration {
     // Unregister all MCP services
     for (const [name, svcName] of this.#mcpServices) {
       if (this.#kernel) {
-        try { this.#kernel.services.unregister(svcName); } catch {}
+        try { this.#kernel.services.unregister(svcName); } catch { /* service may already be gone */ }
       }
     }
     this.#mcpServices.clear();
@@ -368,7 +368,7 @@ export class KernelIntegration {
     // Unregister all server services
     for (const [routeId, svcName] of this.#serverServices) {
       if (this.#kernel) {
-        try { this.#kernel.services.unregister(svcName); } catch {}
+        try { this.#kernel.services.unregister(svcName); } catch { /* service may already be gone */ }
       }
     }
     this.#serverServices.clear();

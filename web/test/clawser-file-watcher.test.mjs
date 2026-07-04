@@ -334,9 +334,9 @@ describe('FileWatcher', () => {
       watcher.watch('~/.config/clawser/test.json', (ev) => events.push(ev));
       watcher.start();
 
-      // Simulate a self-write
+      // Simulate a self-write (content passed for deterministic suppression)
       fs.setFile('~/.config/clawser/test.json', '{"self":true}', Date.now());
-      watcher.markWrittenByMe('~/.config/clawser/test.json');
+      watcher.markWrittenByMe('~/.config/clawser/test.json', '{"self":true}');
 
       await settle();
       watcher.stop();

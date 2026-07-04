@@ -440,16 +440,20 @@ async function showVaultModal(vault) {
   const error = document.getElementById('vaultError');
   const input = document.getElementById('vaultPassphrase');
 
+  const recoverBtn = document.getElementById('vaultRecoverBtn');
+
   if (isNew) {
     title.textContent = 'Create Vault';
     desc.textContent = 'Choose a passphrase to protect your API keys.';
     confirm.style.display = '';
     submit.textContent = 'Create';
+    if (recoverBtn) recoverBtn.style.display = 'none';
   } else {
     title.textContent = 'Unlock Vault';
     desc.textContent = 'Enter your passphrase to unlock the vault.';
     confirm.style.display = 'none';
     submit.textContent = 'Unlock';
+    if (recoverBtn) recoverBtn.style.display = (await vault.hasRecovery()) ? '' : 'none';
   }
 
   return new Promise((resolve) => {
@@ -461,6 +465,35 @@ async function showVaultModal(vault) {
     input.focus();
     modal.addEventListener('cancel', (e) => {
       e.preventDefault(); // prevent Escape from closing — user must submit
+    }, { signal: ac.signal });
+    recoverBtn?.addEventListener('click', async () => {
+      error.style.display = 'none';
+      try {
+        const { modal: dialogs } = await import('./clawser-modal.js');
+        const code = await dialogs.prompt('Enter your vault recovery code:', '', { title: 'Vault Recovery' });
+        if (!code) return;
+        const newPass = await dialogs.prompt('Choose a new passphrase:', '', { title: 'Vault Recovery' });
+        if (!newPass) return;
+        const result = await vault.recoverWithCode(code, newPass);
+        if (!result.success) {
+          error.textContent = result.error || 'Recovery failed';
+          error.style.display = '';
+          return;
+        }
+        await dialogs.alert(
+          `Vault recovered. Your NEW recovery code:\n\n${result.recoveryCode}\n\nSave it now — the old code no longer works and this one will not be shown again.`,
+          { title: 'Save your new recovery code' },
+        );
+        vault.resetIdleTimer();
+        modal.close();
+        ac.abort();
+        input.value = '';
+        confirm.value = '';
+        resolve();
+      } catch (err) {
+        error.textContent = err.message || 'Recovery failed';
+        error.style.display = '';
+      }
     }, { signal: ac.signal });
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -492,6 +525,20 @@ async function showVaultModal(vault) {
         ac.abort(); // removes both cancel and submit listeners
         input.value = '';
         confirm.value = '';
+
+        // First-time setup: issue a recovery code and show it exactly once
+        if (isNew) {
+          try {
+            const { modal: dialogs } = await import('./clawser-modal.js');
+            const code = await vault.setupRecovery(pass);
+            await dialogs.alert(
+              `Vault recovery code:\n\n${code}\n\nSave this somewhere safe NOW — it is the only way to regain access if you forget your passphrase, and it will not be shown again.`,
+              { title: 'Save your recovery code' },
+            );
+          } catch (err) {
+            console.warn('[clawser] vault recovery setup failed:', err.message);
+          }
+        }
         resolve();
       } catch (err) {
         input.value = '';

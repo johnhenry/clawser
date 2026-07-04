@@ -31,6 +31,91 @@ const VAULT_SALT_BYTES = 16;
 const VAULT_IV_BYTES = 12;
 
 // ---------------------------------------------------------------------------
+// base58btc + did:key encoding (W3C did:key spec)
+// ---------------------------------------------------------------------------
+
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+const ED25519_MULTICODEC = [0xed, 0x01];
+
+/**
+ * Encode bytes as base58btc (Bitcoin alphabet, leading zeros → '1').
+ * @param {Uint8Array} bytes
+ * @returns {string}
+ */
+export const base58btcEncode = (bytes) => {
+  let n = 0n;
+  for (const b of bytes) n = (n << 8n) | BigInt(b);
+  let out = '';
+  while (n > 0n) {
+    out = BASE58_ALPHABET[Number(n % 58n)] + out;
+    n /= 58n;
+  }
+  for (const b of bytes) {
+    if (b !== 0) break;
+    out = '1' + out;
+  }
+  return out || '1';
+};
+
+/**
+ * Decode a base58btc string to bytes.
+ * @param {string} str
+ * @returns {Uint8Array}
+ * @throws {Error} On characters outside the base58btc alphabet
+ */
+export const base58btcDecode = (str) => {
+  let n = 0n;
+  for (const ch of str) {
+    const idx = BASE58_ALPHABET.indexOf(ch);
+    if (idx === -1) throw new Error(`Invalid base58 character: ${ch}`);
+    n = n * 58n + BigInt(idx);
+  }
+  const bytes = [];
+  while (n > 0n) {
+    bytes.unshift(Number(n & 0xffn));
+    n >>= 8n;
+  }
+  for (const ch of str) {
+    if (ch !== '1') break;
+    bytes.unshift(0);
+  }
+  return new Uint8Array(bytes);
+};
+
+/**
+ * Encode a raw Ed25519 public key as a W3C did:key URI:
+ * `did:key:z` + base58btc(0xed 0x01 + 32-byte key).
+ * @param {Uint8Array} publicKeyBytes - Raw Ed25519 public key (32 bytes)
+ * @returns {string}
+ */
+export const encodeDIDKey = (publicKeyBytes) => {
+  const prefixed = new Uint8Array(ED25519_MULTICODEC.length + publicKeyBytes.length);
+  prefixed.set(ED25519_MULTICODEC, 0);
+  prefixed.set(publicKeyBytes, ED25519_MULTICODEC.length);
+  return `did:key:z${base58btcEncode(prefixed)}`;
+};
+
+/**
+ * Parse a did:key URI. Handles both the W3C multicodec form and the legacy
+ * MVP form `did:key:z<podId>` (podId = base64url SHA-256 fingerprint).
+ *
+ * @param {string} did
+ * @returns {{publicKeyBytes: Uint8Array}|{legacyId: string}}
+ * @throws {Error} If the string is not a did:key URI
+ */
+export const parseDIDKey = (did) => {
+  const m = /^did:key:z(.+)$/.exec(did);
+  if (!m) throw new Error(`Not a did:key URI: ${did}`);
+  try {
+    const decoded = base58btcDecode(m[1]);
+    if (decoded.length === 34 && decoded[0] === 0xed && decoded[1] === 0x01) {
+      return { publicKeyBytes: decoded.slice(2) };
+    }
+  } catch { /* not base58btc — fall through to legacy */ }
+  return { legacyId: m[1] };
+};
+
+// ---------------------------------------------------------------------------
 // In-memory storage adapter (for tests and standalone use)
 // ---------------------------------------------------------------------------
 
@@ -149,6 +234,7 @@ export class MeshIdentityManager {
     const metadata = opts.metadata || {};
 
     this.#identities.set(identity.podId, { identity, label, metadata, created });
+    await this.#cachePublicKeyBytes(identity.podId);
     this.#onLog('identity:create', { podId: identity.podId, label });
 
     // Auto-set default if this is the first identity
@@ -210,6 +296,7 @@ export class MeshIdentityManager {
     const metadata = opts?.metadata || {};
 
     this.#identities.set(podId, { identity, label, metadata, created });
+    await this.#cachePublicKeyBytes(podId);
     this.#onLog('identity:import', { podId, label });
 
     if (this.#identities.size === 1) {
@@ -432,24 +519,35 @@ export class MeshIdentityManager {
   // -- DID support --------------------------------------------------------
 
   /**
-   * Convert an identity's public key to a did:key URI.
+   * Convert an identity's public key to a W3C did:key URI:
+   * `did:key:z` + base58btc(0xed01 + raw Ed25519 public key).
    *
-   * Uses simplified format: `did:key:z<base64url(0xed01 + rawPubKey)>`
-   * Note: proper did:key uses base58btc with multicodec prefix 0xed01.
-   * This MVP uses base64url encoding instead of base58btc.
+   * Falls back to the legacy `did:key:z<podId>` form when raw public key
+   * bytes aren't cached (e.g. non-extractable keys). parseDIDKey() accepts
+   * both forms.
    *
    * @param {string} podId
    * @returns {string}
    */
-  // TODO: upgrade to proper base58btc multicodec encoding per W3C DID spec
   toDID(podId) {
     const entry = this.#identities.get(podId);
     if (!entry) throw new Error(`Unknown identity: ${podId}`);
-    // Multicodec prefix for Ed25519 pub = 0xed, 0x01
-    // We store the podId (which is base64url(SHA-256(rawPubKey)))
-    // For MVP: did:key:<podId> -- when we have raw pubkey bytes cached we
-    // can do the proper multicodec encoding.
+    if (entry.pubKeyBytes) return encodeDIDKey(entry.pubKeyBytes);
     return `did:key:z${podId}`;
+  }
+
+  /**
+   * Cache the raw public key bytes on an identity entry so toDID() can
+   * build the multicodec form synchronously.
+   * @param {string} podId
+   */
+  async #cachePublicKeyBytes(podId) {
+    const entry = this.#identities.get(podId);
+    if (!entry || entry.pubKeyBytes) return;
+    try {
+      const raw = await crypto.subtle.exportKey('raw', entry.identity.keyPair.publicKey);
+      entry.pubKeyBytes = new Uint8Array(raw);
+    } catch { /* non-extractable key — toDID falls back to the legacy form */ }
   }
 
   // -- Size ---------------------------------------------------------------
@@ -523,6 +621,7 @@ export class MeshIdentityManager {
           metadata: data.metadata || {},
           created: data.created,
         });
+        await this.#cachePublicKeyBytes(data.podId);
       } catch (err) {
         this.#onLog('identity:load:error', { podId, error: err.message });
       }

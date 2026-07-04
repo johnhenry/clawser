@@ -84,17 +84,29 @@ export const registerKernelSysGenerators = (handler, ki) => {
     return `${kernel.clock.nowWall()}\n`;
   });
 
-  // /sys/kernel/trace — recent tracer output
-  handler.register('/sys/kernel/trace', () => {
-    if (!kernel?.tracer) return '(tracer not active)\n';
-    const events = kernel.tracer.events ?? kernel.tracer.drain?.() ?? [];
-    if (typeof events === 'function') {
-      return formatTraceEvents(events());
-    }
-    if (events[Symbol.iterator]) {
-      return formatTraceEvents([...events]);
-    }
-    return '(no trace events)\n';
+  // /sys/kernel/trace — recent tracer output; write '1'/'0' to toggle tracing
+  handler.register('/sys/kernel/trace', {
+    read: () => {
+      if (!kernel?.tracer) return '(tracer not active)\n';
+      const events = kernel.tracer.events ?? kernel.tracer.drain?.() ?? [];
+      if (typeof events === 'function') {
+        return formatTraceEvents(events());
+      }
+      if (events[Symbol.iterator]) {
+        return formatTraceEvents([...events]);
+      }
+      return '(no trace events)\n';
+    },
+    write: (content) => {
+      const value = String(content).trim();
+      if (value !== '0' && value !== '1') {
+        throw new Error('Invalid value: write 0 or 1 to /sys/kernel/trace');
+      }
+      if (!kernel?.tracer) return ''; // no kernel — accept the write as a no-op
+      if (value === '1') kernel.tracer.enable?.();
+      else kernel.tracer.disable?.();
+      return '';
+    },
   });
 
   // /sys/kernel/signals — list active signal controllers

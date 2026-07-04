@@ -36,6 +36,8 @@ export { renderGuestFsPanel, parseLsOutput, parseStatOutput, createGuestFsState,
 export { renderSharedWorkerSection, handleSharedWorkerToggle, initSharedWorkerFromConfig } from './clawser-ui-config-shared-worker.js';
 export {
   applySecuritySettings,
+  applyMeshConnSettings,
+  renderMeshConnSection,
   renderAutonomySection,
   saveAutonomySettings,
   renderIdentitySection,
@@ -80,6 +82,8 @@ import { initChannelPanelListeners } from './clawser-ui-channels.js';
 import { handleSharedWorkerToggle, renderSharedWorkerSection } from './clawser-ui-config-shared-worker.js';
 import {
   applySecuritySettings,
+  applyMeshConnSettings,
+  renderMeshConnSection,
   renderAutonomySection,
   saveAutonomySettings,
   renderIdentitySection,
@@ -1773,6 +1777,20 @@ export function initPanelListeners() {
     addMsg('system', 'Security settings applied.');
   });
 
+  // Mesh connectivity (relay/signaling URLs)
+  $('meshConnToggle').addEventListener('click', () => {
+    const section = $('meshConnSection');
+    const arrow = $('meshConnArrow');
+    section.classList.toggle('visible');
+    arrow.innerHTML = section.classList.contains('visible') ? '&#x25BC;' : '&#x25B6;';
+    if (section.classList.contains('visible')) renderMeshConnSection();
+  });
+
+  $('btnApplyMeshConn').addEventListener('click', () => {
+    applyMeshConnSettings();
+    addMsg('system', 'Mesh connectivity settings saved. They apply on the next workspace init or switch.');
+  });
+
   // Clear data
   $('btnClearData').addEventListener('click', async () => {
     const wsId = state.agent?.getWorkspace() || 'default';
@@ -2002,6 +2020,23 @@ export function initPanelListeners() {
       e.preventDefault();
       termHistoryIdx = Math.max(termHistoryIdx - 1, -1);
       $('terminalInput').value = termHistoryIdx >= 0 ? terminalHistory[termHistoryIdx] : '';
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      if (!state.shell?.complete || _terminalReplMode) return;
+      const input = $('terminalInput');
+      const cursor = input.selectionStart ?? input.value.length;
+      try {
+        const { replaceStart, token, completions, insert } = await state.shell.complete(input.value, cursor);
+        if (completions.length === 0) return;
+        if (insert !== token) {
+          input.value = input.value.slice(0, replaceStart) + insert + input.value.slice(cursor);
+          const newPos = replaceStart + insert.length;
+          input.setSelectionRange(newPos, newPos);
+        }
+        if (completions.length > 1) {
+          terminalAppend(`<div class="terminal-stdout">${esc(completions.map(c => c.trim()).join('  '))}</div>`);
+        }
+      } catch { /* completion errors never disturb typing */ }
     }
   });
 

@@ -293,6 +293,57 @@ describe('VirtualFs', () => {
     await vfs.copy('/proc/clawser/version', '/home/version.txt');
     assert.strictEqual(await mockFs.readFile('/home/version.txt'), '0.1.0\n');
   });
+
+  it('routes writes to writable virtual files', async () => {
+    const writes = [];
+    handler.register('/sys/kernel/trace', {
+      read: () => 'trace on\n',
+      write: (content) => { writes.push(content); return ''; },
+    });
+
+    await vfs.writeFile('/sys/kernel/trace', '1');
+    assert.deepEqual(writes, ['1']);
+    assert.strictEqual(await vfs.readFile('/sys/kernel/trace'), 'trace on\n');
+  });
+
+  it('still rejects writes to read-only virtual files', async () => {
+    handler.register('/sys/kernel/trace', {
+      read: () => '',
+      write: () => '',
+    });
+    handler.register('/sys/kernel/clock', () => '123\n');
+    await assert.rejects(() => vfs.writeFile('/sys/kernel/clock', 'x'), /Read-only/);
+  });
+});
+
+describe('ProcFileHandler writable generators', () => {
+  it('supports {read, write} descriptors', async () => {
+    const handler = new ProcFileHandler();
+    let stored = 'initial';
+    handler.register('/sys/kernel/trace', {
+      read: () => stored,
+      write: (content) => { stored = content; return ''; },
+    });
+
+    assert.equal(handler.handles('/sys/kernel/trace'), true);
+    assert.equal(handler.canWrite('/sys/kernel/trace'), true);
+    assert.equal(await handler.readFile('/sys/kernel/trace'), 'initial');
+    await handler.writeFile('/sys/kernel/trace', 'updated');
+    assert.equal(await handler.readFile('/sys/kernel/trace'), 'updated');
+  });
+
+  it('canWrite is false for function generators and unknown paths', () => {
+    const handler = new ProcFileHandler();
+    handler.register('/proc/clawser/uptime', () => '1\n');
+    assert.equal(handler.canWrite('/proc/clawser/uptime'), false);
+    assert.equal(handler.canWrite('/nope'), false);
+  });
+
+  it('writeFile throws for non-writable paths', async () => {
+    const handler = new ProcFileHandler();
+    handler.register('/proc/clawser/uptime', () => '1\n');
+    await assert.rejects(() => handler.writeFile('/proc/clawser/uptime', 'x'), /not writable|Read-only/);
+  });
 });
 
 // ── Proc Generator Tests ────────────────────────────────────────────

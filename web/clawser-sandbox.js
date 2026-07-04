@@ -270,7 +270,7 @@ export class WorkerSandbox {
 
   #terminateWorker() {
     if (this.#worker?.terminate) {
-      try { this.#worker.terminate(); } catch {}
+      try { this.#worker.terminate(); } catch { /* best-effort cleanup */ }
     }
     this.#worker = null;
   }
