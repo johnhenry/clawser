@@ -160,12 +160,45 @@ async function startServer(sshLines) {
   proc.stdout.on('data', (d) => logs.push(d.toString()));
   proc.stderr.on('data', (d) => logs.push(d.toString()));
 
+  // Wait for the actual "WebSocket TLS listener started" log line rather than
+  // a fixed timer: cert generation (rcgen) + TLS listener bind time varies
+  // with machine load, and a fixed STARTUP_GRACE_MS was observed to
+  // occasionally race the real readiness signal (intermittent "WebSocket
+  // connection failed" in the very first test of a run, ~1-in-6 under load).
+  // STARTUP_GRACE_MS is kept as an upper-bound safety net only.
   await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => resolve(), STARTUP_GRACE_MS);
-    proc.once('exit', (code) => {
-      clearTimeout(timer);
+    const deadline = setTimeout(() => {
+      cleanup();
+      reject(new Error(
+        `wsh-server did not log readiness within ${STARTUP_GRACE_MS}ms: ${logs.join('')}`,
+      ));
+    }, STARTUP_GRACE_MS);
+
+    function checkReady() {
+      if (logs.some((l) => l.includes('WebSocket TLS listener started'))) {
+        cleanup();
+        resolve();
+      }
+    }
+
+    function onExit(code) {
+      cleanup();
       reject(new Error(`wsh-server exited early (code ${code}): ${logs.join('')}`));
-    });
+    }
+
+    function cleanup() {
+      clearTimeout(deadline);
+      proc.stdout.off('data', checkReady);
+      proc.stderr.off('data', checkReady);
+      proc.off('exit', onExit);
+    }
+
+    proc.stdout.on('data', checkReady);
+    proc.stderr.on('data', checkReady);
+    proc.once('exit', onExit);
+    // In case the listener log line arrived in the same tick data was
+    // pushed above (before these listeners were attached).
+    checkReady();
   });
 
   return { proc, url: `wss://127.0.0.1:${port}`, homeDir, logs };
