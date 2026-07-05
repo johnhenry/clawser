@@ -8,7 +8,7 @@
  * ## Quick start
  *
  * ```js
- * import { Kernel, KERNEL_CAP } from 'kernel';
+ * import { Kernel, KERNEL_CAP } from 'browsermesh-kernel';
  *
  * const kernel = new Kernel();
  *
