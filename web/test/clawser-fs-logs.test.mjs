@@ -106,3 +106,80 @@ describe('EventLog onAppend', () => {
     assert.equal(log.size, 1);
   });
 });
+
+describe('RotatingLogWriter.pruneOldestRotation', () => {
+  it('deletes the highest-numbered rotation and returns its path', async () => {
+    const fs = new MemoryFs();
+    const writer = new RotatingLogWriter(fs, LOG, { maxRotations: 3 });
+    await fs.writeFile(`${LOG}.1`, 'one');
+    await fs.writeFile(`${LOG}.2`, 'two');
+    await fs.writeFile(`${LOG}.3`, 'three');
+
+    const removed = await writer.pruneOldestRotation();
+    assert.equal(removed, `${LOG}.3`);
+    await assert.rejects(() => fs.readFile(`${LOG}.3`));
+    assert.equal(await fs.readFile(`${LOG}.2`), 'two'); // untouched
+  });
+
+  it('falls through to lower-numbered rotations when higher ones are missing', async () => {
+    const fs = new MemoryFs();
+    const writer = new RotatingLogWriter(fs, LOG, { maxRotations: 3 });
+    await fs.writeFile(`${LOG}.1`, 'one');
+
+    const removed = await writer.pruneOldestRotation();
+    assert.equal(removed, `${LOG}.1`);
+  });
+
+  it('returns null when no rotations exist', async () => {
+    const fs = new MemoryFs();
+    const writer = new RotatingLogWriter(fs, LOG, { maxRotations: 3 });
+    assert.equal(await writer.pruneOldestRotation(), null);
+  });
+});
+
+describe('RotatingLogWriter global quota pressure', () => {
+  it('prunes an extra rotation when checkQuotaFn reports warning', async () => {
+    const fs = new MemoryFs();
+    await fs.writeFile(`${LOG}.1`, 'existing rotation');
+    const writer = new RotatingLogWriter(fs, LOG, {
+      checkEvery: 1, flushLines: 1,
+      checkQuotaFn: async () => ({ warning: true }),
+    });
+    writer.append('line');
+    await writer.flush();
+
+    await assert.rejects(() => fs.readFile(`${LOG}.1`), 'oldest rotation pruned under quota pressure');
+  });
+
+  it('does not prune when checkQuotaFn reports no warning', async () => {
+    const fs = new MemoryFs();
+    await fs.writeFile(`${LOG}.1`, 'existing rotation');
+    const writer = new RotatingLogWriter(fs, LOG, {
+      checkEvery: 1, flushLines: 1,
+      checkQuotaFn: async () => ({ warning: false }),
+    });
+    writer.append('line');
+    await writer.flush();
+
+    assert.equal(await fs.readFile(`${LOG}.1`), 'existing rotation');
+  });
+
+  it('a throwing checkQuotaFn does not break the flush', async () => {
+    const fs = new MemoryFs();
+    const writer = new RotatingLogWriter(fs, LOG, {
+      checkEvery: 1, flushLines: 1,
+      checkQuotaFn: async () => { throw new Error('estimate failed'); },
+    });
+    writer.append('line');
+    await writer.flush();
+    assert.equal(await fs.readFile(LOG), 'line\n');
+  });
+
+  it('is a no-op with no checkQuotaFn (default)', async () => {
+    const fs = new MemoryFs();
+    const writer = new RotatingLogWriter(fs, LOG, { checkEvery: 1, flushLines: 1 });
+    writer.append('line');
+    await writer.flush(); // must not throw
+    assert.equal(await fs.readFile(LOG), 'line\n');
+  });
+});

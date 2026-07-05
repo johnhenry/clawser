@@ -29,6 +29,7 @@ export class RotatingLogWriter {
   #checkEvery;
   #flushLines;
   #flushMs;
+  #checkQuotaFn;
 
   /** @type {string[]} */
   #buffer = [];
@@ -40,7 +41,7 @@ export class RotatingLogWriter {
   #closed = false;
 
   /**
-   * @param {object} fs - ShellFs-compatible object with readFile/writeFile
+   * @param {object} fs - ShellFs-compatible object with readFile/writeFile/delete
    * @param {string} path - Virtual log file path (e.g. '/var/log/clawser/events.jsonl')
    * @param {object} [opts]
    * @param {number} [opts.maxBytes=5242880] - Rotate when the file exceeds this size
@@ -48,6 +49,11 @@ export class RotatingLogWriter {
    * @param {number} [opts.checkEvery=100] - Appends between rotation checks
    * @param {number} [opts.flushLines=20] - Buffered lines that trigger a flush
    * @param {number} [opts.flushMs=2000] - Max time a buffered line waits before flush
+   * @param {Function} [opts.checkQuotaFn] - Optional () => Promise<{warning:boolean}>
+   *   (see clawser-quota-guard.mjs). When it reports a warning, the writer
+   *   opportunistically prunes one extra oldest rotation beyond its own
+   *   size-based schedule. Injected rather than imported to keep this
+   *   module dependency-free and testable with plain fs mocks.
    */
   constructor(fs, path, {
     maxBytes = 5 * 1024 * 1024,
@@ -55,6 +61,7 @@ export class RotatingLogWriter {
     checkEvery = 100,
     flushLines = 20,
     flushMs = 2000,
+    checkQuotaFn = null,
   } = {}) {
     this.#fs = fs;
     this.#path = path;
@@ -63,6 +70,7 @@ export class RotatingLogWriter {
     this.#checkEvery = checkEvery;
     this.#flushLines = flushLines;
     this.#flushMs = flushMs;
+    this.#checkQuotaFn = checkQuotaFn;
   }
 
   /** Run the rotation check against any pre-existing file. Call on workspace init. */
@@ -115,7 +123,22 @@ export class RotatingLogWriter {
     if (this.#appendsSinceCheck >= this.#checkEvery) {
       this.#appendsSinceCheck = 0;
       await this.#checkRotation();
+      await this.#checkGlobalQuota();
     }
+  }
+
+  /**
+   * Best-effort: if global storage quota is under pressure, shed one
+   * rotation file beyond this writer's own size-based schedule. Never
+   * blocks or fails the log write itself — logs are diagnostic, not
+   * user-facing data worth risking a write failure over.
+   */
+  async #checkGlobalQuota() {
+    if (!this.#checkQuotaFn) return;
+    try {
+      const quota = await this.#checkQuotaFn();
+      if (quota?.warning) await this.pruneOldestRotation();
+    } catch { /* quota check itself failing must not break logging */ }
   }
 
   /** Flush remaining lines and stop the timer. Call on workspace teardown. */
@@ -157,5 +180,24 @@ export class RotatingLogWriter {
     }
     await this.#fs.writeFile(`${this.#path}.1`, currentContent);
     await this.#fs.writeFile(this.#path, '');
+  }
+
+  /**
+   * Delete the single oldest rotation file (highest-numbered `.N`), for
+   * use under global storage-quota pressure — independent of this
+   * writer's own size-based rotation policy. A no-op if no rotations
+   * exist yet.
+   * @returns {Promise<string|null>} The rotation path removed, or null
+   */
+  async pruneOldestRotation() {
+    for (let i = this.#maxRotations; i >= 1; i--) {
+      const path = `${this.#path}.${i}`;
+      try {
+        await this.#fs.readFile(path); // existence check
+      } catch { continue; }
+      await this.#fs.delete(path);
+      return path;
+    }
+    return null;
   }
 }

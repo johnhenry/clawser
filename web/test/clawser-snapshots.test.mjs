@@ -524,3 +524,56 @@ describe('SNAPSHOT_VERSION', () => {
     assert.equal(SNAPSHOT_VERSION, Math.floor(SNAPSHOT_VERSION));
   });
 });
+
+// ── Quota guard wiring ─────────────────────────────────────────────
+
+describe('SnapshotManager quota guard', () => {
+  it('createAtomicSnapshot denies before touching IndexedDB when the guard fails', async () => {
+    const mgr = new SnapshotManager();
+    const quotaGuard = async () => ({ ok: false, reason: 'Storage nearly full — refusing snapshot' });
+    await assert.rejects(
+      () => mgr.createAtomicSnapshot({ wsId: 'ws1', quotaGuard }),
+      /Storage nearly full/,
+    );
+  });
+
+  it('createAtomicSnapshot proceeds to IDB access when the guard allows', async () => {
+    // No real IndexedDB in Node — a passing guard means we reach the
+    // openDB() call and get a ReferenceError/undefined error instead of
+    // our guard's denial message, proving the guard was not the blocker.
+    const mgr = new SnapshotManager();
+    const quotaGuard = async () => ({ ok: true });
+    await assert.rejects(
+      () => mgr.createAtomicSnapshot({ wsId: 'ws1', quotaGuard }),
+      (err) => !/Storage quota guard denied/.test(err.message),
+    );
+  });
+
+  it('createAtomicSnapshot works unguarded (default — no quotaGuard option)', async () => {
+    const mgr = new SnapshotManager();
+    // No IDB in Node, but must fail for an IDB reason, not a guard reason.
+    await assert.rejects(
+      () => mgr.createAtomicSnapshot({ wsId: 'ws1' }),
+      (err) => !/Storage quota guard denied/.test(err.message),
+    );
+  });
+
+  it('createTarSnapshot denies before any fs write when the guard fails', async () => {
+    const mgr = new SnapshotManager();
+    const fs = makeMemFs();
+    const quotaGuard = async () => ({ ok: false, reason: 'Storage nearly full — refusing snapshot' });
+    await assert.rejects(
+      () => mgr.createTarSnapshot({ wsId: 'ws1', fs, quotaGuard }),
+      /Storage nearly full/,
+    );
+    assert.equal(fs.files.size, 0, 'no fs writes happened before the denial');
+  });
+
+  it('createTarSnapshot proceeds normally when the guard allows', async () => {
+    const mgr = new SnapshotManager();
+    const fs = makeMemFs();
+    const quotaGuard = async () => ({ ok: true });
+    const meta = await mgr.createTarSnapshot({ wsId: 'ws1', fs, quotaGuard });
+    assert.ok(meta.id);
+  });
+});

@@ -662,7 +662,10 @@ export async function initWorkspace(wsId, convId) {
     // Global event log → /var/log/clawser/events.jsonl with size-based rotation (design §2.5)
     try {
       if (state.shell?.fs && state.agent?.eventLog) {
-        const logWriter = new RotatingLogWriter(state.shell.fs, '/var/log/clawser/events.jsonl');
+        const { checkQuota } = await import('./clawser-tools.js');
+        const logWriter = new RotatingLogWriter(state.shell.fs, '/var/log/clawser/events.jsonl', {
+          checkQuotaFn: checkQuota,
+        });
         await logWriter.init();
         state.agent.eventLog.onAppend = (event) => logWriter.append(JSON.stringify(event));
         state.eventLogWriter = logWriter;

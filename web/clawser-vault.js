@@ -268,9 +268,18 @@ export class MemoryVaultStorage {
  */
 export class OPFSVaultStorage {
   #dirName;
+  #quotaGuard;
 
-  constructor(dirName = 'clawser_vault') {
+  /**
+   * @param {string} [dirName]
+   * @param {{ guard: (sizeBytes: number, op: string) => Promise<{ok: boolean, reason?: string}> }} [opts]
+   *   Optional pre-write quota guard (see clawser-quota-guard.mjs). Injected
+   *   rather than imported directly so this module stays dependency-free;
+   *   production wiring supplies `guardBeforeWrite`. Defaults to always-allow.
+   */
+  constructor(dirName = 'clawser_vault', opts = {}) {
     this.#dirName = dirName;
+    this.#quotaGuard = opts.guard || (async () => ({ ok: true }));
   }
 
   async #getDir() {
@@ -290,6 +299,8 @@ export class OPFSVaultStorage {
   }
 
   async write(name, packed) {
+    const guard = await this.#quotaGuard(packed.byteLength, `vault write (${name})`);
+    if (!guard.ok) throw new Error(guard.reason || 'Storage quota guard denied vault write');
     const dir = await this.#getDir();
     const fh = await dir.getFileHandle(`${name}.enc`, { create: true });
     const writable = await fh.createWritable();

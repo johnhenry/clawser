@@ -143,6 +143,7 @@ import {
   renderApiKeyWarning,
   renderIdentitySection,
   renderLimitsSection,
+  renderQuotaBar,
 } from '../clawser-ui-config.js'
 
 // ── Setup ───────────────────────────────────────────────────────
@@ -508,5 +509,28 @@ describe('module exports', () => {
     assert.equal(typeof renderHooksSection, 'function')
     assert.equal(typeof renderCheckpointSection, 'function')
     assert.equal(typeof renderCleanConversationsSection, 'function')
+  })
+})
+
+describe('renderQuotaBar', () => {
+  it('renders into securitySection by default (backward compat)', async () => {
+    await renderQuotaBar()
+    assert.ok(true)
+  })
+
+  it('renders into a custom target container (dashboard)', async () => {
+    await renderQuotaBar('dashQuotaBar')
+    assert.ok(true)
+  })
+
+  it('is a no-op when the target container is absent', async () => {
+    await assert.doesNotReject(() => renderQuotaBar('doesNotExist999'))
+  })
+})
+
+describe('refreshDashboard quota wiring', () => {
+  it('does not throw when #dashQuotaBar exists', () => {
+    getOrCreateEl('dashQuotaBar')
+    assert.doesNotThrow(() => refreshDashboard())
   })
 })

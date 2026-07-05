@@ -711,9 +711,24 @@ export async function initMeshSubsystem() {
         //   skill  → SkillStorage.writeSkill
         //   config → writeFsConfig (under ~/.config/clawser/)
         //   memory → state.agent.memoryStore (set inside the apply registry)
+        // Both writes are quota-guarded — a received deploy package must
+        // not be able to push the workspace past a hard quota failure.
         applyHandlers: {
-          writeConfig: writeFsConfig,
-          skillsAPI: { writeSkill: SkillStorage.writeSkill },
+          writeConfig: async (domain, wsId, value) => {
+            const { guardBeforeWrite } = await import('./clawser-quota-guard.mjs');
+            const guard = await guardBeforeWrite(JSON.stringify(value).length, `deploy config write (${domain})`);
+            if (!guard.ok) throw new Error(guard.reason);
+            return writeFsConfig(domain, wsId, value);
+          },
+          skillsAPI: {
+            writeSkill: async (scope, wsId, name, files) => {
+              const { guardBeforeWrite } = await import('./clawser-quota-guard.mjs');
+              const size = [...files.values()].reduce((sum, content) => sum + content.length, 0);
+              const guard = await guardBeforeWrite(size, `deploy skill write (${name})`);
+              if (!guard.ok) throw new Error(guard.reason);
+              return SkillStorage.writeSkill(scope, wsId, name, files);
+            },
+          },
         },
         // First-deploy approval modal — surfaces the source DID,
         // manifest fingerprint, capabilities, and items being deployed.

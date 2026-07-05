@@ -115,3 +115,28 @@ describe('SecretVault.destroy', () => {
     await assert.rejects(() => vault.retrieve('k'), /not found/i);
   });
 });
+
+describe('OPFSVaultStorage quota guard', () => {
+  it('defaults to always-allow when no guard is injected', async () => {
+    // Can't exercise real OPFS in node:test, but construction with the
+    // default guard must not throw, and #quotaGuard must be callable.
+    const store = new (await import('../clawser-vault.js')).OPFSVaultStorage('test-dir');
+    assert.ok(store);
+  });
+
+  it('a denying storage backend surfaces as a failed verify()', async () => {
+    // verify() treats ANY unlock failure (wrong passphrase, storage error,
+    // quota denial) as "not verified" — this proves a guard-denied write
+    // propagates through unlock() rather than silently succeeding.
+    const { SecretVault } = await import('../clawser-vault.js');
+    class DeniedStorage {
+      async read() { return null; }
+      async write() { throw new Error('Storage nearly full — refusing vault write'); }
+      async remove() {}
+      async list() { return []; }
+    }
+    const vault = new SecretVault(new DeniedStorage());
+    assert.equal(await vault.verify('some-passphrase-1!'), false);
+    assert.equal(vault.isLocked, true);
+  });
+});

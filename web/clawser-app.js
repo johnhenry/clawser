@@ -85,7 +85,17 @@ state.mcpManager = new McpManager({
 });
 
 state.responseCache = new ResponseCache();
-state.vault = new SecretVault(state.disposableMode ? new MemoryVaultStorage() : new OPFSVaultStorage());
+state.vault = new SecretVault(state.disposableMode ? new MemoryVaultStorage() : new OPFSVaultStorage('clawser_vault', {
+  guard: async (sizeBytes, op) => {
+    const { guardBeforeWrite } = await import('./clawser-quota-guard.mjs');
+    return guardBeforeWrite(sizeBytes, op, {
+      onWarning: async () => {
+        const { addMsg } = await import('./clawser-ui-chat.js');
+        addMsg('system', 'Storage is running low — consider clearing old snapshots or conversations in Settings.');
+      },
+    });
+  },
+}));
 
 // ── Create advanced module singletons (Batch 6-8) ───────────────
 state.identityManager = new IdentityManager();

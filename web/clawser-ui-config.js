@@ -929,6 +929,10 @@ export { getCostTracker, recordCostEvent } from './clawser-cost-events.js';
 
 /** Refresh dashboard metrics display. */
 export function refreshDashboard() {
+  if ($('dashQuotaBar')) {
+    renderQuotaBar('dashQuotaBar').catch((e) => console.warn('[clawser] dashboard quota bar failed:', e.message));
+  }
+
   if (state.metricsCollector) {
     const snap = state.metricsCollector.snapshot();
     $('dashRequests').textContent = snap.counters?.requests ?? 0;
@@ -1124,10 +1128,14 @@ function formatBytes(bytes) {
  * Render a storage quota usage bar in the security section of the config panel.
  * Shows current OPFS/storage usage as a visual bar with percentage.
  *
- * Call this when the config panel renders (e.g. when securitySection opens).
+ * Call this when the config panel renders (e.g. when securitySection
+ * opens), or pass a target container ID to render elsewhere (e.g. the
+ * dashboard panel).
+ *
+ * @param {string} [targetId='securitySection'] - Container element ID
  */
-export async function renderQuotaBar() {
-  const section = $('securitySection');
+export async function renderQuotaBar(targetId = 'securitySection') {
+  const section = $(targetId);
   if (!section) return;
 
   // Avoid duplicating

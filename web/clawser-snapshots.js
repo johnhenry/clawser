@@ -360,15 +360,24 @@ export class SnapshotManager {
    * @param {import('./clawser-skills.js').SkillRegistry} [opts.skillRegistry]
    * @param {string} [opts.name] - Human-readable snapshot name
    * @param {string} [opts.wsId] - Workspace ID (defaults to agent workspace)
+   * @param {Function} [opts.quotaGuard] - Optional (sizeBytes, op) => Promise<{ok, reason?}>
+   *   (see clawser-quota-guard.mjs). Denies the snapshot before any work is
+   *   done if storage is critically full. Injected rather than imported
+   *   directly to keep this module dependency-free and unit-testable.
    * @returns {Promise<{ id: string, name: string, timestamp: number, size: number, compressedSize: number, wsId: string, subsystems: string[] }>}
    */
   async createAtomicSnapshot(opts) {
-    const { name, ...stateOpts } = opts;
+    const { name, quotaGuard, ...stateOpts } = opts;
     const data = collectState(stateOpts);
 
     // Serialize to JSON bytes
     const jsonStr = JSON.stringify(data);
     const rawSize = jsonStr.length;
+
+    if (quotaGuard) {
+      const guard = await quotaGuard(rawSize, 'snapshot');
+      if (!guard.ok) throw new Error(guard.reason || 'Storage quota guard denied snapshot creation');
+    }
 
     // Compress with fflate
     const fflate = await import('fflate');
@@ -566,10 +575,16 @@ export class SnapshotManager {
    *   });
    */
   async createTarSnapshot(opts) {
-    const { name, fs, ...stateOpts } = opts;
+    const { name, fs, quotaGuard, ...stateOpts } = opts;
     if (!fs) throw new Error('createTarSnapshot: opts.fs is required');
 
     const data = collectState(stateOpts);
+
+    if (quotaGuard) {
+      const guard = await quotaGuard(JSON.stringify(data).length, 'snapshot');
+      if (!guard.ok) throw new Error(guard.reason || 'Storage quota guard denied snapshot creation');
+    }
+
     const id = `snap_${Date.now().toString(36)}_${(globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2)).slice(0, 6)}`;
     const timestamp = Date.now();
 

@@ -122,6 +122,11 @@ Examples:
     const fs = getFs();
 
     try {
+      const { guardBeforeWrite, evictOldestSnapshots } = await import('./clawser-quota-guard.mjs');
+      const quotaGuard = (sizeBytes, op) => guardBeforeWrite(sizeBytes, op, {
+        onWarning: () => evictOldestSnapshots(mgr),
+      });
+
       // Per UFS §2.4: tar to OPFS is the canonical path. Fall back to IDB
       // only when no shell fs is available (early boot / disposable mode).
       let meta;
@@ -134,6 +139,7 @@ Examples:
           name,
           wsId: agent.getWorkspace?.(),
           fs,
+          quotaGuard,
         });
       } else {
         meta = await mgr.createAtomicSnapshot({
@@ -143,6 +149,7 @@ Examples:
           skillRegistry: getSkillRegistry?.(),
           name,
           wsId: agent.getWorkspace?.(),
+          quotaGuard,
         });
       }
 
