@@ -754,6 +754,18 @@ initHomeListeners();
         state.routineEngine?.tickCron?.().catch((e) => console.warn('[clawser] scheduler wake tick failed:', e.message));
       }
     });
+
+    // periodicSync's interval is browser-throttled (often hours) and not
+    // guaranteed to fire promptly, so ask the SW to check right now
+    // whenever this tab regains visibility — catches anything that became
+    // due while backgrounded without waiting for the next periodicSync tick.
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          navigator.serviceWorker.controller?.postMessage({ type: 'clawser-scheduler-check' });
+        }
+      });
+    }
   }
 
   // ── PWA install flow: capture beforeinstallprompt for later trigger ──

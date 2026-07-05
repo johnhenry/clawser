@@ -203,24 +203,32 @@ three pending controllers (mesh, swarms, transfers), the hooks
 silent-data-loss bug, and the visible-panel-on-switch staleness
 bug. Items still surfaced for next pass:
 
-- [ ] **Hook persistence not wired.** `ClawserAgent.persistHooks` and
-      `restoreHooks(factories)` exist but no caller invokes them.
-      User-typed hooks survive a reload only if persistence is
-      wired. Fix shape: persist serializable form (name, point,
-      priority, body string, enabled), restore via factory that
-      `eval`s body strings. Estimate S-M.
+- [x] **Hook persistence wired.** `persistHooks()`/`restoreHooks(factories)`
+      are now called from the hooks UI (`clawser-ui-config.js`) and
+      `initWorkspace()` respectively. User-typed hooks persist as
+      `{name, point, priority, body, enabled}`; `defaultHookFactories()`
+      rebuilds the `user-hook` factory via `new Function('return '+body)()`,
+      wrapped in try/catch so a corrupted body doesn't break restore.
 
-- [ ] **Swarms UI/backend structural mismatch.** The panel was
-      designed multi-swarm; the backend (`SwarmCoordinator`) is
-      single-swarm with members + tasks. The new view-model
-      synthesizes one card to bridge, and `onDisband` explicitly
-      logs "unsupported." Full multi-swarm story would need either
-      a UI rewrite or a `SwarmCoordinator` redesign. Estimate L.
+- [x] **Swarms UI/backend structural mismatch — resolved via the mesh
+      Phase 11 multi-swarm refactor.** `SwarmCoordinator` now tracks
+      `Map<swarmId, {election, distributor, tasks}>` — real multiple
+      concurrent swarms, not a single-swarm synthesis. `'local'` is the
+      always-present default that every pre-refactor call/test implicitly
+      used (all 82 pre-existing tests pass unmodified — backward-compat
+      proof). New: `createSwarm`/`disbandSwarm`/`hasSwarm`/`listSwarms`/
+      `listMembers`. `buildSwarmViewModel` lists one real card per swarm;
+      `onDisband` is a real implementation (still refuses 'local'). Also
+      fixed a latent bug found along the way: the view model read
+      `task.assignee`, which doesn't exist on `SwarmTask` (only
+      `.assignedTo`). 24 new SwarmCoordinator tests + 9 new/updated
+      controller tests.
 
-- [ ] **`clawser-ui-diff.js` orphan deferred.** `computeDiff`,
-      `renderDiff` exist with tests but no production consumer.
-      Natural integration: diff viewer over `UndoManager.previousContent`,
-      requires UX design. Estimate S to wire when target is decided.
+- [x] **`clawser-ui-diff.js` wired.** `buildUndoDiffModel(fileOps)` maps
+      `UndoManager` file ops to diffable `{path, action, oldText, newText}`;
+      the undo button in chat now renders a "± View changes (N)" expander
+      using `computeDiff`/`renderDiff` when file ops exist for that
+      checkpoint.
 
 - [ ] **Mesh dashboard "Deploy Skill" cross-mount.** Currently
       hints at "Settings → My Devices → Deploy now." Could be
@@ -331,11 +339,52 @@ below.
 
 ### Mesh production hardening (RM Phase 11, all in Batch 3)
 
-- [ ] WebRTC reliability hardening (reconnection, ICE restart, TURN fallback)
-- [ ] WebTransport end-to-end (currently bridged)
-- [ ] PBFT consensus end-to-end with real validator sets
-- [ ] Payment channel settlement-on-close + escrow timeouts
-- [ ] Per-member group key envelope encryption
+- [x] **WebRTC reliability hardening** — `mergeIceServers()` (TURN support
+      via a new Settings → Mesh/Relay TURN field), `WebRTCPeerConnection
+      .reconnect()` (ICE restart), `WebRTCMeshManager` auto-reconnect with
+      exponential backoff (`onReconnectOffer`/`reconnectPeer`). 39 new
+      tests. Known gap, documented honestly: `clawser-pod.js`'s production
+      'webrtc' transport adapter still uses raw per-endpoint
+      `WebRTCPeerConnection`, not `WebRTCMeshManager` — the auto-reconnect
+      machinery isn't wired into the live transport path yet.
+- [x] **WebTransport — reframed, not a gap** — WebTransport is inherently
+      client-server (no browser exposes a peer-to-peer WebTransport mode;
+      it's built on HTTP/3, which requires a server). The "bridged, not
+      end-to-end" framing implied a P2P mode was coming; there isn't one to
+      build. `docs/browsermesh/specs/networking/transport-probing.md`
+      already documented this correctly (`webTransport: server-mediated`,
+      same table as `webSocket`). `WebTransportBridge`
+      (`clawser-mesh-webtransport.js`) is the correct, complete
+      implementation for what WebTransport can be: a bridge/relay
+      transport, same category as WebSocket — not a peer transport like
+      WebRTC. Closing this item by documentation; no code change needed.
+- [x] **Consensus validator sets** — `ConsensusManager.addValidator/
+      removeValidator/listValidators/isValidator` gate `propose()`/`vote()`
+      (both local calls and inbound wire handlers) once at least one
+      validator is registered; empty set = open membership (unchanged
+      default behavior). 19 new tests. This is membership-gated voting,
+      **not** PBFT — no pre-prepare/prepare/commit rounds, no view
+      changes, no 3f+1 Byzantine safety guarantee. Full PBFT remains the
+      opt-in `raijin-consensus` path wired at `clawser-pod.js`'s PBFT
+      integration (~line 417-478) for when Byzantine fault tolerance
+      actually matters (e.g. payment finality).
+- [x] **Payment channel settlement/escrow timeouts** — `PaymentRouter
+      .startEscrowSweeper(intervalMs, onExpired)` calls `EscrowManager
+      .pruneExpiredDetailed()` on a timer; wired in `initMeshSubsystem`
+      (started/stopped alongside the pod's mesh lifecycle) with a bug fix
+      found while wiring: the previous workspace's sweeper was never
+      stopped before `initMesh()` rebuilt a fresh `PaymentRouter`, leaking
+      a timer against a detached `EscrowManager` on every workspace switch.
+- [x] **Per-member group key envelope encryption** — X25519 ECDH + AES-GCM
+      key wrap (`generateEncryptionKeyPair`/`wrapKeyForMember`/
+      `unwrapKeyForMember` in `clawser-mesh-group-keys.js`).
+      `GroupKeyManager.initEncryption()`/`setMemberPublicKey()`; `broadcast
+      Distribute()` now sends a per-member encrypted envelope when the
+      recipient's public key is known, falling back to metadata-only (the
+      old behavior) with a logged warning otherwise. Public keys are
+      advertised via discovery-record metadata (`clawser-pod.js`) — best
+      effort/fire-and-forget since key generation is async and discovery
+      announces periodically. 58 tests.
 - [x] **Presence protocol standalone service** — Closed in the 2026-05-03
       quick-wins pass. New `web/clawser-presence.mjs` (`PresenceService`)
       subscribes to PeerNode `peer:connect`/`peer:disconnect` events and
@@ -343,9 +392,33 @@ below.
       API: `getPresence(peerId)`, `getAll()`, `subscribe(cb)`,
       `recordHeartbeat(peerId)`. Wired into `initMeshSubsystem` as
       `state.presenceService`. 25 tests.
-- [ ] Distributed tracing across mesh hops
-- [ ] Mesh health dashboard
-- [ ] Alert rules
+- [x] **Distributed tracing across mesh hops** — traceId carried inside
+      our own message envelope (not the browsermesh-primitives wire
+      schema): `ClawserPod.sendMessage()` generates one for new outbound
+      envelopes (preserving one already present, so forwarded/relayed
+      messages keep the same id across hops), `onMessage()` reports
+      `mesh.recv` for any envelope that already carries one.
+      `KernelIntegration.traceMeshEvent()` emits to the kernel Tracer;
+      wired via `initMeshSubsystem(opts)` → `pod.setTraceEmit(...)`. Full
+      spec-level tracing (correlating with non-clawser mesh peers) stays a
+      roadmap note — this only correlates hops between clawser pods.
+      24 tests.
+- [x] **Mesh health dashboard + alert rules** — `WebRTCPeerConnection
+      .getConnectionStats()` queries `RTCPeerConnection.getStats()`
+      (byte/message counters, RTT, an approximate packet-loss ratio via
+      STUN retransmission — data channels have no standard packetsLost
+      counter); `WebRTCMeshManager.getAllConnectionStats()` aggregates +
+      caches. New `clawser-mesh-alert-rules.mjs`: pure `evaluateAlertRules()`
+      (latency >2s, packet loss >5%, peer-drop defaults) +
+      `recordMetricSample()` (rolling 1-min window). `MeshInspector
+      .snapshot()` gains a `connectivity` field; `clawser-ui-mesh.js`
+      renders a "Connectivity Metrics" section. A 10s poller in
+      `initMeshSubsystem` surfaces violations via `addMsg('system')`.
+      Known gap, documented honestly: `state.webrtcMeshManager` isn't
+      populated by `ClawserPod.initMesh()` yet (same WebRTC-hardening gap
+      noted above) — the poller is real and fully tested against
+      `WebRTCMeshManager` directly, but is a documented no-op in
+      production until that wiring lands. 60 tests.
 - [x] **Remote peers as deployment targets (push code/skills)** —
       **End-to-end shipped 2026-05-03 in the multi-device deploy
       completion pass.** All five Track 3 items + paired-devices
@@ -400,8 +473,23 @@ below.
 
 ### Daemon / Service Worker (RM Phase 12, Batch 3)
 
-- [ ] SW wake-on-message from relay/signaling server
-- [ ] Scheduled task execution in daemon mode (audit + fix)
+- [x] **SW wake-on-message (in-repo half).** `sw.js`'s periodicsync handler
+      logic is now a shared `checkAndWakeScheduler()` function, called both
+      by `periodicsync` (browser-scheduled) and a new `self.addEventListener
+      ('message', ...)` handler responding to `{type: 'clawser-scheduler-
+      check'}` — a page can now ask the SW to check right now instead of
+      waiting for periodicSync's next (browser-throttled, often
+      hours-later) tick. Client side: `clawser-app.js` posts that message
+      on `visibilitychange` when a tab regains visibility. **Remaining
+      gap, honestly out of scope for a client-only app:** true push-from-
+      relay (waking the SW while every tab is closed) needs Web Push +
+      VAPID, which requires a server component.
+- [x] **Scheduled task execution in daemon mode (audit + fix).**
+      `clawser-background-runner.js` now validates cron expressions (5
+      fields, per-field ranges) once per routine and excludes invalid ones
+      from due-checking instead of silently misfiring; tracks
+      `consecutiveFailures` and skips (logging "Skipped (previous
+      failure)") after 3 in a row instead of retrying forever.
 
 ### Ecosystem (Batch 3)
 

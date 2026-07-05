@@ -102,24 +102,24 @@ Items partially complete or planned for the mesh networking layer:
 - [ ] Mesh-native file sync between pods (beyond CRDT state sync)
 
 #### Transport Hardening
-- [ ] WebRTC data channel reliability — reconnection, ICE restart, TURN fallback
-- [ ] WebTransport production path (currently bridged, not end-to-end)
-- [ ] Transport quality metrics (latency, packet loss) exposed to routing layer
+- [x] WebRTC data channel reliability — reconnection (ICE restart via `WebRTCPeerConnection.reconnect()`), auto-reconnect with exponential backoff (`WebRTCMeshManager`), TURN fallback (`mergeIceServers()` + Settings → Mesh/Relay TURN field). Gap: `clawser-pod.js`'s production transport adapter still uses raw per-endpoint connections, not `WebRTCMeshManager` — the auto-reconnect isn't wired into the live path yet.
+- [x] WebTransport — reframed, not a gap. WebTransport is inherently client-server (HTTP/3-based); there's no P2P mode to build toward. `WebTransportBridge` is the correct, complete implementation — a bridge/relay transport like WebSocket, not a peer transport like WebRTC.
+- [x] Transport quality metrics (latency, packet loss) exposed via `WebRTCPeerConnection.getConnectionStats()` / `WebRTCMeshManager.getAllConnectionStats()` and `MeshInspector.snapshot().connectivity`. Not yet wired to a routing-layer decision (e.g. auto-failover on quality), just observability.
 
 #### Group Encryption & Key Management
-- [ ] Per-member key envelope encryption (currently metadata-only distribution)
+- [x] Per-member key envelope encryption — X25519 ECDH + AES-GCM key wrap in `clawser-mesh-group-keys.js`; falls back to metadata-only (the old behavior) with a logged warning when a member's public key isn't known yet.
 - [ ] Key rotation audit trail
 - [ ] Integrate with mesh ACL for group membership changes
 
 #### Consensus & Payments Production
-- [ ] PBFT consensus end-to-end with real validator sets (currently opt-in stub)
+- [x] Validator sets on `ConsensusManager` (membership-gated majority/super-majority/unanimous/weighted voting) — **not** PBFT. Full PBFT with real validator sets remains the opt-in `raijin-consensus` path (unchanged, still a stub integration point at `clawser-pod.js`).
 - [ ] Payment channel settlement on close (currently local-only accounting)
-- [ ] Escrow timeout enforcement via scheduler
+- [x] Escrow timeout enforcement via scheduler — `PaymentRouter.startEscrowSweeper()`.
 
 #### Observability
-- [ ] Mesh health dashboard — peer latency, message throughput, connection status
-- [ ] Distributed tracing across mesh hops
-- [ ] Alert rules for peer disconnection, consensus timeout, payment disputes
+- [x] Mesh health dashboard — peer connection stats (latency, throughput, loss) in a new "Connectivity Metrics" section of `clawser-ui-mesh.js`, sourced from `MeshInspector.snapshot().connectivity`.
+- [x] Distributed tracing across mesh hops — traceId carried in clawser's own message envelope (`ClawserPod.sendMessage`/`onMessage`), emitted to the kernel Tracer via `KernelIntegration.traceMeshEvent()`. Correlates hops between clawser pods only; full spec-level tracing remains a roadmap note.
+- [x] Alert rules for peer disconnection, latency, and packet loss — `clawser-mesh-alert-rules.mjs`'s `evaluateAlertRules()` (defaults: latency >2s, packet loss >5%, peer-drop). Consensus-timeout/payment-dispute alert rules not yet added — this covers connectivity only.
 
 ### Phase 12: Ecosystem & Integrations
 
@@ -134,8 +134,8 @@ Items partially complete or planned for the mesh networking layer:
 - [x] BroadcastChannel tab coordination
 - [x] Background task execution
 - [ ] Service Worker persistent daemon (survives all tabs closing)
-- [ ] Wake-on-message from relay/signaling server
-- [ ] Scheduled task execution in daemon mode
+- [x] Wake-on-message (in-repo half) — `sw.js` responds to a client-posted `{type: 'clawser-scheduler-check'}` message (in addition to its existing `periodicsync` handler), triggered on tab `visibilitychange`. True push-from-relay while every tab is closed needs Web Push + VAPID (a server component) — out of scope for a client-only app.
+- [x] Scheduled task execution in daemon mode — cron validation + per-routine consecutive-failure skip in `clawser-background-runner.js`.
 
 #### Kernel Extraction
 - [ ] Extract `web/packages/kernel/` to standalone npm package (`browsermesh-kernel`)

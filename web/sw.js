@@ -508,98 +508,119 @@ self.addEventListener('install', (event) => {
 // open tab so the real in-tab RoutineEngine (Tier 2, which has agent
 // access and owns this state) performs the actual execution. Scheduling
 // state (lastFired/fired/lastCronMinute) is never mutated from this path.
+// Shared by both the periodicsync handler (browser-driven wake, on its own
+// schedule) and the message handler below (client-driven wake — a page or
+// relay connection asks the SW to check right now, e.g. right after
+// reconnecting or receiving a push-adjacent signal). READ-ONLY, same as
+// the comment above explains: this never mutates routine state.
+async function checkAndWakeScheduler() {
+  let db;
+  try {
+    const DB_NAME = 'clawser_checkpoints';
+    const STORE = 'checkpoints';
+    const ROUTINE_KEY = 'background_routine_state';
+
+    db = await new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, 1);
+      req.onupgradeneeded = () => {
+        if (!req.result.objectStoreNames.contains(STORE)) req.result.createObjectStore(STORE);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+
+    const read = (key) => new Promise((resolve) => {
+      const tx = db.transaction(STORE, 'readonly');
+      const r = tx.objectStore(STORE).get(key);
+      r.onsuccess = () => resolve(r.result ?? null);
+      r.onerror = () => resolve(null);
+    });
+
+    const routines = await read(ROUTINE_KEY);
+    if (!Array.isArray(routines) || routines.length === 0) { db.close(); return false; }
+
+    // Inline cron matching + validation (SW can't import ES modules from
+    // app code — see clawser-background-runner.js for the canonical,
+    // unit-tested version this mirrors).
+    function validateCron(expr) {
+      if (typeof expr !== 'string' || !expr.trim()) return false;
+      const parts = expr.trim().split(/\s+/);
+      return parts.length === 5;
+    }
+    function cronFieldMatches(pattern, value) {
+      if (pattern === '*') return true;
+      if (pattern.startsWith('*/')) {
+        const step = parseInt(pattern.slice(2));
+        return step > 0 && value % step === 0;
+      }
+      for (const v of pattern.split(',')) {
+        if (v.includes('-')) {
+          const [a, b] = v.split('-').map(Number);
+          if (value >= a && value <= b) return true;
+        } else if (parseInt(v) === value) return true;
+      }
+      return false;
+    }
+    function cronMatches(expr, date) {
+      const parts = expr.trim().split(/\s+/);
+      const fields = [date.getMinutes(), date.getHours(), date.getDate(), date.getMonth() + 1, date.getDay()];
+      for (let i = 0; i < 5; i++) {
+        if (!cronFieldMatches(parts[i], fields[i])) return false;
+      }
+      return true;
+    }
+
+    const now = Date.now();
+    const nowDate = new Date(now);
+    let anyDue = false;
+    for (const r of routines) {
+      if (!r.enabled) continue;
+      if (r.meta?.scheduleType === 'interval' && now >= (r.meta.lastFired || 0) + (r.meta.intervalMs || 60000)) {
+        anyDue = true; break;
+      }
+      if (r.meta?.scheduleType === 'once' && !r.meta.fired && now >= (r.meta.fireAt || 0)) {
+        anyDue = true; break;
+      }
+      if (r.trigger?.type === 'cron' && r.trigger?.cron && validateCron(r.trigger.cron)) {
+        const lastMin = r.state?.lastCronMinute || 0;
+        if (Math.floor(now / 60000) > lastMin && cronMatches(r.trigger.cron, nowDate)) { anyDue = true; break; }
+      }
+    }
+    db.close();
+    db = null;
+
+    if (anyDue) {
+      const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: false });
+      for (const client of clients) {
+        client.postMessage({ type: 'clawser-scheduler-wake' });
+      }
+      // No open tab to wake — the routine(s) stay pending; the next
+      // Tier 2 (in-tab) check or periodicSync tick will pick them up.
+      // Nothing to do here since we have no way to execute in this context.
+    }
+    return anyDue;
+  } catch (err) {
+    console.warn('[clawser-sw] Scheduler check error:', err);
+    try { db?.close(); } catch (e) { silentCatch('web/sw.js', 'db', e) }
+    return false;
+  }
+}
+
 self.addEventListener('periodicsync', (event) => {
   if (event.tag !== 'clawser-scheduler') return;
-  event.waitUntil((async () => {
-    let db;
-    try {
-      const DB_NAME = 'clawser_checkpoints';
-      const STORE = 'checkpoints';
-      const ROUTINE_KEY = 'background_routine_state';
+  event.waitUntil(checkAndWakeScheduler());
+});
 
-      db = await new Promise((resolve, reject) => {
-        const req = indexedDB.open(DB_NAME, 1);
-        req.onupgradeneeded = () => {
-          if (!req.result.objectStoreNames.contains(STORE)) req.result.createObjectStore(STORE);
-        };
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error);
-      });
-
-      const read = (key) => new Promise((resolve) => {
-        const tx = db.transaction(STORE, 'readonly');
-        const r = tx.objectStore(STORE).get(key);
-        r.onsuccess = () => resolve(r.result ?? null);
-        r.onerror = () => resolve(null);
-      });
-
-      const routines = await read(ROUTINE_KEY);
-      if (!Array.isArray(routines) || routines.length === 0) { db.close(); return; }
-
-      // Inline cron matching + validation (SW can't import ES modules from
-      // app code — see clawser-background-runner.js for the canonical,
-      // unit-tested version this mirrors).
-      function validateCron(expr) {
-        if (typeof expr !== 'string' || !expr.trim()) return false;
-        const parts = expr.trim().split(/\s+/);
-        return parts.length === 5;
-      }
-      function cronFieldMatches(pattern, value) {
-        if (pattern === '*') return true;
-        if (pattern.startsWith('*/')) {
-          const step = parseInt(pattern.slice(2));
-          return step > 0 && value % step === 0;
-        }
-        for (const v of pattern.split(',')) {
-          if (v.includes('-')) {
-            const [a, b] = v.split('-').map(Number);
-            if (value >= a && value <= b) return true;
-          } else if (parseInt(v) === value) return true;
-        }
-        return false;
-      }
-      function cronMatches(expr, date) {
-        const parts = expr.trim().split(/\s+/);
-        const fields = [date.getMinutes(), date.getHours(), date.getDate(), date.getMonth() + 1, date.getDay()];
-        for (let i = 0; i < 5; i++) {
-          if (!cronFieldMatches(parts[i], fields[i])) return false;
-        }
-        return true;
-      }
-
-      const now = Date.now();
-      const nowDate = new Date(now);
-      let anyDue = false;
-      for (const r of routines) {
-        if (!r.enabled) continue;
-        if (r.meta?.scheduleType === 'interval' && now >= (r.meta.lastFired || 0) + (r.meta.intervalMs || 60000)) {
-          anyDue = true; break;
-        }
-        if (r.meta?.scheduleType === 'once' && !r.meta.fired && now >= (r.meta.fireAt || 0)) {
-          anyDue = true; break;
-        }
-        if (r.trigger?.type === 'cron' && r.trigger?.cron && validateCron(r.trigger.cron)) {
-          const lastMin = r.state?.lastCronMinute || 0;
-          if (Math.floor(now / 60000) > lastMin && cronMatches(r.trigger.cron, nowDate)) { anyDue = true; break; }
-        }
-      }
-      db.close();
-      db = null;
-
-      if (anyDue) {
-        const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: false });
-        for (const client of clients) {
-          client.postMessage({ type: 'clawser-scheduler-wake' });
-        }
-        // No open tab to wake — the routine(s) stay pending; the next
-        // Tier 2 (in-tab) check or periodicSync tick will pick them up.
-        // Nothing to do here since we have no way to execute in this context.
-      }
-    } catch (err) {
-      console.warn('[clawser-sw] Periodic sync error:', err);
-      try { db?.close(); } catch (e) { silentCatch('web/sw.js', 'db', e) }
-    }
-  })());
+// Client-driven wake: a page (or a relay/channel connection running in a
+// page) can ask the SW to check scheduler due-ness immediately rather than
+// waiting for the next periodicSync tick — periodicSync's interval is
+// browser-throttled and not guaranteed to fire promptly. True push-from-
+// relay (server-initiated wake while every tab is closed) would need Web
+// Push + VAPID, which requires a server component — out of scope for a
+// client-only app; this covers the in-repo half.
+self.addEventListener('message', (event) => {
+  if (event.data?.type !== 'clawser-scheduler-check') return;
+  event.waitUntil(checkAndWakeScheduler());
 });
 
 self.addEventListener('activate', (event) => {
