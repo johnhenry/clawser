@@ -2,7 +2,17 @@
  * tools/wsh-server.mjs — a minimal Node.js server for the wsh-v1 protocol,
  * built to interoperate with the real `wsh-upon-star` client library.
  *
- * Two modes, both over one WebSocketServer:
+ * Two transports, sharing one connection-agnostic protocol handler:
+ *   - WebSocket (`ws`), always available.
+ *   - WebTransport (QUIC/HTTP3, via `@fails-components/webtransport`),
+ *     started alongside WebSocket only when `cert`/`key` are given — the
+ *     WebTransport spec requires TLS unconditionally, there's no
+ *     plaintext-QUIC option the way there's plain `ws://` for WebSocket.
+ *     Closes the gap left by the original Rust `wsh-server` (removed
+ *     2026-03-14, see docs/WSH-INTO-CLAWSER.md), which used `wtransport`/
+ *     `quinn` for the same purpose.
+ *
+ * Two operating modes, over either transport:
  *   - Direct host: authenticate a client, then run `kind: 'exec'` sessions
  *     by spawning a real child process and streaming its output back.
  *     `kind: 'pty'` is explicitly rejected (openFail) — there's no PTY
@@ -29,8 +39,17 @@
  *
  * Data plane: every session here uses `data_mode: 'virtual'` in OpenOk,
  * so all I/O flows as `SessionData` control-channel messages rather than
- * needing WebSocket stream multiplexing — `WshVirtualSessionBackend` in
- * wsh-upon-star already implements the client side of exactly this mode.
+ * needing per-transport stream multiplexing — `WshVirtualSessionBackend`
+ * in wsh-upon-star already implements the client side of exactly this
+ * mode, for both transports.
+ *
+ * Connection abstraction: every connection (WS or WT) is reduced to a
+ * `handle = { send(msg), close() }` as soon as it's accepted, and the
+ * entire auth/exec/relay state machine below (`#handleMessage` and
+ * everything it calls) is written purely against that abstraction plus a
+ * transport-agnostic `conn` state object — it has no idea which
+ * transport it's talking to. Only the two `#handle*Connection` entry
+ * points below are transport-specific.
  *
  * WebSocket outer framing: `WebSocketTransport` (the real client's
  * WebSocket transport, src/transport-ws.mjs) wraps every CBOR control
@@ -46,11 +65,22 @@
  * `data_mode: 'virtual'`, this server only ever needs to send/receive
  * frame type 0x01 on stream 0 — no OPEN_STREAM/CLOSE_STREAM/DATA frames.
  *
+ * WebTransport framing is simpler: no outer wrapper at all. Per
+ * `WebTransportTransport` (src/transport.mjs), the client opens its own
+ * first bidirectional stream as the dedicated control stream and sends
+ * plain length-prefixed CBOR frames (`frameEncode`/`FrameDecoder`) on it
+ * directly — WebTransport already multiplexes streams at the transport
+ * layer, so there's no need for the WebSocket transport's extra 5-byte
+ * header. This server accepts that first incoming bidirectional stream
+ * as the control stream and ignores/cancels any further ones (nothing
+ * here uses `data_mode: 'stream'`, so extra streams are unexpected).
+ *
  * Run tests:
  *   node --test tools/test/wsh-server.test.mjs
  */
 
 import { WebSocketServer } from 'ws';
+import { Http3Server } from '@fails-components/webtransport';
 import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { randomUUID, randomBytes } from 'node:crypto';
@@ -153,19 +183,23 @@ const RELAY_FORWARD_TYPES = new Set([
 export class WshServer {
   #wss = null;
   #httpServer = null;
+  #wtServer = null;
   #authorizedKeys;
   #enableRelay;
   #execTimeoutMs;
   #onLog;
 
-  /** @type {Map<string, {ws: import('ws').WebSocket, decoder: FrameDecoder, meta: object}>} fingerprint -> registered reverse peer */
+  /** @type {Map<string, {handle: {send: Function, close: Function}, meta: object}>} fingerprint -> registered reverse peer */
   #peers = new Map();
 
-  /** @type {Map<string, {operatorWs: import('ws').WebSocket, targetFingerprint: string}>} operator connection id -> pending reverse-connect */
+  /** @type {Map<string, {operatorHandle: {send: Function, close: Function}, targetFingerprint: string}>} operator connection id -> pending reverse-connect */
   #pendingReverse = new Map();
 
-  /** @type {Map<import('ws').WebSocket, import('ws').WebSocket>} paired sockets, both directions present as keys */
+  /** @type {Map<object, object>} paired connection handles, both directions present as keys */
   #pairings = new Map();
+
+  /** @type {Map<object, {conn: object, ctx: object}>} handle -> its protocol state, transport-agnostic */
+  #contexts = new Map();
 
   /**
    * @param {object} [opts]
@@ -189,10 +223,18 @@ export class WshServer {
    * trusts, same requirement the original doc called out for the Rust
    * `wsh-server`.
    *
+   * When `cert`/`key` are given, a WebTransport (QUIC/HTTP3) listener is
+   * *also* started on the same `port`/`host` (UDP alongside WebSocket's
+   * TCP — same port number, different protocol, no conflict), same as
+   * the original Rust `wsh-server` did with `wtransport`. WebTransport
+   * has no plaintext mode, so without a cert it's simply not started —
+   * the server still works over plain `ws://` in that case, same as
+   * before.
+   *
    * @param {object} [opts]
    * @param {number} [opts.port=0] - 0 = OS-assigned free port
    * @param {string} [opts.host='0.0.0.0']
-   * @param {string} [opts.cert] - PEM certificate (enables wss://)
+   * @param {string} [opts.cert] - PEM certificate (enables wss:// and WebTransport)
    * @param {string} [opts.key] - PEM private key (required with cert)
    * @returns {Promise<number>} the actual bound port
    */
@@ -205,6 +247,19 @@ export class WshServer {
         this.#httpServer.listen(port, host, resolve);
         this.#httpServer.once('error', reject);
       });
+      const boundPort = this.#httpServer.address().port;
+
+      this.#wtServer = new Http3Server({
+        port: boundPort,
+        host,
+        secret: randomBytes(16).toString('hex'),
+        cert,
+        privKey: key,
+      });
+      const sessions = this.#wtServer.sessionStream('/');
+      this.#wtServer.startServer();
+      await this.#wtServer.ready;
+      this.#acceptWtSessions(sessions);
     } else {
       this.#wss = new WebSocketServer({ port, host });
       await new Promise((resolve, reject) => {
@@ -212,7 +267,7 @@ export class WshServer {
         this.#wss.once('error', reject);
       });
     }
-    this.#wss.on('connection', (ws) => this.#handleConnection(ws));
+    this.#wss.on('connection', (ws) => this.#handleWsConnection(ws));
     return (this.#httpServer || this.#wss).address().port;
   }
 
@@ -227,6 +282,10 @@ export class WshServer {
       await new Promise((resolve) => this.#httpServer.close(() => resolve()));
       this.#httpServer = null;
     }
+    if (this.#wtServer) {
+      try { this.#wtServer.stopServer(); } catch { /* best-effort */ }
+      this.#wtServer = null;
+    }
     this.#wss = null;
     this.#peers.clear();
     this.#pendingReverse.clear();
@@ -238,17 +297,14 @@ export class WshServer {
     return [...this.#peers.keys()];
   }
 
-  // -- Connection handling ---------------------------------------------
+  // -- Connection handling (transport-specific entry points) -----------
 
-  #handleConnection(ws) {
+  #handleWsConnection(ws) {
     const decoder = new FrameDecoder();
-    /** @type {{sessionId: string, nonce: Uint8Array, authenticated: boolean, fingerprint: string|null, isPeer: boolean}} */
-    const conn = { sessionId: randomUUID(), nonce: null, authenticated: false, fingerprint: null, isPeer: false };
-    let channelCounter = 0;
-    /** @type {Map<number, {proc: import('node:child_process').ChildProcess}>} */
-    const sessions = new Map();
-
-    const send = (msg) => sendFrame(ws, msg);
+    const handle = {
+      send: (msg) => sendFrame(ws, msg),
+      close: () => { try { ws.close(); } catch { /* best-effort */ } },
+    };
 
     ws.on('message', (data) => {
       const payload = parseControlFrame(new Uint8Array(data));
@@ -260,35 +316,120 @@ export class WshServer {
         this.#onLog(`[wsh-server] frame decode error: ${e.message}`);
         return;
       }
-      for (const msg of messages) {
-        this.#handleMessage(ws, conn, msg, { send, sessions, channelCounter: () => ++channelCounter })
-          .catch((e) => this.#onLog(`[wsh-server] handler error: ${e.message}`));
-      }
+      for (const msg of messages) this.#dispatch(handle, msg);
     });
 
-    ws.on('close', () => {
-      for (const { proc } of sessions.values()) {
-        try { proc.kill(); } catch { /* best-effort */ }
-      }
-      if (conn.fingerprint) this.#peers.delete(conn.fingerprint);
-      this.#pendingReverse.delete(conn.sessionId);
-      const partner = this.#pairings.get(ws);
-      if (partner) {
-        this.#pairings.delete(ws);
-        this.#pairings.delete(partner);
-        try { partner.close(); } catch { /* best-effort */ }
-      }
-    });
+    const { conn, sessions } = this.#registerConnection(handle);
+    ws.on('close', () => this.#cleanupConnection(handle, conn, sessions));
   }
 
-  async #handleMessage(ws, conn, msg, ctx) {
-    if (!conn.authenticated) return this.#handleAuthPhase(ws, conn, msg, ctx);
-    return this.#handlePostAuth(ws, conn, msg, ctx);
+  /**
+   * Accept incoming WebTransport sessions from `sessionStream('/')`. The
+   * first bidirectional stream a session opens becomes its control
+   * stream (matches `WebTransportTransport._doConnect` on the client
+   * side); any further incoming stream on the same session is
+   * unexpected here (nothing uses `data_mode: 'stream'`) and is closed
+   * immediately rather than silently ignored.
+   *
+   * @param {ReadableStream} sessionReadable
+   */
+  async #acceptWtSessions(sessionReadable) {
+    const reader = sessionReadable.getReader();
+    for (;;) {
+      const { done, value: session } = await reader.read();
+      if (done) return;
+      this.#handleWtSession(session).catch((e) => this.#onLog(`[wsh-server] WebTransport session error: ${e.message}`));
+    }
+  }
+
+  async #handleWtSession(session) {
+    await session.ready;
+    const bidiReader = session.incomingBidirectionalStreams.getReader();
+    const { done, value: controlStream } = await bidiReader.read();
+    if (done) return;
+
+    const writer = controlStream.writable.getWriter();
+    const handle = {
+      send: (msg) => { writer.write(frameEncode(msg)).catch(() => { /* session likely closing */ }); },
+      close: () => { try { session.close(); } catch { /* best-effort */ } },
+    };
+
+    // Extra incoming streams are unexpected (data_mode is always
+    // 'virtual' here) — drain and reject them rather than leaking them.
+    (async () => {
+      for (;;) {
+        const { done: extraDone, value: extra } = await bidiReader.read();
+        if (extraDone) return;
+        try { await extra.writable.close(); } catch { /* best-effort */ }
+        try { await extra.readable.cancel(); } catch { /* best-effort */ }
+      }
+    })().catch(() => { /* session closing */ });
+
+    const { conn, sessions } = this.#registerConnection(handle);
+    const decoder = new FrameDecoder();
+    const controlReader = controlStream.readable.getReader();
+    try {
+      for (;;) {
+        const { done: streamDone, value } = await controlReader.read();
+        if (streamDone) break;
+        let messages;
+        try {
+          messages = decoder.feed(value);
+        } catch (e) {
+          this.#onLog(`[wsh-server] frame decode error: ${e.message}`);
+          continue;
+        }
+        for (const msg of messages) this.#dispatch(handle, msg);
+      }
+    } finally {
+      this.#cleanupConnection(handle, conn, sessions);
+    }
+  }
+
+  // -- Shared connection lifecycle (transport-agnostic) -----------------
+
+  /** @returns {{conn: object, sessions: Map}} */
+  #registerConnection(handle) {
+    /** @type {{sessionId: string, nonce: Uint8Array, authenticated: boolean, fingerprint: string|null, isPeer: boolean}} */
+    const conn = { sessionId: randomUUID(), nonce: null, authenticated: false, fingerprint: null, isPeer: false };
+    let channelCounter = 0;
+    /** @type {Map<number, {proc: import('node:child_process').ChildProcess}>} */
+    const sessions = new Map();
+    const ctx = { send: handle.send, sessions, channelCounter: () => ++channelCounter };
+    this.#contexts.set(handle, { conn, ctx });
+    return { conn, sessions };
+  }
+
+  #dispatch(handle, msg) {
+    const entry = this.#contexts.get(handle);
+    if (!entry) return;
+    this.#handleMessage(handle, entry.conn, msg, entry.ctx)
+      .catch((e) => this.#onLog(`[wsh-server] handler error: ${e.message}`));
+  }
+
+  #cleanupConnection(handle, conn, sessions) {
+    this.#contexts.delete(handle);
+    for (const { proc } of sessions.values()) {
+      try { proc.kill(); } catch { /* best-effort */ }
+    }
+    if (conn.fingerprint) this.#peers.delete(conn.fingerprint);
+    this.#pendingReverse.delete(conn.sessionId);
+    const partner = this.#pairings.get(handle);
+    if (partner) {
+      this.#pairings.delete(handle);
+      this.#pairings.delete(partner);
+      try { partner.close(); } catch { /* best-effort */ }
+    }
+  }
+
+  async #handleMessage(handle, conn, msg, ctx) {
+    if (!conn.authenticated) return this.#handleAuthPhase(handle, conn, msg, ctx);
+    return this.#handlePostAuth(handle, conn, msg, ctx);
   }
 
   // -- Auth handshake ----------------------------------------------------
 
-  async #handleAuthPhase(ws, conn, msg, ctx) {
+  async #handleAuthPhase(handle, conn, msg, ctx) {
     if (msg.type === MSG.HELLO) {
       conn.pendingUsername = msg.username;
       // Deliberately skip ServerHello and go straight to Challenge — the
@@ -309,7 +450,7 @@ export class WshServer {
     if (msg.type === MSG.AUTH) {
       if (msg.method !== 'pubkey') {
         ctx.send(authFail({ reason: 'only pubkey auth is supported' }));
-        ws.close();
+        handle.close();
         return;
       }
       const publicKeyRaw = msg.public_key;
@@ -317,13 +458,13 @@ export class WshServer {
       const entry = this.#authorizedKeys.get(fp);
       if (!entry) {
         ctx.send(authFail({ reason: 'key not authorized' }));
-        ws.close();
+        handle.close();
         return;
       }
       const ok = await verifyChallenge(entry.publicKey, msg.signature, 'pending', conn.nonce);
       if (!ok) {
         ctx.send(authFail({ reason: 'signature verification failed' }));
-        ws.close();
+        handle.close();
         return;
       }
       conn.authenticated = true;
@@ -339,15 +480,15 @@ export class WshServer {
 
   // -- Post-auth: direct-host sessions + relay ---------------------------
 
-  async #handlePostAuth(ws, conn, msg, ctx) {
+  async #handlePostAuth(handle, conn, msg, ctx) {
     if (this.#enableRelay) {
-      const relayHandled = await this.#handleRelayMessage(ws, conn, msg, ctx);
+      const relayHandled = await this.#handleRelayMessage(handle, conn, msg, ctx);
       if (relayHandled) return;
     }
 
     switch (msg.type) {
       case MSG.OPEN:
-        return this.#handleOpen(ws, conn, msg, ctx);
+        return this.#handleOpen(conn, msg, ctx);
       case MSG.SESSION_DATA:
         return this.#handleSessionData(msg, ctx);
       case MSG.CLOSE: {
@@ -360,7 +501,7 @@ export class WshServer {
     }
   }
 
-  #handleOpen(ws, conn, msg, ctx) {
+  #handleOpen(conn, msg, ctx) {
     if (msg.kind !== 'exec') {
       ctx.send(openFail({ reason: `kind "${msg.kind}" is not supported by this server — only "exec" is implemented (no PTY backend)` }));
       return;
@@ -379,15 +520,15 @@ export class WshServer {
       killTimer = setTimeout(() => { try { proc.kill(); } catch { /* best-effort */ } }, this.#execTimeoutMs);
     }
 
-    proc.stdout.on('data', (chunk) => sendFrame(ws, sessionData({ channelId, data: new Uint8Array(chunk) })));
-    proc.stderr.on('data', (chunk) => sendFrame(ws, sessionData({ channelId, data: new Uint8Array(chunk) })));
+    proc.stdout.on('data', (chunk) => ctx.send(sessionData({ channelId, data: new Uint8Array(chunk) })));
+    proc.stderr.on('data', (chunk) => ctx.send(sessionData({ channelId, data: new Uint8Array(chunk) })));
     proc.on('close', (code) => {
       if (killTimer) clearTimeout(killTimer);
       ctx.sessions.delete(channelId);
       try {
-        sendFrame(ws, exitMsg({ channelId, code: code ?? 0 }));
-        sendFrame(ws, closeMsg({ channelId }));
-      } catch { /* socket likely already closed */ }
+        ctx.send(exitMsg({ channelId, code: code ?? 0 }));
+        ctx.send(closeMsg({ channelId }));
+      } catch { /* connection likely already closed */ }
     });
 
     ctx.send(openOk({ channelId, streamIds: [], dataMode: 'virtual', capabilities: [] }));
@@ -402,12 +543,12 @@ export class WshServer {
   // -- Relay -------------------------------------------------------------
 
   /** @returns {Promise<boolean>} true if the message was relay-specific and fully handled */
-  async #handleRelayMessage(ws, conn, msg, ctx) {
+  async #handleRelayMessage(handle, conn, msg, ctx) {
     switch (msg.type) {
       case MSG.REVERSE_REGISTER: {
         conn.isPeer = true;
         this.#peers.set(conn.fingerprint, {
-          ws, decoder: null, meta: {
+          handle, meta: {
             fingerprint: conn.fingerprint,
             fingerprintShort: conn.fingerprint.slice(0, 12),
             username: msg.username,
@@ -450,8 +591,8 @@ export class WshServer {
           ctx.send(reverseReject({ targetFingerprint: msg.target_fingerprint, username: msg.username, reason: 'no such peer' }));
           return true;
         }
-        this.#pendingReverse.set(conn.sessionId, { operatorWs: ws, targetFingerprint: msg.target_fingerprint });
-        sendFrame(target.ws, msg);
+        this.#pendingReverse.set(conn.sessionId, { operatorHandle: handle, targetFingerprint: msg.target_fingerprint });
+        target.handle.send(msg);
         return true;
       }
 
@@ -464,19 +605,19 @@ export class WshServer {
         if (!pendingEntry) return true;
         const [operatorSessionId, pending] = pendingEntry;
         this.#pendingReverse.delete(operatorSessionId);
-        sendFrame(pending.operatorWs, msg);
+        pending.operatorHandle.send(msg);
         if (msg.type === MSG.REVERSE_ACCEPT) {
-          this.#pairings.set(pending.operatorWs, ws);
-          this.#pairings.set(ws, pending.operatorWs);
+          this.#pairings.set(pending.operatorHandle, handle);
+          this.#pairings.set(handle, pending.operatorHandle);
         }
         return true;
       }
 
       default: {
         if (!RELAY_FORWARD_TYPES.has(msg.type)) return false;
-        const partner = this.#pairings.get(ws);
+        const partner = this.#pairings.get(handle);
         if (!partner) return false;
-        sendFrame(partner, msg);
+        partner.send(msg);
         return true;
       }
     }
@@ -498,12 +639,16 @@ Options:
   --host <addr>           Bind address (default: 0.0.0.0)
   --authorized-keys <path> SSH-format authorized_keys file (default: ~/.wsh/authorized_keys)
   --enable-relay          Also accept reverse-connect peer registrations
-  --cert / --key <path>   PEM cert/key for wss:// (omit for plain ws://, fine for localhost)
+  --cert / --key <path>   PEM cert/key for wss:// + WebTransport (omit for plain ws://, fine for localhost)
   --exec-timeout-ms <n>   Kill a spawned exec session after this long (default: no timeout)
 
+Passing --cert/--key also starts a WebTransport (QUIC/HTTP3) listener on
+the same port (UDP alongside WebSocket's TCP) — WebTransport has no
+plaintext mode, so it's simply not started without a cert.
+
 No --generate-cert convenience flag (unlike the Rust wsh-server this
-replaces) — bring your own cert/key for wss://, or use plain ws:// for
-local development.
+replaces) — bring your own cert/key, or use plain ws:// for local
+development.
 `;
 
 async function runCli(argv) {
@@ -541,7 +686,8 @@ async function runCli(argv) {
   }
   const boundPort = await server.listen(listenOpts);
   const scheme = certPath ? 'wss' : 'ws';
-  console.log(`wsh-server ready on ${scheme}://${opts.host}:${boundPort}${opts.enableRelay ? ' (relay enabled)' : ''}`);
+  const wtNote = certPath ? ' + WebTransport (QUIC/HTTP3)' : '';
+  console.log(`wsh-server ready on ${scheme}://${opts.host}:${boundPort}${wtNote}${opts.enableRelay ? ' (relay enabled)' : ''}`);
 
   process.on('SIGINT', async () => { await server.close(); process.exit(0); });
   process.on('SIGTERM', async () => { await server.close(); process.exit(0); });
