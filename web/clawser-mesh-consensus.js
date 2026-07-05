@@ -450,6 +450,17 @@ export class Tally {
 
 /**
  * Orchestrates proposal lifecycle: create, vote, close, expire.
+ *
+ * Validator sets (`addValidator`/`removeValidator`/`listValidators`) gate
+ * WHO may propose/vote — a simple membership check, not a consensus
+ * protocol. This class implements majority/super-majority/unanimous/
+ * weighted VOTING (see VoteType), not PBFT: there's no pre-prepare/
+ * prepare/commit round, no view changes, and no Byzantine fault
+ * tolerance guarantee (3f+1 quorum). For that, see the opt-in
+ * `raijin-consensus` package wired at clawser-pod.js's PBFT integration
+ * (~line 417-478) — a separate, heavier protocol for when Byzantine
+ * safety actually matters (e.g. payment finality). This class is the
+ * lightweight default: mesh-wide polls, config changes, elections.
  */
 export class ConsensusManager {
   /** @type {Map<string, Tally>} proposalId -> Tally */
@@ -461,12 +472,63 @@ export class ConsensusManager {
   /** @type {function|null} */
   #broadcastFn = null;
 
+  /** @type {Set<string>} podIds allowed to propose/vote; empty = open membership (no gating) */
+  #validators = new Set();
+
   /**
    * @param {object} [opts]
    * @param {number} [opts.maxProposals=1000] - Maximum active proposals
+   * @param {string[]} [opts.validators] - Initial validator set (empty/omitted = open membership)
    */
   constructor(opts = {}) {
     this.#maxProposals = opts.maxProposals ?? 1000;
+    for (const podId of opts.validators || []) this.#validators.add(podId);
+  }
+
+  /**
+   * Add a pod to the validator set. Once at least one validator is
+   * registered, `propose()`/`vote()` are gated to validator-only — an
+   * empty set means open membership (no gating), preserving the
+   * pre-validator-set behavior by default.
+   *
+   * @param {string} podId
+   */
+  addValidator(podId) {
+    if (!podId || typeof podId !== 'string') {
+      throw new Error('podId is required and must be a non-empty string');
+    }
+    this.#validators.add(podId);
+  }
+
+  /**
+   * Remove a pod from the validator set. Does not retroactively affect
+   * ballots already cast.
+   *
+   * @param {string} podId
+   * @returns {boolean} True if the pod was a validator
+   */
+  removeValidator(podId) {
+    return this.#validators.delete(podId);
+  }
+
+  /**
+   * List all registered validator pod IDs.
+   * @returns {string[]}
+   */
+  listValidators() {
+    return [...this.#validators];
+  }
+
+  /**
+   * Whether `podId` is a registered validator. Always true when the
+   * validator set is empty (open membership).
+   *
+   * @param {string} podId
+   * @returns {boolean}
+   */
+  isValidator(podId) {
+    if (this.#validators.size === 0) return true;
+    return this.#validators.has(podId);
   }
 
   /**
@@ -486,6 +548,9 @@ export class ConsensusManager {
   propose(authorPodId, title, options, voteType, opts = {}) {
     if (this.#tallies.size >= this.#maxProposals) {
       throw new Error(`maximum proposals (${this.#maxProposals}) reached`);
+    }
+    if (!this.isValidator(authorPodId)) {
+      throw new Error(`"${authorPodId}" is not a registered validator`);
     }
 
     const proposal = new Proposal({
@@ -528,6 +593,9 @@ export class ConsensusManager {
     const tally = this.#tallies.get(proposalId);
     if (!tally) {
       throw new Error(`proposal "${proposalId}" not found`);
+    }
+    if (!this.isValidator(voterPodId)) {
+      throw new Error(`"${voterPodId}" is not a registered validator`);
     }
 
     const ballot = new Ballot({
@@ -637,6 +705,9 @@ export class ConsensusManager {
     // Inbound: receive proposals
     subscribeFn(CONSENSUS_PROPOSE, (payload, fromPodId) => {
       try {
+        if (!this.isValidator(payload.authorPodId)) {
+          throw new Error(`"${payload.authorPodId}" is not a registered validator`);
+        }
         const proposal = Proposal.fromJSON(payload);
         const tally = new Tally(proposal);
         this.#tallies.set(proposal.proposalId, tally);
