@@ -8,6 +8,10 @@ import {
   GROUP_KEY_ROTATE,
   GROUP_KEY_REQUEST,
   GROUP_KEY_ACK,
+  supportsX25519,
+  generateEncryptionKeyPair,
+  wrapKeyForMember,
+  unwrapKeyForMember,
 } from '../clawser-mesh-group-keys.js'
 
 // ---------------------------------------------------------------------------
@@ -411,6 +415,224 @@ describe('GroupKeyManager', () => {
       assert.ok(small.getEpochState(1))
       assert.ok(small.getEpochState(2))
       assert.ok(small.getEpochState(3))
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Per-member envelope encryption (X25519 ECDH + AES-GCM key wrap)
+// ---------------------------------------------------------------------------
+
+describe('supportsX25519', () => {
+  it('returns true in Node (WebCrypto X25519 support)', () => {
+    assert.equal(supportsX25519(), true)
+  })
+})
+
+describe('wrapKeyForMember / unwrapKeyForMember', () => {
+  it('round-trips an AES-GCM key through ECDH wrap/unwrap', async () => {
+    const epochKey = await crypto.subtle.generateKey(
+      { name: 'AES-GCM', length: 256 },
+      true,
+      ['encrypt', 'decrypt'],
+    )
+    const recipient = await generateEncryptionKeyPair()
+
+    const envelope = await wrapKeyForMember(epochKey, recipient.publicKey)
+    assert.equal(typeof envelope.ephemeralPublicKey, 'string')
+    assert.equal(typeof envelope.wrappedKey, 'string')
+    assert.equal(typeof envelope.iv, 'string')
+
+    const unwrapped = await unwrapKeyForMember(envelope, recipient.privateKey)
+
+    // Verify the unwrapped key is functionally identical: encrypt with the
+    // original, decrypt with the unwrapped copy.
+    const iv = crypto.getRandomValues(new Uint8Array(12))
+    const plaintext = new TextEncoder().encode('envelope round-trip')
+    const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, epochKey, plaintext)
+    const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, unwrapped, ciphertext)
+    assert.deepEqual(new Uint8Array(decrypted), plaintext)
+  })
+
+  it('fails to unwrap with the wrong recipient private key', async () => {
+    const epochKey = await crypto.subtle.generateKey(
+      { name: 'AES-GCM', length: 256 },
+      true,
+      ['encrypt', 'decrypt'],
+    )
+    const recipient = await generateEncryptionKeyPair()
+    const attacker = await generateEncryptionKeyPair()
+
+    const envelope = await wrapKeyForMember(epochKey, recipient.publicKey)
+    await assert.rejects(() => unwrapKeyForMember(envelope, attacker.privateKey))
+  })
+})
+
+// Polls until `check()` returns truthy or times out — the inbound
+// GROUP_KEY_DISTRIBUTE handler unwraps envelopes via real WebCrypto ops
+// asynchronously (not just a microtask), so a single setTimeout(0) tick can
+// be insufficient under concurrent test-runner load.
+async function waitFor(check, { timeoutMs = 500, intervalMs = 5 } = {}) {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    if (check()) return true
+    await new Promise(resolve => setTimeout(resolve, intervalMs))
+  }
+  return check()
+}
+
+describe('GroupKeyManager envelope encryption', () => {
+  describe('initEncryption / getPublicKeyRaw', () => {
+    it('generates a keypair and exposes the public key as base64', async () => {
+      const mgr = new GroupKeyManager({ localPodId: 'pod-local', groupId: 'g' })
+      const pub = await mgr.initEncryption()
+      assert.equal(typeof pub, 'string')
+      assert.equal(pub, await mgr.getPublicKeyRaw())
+    })
+
+    it('getPublicKeyRaw returns null before initEncryption', async () => {
+      const mgr = new GroupKeyManager({ localPodId: 'pod-local', groupId: 'g' })
+      assert.equal(await mgr.getPublicKeyRaw(), null)
+    })
+  })
+
+  describe('setMemberPublicKey / hasMemberPublicKey', () => {
+    it('registers a member public key from a base64 string', async () => {
+      const mgr = new GroupKeyManager({ localPodId: 'pod-local', groupId: 'g' })
+      const other = new GroupKeyManager({ localPodId: 'pod-remote', groupId: 'g' })
+      const otherPub = await other.initEncryption()
+
+      assert.equal(mgr.hasMemberPublicKey('pod-remote'), false)
+      await mgr.setMemberPublicKey('pod-remote', otherPub)
+      assert.equal(mgr.hasMemberPublicKey('pod-remote'), true)
+    })
+  })
+
+  describe('end-to-end envelope distribution', () => {
+    // Wires two managers to a shared in-memory bus so broadcastDistribute()
+    // on one delivers a real per-member envelope to the other's
+    // GROUP_KEY_DISTRIBUTE handler.
+    function makeBus() {
+      const handlers = new Map()
+      return {
+        broadcastFn: (wireType, payload) => {
+          for (const [type, handler] of handlers) {
+            if (type === wireType) handler(payload, 'sender')
+          }
+        },
+        subscribeFn: (wireType, handler) => handlers.set(wireType, handler),
+      }
+    }
+
+    it('delivers an encrypted epoch key that the recipient can decrypt', async () => {
+      const alice = new GroupKeyManager({ localPodId: 'alice', groupId: 'g' })
+      const bob = new GroupKeyManager({ localPodId: 'bob', groupId: 'g' })
+
+      const alicePub = await alice.initEncryption()
+      const bobPub = await bob.initEncryption()
+      await alice.setMemberPublicKey('bob', bobPub)
+      await bob.setMemberPublicKey('alice', alicePub)
+
+      const aliceBus = makeBus()
+      alice.wireTransport(aliceBus.broadcastFn, aliceBus.subscribeFn)
+      // Bob only needs to receive; wire his inbound handler onto Alice's bus.
+      bob.wireTransport(() => {}, aliceBus.subscribeFn)
+
+      await alice.initGroup(['bob'])
+      await alice.broadcastDistribute()
+
+      // The unwrap chain runs real WebCrypto ops asynchronously — poll
+      // for completion instead of assuming a single tick suffices.
+      await waitFor(() => bob.currentEpoch === 0)
+
+      assert.equal(bob.currentEpoch, 0)
+      const bobState = bob.getEpochState(0)
+      assert.ok(bobState)
+      assert.ok(bobState.hasMember('alice'))
+      assert.ok(bobState.hasMember('bob'))
+
+      const plaintext = new TextEncoder().encode('secret group message')
+      const { ciphertext, iv, epoch } = await alice.encrypt(plaintext)
+      const decrypted = await bob.decrypt(ciphertext, iv, epoch)
+      assert.deepEqual(decrypted, plaintext)
+    })
+
+    it('falls back to metadata-only and warns once when no member public key is known', async () => {
+      const logs = []
+      const alice = new GroupKeyManager({ localPodId: 'alice', groupId: 'g', onLog: msg => logs.push(msg) })
+      await alice.initEncryption()
+      // No setMemberPublicKey call for 'bob' — envelope cannot be built.
+
+      let sent = null
+      alice.wireTransport((wireType, payload) => { sent = { wireType, payload } }, () => {})
+      await alice.initGroup(['bob'])
+      await alice.broadcastDistribute()
+
+      assert.equal(sent.wireType, GROUP_KEY_DISTRIBUTE)
+      assert.equal(sent.payload.envelopes, undefined)
+      assert.equal(logs.length, 1)
+      assert.match(logs[0], /no member public keys registered/)
+
+      // Warns only once across repeated calls.
+      await alice.broadcastDistribute()
+      assert.equal(logs.length, 1)
+    })
+
+    it('falls back to metadata-only and warns when local encryption key is not initialized', async () => {
+      const logs = []
+      const alice = new GroupKeyManager({ localPodId: 'alice', groupId: 'g', onLog: msg => logs.push(msg) })
+      // No initEncryption() call at all.
+
+      let sent = null
+      alice.wireTransport((wireType, payload) => { sent = { wireType, payload } }, () => {})
+      await alice.initGroup(['bob'])
+      await alice.broadcastDistribute()
+
+      assert.equal(sent.payload.envelopes, undefined)
+      assert.equal(logs.length, 1)
+      assert.match(logs[0], /X25519 unsupported or local encryption key not initialized/)
+    })
+
+    it('logs a warning when receiving an envelope without a locally initialized key', async () => {
+      const alice = new GroupKeyManager({ localPodId: 'alice', groupId: 'g' })
+      const bobLogs = []
+      const bob = new GroupKeyManager({ localPodId: 'bob', groupId: 'g', onLog: msg => bobLogs.push(msg) })
+
+      const alicePub = await alice.initEncryption()
+      // Bob never calls initEncryption(), but Alice still knows Bob's... well,
+      // Bob has no public key to hand Alice, so simulate a stale registration
+      // by reusing alice's own key as a stand-in recipient key from Alice's
+      // point of view (Alice thinks she has a key for Bob).
+      await alice.setMemberPublicKey('bob', alicePub)
+
+      const bus = { handlers: new Map() }
+      bus.broadcastFn = (wireType, payload) => {
+        const h = bus.handlers.get(wireType)
+        if (h) h(payload, 'alice')
+      }
+      bus.subscribeFn = (wireType, handler) => bus.handlers.set(wireType, handler)
+
+      alice.wireTransport(bus.broadcastFn, bus.subscribeFn)
+      bob.wireTransport(() => {}, bus.subscribeFn)
+
+      await alice.initGroup(['bob'])
+      await alice.broadcastDistribute()
+      await waitFor(() => bobLogs.length > 0)
+
+      assert.equal(bobLogs.length, 1)
+      assert.match(bobLogs[0], /local encryption key is not initialized/)
+      assert.equal(bob.currentEpoch, -1) // never accepted the epoch
+    })
+
+    it('ignores a GROUP_KEY_DISTRIBUTE for a different groupId', async () => {
+      const mgr = new GroupKeyManager({ localPodId: 'pod-local', groupId: 'g1' })
+      let handler
+      mgr.wireTransport(() => {}, (wireType, h) => { if (wireType === GROUP_KEY_DISTRIBUTE) handler = h })
+
+      assert.doesNotThrow(() => {
+        handler({ groupId: 'g2', epoch: 0, members: ['pod-local'], envelopes: { 'pod-local': {} } }, 'someone')
+      })
+      assert.equal(mgr.currentEpoch, -1)
     })
   })
 })

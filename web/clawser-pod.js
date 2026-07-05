@@ -545,6 +545,12 @@ export class ClawserPod extends Pod {
         })
       }
 
+      // Register the peer's group-key envelope-encryption public key, if
+      // advertised, so broadcastDistribute() can address them directly.
+      if (record.metadata?.groupKeyPub && record.podId) {
+        this.#groupKeyManager?.setMemberPublicKey(record.podId, record.metadata.groupKeyPub).catch(() => {})
+      }
+
       // Auto-negotiate a WebRTC connection when a new peer is discovered
       if (this.#handshakeCoordinator && record.podId) {
         this.#handshakeCoordinator.connectToPeer(record.podId).catch(() => {
@@ -689,6 +695,12 @@ export class ClawserPod extends Pod {
 
     // 25-b. GroupKeyManager — symmetric group encryption
     this.#groupKeyManager = new GroupKeyManager({ localPodId: podId, groupId: `${podId}:default` })
+    // Generate this pod's envelope-encryption keypair and advertise the
+    // public key via discovery metadata (best-effort — falls back to
+    // metadata-only group key distribution when unsupported/unavailable).
+    this.#groupKeyManager.initEncryption().then((pub) => {
+      if (pub) localRecord.metadata.groupKeyPub = pub
+    }).catch(() => {})
     {
       const broadcastFn = (type, payload) => {
         this.#peerNode?.broadcast?.({ type, payload, from: podId })
