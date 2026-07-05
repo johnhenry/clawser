@@ -37,4 +37,4 @@ Comprehensive guide to every subsystem.
 
 ---
 
-*Generated on 2026-07-04 by `docs/generate.mjs`*
+*Generated on 2026-07-05 by `docs/generate.mjs`*

@@ -84,32 +84,41 @@
   status: implemented
   description: >
     Discord bot integration via WebSocket gateway. Supports text channels and DMs.
-    Requires Discord bot token.
+    Requires Discord bot token. Fully self-contained — no server needed, the
+    browser tab connects directly to Discord's Gateway.
   files:
     - web/clawser-channel-discord.js
   api:
     - DiscordChannel
   category: adapter
   since: "1.0.0"
+  see_also:
+    - "[Setup walkthrough](../docs/channel-setup/discord.md)"
 
 - name: Slack Channel
   status: partial
   description: >
-    Slack integration via Socket Mode. Text messages and thread replies supported.
-    Slash commands planned for future release.
+    Slack integration via the Events API (webhook) for inbound and the Web API
+    for outbound (chat.postMessage). Not actually Socket Mode despite the
+    accepted appToken config field — that field is currently unused.
   files:
     - web/clawser-channel-slack.js
   api:
     - SlackChannel
   category: adapter
-  notes: Requires Slack bot token and app-level token for Socket Mode.
+  notes: >
+    Outbound sending works standalone. Inbound requires a public HTTPS
+    endpoint for Slack's Events API webhook, which a browser tab can't
+    expose on its own — see the setup walkthrough for what's needed.
   since: "1.0.0"
+  see_also:
+    - "[Setup walkthrough (incl. the webhook-relay limitation)](../docs/channel-setup/slack.md)"
 
 - name: Telegram Channel
   status: implemented
   description: >
     Telegram bot integration via long-polling. Supports text messages, images,
-    and inline keyboards.
+    and inline keyboards. Fully self-contained — no server needed.
   files:
     - web/clawser-channel-telegram.js
   api:
@@ -117,6 +126,8 @@
   category: adapter
   notes: Requires bot token from BotFather.
   since: "1.0.0"
+  see_also:
+    - "[Setup walkthrough](../docs/channel-setup/telegram.md)"
 
 - name: Email Channel
   status: planned
@@ -141,6 +152,11 @@
   api:
     - IRCChannel
   category: adapter
+  notes: >
+    Bring your own server: the `server` field must be a `wss://` URL for a
+    WebSocket-to-IRC gateway, not a raw IRC address — browsers can't open
+    plain TCP sockets. Point it at a public WS-IRC bridge (e.g. the kind
+    IRC web clients use) or run your own.
   since: "1.0.0"
 
 - name: Matrix Channel
@@ -153,6 +169,11 @@
   api:
     - MatrixChannel
   category: adapter
+  notes: >
+    Bring your own homeserver: works directly from the browser via the
+    Matrix client-server API's long-poll /sync — no bridge needed, unlike
+    IRC. Point homeserverUrl at any Matrix homeserver you have an account
+    (and access token) on, self-hosted or matrix.org.
   since: "1.0.0"
 
 - name: Relay Channel
