@@ -213,7 +213,7 @@ describe('TabCoordinator', () => {
     assert.equal(coord.tabCount, 1);
   });
 
-  it('isLeader: only one of two coordinators wins, and it is the older one', () => {
+  it('isLeader: only one of two coordinators wins, and it is the older one', async () => {
     // Build a paired BroadcastChannel mock so two coordinators can talk.
     const subA = []; const subB = [];
     const chA = {
@@ -225,18 +225,33 @@ describe('TabCoordinator', () => {
       close() {}, set onmessage(fn) { subB.push(fn); },
     };
     const oldCoord = new TabCoordinator({ channel: chA });
-    // Force a deterministic earlier joinedAt for `oldCoord` by reaching
-    // through to the private field via the broadcast contract instead:
-    // run start() so broadcasts go out, then a fresh coordinator joins.
-    oldCoord.start();
-    // sleep-ish: spin Date.now forward a hair to ensure a different ts
-    const newCoord = new TabCoordinator({ channel: chB });
-    newCoord.start();
-    // Both should now have learned of each other via the swap.
-    assert.equal(oldCoord.isLeader, true, 'older coordinator wins');
-    assert.equal(newCoord.isLeader, false, 'newer coordinator does NOT also claim leader');
-    oldCoord.stop();
-    newCoord.stop();
+    // start() runs a real setInterval heartbeat — both must be stop()'d
+    // even if an assertion below throws, or the interval outlives this
+    // test and blocks the process from exiting (same bug class as the
+    // AgentBusyIndicator keepalive fix above).
+    let newCoord;
+    try {
+      oldCoord.start();
+      // #joinedAt is captured as Date.now() at construction time (see
+      // clawser-daemon.js) with no artificial ordering guarantee — on a
+      // fast machine two back-to-back `new TabCoordinator()` calls can
+      // land in the same millisecond, in which case the tie-break
+      // (lexicographic tabId, which includes a random suffix) is
+      // genuinely non-deterministic and does NOT imply "older wins".
+      // A real delay (not a comment claiming one) is required for this
+      // test's "older coordinator wins" premise to hold. This was a
+      // real, reproducible flake (~50% failure rate) found while
+      // debugging an unrelated test-suite hang.
+      await new Promise(r => setTimeout(r, 5));
+      newCoord = new TabCoordinator({ channel: chB });
+      newCoord.start();
+      // Both should now have learned of each other via the swap.
+      assert.equal(oldCoord.isLeader, true, 'older coordinator wins');
+      assert.equal(newCoord.isLeader, false, 'newer coordinator does NOT also claim leader');
+    } finally {
+      oldCoord.stop();
+      newCoord?.stop();
+    }
   });
 });
 
@@ -800,6 +815,27 @@ describe('DaemonResumeTool', () => {
 // ── AgentBusyIndicator keepalive (long-run pruning fix) ──────────
 
 describe('AgentBusyIndicator keepalive', () => {
+  // Tracked here (not closed inline at the end of each test body) so
+  // afterEach always closes every indicator a test created — even if an
+  // assertion throws first. An indicator left open leaks a live
+  // setInterval (keepalive and/or prune timer) that keeps the process
+  // alive forever; a thrown assertion must still report as a failed
+  // test, not hang the whole test run. This bit twice already: once in
+  // clawser-sprint19.test.mjs (inline-cleanup-after-assertions, same
+  // mistake), and here, where the peer-pruning test's timing assertions
+  // can legitimately fail under heavy concurrent test-runner load
+  // (many parallel `node --test` processes stretch out real setInterval
+  // timing), skipping the trailing a.close()/b.close() calls.
+  let created;
+
+  beforeEach(() => {
+    created = [];
+  });
+
+  afterEach(() => {
+    for (const indicator of created) indicator.close();
+  });
+
   const pair = () => {
     let aHandler = null, bHandler = null;
     const chA = {
@@ -813,13 +849,19 @@ describe('AgentBusyIndicator keepalive', () => {
     return [chA, chB];
   };
 
+  function makeIndicator(opts) {
+    const indicator = new AgentBusyIndicator(opts);
+    created.push(indicator);
+    return indicator;
+  }
+
   it('re-broadcasts while busy so long runs survive peer pruning', async () => {
     const [chA, chB] = pair();
     // staleMs=90 → prune interval ~500ms floor... keepalive floor is 500 too;
     // use large-enough windows: staleMs=1500 → keepalive every 500ms,
     // prune checks every 500ms. Busy run of ~1.2s must NOT be pruned.
-    const a = new AgentBusyIndicator({ channel: chA, staleMs: 1500 });
-    const b = new AgentBusyIndicator({ channel: chB, staleMs: 1500 });
+    const a = makeIndicator({ channel: chA, staleMs: 1500 });
+    const b = makeIndicator({ channel: chB, staleMs: 1500 });
     const events = [];
     b.subscribe((e) => events.push(e));
 
@@ -833,17 +875,14 @@ describe('AgentBusyIndicator keepalive', () => {
 
     a.setBusy(false);
     assert.equal(b.isAnyPeerBusy(), false);
-    a.close();
-    b.close();
   });
 
   it('keepalive timer stops on setBusy(false) and close()', () => {
     const sent = [];
     const ch = { postMessage(m) { sent.push(m); }, close() {} };
-    const a = new AgentBusyIndicator({ channel: ch, staleMs: 1500 });
+    const a = makeIndicator({ channel: ch, staleMs: 1500 });
     a.setBusy(true, 'x');
     a.setBusy(false);
-    a.close(); // must clear all timers — test runner hangs otherwise
     assert.equal(sent.length, 2);
   });
 });

@@ -9,8 +9,16 @@
     "type": "git",
     "url": "https://github.com/johnhenry/clawser"
   },
-  "keywords": ["ai", "agent", "browser", "llm", "workspace"],
-  "workspaces": ["packages/*"],
+  "keywords": [
+    "ai",
+    "agent",
+    "browser",
+    "llm",
+    "workspace"
+  ],
+  "workspaces": [
+    "packages/*"
+  ],
   "engines": {
     "node": ">=24.0.0"
   },
@@ -42,6 +50,6 @@
     "js-yaml": "^4.1.1",
     "vitest": "^4.0.18",
     "ws": "^8.18.0",
-    "wsh-upon-star": "^0.1.0"
+    "wsh-upon-star": "^0.1.1"
   }
 }
