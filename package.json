@@ -27,6 +27,7 @@
     "test:mesh-apps": "node web/test/run-tests.mjs --group mesh-apps",
     "test:mesh-ops": "node web/test/run-tests.mjs --group mesh-ops",
     "test:e2e": "node web/test/run-tests.mjs --group e2e",
+    "test:stress": "node web/test/run-tests.mjs --group stress",
     "test:changed": "node web/test/run-tests.mjs --group changed",
     "test:vitest": "vitest run",
     "test:vitest:watch": "vitest"

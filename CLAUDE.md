@@ -70,6 +70,7 @@ npm run test:mesh-identity # identity, keyring, trust, acl, capabilities
 npm run test:mesh-apps     # apps, marketplace, payments, quotas
 npm run test:mesh-ops      # audit, consensus, scheduler, tools, wsh-bridge
 npm run test:e2e           # end-to-end scenarios
+npm run test:stress        # concurrency/scale stress suite (slow — not in fast/core, run explicitly)
 npm run test:changed       # only files with git changes
 
 # Direct runner with options

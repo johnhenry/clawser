@@ -13,6 +13,7 @@ const GROUP_PREFIXES = {
   sprint:       'clawser-sprint',
   completeness: 'clawser-completeness-',
   e2e:          'clawser-e2e-',
+  stress:       'clawser-stress',
 };
 
 // Mesh sub-groups (stems after "clawser-mesh-")
@@ -28,8 +29,8 @@ const MESH_SUBGROUPS = {
 const MESH_ALL = Object.keys(MESH_SUBGROUPS);
 const META_GROUPS = {
   fast: ['core', 'channels'],
-  slow: ['mesh', 'sprint', 'completeness', 'e2e'],
-  all:  ['core', 'mesh', 'channels', 'sprint', 'completeness', 'e2e'],
+  slow: ['mesh', 'sprint', 'completeness', 'e2e', 'stress'],
+  all:  ['core', 'mesh', 'channels', 'sprint', 'completeness', 'e2e', 'stress'],
   mesh: MESH_ALL,
 };
 
@@ -55,9 +56,10 @@ for (let i = 0; i < args.length; i++) {
 
 Options:
   --group <name>       Test group to run (default: all)
-                       Groups: core, mesh, channels, sprint, completeness, e2e
+                       Groups: core, mesh, channels, sprint, completeness, e2e, stress
                        Mesh sub-groups: mesh-net, mesh-sync, mesh-identity, mesh-apps, mesh-ops
                        Meta-groups: fast, slow, all, changed
+                       (stress is in slow/all, excluded from fast — run explicitly with --group stress)
   --concurrency <n>    Max parallel test files (default: 4)
   --list               List matching files without running
   --help               Show help`);
