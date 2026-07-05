@@ -135,6 +135,8 @@ export class ClawserPod extends Pod {
   #creditLedger = null
   #groupKeyManager = null
   #pbftConsensus = null
+  /** @type {((event: object) => void)|null} Injectable distributed-tracing sink (see setTraceEmit) */
+  #traceEmit = null
 
   get peerNode() { return this.#peerNode }
   get swarmCoordinator() { return this.#swarmCoordinator }
@@ -228,8 +230,31 @@ export class ClawserPod extends Pod {
     if (typeof this.#peerNode.sendTo !== 'function') {
       throw new Error('ClawserPod.sendMessage: peerNode.sendTo not available (legacy build?)');
     }
-    const data = typeof envelope === 'string' ? envelope : JSON.stringify(envelope);
+    let outbound = envelope
+    if (envelope && typeof envelope === 'object') {
+      // Carry a traceId inside our own envelope (not the wire schema) for
+      // cross-hop correlation. Preserve an existing traceId when forwarding
+      // a message this pod already received, so the whole hop chain shares
+      // one id; generate a fresh one only for messages originating here.
+      const traceId = envelope.traceId || `trace_${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 8)}`
+      outbound = envelope.traceId ? envelope : { ...envelope, traceId }
+      this.#traceEmit?.({ type: 'mesh.send', traceId, peerId, messageType: envelope.type })
+    }
+    const data = typeof outbound === 'string' ? outbound : JSON.stringify(outbound);
     return this.#peerNode.sendTo(peerId, data);
+  }
+
+  /**
+   * Inject a distributed-tracing sink invoked with `{type: 'mesh.send'|
+   * 'mesh.recv', traceId, peerId, messageType}` on every `sendMessage()`
+   * call and every envelope received via `onMessage()` that carries a
+   * traceId. Pass null to disable. See clawser-workspace-init-mesh.js for
+   * the wiring to `KernelIntegration.traceMeshEvent()`.
+   *
+   * @param {((event: object) => void)|null} fn
+   */
+  setTraceEmit(fn) {
+    this.#traceEmit = typeof fn === 'function' ? fn : null
   }
 
   /**
@@ -901,6 +926,9 @@ export class ClawserPod extends Pod {
       try { envelope = typeof data === 'string' ? JSON.parse(data) : data }
       catch { return /* drop malformed payload */ }
       if (!envelope || typeof envelope !== 'object') return
+      if (envelope.traceId) {
+        this.#traceEmit?.({ type: 'mesh.recv', traceId: envelope.traceId, peerId: pubKey, messageType: envelope.type })
+      }
       try { handler(envelope, pubKey, meta) }
       catch (err) {
         if (typeof console !== 'undefined') console.warn('[clawser-pod] onMessage handler threw:', err?.message || err)

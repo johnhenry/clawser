@@ -654,12 +654,18 @@ export async function refreshReverseVirtualTerminalManager() {
  * Creates a Pod (identity, discovery, messaging) then layers on
  * PeerNode + SwarmCoordinator. Safe to call multiple times.
  */
-export async function initMeshSubsystem() {
+export async function initMeshSubsystem(opts = {}) {
   try {
     // Boot pod if not already running
     if (!state.pod) {
       state.pod = new ClawserPod();
       await state.pod.boot({ discoveryTimeout: 500 });
+    }
+
+    // Distributed tracing MVP: forward mesh.send/mesh.recv events to the
+    // kernel Tracer when kernel integration is active (no-op otherwise).
+    if (opts.kernelIntegration) {
+      state.pod.setTraceEmit((event) => opts.kernelIntegration.traceMeshEvent(event));
     }
 
     // Layer mesh networking on top of the pod

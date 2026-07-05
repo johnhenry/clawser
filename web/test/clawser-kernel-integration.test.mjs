@@ -115,6 +115,45 @@ describe('KernelIntegration', () => {
     kernel.close();
   });
 
+  // ── Distributed tracing MVP: mesh send/recv ────────────────────
+
+  it('traceMeshEvent emits a mesh.send tracer event', () => {
+    const kernel = new Kernel();
+    const ki = new KernelIntegration(kernel);
+
+    ki.traceMeshEvent({ type: 'mesh.send', traceId: 'trace_abc', peerId: 'pod_b', messageType: 'sync' });
+
+    const events = kernel.tracer.snapshot();
+    const meshEvents = events.filter(e => e.type === 'mesh.send');
+    assert.equal(meshEvents.length, 1);
+    assert.equal(meshEvents[0].traceId, 'trace_abc');
+    assert.equal(meshEvents[0].peerId, 'pod_b');
+    assert.equal(meshEvents[0].messageType, 'sync');
+
+    ki.close();
+    kernel.close();
+  });
+
+  it('traceMeshEvent emits a mesh.recv tracer event with the same traceId for correlation', () => {
+    const kernel = new Kernel();
+    const ki = new KernelIntegration(kernel);
+
+    ki.traceMeshEvent({ type: 'mesh.send', traceId: 'trace_xyz', peerId: 'pod_b', messageType: 'deploy' });
+    ki.traceMeshEvent({ type: 'mesh.recv', traceId: 'trace_xyz', peerId: 'pod_a', messageType: 'deploy' });
+
+    const events = kernel.tracer.snapshot().filter(e => e.traceId === 'trace_xyz');
+    assert.equal(events.length, 2);
+    assert.deepEqual(events.map(e => e.type), ['mesh.send', 'mesh.recv']);
+
+    ki.close();
+    kernel.close();
+  });
+
+  it('traceMeshEvent is a no-op when kernel is null', () => {
+    const ki = new KernelIntegration(null);
+    assert.doesNotThrow(() => ki.traceMeshEvent({ type: 'mesh.send', traceId: 't1', peerId: 'p', messageType: 'x' }));
+  });
+
   // ── Step 27: Sandbox tenant ────────────────────────────────────
 
   it('createSandboxTenant returns tenant with serialized caps', () => {

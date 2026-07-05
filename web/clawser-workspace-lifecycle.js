@@ -492,7 +492,7 @@ export async function switchWorkspace(newId, convId) {
   if (state.gateway) {
     state.gateway.setTenantId(_kernelIntegration?.getWorkspaceTenantId(newId) || null);
   }
-  await initMeshSubsystem();
+  await initMeshSubsystem({ kernelIntegration: _kernelIntegration });
   registerLazyPanelRenders(buildLazyPanelConfig(() => renderRemoteRuntimeWorkspacePanel()));
   // Re-mount any visible multi-device sections so they pick up the new
   // workspace's pairedDevices / deployTarget instead of stale data.
@@ -871,7 +871,7 @@ export async function initWorkspace(wsId, convId) {
     } catch (e) { console.warn('[clawser] gateway→wsh wire failed', e); }
 
     // ── P2P mesh initialization ──
-    await initMeshSubsystem();
+    await initMeshSubsystem({ kernelIntegration: _kernelIntegration });
 
     // ── Deferred renders: non-config panels (Gap 11.1) ──
     registerLazyPanelRenders(buildLazyPanelConfig(() => renderRemoteRuntimeWorkspacePanel()));

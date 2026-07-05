@@ -191,6 +191,26 @@ export class KernelIntegration {
     });
   }
 
+  // ── Distributed tracing MVP: mesh send/recv correlation ────────
+
+  /**
+   * Emit a mesh send/recv trace event for cross-hop correlation between
+   * clawser pods. The traceId is carried inside our own message envelope
+   * (not the browsermesh-primitives wire schema) — generated once at
+   * `ClawserPod.sendMessage()` and forwarded unchanged by relaying code,
+   * so every hop's mesh.send/mesh.recv events share one traceId.
+   *
+   * @param {Object} event
+   * @param {'mesh.send'|'mesh.recv'} event.type
+   * @param {string} event.traceId
+   * @param {string} [event.peerId] - Target peer (send) or sender (recv).
+   * @param {string} [event.messageType] - envelope.type of the app message.
+   */
+  traceMeshEvent({ type, traceId, peerId, messageType }) {
+    if (!this.#kernel) return;
+    this.#kernel.tracer.emit({ type, traceId, peerId, messageType });
+  }
+
   // ── Step 27: Sandbox as kernel tenant runtime ──────────────────
 
   /**
