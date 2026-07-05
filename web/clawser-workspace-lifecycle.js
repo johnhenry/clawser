@@ -19,6 +19,7 @@ import { updateRouteHash, PANELS, resetRenderedPanels, isPanelRendered } from '.
 import { setStatus, addMsg, addErrorMsg, addToolCall, addInlineToolCall, updateInlineToolCall, addEvent, updateState, updateCostDisplay, replaySessionHistory, replayFromEvents, updateConvNameDisplay, persistActiveConversation, renderToolCalls, resetChatUI } from './clawser-ui-chat.js';
 import { renderGoals, renderToolRegistry, renderSkills, applySecuritySettings, renderSecuritySection, renderAutonomySection, renderIdentitySection, renderRoutingSection, renderAuthProfilesSection, renderSelfRepairSection, updateCacheStats, renderLimitsSection, renderSandboxSection, renderHeartbeatSection, renderHooksSection, renderTerminalSection, updateCostMeter, updateAutonomyBadge, updateDaemonBadge, refreshDashboard, renderOAuthSection, renderTerminalSessionBar, replayTerminalSession, initAgentPicker, updateAgentLabel, restoreSavedChannels, updateChannelBadge, initSharedWorkerFromConfig } from './clawser-ui-panels.js';
 import { TerminalSessionManager } from './clawser-terminal-sessions.js';
+import { notifyWorkspaceReady } from './clawser-extension-routine-bridge.js';
 
 import { ClawserAgent } from './clawser-agent.js';
 import { createDefaultRegistry, WorkspaceFs } from './clawser-tools.js';
@@ -911,6 +912,7 @@ export async function initWorkspace(wsId, convId) {
     state.agentInitialized = true;
     setActiveWorkspaceId(activeWsId);
     updateRouteHash();
+    notifyWorkspaceReady(activeWsId);
 
     state._updateInterval = setInterval(() => {
       updateState();

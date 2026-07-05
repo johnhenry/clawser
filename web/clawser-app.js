@@ -42,6 +42,7 @@ import { AuthProfileManager } from './clawser-auth-profiles.js';
 import { MetricsCollector, RingBufferLog } from './clawser-metrics.js';
 import { DaemonController, CheckpointManager, AwaySummaryBuilder, DaemonState } from './clawser-daemon.js';
 import { RoutineEngine } from './clawser-routines.js';
+import { initExtensionRoutineBridge } from './clawser-extension-routine-bridge.js';
 import { CheckpointIndexedDB } from './clawser-checkpoint-idb.js';
 import { OAuthManager } from './clawser-oauth.js';
 import { ToolBuilder } from './clawser-tool-builder.js';
@@ -265,6 +266,15 @@ state.routineEngine = new RoutineEngine({
     // Sync routine state to IndexedDB for background runners
     import('./clawser-workspace-lifecycle.js').then(m => m.syncRoutinesToIDB()).catch(e => console.warn('[clawser] Routine sync:', e.message));
   },
+});
+
+// Lets the browser extension's chrome.alarms scheduler (which has no
+// access to orchestrator/gateway/agent from its isolated service worker)
+// delegate due-routine execution into this live tab instead of only
+// updating bookkeeping. No-op if the extension isn't installed.
+initExtensionRoutineBridge({
+  routineEngine: state.routineEngine,
+  onLog: (msg) => console.log(msg),
 });
 
 state.oauthManager = new OAuthManager({
