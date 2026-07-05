@@ -27,6 +27,30 @@
 export const SECRET_FIELD_RE = /(api[_-]?key|api[_-]?secret|token|password|passphrase|secret|auth(?:orization)?|cookie|bearer|credentials?|private[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|session[_-]?id)/i;
 
 /**
+ * High-confidence secret VALUE shapes, for scanning free-form tool
+ * RESULT text (`output` strings, serialized API responses, etc.).
+ * Intentionally narrow — matches well-known prefixed token formats
+ * and structurally distinctive shapes (JWTs) only, not a general
+ * secret scanner. Deliberately does NOT try to flag arbitrary-looking
+ * random strings, since that produces too many false positives on
+ * legitimate content (hashes, IDs, etc.) — see the module docstring
+ * for why field-name matching alone isn't enough here.
+ */
+export const SECRET_VALUE_RE = /\b(sk-[A-Za-z0-9]{20,}|gh[pousr]_[A-Za-z0-9]{36,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b/g;
+
+/**
+ * Mask any high-confidence secret shapes found in free-form text,
+ * leaving the surrounding content readable.
+ *
+ * @param {*} text
+ * @returns {*} - text with matches replaced, or the input unchanged if not a string
+ */
+export function redactSecretValuesInText(text) {
+  if (typeof text !== 'string') return text;
+  return text.replace(SECRET_VALUE_RE, (m) => `[redacted:${m.length}chars]`);
+}
+
+/**
  * Build a redacted placeholder for a value. Preserves type + length
  * so replay/debug can tell something was there.
  *
@@ -96,6 +120,43 @@ export function redactArgs(args, explicitFields = []) {
 }
 
 /**
+ * Redact a tool RESULT (as opposed to call arguments — see `redactArgs`).
+ * Combines field-name-based redaction (declared fields + regex fallback,
+ * same as `redactArgs`) with content scanning: every string leaf value
+ * (most commonly `{ output: "..." }`) is passed through
+ * `redactSecretValuesInText` regardless of its field name, since result
+ * output is typically free-form and can't be redacted by field name alone.
+ *
+ * @param {*} result                              — typically {success, output, error}
+ * @param {string[]} [explicitFields=[]]           — declared by the tool (redactedResultFields)
+ * @returns {*}
+ */
+export function redactResult(result, explicitFields = []) {
+  if (typeof result === 'string') return redactSecretValuesInText(result);
+  if (!result || typeof result !== 'object') return result;
+  if (Array.isArray(result)) return result.map(v => redactResult(v, explicitFields));
+  if (result.redacted === true && typeof result.kind === 'string') return result; // idempotent
+
+  const declared = new Set(explicitFields.map(f => f.toLowerCase()));
+  const out = {};
+  for (const [key, value] of Object.entries(result)) {
+    const lower = key.toLowerCase();
+    if (declared.has(lower) || SECRET_FIELD_RE.test(key)) {
+      out[key] = (value && typeof value === 'object' && value.redacted === true && typeof value.kind === 'string')
+        ? value
+        : redactedPlaceholder(value);
+    } else if (typeof value === 'string') {
+      out[key] = redactSecretValuesInText(value);
+    } else if (value && typeof value === 'object' && !(value instanceof Uint8Array)) {
+      out[key] = redactResult(value, explicitFields);
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+/**
  * Re-redact a stored event-log entry so legacy entries (recorded
  * before redaction shipped) are scrubbed in place. Idempotent:
  * already-redacted placeholders are passed through unchanged.
@@ -109,14 +170,12 @@ export function redactEvent(event) {
     if (event.data.arguments !== undefined) {
       event.data.arguments = redactArgs(event.data.arguments);
     }
-  } else if (event.type === 'tool_result' && event.data?.result) {
-    // Tool results often contain the original arguments echoed back
-    // (e.g., MCP tool that returns {success, output: 'set apiKey to X'}).
-    // We don't redact tool result OUTPUT because that's free-form text
-    // that may legitimately contain user-readable content. Instead we
-    // surface this gap in the audit doc for design-level review.
-    // (Output is by far the harder case — it's natural-language and
-    //  can't be regex-redacted without breaking legitimate content.)
+  } else if (event.type === 'tool_result' && event.data?.result !== undefined) {
+    // No tool instance available at migration/replay time, so only the
+    // regex/content-scan defaults apply here (no per-tool declared
+    // redactedResultFields — those are applied at append time by the
+    // agent, which does have the tool instance).
+    event.data.result = redactResult(event.data.result);
   }
   return event;
 }
@@ -136,6 +195,11 @@ export function redactEventLog(events) {
       const before = JSON.stringify(evt.data.arguments);
       evt.data.arguments = redactArgs(evt.data.arguments);
       const after = JSON.stringify(evt.data.arguments);
+      if (before !== after) scrubbed++;
+    } else if (evt?.type === 'tool_result' && evt.data?.result !== undefined) {
+      const before = JSON.stringify(evt.data.result);
+      evt.data.result = redactResult(evt.data.result);
+      const after = JSON.stringify(evt.data.result);
       if (before !== after) scrubbed++;
     }
   }

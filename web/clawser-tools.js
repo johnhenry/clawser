@@ -85,6 +85,22 @@ export class BrowserTool {
   get redactedFields() { return []; }
 
   /**
+   * Field names whose values should be fully redacted from the
+   * eventlog record of this tool's RESULT (as opposed to its call
+   * arguments — see `redactedFields`). Declare this when a tool's
+   * output can itself carry a secret verbatim in a structured field
+   * (e.g. `{ token: "..." }`), not free-form text.
+   *
+   * Free-form string output (the common case — `{ output: "..." }`)
+   * is covered separately: it's scanned for high-confidence secret
+   * *value* shapes (API key prefixes, JWTs, etc.) regardless of
+   * declaration, since field-name matching doesn't help for prose.
+   *
+   * @returns {string[]}
+   */
+  get redactedResultFields() { return []; }
+
+  /**
    * Execute the tool.
    * @param {object} params - Parsed JSON parameters
    * @returns {Promise<{success: boolean, output: string, error?: string}>}

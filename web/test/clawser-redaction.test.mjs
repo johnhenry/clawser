@@ -4,8 +4,11 @@ import assert from 'node:assert/strict';
 
 import {
   SECRET_FIELD_RE,
+  SECRET_VALUE_RE,
   redactedPlaceholder,
   redactArgs,
+  redactResult,
+  redactSecretValuesInText,
   redactEvent,
   redactEventLog,
 } from '../clawser-redaction.mjs';
@@ -136,6 +139,109 @@ describe('redactEvent', () => {
     assert.equal(ev.data.arguments.token.redacted, true);
     assert.equal(ev.data.arguments.token.kind, 'string');
   });
+
+  it('scans tool_result output text for high-confidence secret shapes', () => {
+    const ev = {
+      type: 'tool_result',
+      data: { name: 'oauth_api', result: { success: true, output: 'token is sk-abcdefghijklmnopqrstuvwx here' } },
+    };
+    redactEvent(ev);
+    assert.ok(!ev.data.result.output.includes('sk-abcdefghijklmnopqrstuvwx'));
+    assert.match(ev.data.result.output, /token is \[redacted:\d+chars\] here/);
+  });
+
+  it('redacts structured secret fields in tool_result', () => {
+    const ev = { type: 'tool_result', data: { name: 'x', result: { success: true, apiKey: 'sk-verysecretvalue1234' } } };
+    redactEvent(ev);
+    assert.equal(ev.data.result.apiKey.redacted, true);
+  });
+
+  it('leaves clean tool_result output untouched', () => {
+    const ev = { type: 'tool_result', data: { name: 'x', result: { success: true, output: 'Connected to github.' } } };
+    redactEvent(ev);
+    assert.equal(ev.data.result.output, 'Connected to github.');
+  });
+});
+
+// ── SECRET_VALUE_RE / redactSecretValuesInText ────────────────────
+
+describe('SECRET_VALUE_RE / redactSecretValuesInText', () => {
+  it('matches well-known prefixed secret shapes', () => {
+    const samples = [
+      'sk-' + 'a'.repeat(24),
+      'ghp_' + 'B'.repeat(36),
+      'AKIAABCDEFGHIJKLMNOP',
+      'xoxb-1234567890-abc',
+      'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dQw4w9WgXcQ_signature123',
+    ];
+    for (const s of samples) {
+      // SECRET_VALUE_RE carries the 'g' flag (used by .replace() in
+      // production); .test() with 'g' is stateful across calls via
+      // lastIndex, so reset it before each check in this loop.
+      SECRET_VALUE_RE.lastIndex = 0;
+      assert.ok(SECRET_VALUE_RE.test(s), `expected to match: ${s}`);
+    }
+  });
+
+  it('does not match ordinary prose or short strings', () => {
+    for (const s of ['hello world', 'the sky is blue', 'error code 404', 'sk-short', 'user@example.com']) {
+      SECRET_VALUE_RE.lastIndex = 0;
+      assert.equal(SECRET_VALUE_RE.test(s), false, `should not match: ${s}`);
+    }
+  });
+
+  it('redacts matches in place, preserving surrounding text', () => {
+    const text = `Set apiKey to sk-${'x'.repeat(24)} and continue.`;
+    const out = redactSecretValuesInText(text);
+    assert.ok(out.startsWith('Set apiKey to [redacted:'));
+    assert.ok(out.endsWith('] and continue.'));
+  });
+
+  it('passes non-strings through unchanged', () => {
+    assert.equal(redactSecretValuesInText(42), 42);
+    assert.equal(redactSecretValuesInText(null), null);
+  });
+});
+
+// ── redactResult ───────────────────────────────────────────────────
+
+describe('redactResult', () => {
+  it('redacts declared result fields fully', () => {
+    const out = redactResult({ success: true, sessionToken: 'abc123' }, ['sessionToken']);
+    assert.equal(out.sessionToken.redacted, true);
+  });
+
+  it('redacts regex-matched field names by default', () => {
+    const out = redactResult({ success: true, apiKey: 'sk-abc' });
+    assert.equal(out.apiKey.redacted, true);
+  });
+
+  it('scans string leaf values for secret shapes regardless of field name', () => {
+    const out = redactResult({ success: true, output: `key: sk-${'y'.repeat(24)}` });
+    assert.ok(!out.output.includes('y'.repeat(24)));
+  });
+
+  it('handles a bare string result', () => {
+    const out = redactResult(`token sk-${'z'.repeat(24)} end`);
+    assert.ok(!out.includes('z'.repeat(24)));
+  });
+
+  it('recurses into nested objects and arrays', () => {
+    const out = redactResult({ items: [{ name: 'x', token: 'secret-value' }] });
+    assert.equal(out.items[0].token.redacted, true);
+    assert.equal(out.items[0].name, 'x');
+  });
+
+  it('is idempotent on already-redacted placeholders', () => {
+    const out = redactResult({ apiKey: { redacted: true, kind: 'string', length: 5 } });
+    assert.equal(out.apiKey.length, 5);
+  });
+
+  it('passes through non-object, non-string results unchanged', () => {
+    assert.equal(redactResult(42), 42);
+    assert.equal(redactResult(null), null);
+    assert.equal(redactResult(undefined), undefined);
+  });
 });
 
 describe('redactEventLog (migration)', () => {
@@ -164,5 +270,16 @@ describe('redactEventLog (migration)', () => {
   it('handles empty/non-array input safely', () => {
     assert.deepEqual(redactEventLog([]), { events: [], scrubbed: 0 });
     assert.deepEqual(redactEventLog(null), { events: [], scrubbed: 0 });
+  });
+
+  it('also scrubs legacy tool_result entries with leaked secrets', () => {
+    const events = [
+      { type: 'tool_result', data: { name: 't1', result: { success: true, output: 'clean output' } } },
+      { type: 'tool_result', data: { name: 't2', result: { success: true, apiKey: 'sk-leaked-in-old-log' } } },
+    ];
+    const { scrubbed } = redactEventLog(events);
+    assert.equal(scrubbed, 1);
+    assert.equal(events[0].data.result.output, 'clean output');
+    assert.equal(events[1].data.result.apiKey.redacted, true);
   });
 });

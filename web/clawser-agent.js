@@ -27,7 +27,7 @@ import { Codex } from './clawser-codex.js';
 import { SafetyPipeline } from './clawser-safety.js';
 import { SemanticMemory } from './clawser-memory.js';
 import { silentCatch } from './clawser-silent-catch.mjs'
-import { redactArgs, redactEventLog } from './clawser-redaction.mjs';
+import { redactArgs, redactResult, redactEventLog } from './clawser-redaction.mjs';
 
 let _providersModule = null;
 async function getProvidersModule() {
@@ -1234,6 +1234,29 @@ export class ClawserAgent {
   }
 
   /**
+   * Redact a tool result before it's written to the eventlog. Combines
+   * the tool's declared `redactedResultFields` with the content-scan
+   * defaults in `clawser-redaction.mjs` (field-name matching for
+   * structured secrets, high-confidence value-shape scanning for
+   * free-form `output` text).
+   *
+   * @param {string} toolName
+   * @param {*} result              — typically {success, output, error}
+   * @returns {*}                   — same shape, with secrets masked
+   * @internal
+   */
+  #redactToolResult(toolName, result) {
+    let declared = [];
+    try {
+      const tool = this.#browserTools?.get?.(toolName);
+      if (tool && Array.isArray(tool.redactedResultFields)) {
+        declared = tool.redactedResultFields;
+      }
+    } catch { /* fall through to regex/content-scan defaults */ }
+    return redactResult(result, declared);
+  }
+
+  /**
    * Re-scan browser tools and MCP tools to pick up any newly registered tools.
    * Use instead of calling init() a second time.
    */
@@ -1808,7 +1831,7 @@ export class ClawserAgent {
       this.#eventLog.append('tool_result', {
         call_id: tc.id,
         name: tc.name,
-        result: result,
+        result: this.#redactToolResult(tc.name, result),
       }, 'system');
     }
 
@@ -2178,7 +2201,7 @@ export class ClawserAgent {
         this.#eventLog.append('tool_result', {
           call_id: tr.id,
           name: tr.name,
-          result: tr.result,
+          result: this.#redactToolResult(tr.name, tr.result),
         }, 'system');
 
         this.#recordUndoOps(tr);
@@ -2500,7 +2523,7 @@ export class ClawserAgent {
             role: 'tool', tool_call_id: tr.id, name: tr.name,
             content: tr.result.success ? tr.result.output : `Error: ${tr.result.error || 'unknown error'}`,
           });
-          this.#eventLog.append('tool_result', { call_id: tr.id, name: tr.name, result: tr.result }, 'system');
+          this.#eventLog.append('tool_result', { call_id: tr.id, name: tr.name, result: this.#redactToolResult(tr.name, tr.result) }, 'system');
           yield { type: 'tool_result', name: tr.name, id: tr.id, result: tr.result };
 
           this.#recordUndoOps(tr);
@@ -2718,7 +2741,7 @@ export class ClawserAgent {
             ? tr.result.output
             : `Error: ${tr.result.error || 'unknown error'}`,
         });
-        this.#eventLog.append('tool_result', { call_id: tr.id, name: tr.name, result: tr.result }, 'system');
+        this.#eventLog.append('tool_result', { call_id: tr.id, name: tr.name, result: this.#redactToolResult(tr.name, tr.result) }, 'system');
         yield { type: 'tool_result', name: tr.name, id: tr.id, result: tr.result };
 
         this.#recordUndoOps(tr);
@@ -4066,10 +4089,11 @@ export class ClawserAgent {
       } else if (msg.role === 'tool') {
         let result;
         try { result = JSON.parse(msg.content); } catch { result = { success: true, output: msg.content }; }
+        const name = msg.name || 'tool';
         this.#eventLog.append('tool_result', {
           call_id: msg.tool_call_id,
-          name: msg.name || 'tool',
-          result,
+          name,
+          result: this.#redactToolResult(name, result),
         }, 'system');
       }
     }
