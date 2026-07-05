@@ -56,20 +56,49 @@
 // fixed, currently-shipping standard this suite verifies the Rust server
 // against.
 //
-// ── WebTransport (QUIC) coverage — what is and isn't verified here ──
+// ── WebTransport (QUIC) coverage ─────────────────────────────────────
 //
-// wsh-upon-star's `WebTransportTransport` requires a global `WebTransport`
-// constructor, which does not exist in plain Node (confirmed: `typeof
-// WebTransport === 'undefined'` on Node 24). There is no way to drive a real
-// wsh-upon-star WebTransport session from this test file without a browser.
-// So WebTransport is verified only at the level the task allows as a
-// fallback: the Rust server is started with its (always-on) WebTransport/QUIC
-// listener, and this suite asserts the listener actually bound and the
-// process logged "WebTransport listener started" with no panic/error in the
-// grace period after startup. This does NOT verify QUIC wire-level framing,
-// ALPN negotiation, or the WebTransport session handshake — only that the
-// listener is up and the process is healthy. Full E2E WebTransport interop
-// would require a real browser (out of scope for a Node test).
+// wsh-upon-star's `WebTransportTransport` calls the bare global
+// `new WebTransport(url)`, which doesn't exist in plain Node — but
+// `@fails-components/webtransport` (already a dependency of
+// tools/wsh-server.mjs) ships a real Node *client* too, so assigning it to
+// `globalThis.WebTransport` (subclassed only to inject
+// `serverCertificateHashes` for pinning the server's self-signed dev cert —
+// the real client calls the constructor with no options) lets
+// wsh-upon-star's own transport code run completely unmodified over a real
+// QUIC connection to this Rust server. Full end-to-end WebTransport
+// interop — auth handshake through a real exec session — is verified this
+// way below.
+//
+// Getting here took two real, non-obvious fixes on the Rust side, both
+// found by a careful, from-scratch investigation (see
+// docs/WSH-INTO-CLAWSER.md for the full account, including a false-positive
+// detour that initially looked like the interop gap was unfixable):
+//
+//   1. The WebTransport spec's certificate-hash-pinning algorithm
+//      (`serverCertificateHashes`) requires the pinned certificate's
+//      validity period to be **at most 14 days** — confirmed independently
+//      via the W3C spec and Firefox's own bugzilla history for this exact
+//      feature (bugzilla.mozilla.org/1873263). rcgen's default validity
+//      window (1975-01-01..4096-01-01) obviously fails this; so does any
+//      "just make it not absurd" window longer than 14 days (365 days was
+//      tried and confirmed to still fail). `generate_self_signed_cert()` in
+//      crates/wsh-server/src/main.rs now uses a 13-day window with a day of
+//      `not_before` slack for clock skew.
+//   2. `handle_webtransport()` in crates/wsh-server/src/server.rs was
+//      sending SERVER_HELLO then CHALLENGE back-to-back on one QUIC stream.
+//      Unlike discrete WebSocket frames, a QUIC stream has no
+//      message-boundary framing at that layer, so both writes can arrive in
+//      a single client-side `read()` — and wsh-upon-star's WshClient
+//      dispatches both messages synchronously from that one read, but only
+//      registers its *next* waiter (for CHALLENGE) in a microtask after the
+//      first `await` (for SERVER_HELLO) resolves. The synchronously-
+//      dispatched CHALLENGE has no waiter yet and is silently dropped,
+//      hanging until timeout — the exact same race already found and fixed
+//      on the Node reimplementation's WebSocket path in
+//      tools/wsh-server.mjs. Fixed the same way: skip SERVER_HELLO, send
+//      only CHALLENGE, and use the client's documented "pending" literal
+//      session-id fallback for transcript verification.
 
 import { describe, it, before, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -439,5 +468,49 @@ describe('Rust wsh-server WebTransport/QUIC listener', () => {
       `expected no WebTransport startup errors, got:\n${server.logs.join('')}`,
     );
     assert.equal(server.proc.exitCode, null, 'server process should still be running');
+  });
+
+  it('authenticates and runs a direct-host exec session over real WebTransport (QUIC)', async () => {
+    const { kp, publicKeySSH } = await makeKeyPair();
+    const server = await startServer([publicKeySSH]);
+    servers.push(server);
+
+    const certPath = path.join(server.homeDir, '.wsh', 'cert.pem');
+    const fpOutput = execFileSync('openssl', ['x509', '-in', certPath, '-noout', '-fingerprint', '-sha256']).toString();
+    const fpHex = fpOutput.split('=')[1].trim();
+    const fingerprintBytes = Uint8Array.from(fpHex.split(':').map((h) => parseInt(h, 16)));
+
+    const { WebTransport: RealWebTransport, quicheLoaded } = await import('@fails-components/webtransport');
+    await quicheLoaded;
+    const originalWebTransport = globalThis.WebTransport;
+    globalThis.WebTransport = class extends RealWebTransport {
+      constructor(url) {
+        super(url, { serverCertificateHashes: [{ algorithm: 'sha-256', value: fingerprintBytes }] });
+      }
+    };
+
+    try {
+      const wtUrl = server.url.replace(/^wss:\/\//, 'https://');
+      const client = new WshClient();
+      clients.push(client);
+      const sessionId = await client.connect(wtUrl, { username: 'alice', keyPair: kp, transport: 'wt' });
+      assert.equal(typeof sessionId, 'string');
+      assert.equal(client._transport.constructor.name, 'WebTransportTransport');
+
+      const session = await client.openSession({ type: 'exec', command: 'echo rust-wt-exec-works' });
+      const chunks = [];
+      let exitCode = null;
+      await new Promise((resolve) => {
+        session.onData = (d) => chunks.push(d);
+        session.onExit = (c) => { exitCode = c; };
+        session.onClose = resolve;
+      });
+      const stdout = Buffer.concat(chunks.map((c) => Buffer.from(c))).toString('utf8');
+      assert.match(stdout, /rust-wt-exec-works/);
+      assert.equal(exitCode, 0);
+    } finally {
+      if (originalWebTransport === undefined) delete globalThis.WebTransport;
+      else globalThis.WebTransport = originalWebTransport;
+    }
   });
 });
