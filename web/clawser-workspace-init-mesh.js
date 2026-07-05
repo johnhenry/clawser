@@ -754,6 +754,18 @@ export async function initMeshSubsystem() {
     state.quotaManager = result.quotaManager;
     state.quotaEnforcer = result.quotaEnforcer;
     state.paymentRouter = result.paymentRouter;
+    // Escrow-timeout enforcement: without this, EscrowManager.pruneExpired()
+    // exists but nothing ever calls it and timed-out escrows sit in
+    // 'held' status forever. See PaymentRouter.startEscrowSweeper() docs
+    // for why there's no wire notification (no ESCROW_EXPIRE message
+    // type in the mesh wire format yet — each party expires independently).
+    if (state.paymentRouter) {
+      state.paymentRouter.startEscrowSweeper(30_000, (expired) => {
+        for (const e of expired) {
+          addMsg('system', `Escrow ${e.escrowId.slice(0, 8)}… timed out (${e.amount} held between ${e.payerPodId.slice(0, 8)}… and ${e.payeePodId.slice(0, 8)}…).`);
+        }
+      });
+    }
     state.consensusManager = result.consensusManager;
     state.relayClient = result.relayClient;
     // If user opted in via Settings → Mesh / Relay, fire-and-forget connect.
@@ -1139,6 +1151,9 @@ export async function initMeshSubsystem() {
     state.meshMarketplace = null;
     state.quotaManager = null;
     state.quotaEnforcer = null;
+    if (state.paymentRouter) {
+      try { state.paymentRouter.stopEscrowSweeper(); } catch (e) { silentCatch('clawser-workspace-init-mesh', 'state.paymentRouter.stopEscrowSweeper', e) }
+    }
     state.paymentRouter = null;
     state.consensusManager = null;
     state.relayClient = null;

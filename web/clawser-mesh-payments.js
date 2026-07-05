@@ -643,17 +643,29 @@ export class EscrowManager {
    * @returns {number} Number of escrows expired
    */
   pruneExpired(now = Date.now()) {
-    let count = 0;
+    return this.pruneExpiredDetailed(now).length;
+  }
+
+  /**
+   * Same as `pruneExpired`, but returns the expired escrow records
+   * (copies) instead of just a count — used by callers that need to
+   * notify the counterparty which escrows just timed out.
+   *
+   * @param {number} [now=Date.now()]
+   * @returns {object[]} Copies of the escrows that were just expired
+   */
+  pruneExpiredDetailed(now = Date.now()) {
+    const expired = [];
     for (const e of this.#escrows.values()) {
       if (e.status !== 'held') continue;
       if (e.conditions.timeout == null) continue;
       if (now - e.createdAt >= e.conditions.timeout) {
         e.status = 'expired';
         e.resolvedAt = now;
-        count++;
+        expired.push({ ...e });
       }
     }
-    return count;
+    return expired;
   }
 }
 
@@ -680,6 +692,9 @@ export class PaymentRouter {
 
   /** @type {function|null} */
   #broadcastFn = null;
+
+  /** @type {ReturnType<typeof setInterval>|null} */
+  #escrowSweeperTimer = null;
 
   /**
    * @param {string} localPodId
@@ -758,6 +773,39 @@ export class PaymentRouter {
    */
   getEscrow() {
     return this.#escrow;
+  }
+
+  /**
+   * Start periodic escrow-timeout enforcement. Without this,
+   * `EscrowManager.pruneExpired()` exists but nothing ever calls it, so
+   * timed-out escrows sit in `held` status forever.
+   *
+   * There is no dedicated wire message for escrow expiry in the mesh
+   * wire format (`browsermesh-primitives`) today — adding one is an
+   * upstream package change, tracked separately. Until then, expiry is
+   * enforced locally per-pod and surfaced via `onExpired`; each party
+   * to an escrow independently expires it once its own clock passes
+   * the timeout, so both sides converge without needing a message.
+   *
+   * @param {number} [intervalMs=30000]
+   * @param {(expired: object[]) => void} [onExpired] - Called with the escrows that just expired (may be empty)
+   */
+  startEscrowSweeper(intervalMs = 30000, onExpired = null) {
+    this.stopEscrowSweeper();
+    this.#escrowSweeperTimer = setInterval(() => {
+      const expired = this.#escrow.pruneExpiredDetailed();
+      if (expired.length > 0 && onExpired) {
+        try { onExpired(expired); } catch (e) { silentCatch('clawser-mesh-payments', 'onExpired', e) }
+      }
+    }, intervalMs);
+  }
+
+  /** Stop escrow-timeout enforcement. Call on pod teardown. */
+  stopEscrowSweeper() {
+    if (this.#escrowSweeperTimer) {
+      clearInterval(this.#escrowSweeperTimer);
+      this.#escrowSweeperTimer = null;
+    }
   }
 
   /**
