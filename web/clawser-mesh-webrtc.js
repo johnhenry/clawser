@@ -284,6 +284,46 @@ export class WebRTCPeerConnection {
   }
 
   /**
+   * Query real-time connection health via `RTCPeerConnection.getStats()`.
+   * Data channels don't expose a standard `packetsLost` counter the way
+   * RTP media tracks do (there's no media here), so `packetLossRatio` is
+   * an approximation derived from the nominated candidate pair's STUN
+   * connectivity-check retransmission ratio — a reasonable proxy for
+   * path quality, not an exact application-level loss count.
+   *
+   * @returns {Promise<{remotePodId: string, state: string, bytesSent: number,
+   *   bytesReceived: number, messagesSent: number, messagesReceived: number,
+   *   roundTripTime: number|null, packetLossRatio: number}>}
+   * @throws {Error} If there's no underlying connection yet.
+   */
+  async getConnectionStats() {
+    if (!this.#pc) throw new Error('Cannot get stats: no peer connection — call createOffer() first')
+    const report = await this.#pc.getStats()
+    let bytesSent = 0, bytesReceived = 0, messagesSent = 0, messagesReceived = 0
+    let roundTripTime = null, requestsSent = 0, responsesReceived = 0
+    for (const stat of report.values()) {
+      if (stat.type === 'data-channel') {
+        bytesSent += stat.bytesSent || 0
+        bytesReceived += stat.bytesReceived || 0
+        messagesSent += stat.messagesSent || 0
+        messagesReceived += stat.messagesReceived || 0
+      } else if (stat.type === 'candidate-pair' && stat.nominated) {
+        if (typeof stat.currentRoundTripTime === 'number') roundTripTime = stat.currentRoundTripTime
+        requestsSent += stat.requestsSent || 0
+        responsesReceived += stat.responsesReceived || 0
+      }
+    }
+    const packetLossRatio = requestsSent > 0 ? Math.max(0, 1 - responsesReceived / requestsSent) : 0
+    return {
+      remotePodId: this.#remotePodId,
+      state: this.#state,
+      bytesSent, bytesReceived, messagesSent, messagesReceived,
+      roundTripTime,
+      packetLossRatio,
+    }
+  }
+
+  /**
    * Close the connection and clean up all resources.
    */
   close() {
@@ -402,6 +442,7 @@ export class WebRTCMeshManager {
   #reconnectTimers = new Map()    // remotePodId -> timer handle
   #maxReconnectAttempts
   #reconnectBaseDelayMs
+  #lastStats = []
 
   /**
    * @param {object} opts
@@ -560,6 +601,35 @@ export class WebRTCMeshManager {
       state: conn.state,
     }))
   }
+
+  /**
+   * Query `getConnectionStats()` on every tracked connection. A single
+   * connection's stats query failing (e.g. mid-teardown) doesn't abort
+   * the rest — its entry carries `error` instead. Result is cached on
+   * `lastStats` for synchronous readers (e.g. MeshInspector.snapshot(),
+   * which can't await this method).
+   *
+   * @returns {Promise<Array<object>>}
+   */
+  async getAllConnectionStats() {
+    const results = []
+    for (const [remotePodId, conn] of this.#connections.entries()) {
+      try {
+        results.push(await conn.getConnectionStats())
+      } catch (err) {
+        results.push({ remotePodId, state: conn.state, error: err?.message || String(err) })
+      }
+    }
+    this.#lastStats = results
+    return results
+  }
+
+  /**
+   * The result of the most recent `getAllConnectionStats()` call, read
+   * synchronously. Empty until the first call.
+   * @returns {Array<object>}
+   */
+  get lastStats() { return this.#lastStats }
 
   /**
    * Broadcast data to all connected peers.

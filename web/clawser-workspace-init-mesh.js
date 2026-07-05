@@ -21,6 +21,7 @@ import { ChannelGateway } from './clawser-gateway.js';
 import { ClawserPod } from './clawser-pod.js';
 import { registerMeshTools } from './clawser-mesh-tools.js';
 import { PresenceService, presenceChangeMessage } from './clawser-presence.mjs';
+import { evaluateAlertRules, recordMetricSample } from './clawser-mesh-alert-rules.mjs';
 import { installMultiDeviceWiring, uninstallMultiDeviceWiring } from './clawser-multi-device.mjs';
 import { SkillStorage } from './clawser-skills.js';
 import { writeConfig as writeFsConfig } from './clawser-fs-config.mjs';
@@ -491,6 +492,11 @@ export function refreshMeshWorkspacePanel() {
       )
     ),
     services,
+    connectivity: {
+      active: !!state.webrtcMeshManager,
+      connectionCount: state.webrtcMeshManager?.connectionCount ?? 0,
+      stats: state.webrtcMeshManager?.lastStats ?? [],
+    },
   });
   const ctrl = buildMeshController({
     peerNode: state.peerNode,
@@ -759,6 +765,13 @@ export async function initMeshSubsystem(opts = {}) {
     state.meshMarketplace = result.meshMarketplace;
     state.quotaManager = result.quotaManager;
     state.quotaEnforcer = result.quotaEnforcer;
+    // Stop the previous workspace's/pod's sweeper before replacing
+    // paymentRouter — initMesh() rebuilds a fresh PaymentRouter on every
+    // call (e.g. workspace switch), and without this the old sweeper
+    // timer keeps firing against a detached EscrowManager forever.
+    if (state.paymentRouter) {
+      try { state.paymentRouter.stopEscrowSweeper(); } catch (e) { silentCatch('clawser-workspace-init-mesh', 'stop-prior-escrow-sweeper', e) }
+    }
     state.paymentRouter = result.paymentRouter;
     // Escrow-timeout enforcement: without this, EscrowManager.pruneExpired()
     // exists but nothing ever calls it and timed-out escrows sit in
@@ -772,6 +785,32 @@ export async function initMeshSubsystem(opts = {}) {
         }
       });
     }
+    // Mesh health metrics: poll WebRTC connection stats on a rolling 1-min
+    // window and surface alert-rule violations (latency, packet loss, peer
+    // drop) as system messages. Stop any prior timer first (same
+    // rebuild-on-every-initMesh-call concern as the escrow sweeper above).
+    // NOTE: state.webrtcMeshManager is not currently populated by
+    // ClawserPod.initMesh() — the production WebRTC transport still uses
+    // raw per-endpoint WebRTCPeerConnection instances (see the 'webrtc'
+    // adapter in clawser-pod.js), not WebRTCMeshManager. This poller is a
+    // documented no-op until that wiring exists; it's fully real and
+    // tested against WebRTCMeshManager directly (clawser-mesh-webrtc.js,
+    // clawser-mesh-alert-rules.mjs).
+    if (state._meshMetricsTimer) clearInterval(state._meshMetricsTimer);
+    state._meshMetricsWindow = [];
+    state._meshMetricsPeerIds = [];
+    state._meshMetricsTimer = setInterval(async () => {
+      if (!state.webrtcMeshManager) return;
+      try {
+        const stats = await state.webrtcMeshManager.getAllConnectionStats();
+        const violations = evaluateAlertRules(stats, state._meshMetricsPeerIds);
+        state._meshMetricsPeerIds = stats.map(s => s.remotePodId);
+        state._meshMetricsWindow = recordMetricSample(state._meshMetricsWindow, { stats }, Date.now());
+        for (const v of violations) addMsg('system', v.message);
+        refreshMeshWorkspacePanel();
+      } catch (e) { silentCatch('clawser-workspace-init-mesh', 'mesh-metrics-poll', e); }
+    }, 10_000);
+    if (state._meshMetricsTimer?.unref) state._meshMetricsTimer.unref();
     state.consensusManager = result.consensusManager;
     state.relayClient = result.relayClient;
     // If user opted in via Settings → Mesh / Relay, fire-and-forget connect.
@@ -1161,6 +1200,10 @@ export async function initMeshSubsystem(opts = {}) {
       try { state.paymentRouter.stopEscrowSweeper(); } catch (e) { silentCatch('clawser-workspace-init-mesh', 'state.paymentRouter.stopEscrowSweeper', e) }
     }
     state.paymentRouter = null;
+    if (state._meshMetricsTimer) {
+      clearInterval(state._meshMetricsTimer);
+      state._meshMetricsTimer = null;
+    }
     state.consensusManager = null;
     state.relayClient = null;
     state.nameResolver = null;

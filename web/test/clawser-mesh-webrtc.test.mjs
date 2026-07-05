@@ -73,6 +73,16 @@ class MockRTCPeerConnection {
     this._lastCandidate = c
   }
 
+  /** Test hook: set to an array of stat objects to control getStats() output. */
+  _mockStatsEntries = [
+    { type: 'data-channel', bytesSent: 1000, bytesReceived: 2000, messagesSent: 10, messagesReceived: 20 },
+    { type: 'candidate-pair', nominated: true, currentRoundTripTime: 0.05, requestsSent: 10, responsesReceived: 9 },
+  ]
+
+  async getStats() {
+    return new Map(this._mockStatsEntries.map((entry, i) => [`stat-${i}`, entry]))
+  }
+
   close() {}
 }
 
@@ -434,6 +444,102 @@ describe('WebRTCPeerConnection reconnect', () => {
     conn.close()
     conn.close() // second call is a no-op guarded before #setState — no duplicate 'closed'
     assert.deepEqual(transitions, ['connecting', 'closed'])
+  })
+})
+
+// ── getConnectionStats / getAllConnectionStats (mesh health metrics) ──
+
+describe('WebRTCPeerConnection.getConnectionStats', () => {
+  it('throws when there is no underlying connection yet', async () => {
+    const conn = new WebRTCPeerConnection({ localPodId: 'a', remotePodId: 'b' })
+    await assert.rejects(() => conn.getConnectionStats(), /no peer connection/)
+  })
+
+  it('aggregates data-channel byte/message counters from getStats()', async () => {
+    const conn = new WebRTCPeerConnection({ localPodId: 'a', remotePodId: 'b' })
+    await conn.createOffer()
+    const stats = await conn.getConnectionStats()
+    assert.equal(stats.remotePodId, 'b')
+    assert.equal(stats.state, 'connecting')
+    assert.equal(stats.bytesSent, 1000)
+    assert.equal(stats.bytesReceived, 2000)
+    assert.equal(stats.messagesSent, 10)
+    assert.equal(stats.messagesReceived, 20)
+  })
+
+  it('derives roundTripTime from the nominated candidate pair', async () => {
+    const conn = new WebRTCPeerConnection({ localPodId: 'a', remotePodId: 'b' })
+    await conn.createOffer()
+    const stats = await conn.getConnectionStats()
+    assert.equal(stats.roundTripTime, 0.05)
+  })
+
+  it('derives packetLossRatio from the STUN request/response ratio', async () => {
+    const conn = new WebRTCPeerConnection({ localPodId: 'a', remotePodId: 'b' })
+    await conn.createOffer()
+    const stats = await conn.getConnectionStats()
+    assert.ok(Math.abs(stats.packetLossRatio - 0.1) < 1e-9) // 1 - 9/10
+  })
+
+  it('reports zero loss and null RTT when no candidate-pair stat is present', async () => {
+    const conn = new WebRTCPeerConnection({ localPodId: 'a', remotePodId: 'b' })
+    await conn.createOffer()
+    _lastMockPC._mockStatsEntries = [
+      { type: 'data-channel', bytesSent: 5, bytesReceived: 5, messagesSent: 1, messagesReceived: 1 },
+    ]
+    const stats = await conn.getConnectionStats()
+    assert.equal(stats.roundTripTime, null)
+    assert.equal(stats.packetLossRatio, 0)
+  })
+
+  it('ignores a non-nominated candidate pair', async () => {
+    const conn = new WebRTCPeerConnection({ localPodId: 'a', remotePodId: 'b' })
+    await conn.createOffer()
+    _lastMockPC._mockStatsEntries = [
+      { type: 'candidate-pair', nominated: false, currentRoundTripTime: 0.9, requestsSent: 100, responsesReceived: 1 },
+    ]
+    const stats = await conn.getConnectionStats()
+    assert.equal(stats.roundTripTime, null)
+    assert.equal(stats.packetLossRatio, 0)
+  })
+})
+
+describe('WebRTCMeshManager.getAllConnectionStats', () => {
+  it('returns an empty array with no connections', async () => {
+    const mgr = new WebRTCMeshManager({ localPodId: 'node-1' })
+    assert.deepEqual(await mgr.getAllConnectionStats(), [])
+  })
+
+  it('collects stats for every tracked connection', async () => {
+    const mgr = new WebRTCMeshManager({ localPodId: 'node-1' })
+    const connA = await mgr.connectToPeer('node-2')
+    await connA.createOffer()
+    const connB = await mgr.connectToPeer('node-3')
+    await connB.createOffer()
+
+    const stats = await mgr.getAllConnectionStats()
+    assert.equal(stats.length, 2)
+    const podIds = stats.map(s => s.remotePodId).sort()
+    assert.deepEqual(podIds, ['node-2', 'node-3'])
+  })
+
+  it('caches the result on lastStats', async () => {
+    const mgr = new WebRTCMeshManager({ localPodId: 'node-1' })
+    assert.deepEqual(mgr.lastStats, [])
+    const conn = await mgr.connectToPeer('node-2')
+    await conn.createOffer()
+    const stats = await mgr.getAllConnectionStats()
+    assert.deepEqual(mgr.lastStats, stats)
+  })
+
+  it('records an error entry instead of throwing when one connection fails', async () => {
+    const mgr = new WebRTCMeshManager({ localPodId: 'node-1' })
+    await mgr.connectToPeer('node-2') // never calls createOffer() — getConnectionStats() will throw
+
+    const stats = await mgr.getAllConnectionStats()
+    assert.equal(stats.length, 1)
+    assert.equal(stats[0].remotePodId, 'node-2')
+    assert.match(stats[0].error, /no peer connection/)
   })
 })
 
