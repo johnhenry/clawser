@@ -618,3 +618,193 @@ describe('SwarmCoordinator', () => {
     assert.equal(coord.isLeader, false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// SwarmCoordinator — multi-swarm
+// ---------------------------------------------------------------------------
+
+describe('SwarmCoordinator multi-swarm', () => {
+  let coord;
+
+  beforeEach(() => {
+    coord = new SwarmCoordinator('local-pod');
+  });
+
+  describe('listSwarms', () => {
+    it('starts with only the local swarm', () => {
+      const swarms = coord.listSwarms();
+      assert.equal(swarms.length, 1);
+      assert.equal(swarms[0].swarmId, 'local');
+      assert.equal(swarms[0].size, 1);
+      assert.equal(swarms[0].taskCount, 0);
+    });
+
+    it('reflects a newly created swarm', () => {
+      coord.createSwarm('team-a');
+      const swarms = coord.listSwarms();
+      assert.equal(swarms.length, 2);
+      assert.deepEqual(swarms.map(s => s.swarmId).sort(), ['local', 'team-a']);
+    });
+
+    it('reflects size and task counts per swarm', () => {
+      coord.join('peer-1', [], 'team-a');
+      coord.submitTask('do work', 'leader-follower', null, 'team-a');
+      const teamA = coord.listSwarms().find(s => s.swarmId === 'team-a');
+      assert.equal(teamA.size, 2); // local-pod + peer-1
+      assert.equal(teamA.taskCount, 1);
+    });
+  });
+
+  describe('createSwarm / hasSwarm / disbandSwarm', () => {
+    it('createSwarm returns true for a new swarm, false if it already exists', () => {
+      assert.equal(coord.createSwarm('team-a'), true);
+      assert.equal(coord.createSwarm('team-a'), false);
+    });
+
+    it('a newly created swarm includes the local pod as its first member', () => {
+      coord.createSwarm('team-a');
+      assert.equal(coord.swarmSize, 1); // 'local' unaffected
+      const swarms = coord.listSwarms();
+      assert.equal(swarms.find(s => s.swarmId === 'team-a').size, 1);
+    });
+
+    it('hasSwarm reflects existence', () => {
+      assert.equal(coord.hasSwarm('team-a'), false);
+      coord.createSwarm('team-a');
+      assert.equal(coord.hasSwarm('team-a'), true);
+    });
+
+    it('disbandSwarm removes a non-local swarm', () => {
+      coord.createSwarm('team-a');
+      assert.equal(coord.disbandSwarm('team-a'), true);
+      assert.equal(coord.hasSwarm('team-a'), false);
+    });
+
+    it('disbandSwarm returns false for an unknown swarm', () => {
+      assert.equal(coord.disbandSwarm('nope'), false);
+    });
+
+    it('disbandSwarm throws when asked to disband the local swarm', () => {
+      assert.throws(() => coord.disbandSwarm('local'), /cannot disband/);
+    });
+
+    it('tasks in a disbanded swarm are no longer reachable', () => {
+      const task = coord.submitTask('do work', 'leader-follower', null, 'team-a');
+      coord.disbandSwarm('team-a');
+      assert.equal(coord.getTask(task.taskId), null);
+    });
+  });
+
+  describe('join / leave with an explicit swarmId', () => {
+    it('join auto-creates the target swarm', () => {
+      assert.equal(coord.hasSwarm('team-a'), false);
+      coord.join('peer-1', [], 'team-a');
+      assert.equal(coord.hasSwarm('team-a'), true);
+    });
+
+    it('join to a non-local swarm does not affect the local swarm', () => {
+      coord.join('peer-1', [], 'team-a');
+      assert.equal(coord.swarmSize, 1); // local unaffected
+      assert.equal(coord.listSwarms().find(s => s.swarmId === 'team-a').size, 2);
+    });
+
+    it('join defaults to the local swarm — identical to pre-multi-swarm behavior', () => {
+      coord.join('peer-1');
+      assert.equal(coord.swarmSize, 2);
+    });
+
+    it('leave removes a member from the specified swarm only', () => {
+      coord.join('peer-1'); // local
+      coord.join('peer-1', [], 'team-a');
+      coord.leave('peer-1', 'team-a');
+      assert.equal(coord.swarmSize, 2); // local still has peer-1
+      assert.equal(coord.listSwarms().find(s => s.swarmId === 'team-a').size, 1);
+    });
+
+    it('leave returns false for a swarm that does not exist', () => {
+      assert.equal(coord.leave('peer-1', 'nonexistent'), false);
+    });
+  });
+
+  describe('submitTask / listTasks with an explicit swarmId', () => {
+    it('submitTask defaults to the local swarm', () => {
+      coord.submitTask('t1');
+      assert.equal(coord.listTasks().length, 1);
+      assert.equal(coord.listTasks({ swarmId: 'team-a' }).length, 0);
+    });
+
+    it('submitTask to a non-local swarm keeps local swarm tasks unaffected', () => {
+      coord.submitTask('local-task');
+      coord.submitTask('team-task', 'leader-follower', null, 'team-a');
+      assert.equal(coord.listTasks().length, 1);
+      assert.equal(coord.listTasks({ swarmId: 'team-a' }).length, 1);
+    });
+
+    it("listTasks with swarmId '*' lists across every swarm", () => {
+      coord.submitTask('local-task');
+      coord.submitTask('team-task', 'leader-follower', null, 'team-a');
+      assert.equal(coord.listTasks({ swarmId: '*' }).length, 2);
+    });
+
+    it('listTasks combines status and swarmId filters', () => {
+      const t1 = coord.submitTask('team-task', 'leader-follower', null, 'team-a');
+      coord.completeTask(t1.taskId);
+      coord.submitTask('team-task-2', 'leader-follower', null, 'team-a');
+      assert.equal(coord.listTasks({ swarmId: 'team-a', status: 'completed' }).length, 1);
+    });
+  });
+
+  describe('getTask / completeTask / failTask / cancelTask across swarms', () => {
+    it('getTask finds a task regardless of which swarm it belongs to', () => {
+      const task = coord.submitTask('team-task', 'leader-follower', null, 'team-a');
+      assert.equal(coord.getTask(task.taskId)?.taskId, task.taskId);
+    });
+
+    it('completeTask works for a task in a non-local swarm', () => {
+      const task = coord.submitTask('team-task', 'leader-follower', null, 'team-a');
+      assert.equal(coord.completeTask(task.taskId), true);
+      assert.equal(coord.getTask(task.taskId).status, 'completed');
+    });
+
+    it('failTask works for a task in a non-local swarm', () => {
+      const task = coord.submitTask('team-task', 'leader-follower', null, 'team-a');
+      assert.equal(coord.failTask(task.taskId, 'boom'), true);
+      assert.equal(coord.getTask(task.taskId).status, 'failed');
+    });
+
+    it('cancelTask works for a task in a non-local swarm', () => {
+      const task = coord.submitTask('team-task', 'leader-follower', null, 'team-a');
+      assert.equal(coord.cancelTask(task.taskId), true);
+      assert.equal(coord.getTask(task.taskId).status, 'cancelled');
+    });
+  });
+
+  describe('listMembers', () => {
+    it('defaults to the local swarm', () => {
+      coord.join('peer-1');
+      assert.deepEqual(coord.listMembers().sort(), ['local-pod', 'peer-1']);
+    });
+
+    it('lists members of a non-local swarm', () => {
+      coord.join('peer-1', [], 'team-a');
+      assert.deepEqual(coord.listMembers('team-a').sort(), ['local-pod', 'peer-1']);
+    });
+
+    it('returns an empty array for an unknown swarm', () => {
+      assert.deepEqual(coord.listMembers('nonexistent'), []);
+    });
+  });
+
+  describe('election isolation between swarms', () => {
+    it('each swarm has its own independent leader election', () => {
+      coord.join('aaa-pod', [], 'team-a'); // lexicographically first in team-a
+      coord.createSwarm('team-b');
+
+      coord.election.elect(); // local swarm — local-pod is the only candidate
+      assert.equal(coord.isLeader, true);
+
+      const teamAElection = coord.listSwarms().find(s => s.swarmId === 'team-a');
+      assert.equal(teamAElection.isLeader, false); // not elected yet — leader is null until elect() runs
+    });
+  });
+});
