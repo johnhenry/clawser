@@ -544,20 +544,25 @@ below.
 - [x] **5.3** Channel integrations — **credential walkthroughs shipped**,
       real API credentials still require the user's own accounts (out of
       repo by nature). New `docs/channel-setup/{discord,telegram,slack}.md`,
-      linked from `docs/data/channels.yaml`'s `see_also`. Discord and
-      Telegram are fully self-contained (verified against actual adapter
-      source, not assumed behavior). **Found a real gap writing the Slack
-      doc:** `SlackPlugin` only implements the *receiving* half of Slack's
-      Events API (`handleEvent()`) — nothing exposes a public HTTPS
-      endpoint for Slack to POST to, which a browser tab can't do alone.
-      Documented as a known limitation rather than glossed over; outbound
-      sending already works. Also corrected the channels.yaml description,
-      which claimed "Socket Mode" — the source has no WebSocket at all,
-      and the `appToken` config field it accepts is dead code. Matrix/IRC
-      get bring-your-own-server notes instead of full walkthroughs
-      (Matrix: any homeserver via long-poll `/sync`, no bridge needed; IRC:
-      the `server` field must be a `wss://` WebSocket-to-IRC bridge URL,
-      not a raw IRC address).
+      linked from `docs/data/channels.yaml`'s `see_also`. Discord, Telegram,
+      and now Slack are fully self-contained (verified against actual
+      adapter source, not assumed behavior). **Found and fixed a real gap
+      writing the Slack doc:** `SlackPlugin` only implemented the
+      *receiving* half of Slack's Events API (`handleEvent()`) — nothing
+      exposed a public HTTPS endpoint for Slack to POST to, which a browser
+      tab can't do alone, and the `appToken` config field it accepted was
+      dead code despite doc comments calling it "Socket Mode". Implemented
+      real Socket Mode in `web/clawser-channel-slack.js`: `apps.connections.open`
+      + a WebSocket connection (same self-contained pattern as Discord's
+      Gateway), envelope ack (`envelope_id`), and reconnect-with-backoff
+      including handling Slack's `disconnect` envelope. The classic Events
+      API webhook path (`handleEvent()`) still works for anyone who'd
+      rather run their own relay. 15 new tests in
+      `web/test/clawser-channel-slack.test.mjs` (23 total, all passing).
+      Matrix/IRC get bring-your-own-server notes instead of full
+      walkthroughs (Matrix: any homeserver via long-poll `/sync`, no bridge
+      needed; IRC: the `server` field must be a `wss://` WebSocket-to-IRC
+      bridge URL, not a raw IRC address).
 - [ ] **5.4** Chrome Web Store extension publication — code in `clawser-browser-control` repo
 - [x] **5.5** Verify IPFS Helia CDN URL freshness — Closed in the 2026-05-03
       quick-wins pass. Bumped `helia@6.0.21` → `helia@6.1.4` in

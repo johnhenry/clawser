@@ -96,23 +96,25 @@
     - "[Setup walkthrough](../docs/channel-setup/discord.md)"
 
 - name: Slack Channel
-  status: partial
+  status: implemented
   description: >
-    Slack integration via the Events API (webhook) for inbound and the Web API
-    for outbound (chat.postMessage). Not actually Socket Mode despite the
-    accepted appToken config field — that field is currently unused.
+    Slack integration via Socket Mode (WebSocket, self-contained — same
+    pattern as Discord's Gateway) when an appToken is configured, or the
+    classic Events API webhook for deployments that run their own relay.
+    Outbound sends via the Web API (chat.postMessage).
   files:
     - web/clawser-channel-slack.js
   api:
     - SlackChannel
   category: adapter
   notes: >
-    Outbound sending works standalone. Inbound requires a public HTTPS
-    endpoint for Slack's Events API webhook, which a browser tab can't
-    expose on its own — see the setup walkthrough for what's needed.
+    Fully self-contained via Socket Mode — no server needed, the browser
+    tab connects directly to Slack using an app-level token (xapp-...).
+    The webhook path (handleEvent()) still works for anyone who'd rather
+    run their own relay/server instead.
   since: "1.0.0"
   see_also:
-    - "[Setup walkthrough (incl. the webhook-relay limitation)](../docs/channel-setup/slack.md)"
+    - "[Setup walkthrough](../docs/channel-setup/slack.md)"
 
 - name: Telegram Channel
   status: implemented

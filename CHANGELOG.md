@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added (2026-07-04 — Slack Socket Mode)
+- **Slack channel is now fully self-contained**, closing the inbound gap
+  found while writing `docs/channel-setup/slack.md`: `SlackPlugin` only
+  implemented the *receiving* half of Slack's Events API (`handleEvent()`),
+  with no public HTTPS endpoint for Slack to POST to, and the `appToken`
+  config field it accepted was dead code despite doc comments calling it
+  "Socket Mode". Implemented real Socket Mode in
+  `web/clawser-channel-slack.js`: `apps.connections.open` + a WebSocket
+  connection (same self-contained pattern as Discord's Gateway plugin),
+  envelope ack (`envelope_id`), and reconnect-with-backoff including
+  handling Slack's `disconnect` envelope. The classic Events API webhook
+  path (`handleEvent()`) still works for anyone who'd rather run their own
+  relay. Added an `appToken` field to the Channels panel UI
+  (`web/clawser-ui-channels.js`). 15 new tests in
+  `web/test/clawser-channel-slack.test.mjs` (23 total, all passing).
+  Updated `docs/channel-setup/slack.md` and `docs/data/channels.yaml` to
+  match.
+
 ### Added (2026-07-05 — comprehensive "finish everything off" pass)
 - **Vault reset flow, agent tool-list picker, auth profile credentials UX,
   hook persistence, EventLog replay registry, undo diff viewer, mesh

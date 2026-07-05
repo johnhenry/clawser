@@ -14,7 +14,7 @@ import { TabWatcherPlugin, SITE_PROFILES } from './clawser-channel-tabwatch.js';
 const CHANNEL_FIELDS = {
   telegram:  [{ key: 'botToken', label: 'Bot Token', type: 'password' }, { key: 'chatId', label: 'Chat ID', type: 'text' }],
   discord:   [{ key: 'botToken', label: 'Bot Token', type: 'password' }, { key: 'guildId', label: 'Guild ID', type: 'text' }],
-  slack:     [{ key: 'botToken', label: 'Bot Token', type: 'password' }, { key: 'channel', label: 'Channel', type: 'text' }, { key: 'signingSecret', label: 'Signing Secret', type: 'password' }],
+  slack:     [{ key: 'botToken', label: 'Bot Token', type: 'password' }, { key: 'channel', label: 'Channel', type: 'text' }, { key: 'appToken', label: 'App Token (Socket Mode)', type: 'password' }, { key: 'signingSecret', label: 'Signing Secret (webhook only)', type: 'password' }],
   matrix:    [{ key: 'homeserverUrl', label: 'Homeserver URL', type: 'text' }, { key: 'accessToken', label: 'Access Token', type: 'password' }, { key: 'roomId', label: 'Room ID', type: 'text' }],
   email:     [{ key: 'imapHost', label: 'IMAP Host', type: 'text' }, { key: 'smtpHost', label: 'SMTP Host', type: 'text' }, { key: 'username', label: 'Username', type: 'text' }, { key: 'password', label: 'Password', type: 'password' }],
   irc:       [{ key: 'server', label: 'Server', type: 'text' }, { key: 'nick', label: 'Nick', type: 'text' }, { key: 'channels', label: 'Channels (comma-sep)', type: 'text' }],
