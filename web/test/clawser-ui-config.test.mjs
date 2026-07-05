@@ -144,6 +144,9 @@ import {
   renderIdentitySection,
   renderLimitsSection,
   renderQuotaBar,
+  readMeshRelaySettings,
+  getUserIceServers,
+  applyMeshRelaySettings,
 } from '../clawser-ui-config.js'
 
 // ── Setup ───────────────────────────────────────────────────────
@@ -532,5 +535,54 @@ describe('refreshDashboard quota wiring', () => {
   it('does not throw when #dashQuotaBar exists', () => {
     getOrCreateEl('dashQuotaBar')
     assert.doesNotThrow(() => refreshDashboard())
+  })
+})
+
+describe('Mesh/Relay settings — TURN server config', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    getOrCreateEl('cfgTurnUrl').value = ''
+    getOrCreateEl('cfgTurnUsername').value = ''
+    getOrCreateEl('cfgTurnCredential').value = ''
+    getOrCreateEl('cfgRelayUrl').value = ''
+    getOrCreateEl('cfgSignalingUrl').value = ''
+    getOrCreateEl('cfgRelayAutoConnect').checked = false
+  })
+
+  it('getUserIceServers returns empty when unconfigured', () => {
+    assert.deepEqual(getUserIceServers(), [])
+  })
+
+  it('applyMeshRelaySettings persists TURN fields, then getUserIceServers reads them back', () => {
+    getOrCreateEl('cfgTurnUrl').value = 'turn:relay.example.com:3478'
+    getOrCreateEl('cfgTurnUsername').value = 'alice'
+    getOrCreateEl('cfgTurnCredential').value = 'secret'
+
+    applyMeshRelaySettings()
+
+    const settings = readMeshRelaySettings()
+    assert.equal(settings.turnUrl, 'turn:relay.example.com:3478')
+    assert.equal(settings.turnUsername, 'alice')
+
+    assert.deepEqual(getUserIceServers(), [
+      { urls: 'turn:relay.example.com:3478', username: 'alice', credential: 'secret' },
+    ])
+  })
+
+  it('omits username/credential fields when blank', () => {
+    getOrCreateEl('cfgTurnUrl').value = 'turn:relay.example.com:3478'
+    applyMeshRelaySettings()
+    assert.deepEqual(getUserIceServers(), [{ urls: 'turn:relay.example.com:3478' }])
+  })
+
+  it('clearing the TURN URL removes the stored config', () => {
+    getOrCreateEl('cfgTurnUrl').value = 'turn:relay.example.com:3478'
+    applyMeshRelaySettings()
+    assert.equal(readMeshRelaySettings().turnUrl, 'turn:relay.example.com:3478')
+
+    getOrCreateEl('cfgTurnUrl').value = ''
+    applyMeshRelaySettings()
+    assert.equal(readMeshRelaySettings().turnUrl, '');
+    assert.deepEqual(getUserIceServers(), [])
   })
 })

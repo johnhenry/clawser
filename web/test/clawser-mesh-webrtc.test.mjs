@@ -24,6 +24,11 @@ class MockRTCDataChannel {
   }
 }
 
+/** Tracks the most recently constructed mock PC/DC so tests can drive
+ * their event callbacks without the real class exposing private fields. */
+let _lastMockPC = null
+let _lastMockDC = null
+
 class MockRTCPeerConnection {
   #localDesc = null
   #remoteDesc = null
@@ -35,16 +40,21 @@ class MockRTCPeerConnection {
 
   constructor(config) {
     this.config = config
+    _lastMockPC = this
   }
 
   createDataChannel(label, opts) {
     const dc = new MockRTCDataChannel()
     dc.label = label
+    _lastMockDC = dc
     return dc
   }
 
-  async createOffer() {
-    return { type: 'offer', sdp: 'mock-offer-sdp' }
+  lastCreateOfferOpts = null
+
+  async createOffer(opts) {
+    this.lastCreateOfferOpts = opts || null
+    return { type: 'offer', sdp: opts?.iceRestart ? 'mock-restart-offer-sdp' : 'mock-offer-sdp' }
   }
 
   async createAnswer() {
@@ -78,6 +88,7 @@ import {
   WebRTCMeshManager,
   WebRTCTransportAdapter,
   WebRTCAdapterFactory,
+  mergeIceServers,
 } from '../clawser-mesh-webrtc.js'
 
 // ── supportsWebRTC ─────────────────────────────────────────────────────
@@ -342,6 +353,184 @@ describe('WebRTCMeshManager', () => {
     mgr.closeAll()
     assert.equal(mgr.connectionCount, 0)
     assert.deepEqual(mgr.listConnections(), [])
+  })
+})
+
+// ── mergeIceServers ──────────────────────────────────────────────────
+
+describe('mergeIceServers', () => {
+  it('appends valid user servers to the defaults', () => {
+    const merged = mergeIceServers(
+      [{ urls: 'turn:relay.example.com', username: 'u', credential: 'p' }],
+      [{ urls: 'stun:stun.example.com' }],
+    )
+    assert.deepEqual(merged, [
+      { urls: 'stun:stun.example.com' },
+      { urls: 'turn:relay.example.com', username: 'u', credential: 'p' },
+    ])
+  })
+
+  it('filters out malformed entries silently', () => {
+    const merged = mergeIceServers([
+      { urls: 'turn:ok.example.com' },
+      { username: 'no-urls-field' },
+      null,
+      'not-an-object',
+      { urls: '' },
+    ], [])
+    assert.deepEqual(merged, [{ urls: 'turn:ok.example.com' }])
+  })
+
+  it('returns just the defaults when no user servers are given', () => {
+    assert.deepEqual(mergeIceServers(undefined, [{ urls: 'stun:x' }]), [{ urls: 'stun:x' }])
+    assert.deepEqual(mergeIceServers(null, [{ urls: 'stun:x' }]), [{ urls: 'stun:x' }])
+  })
+})
+
+// ── WebRTCPeerConnection.reconnect / onStateChange ─────────────────────
+
+describe('WebRTCPeerConnection reconnect', () => {
+  it('reconnect() requests an ICE restart and returns a fresh offer', async () => {
+    const conn = new WebRTCPeerConnection({ localPodId: 'a', remotePodId: 'b' })
+    await conn.createOffer()
+    const offer = await conn.reconnect()
+    assert.equal(offer.type, 'offer')
+    assert.equal(offer.sdp, 'mock-restart-offer-sdp')
+    assert.equal(conn.state, 'connecting')
+  })
+
+  it('reconnect() throws when no underlying connection exists yet', async () => {
+    const conn = new WebRTCPeerConnection({ localPodId: 'a', remotePodId: 'b' })
+    await assert.rejects(() => conn.reconnect(), /call createOffer/)
+  })
+
+  it('reconnect() throws on a closed connection', async () => {
+    const conn = new WebRTCPeerConnection({ localPodId: 'a', remotePodId: 'b' })
+    await conn.createOffer()
+    conn.close()
+    await assert.rejects(() => conn.reconnect(), /closed/)
+  })
+
+  it('onStateChange fires connecting, then connected on data-channel open, then closed', async () => {
+    const conn = new WebRTCPeerConnection({ localPodId: 'a', remotePodId: 'b' })
+    const transitions = []
+    conn.onStateChange((s) => transitions.push(s))
+
+    await conn.createOffer()
+    assert.deepEqual(transitions, ['connecting'])
+
+    _lastMockDC.onopen() // simulate the data channel opening
+    assert.deepEqual(transitions, ['connecting', 'connected'])
+
+    conn.close()
+    assert.deepEqual(transitions, ['connecting', 'connected', 'closed'])
+  })
+
+  it('onStateChange does not fire duplicate entries for a repeated state', async () => {
+    const conn = new WebRTCPeerConnection({ localPodId: 'a', remotePodId: 'b' })
+    const transitions = []
+    conn.onStateChange((s) => transitions.push(s))
+    await conn.createOffer()
+    conn.close()
+    conn.close() // second call is a no-op guarded before #setState — no duplicate 'closed'
+    assert.deepEqual(transitions, ['connecting', 'closed'])
+  })
+})
+
+// ── WebRTCMeshManager reconnect-with-backoff ───────────────────────────
+
+describe('WebRTCMeshManager auto-reconnect', () => {
+  it('reconnectPeer() manually triggers an ICE restart and notifies onReconnectOffer', async () => {
+    const mgr = new WebRTCMeshManager({ localPodId: 'node-1' })
+    const conn = await mgr.connectToPeer('node-2')
+    await conn.createOffer()
+
+    const offers = []
+    mgr.onReconnectOffer((offer, remotePodId) => offers.push({ offer, remotePodId }))
+
+    const offer = await mgr.reconnectPeer('node-2')
+    assert.equal(offer.sdp, 'mock-restart-offer-sdp')
+    assert.equal(offers.length, 1)
+    assert.equal(offers[0].remotePodId, 'node-2')
+  })
+
+  it('reconnectPeer() returns null for an unknown pod', async () => {
+    const mgr = new WebRTCMeshManager({ localPodId: 'node-1' })
+    assert.equal(await mgr.reconnectPeer('nope'), null)
+  })
+
+  it('auto-schedules a reconnect (with an ICE-restart offer) after a connection error', async () => {
+    const mgr = new WebRTCMeshManager({ localPodId: 'node-1', reconnectBaseDelayMs: 5 })
+    const conn = await mgr.connectToPeer('node-2')
+    await conn.createOffer()
+    const pc = _lastMockPC
+
+    const offers = []
+    mgr.onReconnectOffer((offer, remotePodId) => offers.push({ offer, remotePodId }))
+
+    // Simulate a connection failure at the RTCPeerConnection level
+    pc.connectionState = 'failed'
+    pc.onconnectionstatechange()
+
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    assert.ok(offers.length >= 1, 'expected at least one auto-reconnect offer')
+    assert.equal(offers[0].remotePodId, 'node-2')
+    assert.equal(offers[0].offer.sdp, 'mock-restart-offer-sdp')
+  })
+
+  it('gives up after maxReconnectAttempts and logs', async () => {
+    const logs = []
+    const mgr = new WebRTCMeshManager({
+      localPodId: 'node-1', reconnectBaseDelayMs: 2, maxReconnectAttempts: 2,
+      onLog: (m) => logs.push(m),
+    })
+    const conn = await mgr.connectToPeer('node-2')
+    await conn.createOffer()
+    const pc = _lastMockPC
+
+    // Fire repeated errors faster than backoff can clear, forcing exhaustion
+    for (let i = 0; i < 5; i++) {
+      pc.connectionState = 'failed'
+      pc.onconnectionstatechange()
+      await new Promise((resolve) => setTimeout(resolve, 15))
+    }
+
+    assert.ok(logs.some(l => l.includes('Giving up reconnecting')))
+  })
+
+  it('does not schedule a second reconnect while one is already pending', async () => {
+    const mgr = new WebRTCMeshManager({ localPodId: 'node-1', reconnectBaseDelayMs: 50 })
+    const conn = await mgr.connectToPeer('node-2')
+    await conn.createOffer()
+    const pc = _lastMockPC
+
+    const offers = []
+    mgr.onReconnectOffer((offer) => offers.push(offer))
+
+    pc.connectionState = 'failed'
+    pc.onconnectionstatechange() // schedules attempt #1
+    pc.onconnectionstatechange() // must be a no-op — one is already pending
+    pc.onconnectionstatechange()
+
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    assert.equal(offers.length, 1)
+  })
+
+  it('clears reconnect state when the peer connection closes', async () => {
+    const mgr = new WebRTCMeshManager({ localPodId: 'node-1', reconnectBaseDelayMs: 5 })
+    const conn = await mgr.connectToPeer('node-2')
+    await conn.createOffer()
+    const pc = _lastMockPC
+
+    pc.connectionState = 'failed'
+    pc.onconnectionstatechange() // schedules a reconnect
+
+    const offers = []
+    mgr.onReconnectOffer((offer) => offers.push(offer))
+    conn.close() // must cancel the pending timer — no reconnect fires afterward
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(offers.length, 0)
   })
 })
 

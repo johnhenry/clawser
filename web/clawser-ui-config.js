@@ -82,6 +82,9 @@ export function renderSecuritySection(config) {
 const LS_KEY_RELAY_URL = 'clawser_relay_url';
 const LS_KEY_SIGNALING_URL = 'clawser_signaling_url';
 const LS_KEY_RELAY_AUTO_CONNECT = 'clawser_relay_auto_connect';
+const LS_KEY_TURN_URL = 'clawser_turn_url';
+const LS_KEY_TURN_USERNAME = 'clawser_turn_username';
+const LS_KEY_TURN_CREDENTIAL = 'clawser_turn_credential';
 
 /** Read mesh/relay settings from localStorage, falling back to DEFAULTS. */
 export function readMeshRelaySettings() {
@@ -89,7 +92,21 @@ export function readMeshRelaySettings() {
   const relayUrl = ls?.getItem(LS_KEY_RELAY_URL) ?? '';
   const signalingUrl = ls?.getItem(LS_KEY_SIGNALING_URL) ?? '';
   const autoConnect = ls?.getItem(LS_KEY_RELAY_AUTO_CONNECT) === 'true';
-  return { relayUrl, signalingUrl, autoConnect };
+  const turnUrl = ls?.getItem(LS_KEY_TURN_URL) ?? '';
+  const turnUsername = ls?.getItem(LS_KEY_TURN_USERNAME) ?? '';
+  const turnCredential = ls?.getItem(LS_KEY_TURN_CREDENTIAL) ?? '';
+  return { relayUrl, signalingUrl, autoConnect, turnUrl, turnUsername, turnCredential };
+}
+
+/**
+ * User-configured TURN server as an RTCIceServer, for NAT traversal when
+ * direct/STUN connectivity fails (symmetric NATs, restrictive firewalls).
+ * @returns {import('./clawser-mesh-webrtc.js').RTCIceServer[]}
+ */
+export function getUserIceServers() {
+  const { turnUrl, turnUsername, turnCredential } = readMeshRelaySettings();
+  if (!turnUrl) return [];
+  return [{ urls: turnUrl, ...(turnUsername ? { username: turnUsername } : {}), ...(turnCredential ? { credential: turnCredential } : {}) }];
 }
 
 /** Render the Mesh / Relay settings section from current localStorage values. */
@@ -97,6 +114,9 @@ export function renderMeshRelaySection() {
   const settings = readMeshRelaySettings();
   setIfClean('cfgRelayUrl', settings.relayUrl);
   setIfClean('cfgSignalingUrl', settings.signalingUrl);
+  setIfClean('cfgTurnUrl', settings.turnUrl);
+  setIfClean('cfgTurnUsername', settings.turnUsername);
+  setIfClean('cfgTurnCredential', settings.turnCredential);
   const auto = $('cfgRelayAutoConnect');
   if (auto && document.activeElement !== auto) {
     auto.checked = !!settings.autoConnect;
@@ -110,12 +130,21 @@ export function applyMeshRelaySettings() {
   const relay = ($('cfgRelayUrl')?.value || '').trim();
   const signaling = ($('cfgSignalingUrl')?.value || '').trim();
   const autoConnect = !!$('cfgRelayAutoConnect')?.checked;
+  const turnUrl = ($('cfgTurnUrl')?.value || '').trim();
+  const turnUsername = ($('cfgTurnUsername')?.value || '').trim();
+  const turnCredential = ($('cfgTurnCredential')?.value || '').trim();
   if (relay) ls.setItem(LS_KEY_RELAY_URL, relay);
   else ls.removeItem(LS_KEY_RELAY_URL);
   if (signaling) ls.setItem(LS_KEY_SIGNALING_URL, signaling);
   else ls.removeItem(LS_KEY_SIGNALING_URL);
   if (autoConnect) ls.setItem(LS_KEY_RELAY_AUTO_CONNECT, 'true');
   else ls.removeItem(LS_KEY_RELAY_AUTO_CONNECT);
+  if (turnUrl) ls.setItem(LS_KEY_TURN_URL, turnUrl);
+  else ls.removeItem(LS_KEY_TURN_URL);
+  if (turnUsername) ls.setItem(LS_KEY_TURN_USERNAME, turnUsername);
+  else ls.removeItem(LS_KEY_TURN_USERNAME);
+  if (turnCredential) ls.setItem(LS_KEY_TURN_CREDENTIAL, turnCredential);
+  else ls.removeItem(LS_KEY_TURN_CREDENTIAL);
 }
 
 // ── Config sections (Batch 1) ────────────────────────────────────

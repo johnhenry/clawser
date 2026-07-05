@@ -886,6 +886,18 @@
               Auto-connect on workspace start
             </label>
           </div>
+          <div class="config-group">
+            <label>TURN Server URL <small class="domain-hint">(optional — for NAT traversal when direct P2P fails)</small></label>
+            <input type="text" id="cfgTurnUrl" placeholder="turn:relay.example.com:3478" />
+          </div>
+          <div class="config-group">
+            <label>TURN Username</label>
+            <input type="text" id="cfgTurnUsername" />
+          </div>
+          <div class="config-group">
+            <label>TURN Credential</label>
+            <input type="password" id="cfgTurnCredential" autocomplete="off" />
+          </div>
           <div class="security-apply-wrap">
             <button class="btn-sm" id="btnApplyMeshRelay">Apply</button>
           </div>

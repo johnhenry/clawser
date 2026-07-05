@@ -320,10 +320,20 @@ export class ClawserPod extends Pod {
       return ws
     })
     this.#transportNegotiator.registerAdapter('webrtc', async (endpoint, auth) => {
+      const { WebRTCPeerConnection, mergeIceServers } = await import('./clawser-mesh-webrtc.js')
+      // User-configured TURN server (Settings → Mesh / Relay) for NAT
+      // traversal when direct/STUN connectivity fails. Falls back to
+      // STUN-only defaults when none is configured or the settings
+      // module isn't available (e.g. server/test contexts).
+      let userIceServers = []
+      try {
+        userIceServers = (await import('./clawser-ui-config.js')).getUserIceServers()
+      } catch { /* no UI context — STUN-only defaults */ }
       const bridge = new WebRTCTransportAdapter(
-        new (await import('./clawser-mesh-webrtc.js')).WebRTCPeerConnection({
+        new WebRTCPeerConnection({
           localPodId: podId,
           remotePodId: endpoint,
+          iceServers: mergeIceServers(userIceServers),
         })
       )
       await bridge.connect()
