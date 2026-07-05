@@ -744,6 +744,18 @@ initHomeListeners();
     }
   } catch { /* periodicSync not available or permission denied — Tiers 1/2 still work */ }
 
+  // The SW's periodicsync handler can only detect due routines (no
+  // agent/LLM access in a SW context) — it wakes any open tab so the
+  // real in-tab RoutineEngine executes them immediately rather than
+  // waiting for its own next tick interval.
+  if (typeof navigator !== 'undefined' && navigator.serviceWorker) {
+    navigator.serviceWorker.addEventListener('message', (event) => {
+      if (event.data?.type === 'clawser-scheduler-wake') {
+        state.routineEngine?.tickCron?.().catch((e) => console.warn('[clawser] scheduler wake tick failed:', e.message));
+      }
+    });
+  }
+
   // ── PWA install flow: capture beforeinstallprompt for later trigger ──
   try { initPwaInstall(); } catch (e) { silentCatch('clawser-app', 'initPwaInstall', e) }
 

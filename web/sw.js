@@ -498,16 +498,26 @@ self.addEventListener('install', (event) => {
 });
 
 // ── Periodic Background Sync (Tier 3: fallback when no extension, all tabs closed) ──
+//
+// IMPORTANT: this handler cannot actually EXECUTE a routine's action — a
+// Service Worker has no agent/LLM/vault access (those live in the tab).
+// It previously marked due routines as fired/lastRun directly, which for
+// 'once' routines meant the task was permanently marked complete without
+// ever running if no tab was open when periodicSync fired — silent data
+// loss. The fix: only DETECT due-ness here (read-only), then wake any
+// open tab so the real in-tab RoutineEngine (Tier 2, which has agent
+// access and owns this state) performs the actual execution. Scheduling
+// state (lastFired/fired/lastCronMinute) is never mutated from this path.
 self.addEventListener('periodicsync', (event) => {
   if (event.tag !== 'clawser-scheduler') return;
   event.waitUntil((async () => {
+    let db;
     try {
       const DB_NAME = 'clawser_checkpoints';
       const STORE = 'checkpoints';
       const ROUTINE_KEY = 'background_routine_state';
-      const LOG_KEY = 'background_execution_log';
 
-      const db = await new Promise((resolve, reject) => {
+      db = await new Promise((resolve, reject) => {
         const req = indexedDB.open(DB_NAME, 1);
         req.onupgradeneeded = () => {
           if (!req.result.objectStoreNames.contains(STORE)) req.result.createObjectStore(STORE);
@@ -522,18 +532,18 @@ self.addEventListener('periodicsync', (event) => {
         r.onsuccess = () => resolve(r.result ?? null);
         r.onerror = () => resolve(null);
       });
-      const write = (key, data) => new Promise((resolve, reject) => {
-        const tx = db.transaction(STORE, 'readwrite');
-        tx.objectStore(STORE).put(data, key);
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-        tx.onabort = () => reject(tx.error || new Error('Transaction aborted'));
-      });
 
       const routines = await read(ROUTINE_KEY);
       if (!Array.isArray(routines) || routines.length === 0) { db.close(); return; }
 
-      // Inline cron matching (SW can't import ES modules from app)
+      // Inline cron matching + validation (SW can't import ES modules from
+      // app code — see clawser-background-runner.js for the canonical,
+      // unit-tested version this mirrors).
+      function validateCron(expr) {
+        if (typeof expr !== 'string' || !expr.trim()) return false;
+        const parts = expr.trim().split(/\s+/);
+        return parts.length === 5;
+      }
       function cronFieldMatches(pattern, value) {
         if (pattern === '*') return true;
         if (pattern.startsWith('*/')) {
@@ -550,7 +560,6 @@ self.addEventListener('periodicsync', (event) => {
       }
       function cronMatches(expr, date) {
         const parts = expr.trim().split(/\s+/);
-        if (parts.length < 5) return false;
         const fields = [date.getMinutes(), date.getHours(), date.getDate(), date.getMonth() + 1, date.getDay()];
         for (let i = 0; i < 5; i++) {
           if (!cronFieldMatches(parts[i], fields[i])) return false;
@@ -560,37 +569,32 @@ self.addEventListener('periodicsync', (event) => {
 
       const now = Date.now();
       const nowDate = new Date(now);
-      const results = [];
+      let anyDue = false;
       for (const r of routines) {
         if (!r.enabled) continue;
-        let fire = false;
-        if (r.meta?.scheduleType === 'interval') {
-          if (now >= (r.meta.lastFired || 0) + (r.meta.intervalMs || 60000)) fire = true;
+        if (r.meta?.scheduleType === 'interval' && now >= (r.meta.lastFired || 0) + (r.meta.intervalMs || 60000)) {
+          anyDue = true; break;
         }
-        if (r.meta?.scheduleType === 'once' && !r.meta.fired && now >= (r.meta.fireAt || 0)) fire = true;
-        if (r.trigger?.type === 'cron' && r.trigger?.cron) {
+        if (r.meta?.scheduleType === 'once' && !r.meta.fired && now >= (r.meta.fireAt || 0)) {
+          anyDue = true; break;
+        }
+        if (r.trigger?.type === 'cron' && r.trigger?.cron && validateCron(r.trigger.cron)) {
           const lastMin = r.state?.lastCronMinute || 0;
-          if (Math.floor(now / 60000) > lastMin && cronMatches(r.trigger.cron, nowDate)) fire = true;
+          if (Math.floor(now / 60000) > lastMin && cronMatches(r.trigger.cron, nowDate)) { anyDue = true; break; }
         }
-        if (fire) {
-          r.state = r.state || {};
-          r.state.lastRun = now;
-          r.state.lastResult = 'background_sync';
-          r.state.runCount = (r.state.runCount || 0) + 1;
-          if (r.trigger?.type === 'cron') r.state.lastCronMinute = Math.floor(now / 60000);
-          if (r.meta?.scheduleType === 'interval') r.meta.lastFired = now;
-          if (r.meta?.scheduleType === 'once') r.meta.fired = true;
-          results.push({ routineId: r.id, result: 'background_sync' });
-        }
-      }
-      if (results.length > 0) {
-        await write(ROUTINE_KEY, routines);
-        const log = (await read(LOG_KEY)) || [];
-        log.push({ timestamp: now, results });
-        while (log.length > 100) log.shift();
-        await write(LOG_KEY, log);
       }
       db.close();
+      db = null;
+
+      if (anyDue) {
+        const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: false });
+        for (const client of clients) {
+          client.postMessage({ type: 'clawser-scheduler-wake' });
+        }
+        // No open tab to wake — the routine(s) stay pending; the next
+        // Tier 2 (in-tab) check or periodicSync tick will pick them up.
+        // Nothing to do here since we have no way to execute in this context.
+      }
     } catch (err) {
       console.warn('[clawser-sw] Periodic sync error:', err);
       try { db?.close(); } catch (e) { silentCatch('web/sw.js', 'db', e) }
