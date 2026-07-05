@@ -112,7 +112,10 @@ import {
   WshClient,
   generateKeyPair,
   exportPublicKeySSH,
+  reverseAccept,
+  MSG,
 } from 'wsh-upon-star';
+import { WebTransport as RealWebTransport, quicheLoaded } from '@fails-components/webtransport';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
@@ -168,9 +171,10 @@ after(() => {
  * crates/wsh-server/src/main.rs's `Cli` struct, which has no such option).
  *
  * @param {string[]} sshLines - authorized_keys lines (ssh-ed25519 ...)
+ * @param {string[]} [extraArgs] - additional CLI flags, e.g. ['--enable-relay']
  * @returns {Promise<RunningServer>}
  */
-async function startServer(sshLines) {
+async function startServer(sshLines, extraArgs = []) {
   const homeDir = mkdtempSync(path.join(tmpdir(), 'wsh-rust-server-test-'));
   const wshDir = path.join(homeDir, '.wsh');
   execFileSync('mkdir', ['-p', wshDir]);
@@ -180,7 +184,7 @@ async function startServer(sshLines) {
   const logs = [];
   const proc = spawn(
     SERVER_BIN,
-    ['--port', String(port), '--generate-cert', '--config', '/dev/null/does-not-exist'],
+    ['--port', String(port), '--generate-cert', '--config', '/dev/null/does-not-exist', ...extraArgs],
     {
       env: { ...process.env, HOME: homeDir },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -248,6 +252,35 @@ async function makeKeyPair() {
   const kp = await generateKeyPair(true);
   const publicKeySSH = await exportPublicKeySSH(kp.publicKey);
   return { kp, publicKeySSH };
+}
+
+/** SHA-256 fingerprint bytes of a running server's self-signed cert, for WebTransport's serverCertificateHashes pinning. */
+function certFingerprintBytes(server) {
+  const certPath = path.join(server.homeDir, '.wsh', 'cert.pem');
+  const fpOutput = execFileSync('openssl', ['x509', '-in', certPath, '-noout', '-fingerprint', '-sha256']).toString();
+  const fpHex = fpOutput.split('=')[1].trim();
+  return Uint8Array.from(fpHex.split(':').map((h) => parseInt(h, 16)));
+}
+
+/**
+ * Install a WebTransport global that pins the given server's self-signed
+ * dev cert (wsh-upon-star's WebTransportTransport calls `new
+ * WebTransport(url)` with no options, so pinning has to be injected this
+ * way). Returns a restore function — always call it in a `finally`.
+ */
+async function installPinnedWebTransport(server) {
+  await quicheLoaded;
+  const fingerprintBytes = certFingerprintBytes(server);
+  const original = globalThis.WebTransport;
+  globalThis.WebTransport = class extends RealWebTransport {
+    constructor(url) {
+      super(url, { serverCertificateHashes: [{ algorithm: 'sha-256', value: fingerprintBytes }] });
+    }
+  };
+  return () => {
+    if (original === undefined) delete globalThis.WebTransport;
+    else globalThis.WebTransport = original;
+  };
 }
 
 const servers = [];
@@ -475,19 +508,7 @@ describe('Rust wsh-server WebTransport/QUIC listener', () => {
     const server = await startServer([publicKeySSH]);
     servers.push(server);
 
-    const certPath = path.join(server.homeDir, '.wsh', 'cert.pem');
-    const fpOutput = execFileSync('openssl', ['x509', '-in', certPath, '-noout', '-fingerprint', '-sha256']).toString();
-    const fpHex = fpOutput.split('=')[1].trim();
-    const fingerprintBytes = Uint8Array.from(fpHex.split(':').map((h) => parseInt(h, 16)));
-
-    const { WebTransport: RealWebTransport, quicheLoaded } = await import('@fails-components/webtransport');
-    await quicheLoaded;
-    const originalWebTransport = globalThis.WebTransport;
-    globalThis.WebTransport = class extends RealWebTransport {
-      constructor(url) {
-        super(url, { serverCertificateHashes: [{ algorithm: 'sha-256', value: fingerprintBytes }] });
-      }
-    };
+    const restoreWebTransport = await installPinnedWebTransport(server);
 
     try {
       const wtUrl = server.url.replace(/^wss:\/\//, 'https://');
@@ -509,8 +530,55 @@ describe('Rust wsh-server WebTransport/QUIC listener', () => {
       assert.match(stdout, /rust-wt-exec-works/);
       assert.equal(exitCode, 0);
     } finally {
-      if (originalWebTransport === undefined) delete globalThis.WebTransport;
-      else globalThis.WebTransport = originalWebTransport;
+      restoreWebTransport();
+    }
+  });
+});
+
+// ── Relay (reverse-connect) across mixed transports ──────────────────
+//
+// Mirrors tools/test/wsh-webtransport.test.mjs's "relay reverse-connect
+// works across mixed transports" test, but against the real Rust binary
+// with --enable-relay instead of the Node reimplementation — the actual
+// cross-implementation check for whether the Rust relay (crates/wsh-server/
+// src/relay/{broker,registry}.rs, dispatched from server.rs's
+// ReverseRegister/ReverseList/ReverseConnect/ReverseAccept arms) speaks the
+// same wire protocol wsh-upon-star expects, and whether a WebSocket peer and
+// a WebTransport operator can be bridged through it.
+
+describe('Rust wsh-server relay — mixed transports', () => {
+  it('relay reverse-connect works: WebSocket peer, WebTransport operator', async () => {
+    const { kp: operatorKp, publicKeySSH: opPub } = await makeKeyPair();
+    const { publicKeySSH: peerPub, kp: peerKp } = await makeKeyPair();
+
+    const server = await startServer([opPub, peerPub], ['--enable-relay']);
+    servers.push(server);
+
+    // Peer registers over WebSocket (wss://, self-signed dev cert).
+    const peerClient = new WshClient();
+    clients.push(peerClient);
+    await peerClient.connectReverse(server.url, {
+      username: 'browser-tab', keyPair: peerKp, expose: { exec: true }, transport: 'ws',
+    });
+    peerClient.onReverseConnect = (msg) => {
+      peerClient.sendRelayControl(reverseAccept({ targetFingerprint: msg.target_fingerprint, username: 'browser-tab' }));
+    };
+
+    // Operator connects over WebTransport and reverse-connects to that peer.
+    const restoreWebTransport = await installPinnedWebTransport(server);
+    try {
+      const wtUrl = server.url.replace(/^wss:\/\//, 'https://');
+      const operatorClient = new WshClient();
+      clients.push(operatorClient);
+      await operatorClient.connect(wtUrl, { username: 'operator', keyPair: operatorKp, transport: 'wt' });
+      assert.equal(operatorClient._transport.constructor.name, 'WebTransportTransport');
+
+      const [peerInfo] = await operatorClient.listPeers();
+      assert.ok(peerInfo, 'expected the WebSocket peer to be visible to the WebTransport operator via ReverseList/ReversePeers');
+      const acceptResponse = await operatorClient.reverseConnect(peerInfo.fingerprint);
+      assert.equal(acceptResponse.type, MSG.REVERSE_ACCEPT);
+    } finally {
+      restoreWebTransport();
     }
   });
 });
