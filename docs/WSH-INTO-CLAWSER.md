@@ -9,13 +9,20 @@ The first thing to know is that Clawser itself is a browser app. There is no alw
 
 If your goal is specifically to reach a live Clawser tab, use the reverse-connect flow below. If your goal is running a command on a real host, use the direct `wsh-server` path in the last section. If you want the browser-hosted guest-console path, expose a VM peer with `--type vm-guest --backend vm-console --vm-runtime demo-linux`.
 
-> **Provenance note**: earlier drafts of this guide described a Rust `wsh-server`/`wsh-cli` "operator" toolchain (`cargo build -p wsh-server -p wsh-cli`). That Rust workspace no longer exists in this repo or anywhere findable. Everything below uses the real, currently-shipping pieces instead:
+> **Provenance note**: earlier drafts of this guide described a Rust `wsh-server`/`wsh-cli` "operator" toolchain (`cargo build -p wsh-server -p wsh-cli`). That toolchain was real and did exist in this repo — six crates (`clawser-core`, `clawser-wasm`, `wsh-core`, `wsh-client`, `wsh-server`, `wsh-cli`) under a Cargo workspace, removed in commit `7a2d7a5` ("chore: remove legacy Rust crates and Cargo workspace", 2026-03-14) as a side effect of replacing Clawser's own agent core with the pure-JS runtime — not because `wsh` itself was replaced with anything. The Rust `wsh-server` specifically provided two things nothing here fully replaces:
+>
+> - **Native WebTransport (QUIC/HTTP3)** via `wtransport`/`quinn`, alongside a WebSocket fallback (`tokio-tungstenite`). Node has no mature built-in WebTransport server implementation; the closest option is the native-binding package [`@fails-components/webtransport`](https://github.com/fails-components/webtransport), not currently a dependency here.
+> - **Real PTYs** via `portable-pty`, giving genuine `/dev/tty` semantics for both direct-host and reverse-host sessions.
+>
+> Practically, this matters less than it sounds: `wsh-upon-star`'s browser client already tries WebTransport first and **falls back to WebSocket automatically** when WebTransport isn't available (see step 6 below), so every flow in this guide still works end-to-end over the Node server below — you just don't get QUIC's connection-migration/multiplexing benefits, and you don't get a real PTY. The prior Rust source is still recoverable from git at `7a2d7a5~1:crates/wsh-server` and `7a2d7a5~1:crates/wsh-cli` if reviving native WebTransport/PTY support becomes worth doing.
+>
+> Everything below uses the real, currently-shipping pieces instead:
 >
 > - [`wsh-upon-star`](https://github.com/johnhenry/wsh-upon-star) — the pure-JS client library Clawser's browser `wsh` shell command is built on (re-exported via `web/packages-wsh.js`)
-> - [`tools/wsh-server.mjs`](../tools/wsh-server.mjs) — a from-scratch Node.js server (direct-host exec + optional reverse-connect relay) that interoperates with the real `wsh-upon-star` client
-> - [`tools/wsh-operator-cli.mjs`](../tools/wsh-operator-cli.mjs) — a thin Node.js operator CLI on top of that client, replacing the vanished Rust CLI's operator-side commands
+> - [`tools/wsh-server.mjs`](../tools/wsh-server.mjs) — a from-scratch Node.js server (WebSocket-only direct-host exec + optional reverse-connect relay) that interoperates with the real `wsh-upon-star` client
+> - [`tools/wsh-operator-cli.mjs`](../tools/wsh-operator-cli.mjs) — a thin Node.js operator CLI on top of that client, replacing the removed Rust CLI's operator-side commands
 >
-> A few Rust-CLI conveniences have no equivalent yet and are called out explicitly where relevant instead of silently vanishing: `wsh check relay` (relay self-diagnosis), `wsh agent install` (systemd/launchd startup unit for a dial-out host agent), `wsh copy-id` (password-bootstrapped key install), and real PTY semantics on the host side. None of these exist in `wsh-upon-star` either — they'd need to be built from scratch, same as the server and CLI below were.
+> A few Rust-CLI conveniences have no equivalent yet and are called out explicitly where relevant instead of silently vanishing: `wsh check relay` (relay self-diagnosis), `wsh agent install` (systemd/launchd startup unit for a dial-out host agent), `wsh copy-id` (password-bootstrapped key install), `~/.wsh/known_hosts` TOFU pinning, and real PTY semantics on the host side. None of these exist in `wsh-upon-star` either — they'd need to be built from scratch, same as the server and CLI below were (or recovered from the removed Rust source above).
 
 ## Topology At A Glance
 
