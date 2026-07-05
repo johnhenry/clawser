@@ -6,6 +6,63 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added (2026-07-05 — comprehensive "finish everything off" pass)
+- **Vault reset flow, agent tool-list picker, auth profile credentials UX,
+  hook persistence, EventLog replay registry, undo diff viewer, mesh
+  one-click deploy, peer disconnect surfacing** — 8 small UX/wiring gaps
+  closed with tests (Batch A).
+- **BroadcastChannel + ghost-method audits** — verified `AgentBusyBroadcaster`/
+  `CrossTabToolBroadcaster` don't share `TabCoordinator`'s leader-election bug
+  class; scripted enumeration of every `state.X.method()` UI call site found
+  and fixed remaining ghost-method calls (Batch B).
+- **OPFS quota guard + eviction** (`clawser-quota-guard.mjs`), **tool result
+  output redaction**, **escrow timeout enforcement**
+  (`PaymentRouter.startEscrowSweeper`), **daemon scheduler audit** (cron
+  validation, consecutive-failure skip), **v86 guest VM activation** (Boot/
+  Shutdown UI, auto-mount) (Batch C).
+- **Mesh Phase 11 hardening** (Batch D):
+  - WebRTC reliability — ICE restart (`reconnect()`), `WebRTCMeshManager`
+    auto-reconnect with exponential backoff, TURN server config.
+  - Group key per-member envelope encryption — X25519 ECDH + AES-GCM wrap,
+    falling back to metadata-only with a logged warning when unsupported.
+  - Distributed tracing MVP — traceId carried in clawser's own message
+    envelope, correlating `mesh.send`/`mesh.recv` kernel Tracer events across
+    pod hops.
+  - Mesh health metrics + alert rules — `WebRTCPeerConnection
+    .getConnectionStats()`, `evaluateAlertRules()` (latency/packet-loss/
+    peer-drop defaults), a "Connectivity Metrics" mesh panel section.
+  - Consensus validator sets on `ConsensusManager` (membership-gated voting,
+    not PBFT — that stays the opt-in `raijin-consensus` path).
+  - **Multi-swarm refactor** — `SwarmCoordinator` now tracks real concurrent
+    swarms (`Map<swarmId, {election, distributor, tasks}>`), with `'local'`
+    as the always-present default; all 82 pre-existing tests pass unmodified
+    (backward-compat proof).
+  - SW client-driven wake (`{type:'clawser-scheduler-check'}` message
+    handler, triggered on tab `visibilitychange`).
+  - WebTransport reframed as resolved-by-documentation (inherently
+    client-server, no P2P mode to build toward).
+- **Concurrency stress suite** (Batch E) — 100 paired devices, 1,000 skills,
+  10,000-entry audit chain, 100MB `MemoryFs`; new `stress` test group
+  (excluded from `fast`/`core`, in `slow`/`all`).
+- **npm publish prep** (Batch F) — `packages/clawser-embed/` scaffolded and
+  verified (`npm pack --dry-run` + real smoke import);
+  `web/packages/kernel/` renamed `kernel` → `browsermesh-kernel` after
+  finding the old name was already taken on the public registry. Both
+  publish-ready, blocked only on `npm login` in this environment.
+- **Channel setup docs** (Batch F) — `docs/channel-setup/{discord,telegram,
+  slack}.md`; Slack's doc documents a real limitation found while writing
+  it (no public webhook endpoint for Slack's Events API from a browser tab
+  alone — outbound sending works, inbound doesn't yet).
+- **Fixed along the way:** an escrow-sweeper timer leak (the previous
+  workspace's sweeper was never stopped before `initMesh()` rebuilt a fresh
+  `PaymentRouter` on every workspace switch); a latent bug in the swarm
+  view-model reading `task.assignee` (doesn't exist — `SwarmTask` only has
+  `.assignedTo`); a real (not environmental) test hang —
+  `clawser-sprint19.test.mjs` leaked `AgentBusyIndicator`'s keepalive timer
+  in 3 tests with no cleanup, the same missing-`close()` bug already fixed
+  in `clawser-daemon.test.mjs` earlier this session but never checked
+  elsewhere. Full suite (`npm test`, all groups): **9,732 tests, 0 failing.**
+
 ### Added (2026-07-04 audit pass + session recovery merge)
 - **Recovered 2026-05-04 session merged into main.** ~30K lines of
   finished, QA'd work (multi-device sync/pairing, deploy system,

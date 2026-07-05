@@ -1,7 +1,29 @@
 # Clawser — Outstanding Work
 
-> Last updated 2026-07-04 (audit pass + recovered-session merge).
-> **9,490 tests passing, 0 failing — stable across runs.**
+> Last updated 2026-07-05 ("finish everything off" comprehensive pass).
+> **9,732 tests passing, 0 failing — full suite (`npm test`, all groups
+> incl. the new stress suite) verified green.**
+>
+> 2026-07-05: closed every item shipped in this session's second pass —
+> 8 small UX/wiring fixes, 2 verification audits, 5 medium features
+> (quota guard, output redaction, escrow sweeper, daemon audit, v86
+> activation), all 8 mesh Phase 11 hardening items including the risky
+> SwarmCoordinator multi-swarm refactor (82 pre-existing tests pass
+> unmodified — backward-compat proof), a new concurrency stress suite,
+> npm publish prep for two packages (found and fixed a real blocker: the
+> kernel package's name was already taken on the registry), and channel
+> setup docs (found and documented a real Slack limitation: no public
+> webhook endpoint for its Events API from a browser tab alone). Also
+> closed several stale entries left unchecked from earlier audit rounds
+> after this session's own earlier work had already fixed them.
+> Along the way: fixed a real, reproducible test hang (not the
+> environmental flake it looked like at first) —
+> `clawser-sprint19.test.mjs` leaked `AgentBusyIndicator`'s keepalive
+> timer in 3 tests, same missing-cleanup bug already fixed in
+> `clawser-daemon.test.mjs` earlier but never checked elsewhere; also
+> fixed a genuine escrow-sweeper timer leak on workspace switch found
+> while wiring mesh health metrics. See CHANGELOG [Unreleased] for the
+> full list.
 >
 > 2026-07-04: the uncommitted 2026-05-04 session (~30K lines:
 > multi-device, deploy system, vault v2, passkeys, presence, Y.js
@@ -77,37 +99,41 @@
 
 ## Surfaced 2026-05-08 (comprehensive audit Rounds 2-4)
 
-- [ ] **Tool result OUTPUT redaction.** EventLog now redacts
-      tool-call arguments (privacy fix shipped 2026-05-08), but
-      tool result *output* is still free-form text. A tool that
-      echoes a secret in its output (e.g.,
-      `"set apiKey to sk-..."`) leaks it into the eventlog.
-      Hard to fix without a structured result schema with
-      declared sensitive fields — regex over output text would
-      false-positive too aggressively. Estimate L.
+- [x] **Tool result OUTPUT redaction.** Closed: `BrowserTool` gained
+      `get redactedResultFields()`; `redactEvent()` in
+      `clawser-redaction.mjs` extended to redact `tool_result.data.result`
+      when it's an object (declared fields + regex fallback), plus a
+      conservative high-confidence key-shape regex pass for string
+      results (no aggressive NL matching — the false-positive concern
+      above is why this stayed narrow). Threaded through via
+      `#redactToolResult(toolName, result)` at all 5
+      `eventLog.append('tool_result', ...)` sites. Declared fields on the
+      obvious tools (auth/vault/oauth).
 
-- [ ] **Vault corruption — no UI reset path.** If the wrapped
-      DEK becomes unreadable (corrupted bytes, mismatched salt,
-      forgotten passphrase), the unlock dialog only offers
-      retry. There is no "reset vault (deletes all secrets)"
-      confirm flow. User is stuck. Estimate S.
+- [x] **Vault corruption — no UI reset path.** Closed: `SecretVault
+      .destroy()` wipes all storage (incl. `__vault_*__` internal keys)
+      and locks the vault. `showVaultModal`'s unlock path now offers a
+      danger-confirmed "Reset vault (deletes all secrets)" action after a
+      failed unlock, then reopens the modal in create mode.
 
-- [ ] **OPFS quota — no eviction policy.** Writes to vault /
-      snapshot / audit / sync don't check
-      `navigator.storage.estimate()` first. There is no
-      automatic prune of old eventlog entries beyond
-      `EventLog.#maxSize`, no compaction of audit log, no
-      quota meter in the UI. Power users with multi-month
-      workspaces will hit `QuotaExceededError` with no
-      automatic recovery. Fix shape: pre-write quota check +
-      eventlog compaction UI + workspace settings quota meter.
-      Estimate M-L.
+- [x] **OPFS quota — no eviction policy.** Closed: new
+      `clawser-quota-guard.mjs` — `guardBeforeWrite(sizeBytes, op, opts)`
+      denies at critical (≥95%), warns once per session at ≥80% (with an
+      `onWarning` callback for eviction), `evictOldestSnapshots()` for
+      oldest-first pruning. Wired into `OPFSVaultStorage.write`, snapshot
+      writes (`createAtomicSnapshot`/`createTarSnapshot`), the CLI's
+      `cmdSave`, `RotatingLogWriter.#doFlush` (with a
+      `pruneOldestRotation()` method), and deploy-apply writes. Quota
+      meter (`renderQuotaBar`) now also surfaces on the Dashboard, not
+      just Settings.
 
-- [ ] **Concurrency stress untested.** 100 paired devices, 1k
-      skills, 10k audit entries, 100MB OPFS workspace. Code
-      paths look reasonable analytically but no synthetic
-      stress-test fixtures exist. Surfaced for a dedicated
-      pass. Estimate L (multi-day).
+- [x] **Concurrency stress untested.** Closed: new
+      `web/test/clawser-stress.test.mjs` covers all four scenarios named
+      here (100 paired devices, 1,000 skills, 10,000 audit chain entries,
+      100MB/100-file MemoryFs) plus a signature-tamper case for the audit
+      chain. Asserts completion/correctness rather than tight performance
+      numbers. New `stress` test group (excluded from `fast`/`core`,
+      included in `slow`/`all`; run explicitly via `npm run test:stress`).
 
 ## Closed 2026-05-08
 
@@ -163,38 +189,40 @@
 
 Items not silently fixable; need design / feature work:
 
-- [ ] **Agent tool-list editor missing.** The agent editor exposes
-      a "Tool Mode" select (allowlist / blocklist / all / none),
-      but no UI to populate the actual list. Selecting "Allowlist"
-      with the default empty list silently denies the agent every
-      tool. Fix shape: inline tool picker (similar to the deploy
-      picker). Estimate S-M.
+- [x] **Agent tool-list editor missing.** Closed: `buildToolPickerModel`/
+      `renderToolPickerHtml`/`collectToolPickerSelection` (new
+      `clawser-tool-picker.mjs`) render a checkbox picker (grouped by
+      category) for the allowlist/blocklist Tool Mode, replacing the
+      silent-deny-everything empty-list default.
 
-- [ ] **Auth profile credentials UX.** "+ New Profile" creates a
-      placeholder via `addProfile(provider, name, {})` (empty
-      credentials). There is no UI to set credentials separately
-      (OAuth providers have their own flow; non-OAuth profiles are
-      stuck). Fix shape: per-profile "Set Credentials" modal that
-      writes through to the vault. Estimate S-M.
+- [x] **Auth profile credentials UX.** Closed: `AuthProfileManager`
+      gained `updateCredentials(id, credentials)`/`hasCredentials(id)`;
+      per-profile "Set Credentials" button wired to a small modal (API
+      key + optional baseUrl) in `renderAuthProfilesSection`. The
+      switch/delete buttons already existed in the HTML but had **no**
+      event listeners at all — also wired.
 
-- [ ] **Peer disconnect not surfaced.** Mid-session
-      `peer:disconnect` events update the mesh panel but emit only
-      `console.log`. UX choice — surfacing every disconnect would
-      be noisy. Recommend a "transient vs sustained" heuristic
-      before adding noise. Estimate S after the heuristic is
-      designed.
+- [x] **Peer disconnect not surfaced.** Closed with the "sustained, not
+      transient" heuristic this item asked for: new
+      `presenceChangeMessage(change)` pure function in
+      `clawser-presence.mjs` announces sustained offline (debounced by
+      `offlineAfterMs`, so quiet on flapping) and recovery-from-offline
+      only — quiet on idle-flapping and initial discovery. Wired into
+      `state.presenceService.subscribe(...)`.
 
-- [ ] **Other BroadcastChannel coordination paths not exhaustively
-      audited.** The leader-election bug in `TabCoordinator` was
-      caught by reading protocol semantics. `AgentBusyBroadcaster`
-      and `CrossTabToolBroadcaster` use the same primitive — likely
-      similar shape but not verified.
+- [x] **Other BroadcastChannel coordination paths not exhaustively
+      audited.** Audited: `AgentBusyBroadcaster` and
+      `CrossTabToolBroadcaster` do **not** have the `TabCoordinator`-class
+      leader-election bug (they don't do leader election at all — pure
+      broadcast/subscribe, no ordering-sensitive state machine). Recorded
+      clean; no fix needed.
 
-- [ ] **EventLog replay completeness.** `replayFromEvents`,
-      `replaySessionHistory`, and `EventLog.deriveGoals` handle
-      a fixed set of event types. New event types can be added
-      without a corresponding replay branch (would silently skip).
-      Recommend a registry pattern + lint check. Estimate S.
+- [x] **EventLog replay completeness.** Closed: `replayFromEvents`
+      refactored to a `REPLAY_HANDLERS` registry `Map` (type → handler)
+      plus an explicit `IGNORED_EVENT_TYPES` `Set`, both exported. New
+      test enumerates all 24 appended event types and asserts each is
+      either handled or explicitly ignored — the "lint check" this item
+      asked for. 7 previously-unclassified types added to the ignore set.
 
 ## Surfaced 2026-05-06 (panel-audit convergence pass)
 
@@ -230,18 +258,20 @@ bug. Items still surfaced for next pass:
       using `computeDiff`/`renderDiff` when file ops exist for that
       checkpoint.
 
-- [ ] **Mesh dashboard "Deploy Skill" cross-mount.** Currently
-      hints at "Settings → My Devices → Deploy now." Could be
-      unified for one-click cross-pod deploy from the mesh panel.
-      Estimate S.
+- [x] **Mesh dashboard "Deploy Skill" cross-mount.** Closed: `onDeploySkill`
+      wired to a picker modal → target picker from the paired-devices
+      store → `publishDeploy(...)`, reusing the My Devices controller
+      flow (`clawser-deploy-flow.mjs`) instead of duplicating it. Also
+      fixed a real bug found along the way: `mountMyDevicesPanel(state)`
+      was called with no second argument, so `resolveItems`/
+      `getSigningKey`/`getSourceDid` were always the useless defaults.
 
-- [ ] **`max_tokens`-style ghost-method audit not exhaustive.**
-      Round 3's enumeration covered the high-traffic surfaces
-      (`state.agent.*`, `state.skillRegistry.*`, etc.). Other
-      `state.X.method()` call sites in deeper UI modules (chat,
-      terminal, dashboard, agents picker) may still hide
-      ghost-method bugs. Recommend a targeted second pass at
-      `state.X.Y` enumeration across all 24 UI modules.
+- [x] **`max_tokens`-style ghost-method audit not exhaustive.** Closed:
+      scripted enumeration of every `state.<service>.<method>(` call site
+      across all UI modules (node script importing modules with stubs,
+      reflecting on prototypes to verify each call site against real
+      class methods). Findings fixed (guarded or corrected); no
+      unguarded ghost-method calls remaining in the audited surface.
 
 See `docs/panel-convergence-2026-05-04.md` for the full per-round
 report + brutal-honest residual-gap assessment.
@@ -493,9 +523,41 @@ below.
 
 ### Ecosystem (Batch 3)
 
-- [ ] **5.1** Publish npm embed package
+- [x] **5.1** Publish npm embed package — **scaffolded, publish blocked on
+      npm auth.** New `packages/clawser-embed/` wraps `EmbeddedPod` (its
+      only dependency, `Pod`, resolves to the already-published
+      `browsermesh-pod` package). `npm pack --dry-run` produces a clean
+      4-file tarball; verified with a real smoke import (constructs
+      `EmbeddedPod`, confirms the `ClawserEmbed` alias) against the actual
+      installed `browsermesh-pod`. **Also fixed while doing kernel publish
+      prep (G2, see below):** `web/packages/kernel/package.json`'s name was
+      plain `"kernel"` — already taken on the public registry by an
+      unrelated package — renamed to `browsermesh-kernel` (confirmed
+      available), matching what ROADMAP.md already committed to. Both are
+      genuinely publish-ready; only blocked by `npm login` in this
+      environment (`npm whoami` → 401). To publish once credentials exist:
+      ```
+      cd packages/clawser-embed && npm login && npm publish
+      cd web/packages/kernel && npm login && npm publish
+      ```
 - [ ] **5.2** Skills marketplace backend (agentskills.io) — out of repo
-- [ ] **5.3** Channel integrations with real API credentials (per-channel docs)
+- [x] **5.3** Channel integrations — **credential walkthroughs shipped**,
+      real API credentials still require the user's own accounts (out of
+      repo by nature). New `docs/channel-setup/{discord,telegram,slack}.md`,
+      linked from `docs/data/channels.yaml`'s `see_also`. Discord and
+      Telegram are fully self-contained (verified against actual adapter
+      source, not assumed behavior). **Found a real gap writing the Slack
+      doc:** `SlackPlugin` only implements the *receiving* half of Slack's
+      Events API (`handleEvent()`) — nothing exposes a public HTTPS
+      endpoint for Slack to POST to, which a browser tab can't do alone.
+      Documented as a known limitation rather than glossed over; outbound
+      sending already works. Also corrected the channels.yaml description,
+      which claimed "Socket Mode" — the source has no WebSocket at all,
+      and the `appToken` config field it accepts is dead code. Matrix/IRC
+      get bring-your-own-server notes instead of full walkthroughs
+      (Matrix: any homeserver via long-poll `/sync`, no bridge needed; IRC:
+      the `server` field must be a `wss://` WebSocket-to-IRC bridge URL,
+      not a raw IRC address).
 - [ ] **5.4** Chrome Web Store extension publication — code in `clawser-browser-control` repo
 - [x] **5.5** Verify IPFS Helia CDN URL freshness — Closed in the 2026-05-03
       quick-wins pass. Bumped `helia@6.0.21` → `helia@6.1.4` in
@@ -504,9 +566,18 @@ below.
       docs is current. No other IPFS gateway URLs in the codebase.
 - [ ] **5.6** Verify IoT bridge with real hardware
 - [ ] **F4** iOS Safari compatibility audit
-- [ ] **G2** Kernel extraction to standalone npm
+- [x] **G2** Kernel extraction to standalone npm — publish-ready (see 5.1
+      above for the details: renamed `kernel` → `browsermesh-kernel` to
+      fix a real name collision, added README/LICENSE, verified with
+      `npm pack --dry-run` + a real smoke import). Blocked only on
+      `npm login`.
 - [ ] **G3** Kernel tenants from ServerPod (Node)
-- [ ] **G4** v86 guest UI + auto-mount activation (Phase 9 dormant)
+- [x] **G4** v86 guest UI + auto-mount activation — Closed in the Batch C
+      pass. "Guest VM" collapsible section in the Config panel (Boot/
+      Shutdown buttons, status line); boots `LinuxGuest` lazily via CDN,
+      wires `renderGuestFsPanel` + `autoMountGuest`; torn down in
+      `cleanupWorkspace()`. Mock-guest tests cover the controller; real
+      boot is network-dependent (manual smoke only, as planned).
 
 ### Surfaced for design decision (2026-05-04 triage) — RESOLVED
 
