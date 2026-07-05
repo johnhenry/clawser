@@ -54,6 +54,8 @@ import { WebSocketServer } from 'ws';
 import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { randomUUID, randomBytes } from 'node:crypto';
+import { homedir } from 'node:os';
+import path from 'node:path';
 
 import {
   MSG,
@@ -150,6 +152,7 @@ const RELAY_FORWARD_TYPES = new Set([
  */
 export class WshServer {
   #wss = null;
+  #httpServer = null;
   #authorizedKeys;
   #enableRelay;
   #execTimeoutMs;
@@ -179,20 +182,38 @@ export class WshServer {
   }
 
   /**
-   * Start listening.
+   * Start listening. Plain `ws://` by default (fine for localhost/trusted-
+   * network use, matching the original doc's `--generate-cert` local-dev
+   * story); pass `cert`/`key` for `wss://` — a real remote hostname a
+   * browser tab will reverse-connect to needs a certificate the browser
+   * trusts, same requirement the original doc called out for the Rust
+   * `wsh-server`.
+   *
    * @param {object} [opts]
    * @param {number} [opts.port=0] - 0 = OS-assigned free port
    * @param {string} [opts.host='0.0.0.0']
+   * @param {string} [opts.cert] - PEM certificate (enables wss://)
+   * @param {string} [opts.key] - PEM private key (required with cert)
    * @returns {Promise<number>} the actual bound port
    */
-  async listen({ port = 0, host = '0.0.0.0' } = {}) {
-    this.#wss = new WebSocketServer({ port, host });
+  async listen({ port = 0, host = '0.0.0.0', cert, key } = {}) {
+    if (cert && key) {
+      const { createServer } = await import('node:https');
+      this.#httpServer = createServer({ cert, key });
+      this.#wss = new WebSocketServer({ server: this.#httpServer });
+      await new Promise((resolve, reject) => {
+        this.#httpServer.listen(port, host, resolve);
+        this.#httpServer.once('error', reject);
+      });
+    } else {
+      this.#wss = new WebSocketServer({ port, host });
+      await new Promise((resolve, reject) => {
+        this.#wss.once('listening', resolve);
+        this.#wss.once('error', reject);
+      });
+    }
     this.#wss.on('connection', (ws) => this.#handleConnection(ws));
-    await new Promise((resolve, reject) => {
-      this.#wss.once('listening', resolve);
-      this.#wss.once('error', reject);
-    });
-    return this.#wss.address().port;
+    return (this.#httpServer || this.#wss).address().port;
   }
 
   /** Stop listening and close all connections. */
@@ -202,6 +223,10 @@ export class WshServer {
       try { client.terminate(); } catch { /* best-effort */ }
     }
     await new Promise((resolve) => this.#wss.close(() => resolve()));
+    if (this.#httpServer) {
+      await new Promise((resolve) => this.#httpServer.close(() => resolve()));
+      this.#httpServer = null;
+    }
     this.#wss = null;
     this.#peers.clear();
     this.#pendingReverse.clear();
@@ -456,4 +481,73 @@ export class WshServer {
       }
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// CLI entry point
+// ---------------------------------------------------------------------------
+
+const HELP_TEXT = `wsh-server — direct-host exec sessions, optionally a reverse-connect relay
+
+Usage:
+  wsh-server.mjs [--port 4422] [--host 0.0.0.0] [--authorized-keys ~/.wsh/authorized_keys]
+                 [--enable-relay] [--cert path/to/fullchain.pem --key path/to/privkey.pem]
+
+Options:
+  --port <n>              Listen port (default: 4422)
+  --host <addr>           Bind address (default: 0.0.0.0)
+  --authorized-keys <path> SSH-format authorized_keys file (default: ~/.wsh/authorized_keys)
+  --enable-relay          Also accept reverse-connect peer registrations
+  --cert / --key <path>   PEM cert/key for wss:// (omit for plain ws://, fine for localhost)
+  --exec-timeout-ms <n>   Kill a spawned exec session after this long (default: no timeout)
+
+No --generate-cert convenience flag (unlike the Rust wsh-server this
+replaces) — bring your own cert/key for wss://, or use plain ws:// for
+local development.
+`;
+
+async function runCli(argv) {
+  const opts = { port: 4422, host: '0.0.0.0', authorizedKeysPath: path.join(homedir(), '.wsh', 'authorized_keys'), enableRelay: false };
+  let certPath, keyPath;
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--help' || arg === '-h') { process.stdout.write(HELP_TEXT); return 0; }
+    if (arg === '--port') { opts.port = parseInt(argv[++i], 10); continue; }
+    if (arg === '--host') { opts.host = argv[++i]; continue; }
+    if (arg === '--authorized-keys') { opts.authorizedKeysPath = argv[++i]; continue; }
+    if (arg === '--enable-relay') { opts.enableRelay = true; continue; }
+    if (arg === '--cert') { certPath = argv[++i]; continue; }
+    if (arg === '--key') { keyPath = argv[++i]; continue; }
+    if (arg === '--exec-timeout-ms') { opts.execTimeoutMs = parseInt(argv[++i], 10); continue; }
+  }
+
+  const authorizedKeys = await loadAuthorizedKeys(opts.authorizedKeysPath);
+  if (authorizedKeys.size === 0) {
+    process.stderr.write(`Warning: no keys loaded from ${opts.authorizedKeysPath} — every connection will be rejected.\n`);
+  }
+
+  const server = new WshServer({
+    authorizedKeys,
+    enableRelay: opts.enableRelay,
+    execTimeoutMs: opts.execTimeoutMs,
+    onLog: (m) => console.log(m),
+  });
+
+  const listenOpts = { port: opts.port, host: opts.host };
+  if (certPath && keyPath) {
+    listenOpts.cert = await readFile(certPath, 'utf8');
+    listenOpts.key = await readFile(keyPath, 'utf8');
+  }
+  const boundPort = await server.listen(listenOpts);
+  const scheme = certPath ? 'wss' : 'ws';
+  console.log(`wsh-server ready on ${scheme}://${opts.host}:${boundPort}${opts.enableRelay ? ' (relay enabled)' : ''}`);
+
+  process.on('SIGINT', async () => { await server.close(); process.exit(0); });
+  process.on('SIGTERM', async () => { await server.close(); process.exit(0); });
+  return null; // keep running
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  runCli(process.argv.slice(2)).then((code) => { if (code !== null) process.exit(code); });
 }
