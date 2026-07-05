@@ -1472,6 +1472,44 @@ function renderAgentPickerDropdown(agents, activeId, accts = []) {
   });
 }
 
+// ── Guest VM (v86 Linux guest) ────────────────────────────────────
+
+/** @type {ReturnType<typeof import('./clawser-guest-vm-controller.mjs').buildGuestVmController>|null} */
+let _guestVmController = null;
+
+/**
+ * Lazily build the Guest VM controller with real production dependencies.
+ * Memoized so repeated boot/shutdown clicks share one guest reference.
+ * @returns {Promise<object>}
+ */
+async function getGuestVmController() {
+  if (_guestVmController) return _guestVmController;
+  const [{ LinuxGuest }, { autoMountGuest }, { renderGuestFsPanel }, { buildGuestVmController }] = await Promise.all([
+    import('./clawser-v86-guest.mjs'),
+    import('./clawser-fs-guest-mount.mjs'),
+    import('./clawser-ui-guest-fs.mjs'),
+    import('./clawser-guest-vm-controller.mjs'),
+  ]);
+  _guestVmController = buildGuestVmController({
+    createGuest: () => new LinuxGuest(),
+    autoMountGuest,
+    renderPanel: (guest, container) => { if (container) renderGuestFsPanel(guest, container); },
+    mountableFs: state.workspaceFs,
+    container: $('guestFsContainer'),
+  });
+  return _guestVmController;
+}
+
+/** Shut down and discard the Guest VM controller, if one exists. Called on workspace teardown. */
+export async function shutdownGuestVm() {
+  if (!_guestVmController) return;
+  const ctrl = _guestVmController;
+  _guestVmController = null;
+  if (ctrl.getGuest()) {
+    try { await ctrl.shutdown(); } catch (e) { console.warn('[clawser] guest VM shutdown failed:', e.message); }
+  }
+}
+
 // ── Agent Management Panel (Block 37) ─────────────────────────────
 
 let agentEditingId = null;
@@ -1868,6 +1906,54 @@ export function initPanelListeners() {
   $('btnApplyMeshRelay')?.addEventListener('click', () => {
     applyMeshRelaySettings();
     addMsg('system', 'Mesh / Relay settings saved. Restart the workspace to reconnect with new endpoints.');
+  });
+
+  // Guest VM (v86 Linux guest, Phase 9 PoC) — collapsible section + boot/shutdown.
+  // Everything (LinuxGuest, autoMountGuest, renderGuestFsPanel) is dynamically
+  // imported since the guest pulls v86 from a CDN on first boot.
+  $('guestVmToggle')?.addEventListener('click', () => {
+    const section = $('guestVmSection');
+    const arrow = $('guestVmArrow');
+    if (!section || !arrow) return;
+    section.classList.toggle('visible');
+    arrow.innerHTML = section.classList.contains('visible') ? '&#x25BC;' : '&#x25B6;';
+  });
+
+  $('guestVmBootBtn')?.addEventListener('click', async () => {
+    const bootBtn = $('guestVmBootBtn');
+    const shutdownBtn = $('guestVmShutdownBtn');
+    const statusEl = $('guestVmStatus');
+    bootBtn.disabled = true;
+    statusEl.textContent = 'Booting (downloading v86 + Linux image, this can take a while)…';
+    try {
+      const ctrl = await getGuestVmController();
+      const result = await ctrl.boot();
+      if (result.ok) {
+        statusEl.textContent = `Running (booted in ${result.bootMs}ms).`;
+        bootBtn.style.display = 'none';
+        shutdownBtn.style.display = '';
+      } else {
+        statusEl.textContent = `Boot failed: ${result.error}`;
+        bootBtn.disabled = false;
+      }
+    } catch (e) {
+      statusEl.textContent = `Boot failed: ${e.message}`;
+      bootBtn.disabled = false;
+    }
+  });
+
+  $('guestVmShutdownBtn')?.addEventListener('click', async () => {
+    const bootBtn = $('guestVmBootBtn');
+    const shutdownBtn = $('guestVmShutdownBtn');
+    const statusEl = $('guestVmStatus');
+    shutdownBtn.disabled = true;
+    const ctrl = await getGuestVmController();
+    await ctrl.shutdown();
+    statusEl.textContent = 'Not running.';
+    shutdownBtn.style.display = 'none';
+    shutdownBtn.disabled = false;
+    bootBtn.style.display = '';
+    bootBtn.disabled = false;
   });
 
   // My Devices + Trusted Publishers — wired via clawser-multi-device-panels.mjs.

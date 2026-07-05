@@ -289,6 +289,12 @@ export async function cleanupWorkspace() {
   state.routineEngine.stop();
   await state.daemonController.stop().catch(e => console.warn('[clawser] Daemon stop:', e.message));
 
+  // Shut down any running v86 Guest VM (unmounts /mnt/guest too)
+  try {
+    const { shutdownGuestVm } = await import('./clawser-ui-panels.js');
+    await shutdownGuestVm();
+  } catch (e) { console.warn('[clawser] Guest VM shutdown:', e.message); }
+
   // Persist terminal session before switching
   if (state.terminalSessions) {
     await state.terminalSessions.persist().catch(e => console.warn('[clawser] Terminal persist:', e.message));

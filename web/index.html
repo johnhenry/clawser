@@ -907,6 +907,21 @@
           <div id="trustedPubsContainer"></div>
         </div>
 
+        <!-- Guest VM (v86 Linux guest, Phase 9 PoC) -->
+        <div class="config-group config-toggle" id="guestVmToggle" aria-expanded="false" aria-controls="guestVmSection">
+          <label class="config-toggle">Guest VM <span id="guestVmArrow" class="config-arrow">&#x25B6;</span></label>
+        </div>
+        <div id="guestVmSection" class="config-section-hidden">
+          <div class="config-group">
+            <span id="guestVmStatus" style="color:var(--dim);font-size:12px;">Not running.</span>
+          </div>
+          <div class="btn-row">
+            <button class="btn-sm" id="guestVmBootBtn">Boot</button>
+            <button class="btn-sm btn-danger" id="guestVmShutdownBtn" style="display:none">Shutdown</button>
+          </div>
+          <div id="guestFsContainer" style="margin-top:8px;"></div>
+        </div>
+
         <!-- Checkpoints & Rollback (Phase 3a) -->
         <div class="config-group config-toggle" id="checkpointToggle" aria-expanded="false" aria-controls="checkpointSection">
           <label class="config-toggle">Checkpoints &amp; Rollback <span id="checkpointArrow" class="config-arrow">&#x25B6;</span></label>
