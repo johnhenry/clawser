@@ -813,6 +813,7 @@ export class AgentBusyIndicator {
   #subscribers = new Set();
   #staleMs;
   #pruneTimer = null;
+  #keepaliveTimer = null;
 
   /**
    * @param {object} [opts]
@@ -854,6 +855,22 @@ export class AgentBusyIndicator {
     this.#busy = busy;
     this.#reason = busy ? reason : '';
     this.#since = busy ? Date.now() : 0;
+    this.#broadcastState();
+    // Keepalive: peers prune tabs silent for staleMs, and agent runs
+    // routinely outlast that. Re-broadcast while busy so a long run
+    // isn't misreported as idle; stop when idle again.
+    if (busy && !this.#keepaliveTimer) {
+      this.#keepaliveTimer = setInterval(
+        () => this.#broadcastState(),
+        Math.max(this.#staleMs / 3, 500),
+      );
+    } else if (!busy && this.#keepaliveTimer) {
+      clearInterval(this.#keepaliveTimer);
+      this.#keepaliveTimer = null;
+    }
+  }
+
+  #broadcastState() {
     this.#channel.postMessage({
       type: 'agent_busy',
       tabId: this.#tabId,
@@ -904,9 +921,10 @@ export class AgentBusyIndicator {
     };
   }
 
-  /** Clean up channel and prune timer. */
+  /** Clean up channel and timers. */
   close() {
     if (this.#pruneTimer) { clearInterval(this.#pruneTimer); this.#pruneTimer = null; }
+    if (this.#keepaliveTimer) { clearInterval(this.#keepaliveTimer); this.#keepaliveTimer = null; }
     this.#peerStates.clear();
     this.#subscribers.clear();
     this.#channel.close();
@@ -915,6 +933,7 @@ export class AgentBusyIndicator {
   #handleMessage(data) {
     if (!data || data.type !== 'agent_busy' || !data.tabId) return;
     if (data.tabId === this.#tabId) return; // ignore self
+    const prev = this.#peerStates.get(data.tabId);
     const peer = {
       busy: !!data.busy,
       reason: typeof data.reason === 'string' ? data.reason : '',
@@ -924,6 +943,10 @@ export class AgentBusyIndicator {
     this.#peerStates.set(data.tabId, peer);
     // Lazy-start the stale-pruner only when we have peers to prune.
     if (!this.#pruneTimer) this.#startPrune();
+    // Keepalive re-broadcasts refresh lastSeen silently; only notify
+    // subscribers on actual state changes (join, busy flip, new reason).
+    const changed = !prev || prev.busy !== peer.busy || prev.reason !== peer.reason;
+    if (!changed) return;
     for (const cb of this.#subscribers) {
       try { cb({ tabId: data.tabId, busy: peer.busy, reason: peer.reason, since: peer.since }); }
       catch { /* swallow subscriber errors */ }

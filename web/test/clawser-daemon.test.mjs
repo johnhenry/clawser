@@ -1,5 +1,5 @@
 // Run with: node --import ./web/test/_setup-globals.mjs --test web/test/clawser-daemon.test.mjs
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 globalThis.BrowserTool = class { constructor() {} };
@@ -292,6 +292,12 @@ describe('AgentBusyIndicator', () => {
   beforeEach(() => {
     const ch = { postMessage() {}, close() {} };
     indicator = new AgentBusyIndicator({ channel: ch });
+  });
+
+  afterEach(() => {
+    // setBusy(true) starts a keepalive setInterval — without this the
+    // interval outlives the test and blocks the process from exiting.
+    indicator.close();
   });
 
   it('isBusy defaults to false', () => {
@@ -788,5 +794,56 @@ describe('DaemonResumeTool', () => {
     const result = await tool.execute();
     assert.equal(result.success, false);
     assert.ok(result.error.includes('Cannot resume'));
+  });
+});
+
+// ── AgentBusyIndicator keepalive (long-run pruning fix) ──────────
+
+describe('AgentBusyIndicator keepalive', () => {
+  const pair = () => {
+    let aHandler = null, bHandler = null;
+    const chA = {
+      postMessage(msg) { if (bHandler) bHandler({ data: msg }); },
+      close() {}, set onmessage(fn) { aHandler = fn; },
+    };
+    const chB = {
+      postMessage(msg) { if (aHandler) aHandler({ data: msg }); },
+      close() {}, set onmessage(fn) { bHandler = fn; },
+    };
+    return [chA, chB];
+  };
+
+  it('re-broadcasts while busy so long runs survive peer pruning', async () => {
+    const [chA, chB] = pair();
+    // staleMs=90 → prune interval ~500ms floor... keepalive floor is 500 too;
+    // use large-enough windows: staleMs=1500 → keepalive every 500ms,
+    // prune checks every 500ms. Busy run of ~1.2s must NOT be pruned.
+    const a = new AgentBusyIndicator({ channel: chA, staleMs: 1500 });
+    const b = new AgentBusyIndicator({ channel: chB, staleMs: 1500 });
+    const events = [];
+    b.subscribe((e) => events.push(e));
+
+    a.setBusy(true, 'long run');
+    await new Promise(r => setTimeout(r, 1200));
+
+    assert.equal(b.isAnyPeerBusy(), true, 'peer still busy after > 2 keepalive intervals');
+    assert.ok(!events.some(e => e.pruned), 'peer must not be pruned while keepalives flow');
+    // Keepalives are change-deduped: exactly one busy notification
+    assert.equal(events.filter(e => e.busy).length, 1);
+
+    a.setBusy(false);
+    assert.equal(b.isAnyPeerBusy(), false);
+    a.close();
+    b.close();
+  });
+
+  it('keepalive timer stops on setBusy(false) and close()', () => {
+    const sent = [];
+    const ch = { postMessage(m) { sent.push(m); }, close() {} };
+    const a = new AgentBusyIndicator({ channel: ch, staleMs: 1500 });
+    a.setBusy(true, 'x');
+    a.setBusy(false);
+    a.close(); // must clear all timers — test runner hangs otherwise
+    assert.equal(sent.length, 2);
   });
 });
