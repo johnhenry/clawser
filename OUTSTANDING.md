@@ -26,18 +26,31 @@
 >   restored 2026-07-05 after that removal silently dropped the only
 >   native WebTransport/QUIC + real-PTY implementations) had zero CI
 >   coverage despite already flip-flopping once. Added a `rust` job to
->   `.github/workflows/ci.yml` (`cargo build --workspace` +
->   `cargo test --workspace`, 97 tests, all passing locally before wiring
->   in). `tools/test/wsh-{server,operator-cli,webtransport}.test.mjs` also
->   verified passing locally; not yet added to CI (would need an
->   `npm approve-scripts` step for the webtransport native binding and a
->   release-mode Rust binary build — left as a follow-up rather than
->   risking an unvalidated slow/fragile CI job).
+>   `.github/workflows/ci.yml`: `cargo build --workspace` + `cargo test
+>   --workspace` (97 tests) plus all 4
+>   `tools/test/wsh-{server,operator-cli,webtransport,rust-server}.test.mjs`
+>   (44 more tests, including a real release-mode Rust server + a real
+>   QUIC WebTransport session) — all verified passing locally before
+>   wiring in. First CI run will be slow (uncached release build); cached
+>   on subsequent runs via `Cargo.lock`-keyed `actions/cache`.
 > - Documented an undisclosed gap: reverse-host *listen* (inbound
 >   port-forwarding) is a stub (`handle_listen_request` always returns
 >   `ListenFail`) — the support matrix in `docs/WSH-INTO-CLAWSER.md` read
 >   as unconditionally "Complete." Shell/PTY/file-transfer/tools through
 >   a reverse host peer are unaffected.
+> - `createTerminalSessionId()` combined a millisecond timestamp with
+>   only 4 hex chars (16 bits) of randomness — its own 50-id-in-a-loop
+>   test had a real ~1.9% collision chance, which is what surfaced this
+>   as an intermittent failure under concurrent test-runner load (more
+>   ids land in the same millisecond under CPU contention). Widened to 8
+>   hex chars; 200k ids generated with zero collisions.
+> - `clawser-mesh-relay.test.mjs` and `clawser-mesh-sync.test.mjs`
+>   intermittently fail under `run-tests.mjs`'s `concurrency=4` (timing-
+>   sensitive auto-reconnect/auto-sync-interval assertions) but pass
+>   clean every time run standalone — confirmed environment/timing
+>   flakiness, not a data-correctness bug like the two above. Not fixed;
+>   flagging the pattern in case it's worth loosening timeouts or
+>   dropping concurrency for these two files specifically.
 >
 > **Tracked, not fixed:** `packages/browsermesh-{core,apps,discovery,sync,transport}`
 > (~9K LOC) are wired into `web/index.html`'s import map but **nothing
