@@ -11,6 +11,7 @@ describe('SessionStorageAdapter', () => {
 
   beforeEach(() => {
     adapter = new SessionStorageAdapter();
+    adapter.clear(); // real sessionStorage backing is shared across instances/tests
   });
 
   it('stores and retrieves values', () => {
