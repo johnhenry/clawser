@@ -65,6 +65,8 @@ Terminology used in this guide:
 - **Real PTY**: a host/kernel terminal device backing an interactive shell
 - **Peer capability**: the advertised surfaces a reverse peer exposes, such as `shell`, `fs`, `tools`, or `gateway`
 
+> **Known gap**: reverse-host *listen* requests (inbound port-forwarding through a reverse-host peer, distinct from `gateway` outbound forwarding) are not implemented — `wsh-cli`'s `handle_listen_request` always replies with `ListenFail` (`crates/wsh-cli/src/commands/reverse_host.rs`). Shell/PTY/file-transfer/tools access through a reverse host peer is unaffected.
+
 ## Before You Start
 
 This guide uses four different command surfaces:
