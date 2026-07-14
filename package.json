@@ -50,9 +50,7 @@
     "js-yaml": "^4.1.1",
     "vitest": "^4.0.18",
     "ws": "^8.21.0",
-    "wsh-upon-star": "^0.1.1"
-  },
-  "dependencies": {
+    "wsh-upon-star": "^0.1.1",
     "@fails-components/webtransport": "^1.6.4",
     "@fails-components/webtransport-transport-http3-quiche": "^1.6.4"
   }
