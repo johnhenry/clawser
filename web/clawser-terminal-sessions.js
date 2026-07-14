@@ -34,7 +34,7 @@ import { getWorkspaceDir } from './clawser-opfs.js';
  * @returns {string}
  */
 export function createTerminalSessionId() {
-  return 'term_' + Date.now().toString(36) + '_' + crypto.randomUUID().slice(0, 4);
+  return 'term_' + Date.now().toString(36) + '_' + crypto.randomUUID().slice(0, 8);
 }
 
 /**
