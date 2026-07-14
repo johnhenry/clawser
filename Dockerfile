@@ -1,15 +1,24 @@
 FROM nginx:alpine
 
-COPY web/ /usr/share/nginx/html/
+COPY web/ /usr/share/nginx/html/web/
 
 RUN cat > /etc/nginx/conf.d/default.conf <<'CONF'
+map $http_x_forwarded_proto $proxy_scheme {
+    default $http_x_forwarded_proto;
+    ''      $scheme;
+}
+
 server {
     listen 80;
     server_name _;
     root /usr/share/nginx/html;
 
-    location / {
-        try_files $uri $uri/ /index.html;
+    location = / {
+        return 302 $proxy_scheme://$http_host/web/;
+    }
+
+    location /web/ {
+        try_files $uri $uri/ /web/index.html;
         add_header Cache-Control "no-cache, must-revalidate";
     }
 
