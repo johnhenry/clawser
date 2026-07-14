@@ -39,13 +39,15 @@
 >   as unconditionally "Complete." Shell/PTY/file-transfer/tools through
 >   a reverse host peer are unaffected.
 >
-> **Flagged, not yet fixed — needs a decision, see below:**
-> `packages/browsermesh-{core,apps,discovery,sync,transport}` (~9K LOC)
-> are wired into `web/index.html`'s import map but **nothing under
-> `web/` imports any of them**, and none have a `test/` directory despite
-> `package.json` declaring a test script. This looks like either
-> unfinished work merged prematurely or an abandoned refactor — deleting
-> or wiring in ~9K LOC isn't a call to make unilaterally.
+> **Tracked, not fixed:** `packages/browsermesh-{core,apps,discovery,sync,transport}`
+> (~9K LOC) are wired into `web/index.html`'s import map but **nothing
+> under `web/` imports any of them**, and none have a `test/` directory
+> despite `package.json` declaring a test script. Investigated: it's a
+> 2026-04-30 snapshot extraction of mesh modules that kept evolving live
+> in `web/` afterward (last touched 2026-07-04) — a stale fork, not
+> current WIP. Left as-is per decision; see
+> [johnhenry/clawser#3](https://github.com/johnhenry/clawser/issues/3)
+> for the full writeup and the finish-it-properly-or-delete options.
 >
 > Last updated 2026-07-05 ("finish everything off" comprehensive pass).
 > **9,732 tests passing, 0 failing — full suite (`npm test`, all groups
