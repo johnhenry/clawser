@@ -157,6 +157,7 @@ describe('DiscoveryRecord', () => {
       ttl: 10000,
       discoveredAt: 2000,
       source: 'manual',
+      peerType: 'unknown',
     });
   });
 
@@ -174,6 +175,44 @@ describe('DiscoveryRecord', () => {
     });
     const restored = DiscoveryRecord.fromJSON(original.toJSON());
     assert.deepEqual(restored.toJSON(), original.toJSON());
+  });
+
+  // -- peerType taxonomy --
+
+  it('defaults peerType to "unknown" for backward compat', () => {
+    const r = new DiscoveryRecord({ podId: 'pod-x' });
+    assert.equal(r.peerType, 'unknown');
+  });
+
+  it('accepts canonical peer types', async () => {
+    const { PEER_TYPE } = await import('../clawser-mesh-discovery.js');
+    for (const value of Object.values(PEER_TYPE)) {
+      const r = new DiscoveryRecord({ podId: 'p', peerType: value });
+      assert.equal(r.peerType, value);
+    }
+  });
+
+  it('normalises unknown peerType values to "unknown"', () => {
+    const r = new DiscoveryRecord({ podId: 'pod-x', peerType: 'pirate-ship' });
+    assert.equal(r.peerType, 'unknown');
+  });
+
+  it('matchesFilter filters by peerType (single value)', () => {
+    const r = new DiscoveryRecord({ podId: 'p', peerType: 'runtime' });
+    assert.equal(r.matchesFilter({ peerType: 'runtime' }), true);
+    assert.equal(r.matchesFilter({ peerType: 'chat' }), false);
+  });
+
+  it('matchesFilter filters by peerType (array of allowed values)', () => {
+    const r = new DiscoveryRecord({ podId: 'p', peerType: 'vm-compute' });
+    assert.equal(r.matchesFilter({ peerType: ['vm-compute', 'host-shell'] }), true);
+    assert.equal(r.matchesFilter({ peerType: ['chat'] }), false);
+  });
+
+  it('peerType is round-tripped through toJSON/fromJSON', () => {
+    const r = new DiscoveryRecord({ podId: 'p', peerType: 'host-shell' });
+    const restored = DiscoveryRecord.fromJSON(r.toJSON());
+    assert.equal(restored.peerType, 'host-shell');
   });
 });
 

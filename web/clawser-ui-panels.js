@@ -12,14 +12,16 @@
  *   - Panel event listeners (initPanelListeners)
  *   - Slash command autocomplete on the chat input
  */
-import { $, esc, state, lsKey } from './clawser-state.js';
+import { $, esc, state, lsKey, emit } from './clawser-state.js';
 import { modal } from './clawser-modal.js';
 import { addMsg, addErrorMsg, updateState, resetToolAndEventState } from './clawser-ui-chat.js';
 import { loadWorkspaces, getActiveWorkspaceId, renameWorkspace, deleteWorkspace, createWorkspace, getWorkspaceName } from './clawser-workspaces.js';
+import { getWorkspaceDir } from './clawser-opfs.js';
 import { navigate } from './clawser-router.js';
 import { SkillParser, SkillStorage, SKILL_TEMPLATES, simpleDiff, validateRequirements } from './clawser-skills.js';
 import { createItemBar, _relativeTime } from './clawser-item-bar.js';
 import { CLAWSER_SUBCOMMAND_META } from './clawser-cli.js';
+import { createAdapter, detectAdapterType } from './clawser-terminal-adapter.mjs';
 
 // ── Re-exports from extracted modules ──────────────────────────
 export { refreshFiles, mountLocalFolder, renderMountList } from './clawser-ui-files.js';
@@ -30,9 +32,13 @@ export { renderChannelPanel, updateChannelBadge, initChannelPanelListeners, rest
 export { renderSwarmPanel, initSwarmListeners } from './clawser-ui-swarms.js';
 export { renderTransferPanel, initTransferListeners } from './clawser-ui-transfers.js';
 export { renderMeshPanel, initMeshListeners } from './clawser-ui-mesh.js';
+export { renderGuestFsPanel, parseLsOutput, parseStatOutput, createGuestFsState, createGuestFsController } from './clawser-ui-guest-fs.mjs';
 export { renderSharedWorkerSection, handleSharedWorkerToggle, initSharedWorkerFromConfig } from './clawser-ui-config-shared-worker.js';
 export {
   applySecuritySettings,
+  renderSecuritySection,
+  renderMeshRelaySection,
+  applyMeshRelaySettings,
   renderAutonomySection,
   saveAutonomySettings,
   renderIdentitySection,
@@ -75,8 +81,11 @@ import { renderGoals } from './clawser-ui-goals.js';
 import { renderMarketplace } from './clawser-ui-marketplace.js';
 import { initChannelPanelListeners } from './clawser-ui-channels.js';
 import { handleSharedWorkerToggle, renderSharedWorkerSection } from './clawser-ui-config-shared-worker.js';
+import { silentCatch } from './clawser-silent-catch.mjs'
 import {
   applySecuritySettings,
+  renderMeshRelaySection,
+  applyMeshRelaySettings,
   renderAutonomySection,
   saveAutonomySettings,
   renderIdentitySection,
@@ -506,13 +515,170 @@ export async function searchSkillRegistry(query) {
 const terminalHistory = [];
 let termHistoryIdx = -1;
 
-/** Append output to terminal. */
+/** Append output to terminal via the active adapter (or direct DOM fallback). */
 export function terminalAppend(html) {
-  const el = $('terminalOutput');
-  if (!el) return;
-  el.insertAdjacentHTML('beforeend', html);
-  el.scrollTop = el.scrollHeight;
+  const adapter = state.terminalAdapter;
+  if (!adapter) {
+    // Fallback: direct DOM manipulation (pre-migration compatibility)
+    const el = $('terminalOutput');
+    if (!el) return;
+    el.insertAdjacentHTML('beforeend', html);
+    el.scrollTop = el.scrollHeight;
+    return;
+  }
+
+  if (adapter.type() === 'custom-dom') {
+    adapter.appendHTML(html);
+  } else {
+    // wterm: strip HTML tags, write plain text
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    const text = tmp.textContent || '';
+    if (text) adapter.write(text + '\r\n');
+  }
 }
+
+/**
+ * Terminal renderer config defaults.
+ * @type {{ mode: 'auto'|'custom-dom'|'wterm', fontSize: number, scrollback: number }}
+ */
+const DEFAULT_RENDERER_CONFIG = { mode: 'auto', fontSize: 11, scrollback: 1000 };
+
+/**
+ * Read terminal renderer config from localStorage.
+ *
+ * @param {string} wsId — workspace ID
+ * @returns {{ mode: string, fontSize: number, scrollback: number }}
+ *
+ * @example
+ * ```js
+ * const cfg = getTerminalRendererConfig('ws_abc');
+ * // => { mode: 'auto', fontSize: 11, scrollback: 1000 }
+ * ```
+ */
+export const getTerminalRendererConfig = (wsId) => {
+  const raw = localStorage.getItem(lsKey.terminalRenderer(wsId));
+  if (!raw) return { ...DEFAULT_RENDERER_CONFIG };
+  try {
+    return { ...DEFAULT_RENDERER_CONFIG, ...JSON.parse(raw) };
+  } catch {
+    return { ...DEFAULT_RENDERER_CONFIG };
+  }
+};
+
+/**
+ * Save terminal renderer config to localStorage.
+ *
+ * @param {string} wsId
+ * @param {{ mode?: string, fontSize?: number, scrollback?: number }} config
+ */
+export const saveTerminalRendererConfig = (wsId, config) => {
+  localStorage.setItem(lsKey.terminalRenderer(wsId), JSON.stringify(config));
+  // Phase 7: also write through to ~/.config/clawser/terminal.json
+  if (state.fsUiSync) {
+    state.fsUiSync.saveValue('terminal', config).catch(e =>
+      console.warn('[clawser] FsUiSync terminal save failed:', e?.message || e));
+  }
+};
+
+/**
+ * Render terminal section. Phase 7 read-side helper. The terminal panel
+ * has no live form widget — the renderer is selected at session-start
+ * via `detectAdapterType`. So when an external config change arrives,
+ * we update the cached value (via `saveTerminalRendererConfig` would
+ * loop) and emit `terminalSettingsChanged` so `clawser-reactive-config.mjs`
+ * subscribers (and any future UI) can react.
+ *
+ * @param {object} [config]
+ */
+export const renderTerminalSection = (config) => {
+  if (!state.agent) return;
+  const wsId = state.agent.getWorkspace?.() || 'default';
+  const cfg = config ?? getTerminalRendererConfig(wsId);
+  // Stash to localStorage WITHOUT going through the FsUiSync write-through
+  // path (it's already what triggered us; would loop).
+  try {
+    localStorage.setItem(lsKey.terminalRenderer(wsId), JSON.stringify(cfg));
+  } catch { /* quota / shadow DOM */ }
+  // Existing reactive listener fires `terminalSettingsChanged`; mirror
+  // for direct callers here.
+  emit('terminalSettingsChanged', cfg);
+};
+
+/**
+ * Resolve which adapter type to use for a given session context.
+ *
+ * @param {Object} sessionContext — { kind, isRemote, shellBackend }
+ * @param {string} wsId — workspace ID
+ * @returns {'custom-dom'|'wterm'}
+ *
+ * @example
+ * ```js
+ * const type = resolveAdapterForSession({ kind: 'pty', isRemote: true }, 'ws_abc');
+ * // With mode='auto': returns 'wterm'
+ * ```
+ */
+export const resolveAdapterForSession = (sessionContext, wsId) => {
+  const config = getTerminalRendererConfig(wsId);
+  if (config.mode === 'custom-dom') return 'custom-dom';
+  if (config.mode === 'wterm') return 'wterm';
+  // Auto mode
+  return detectAdapterType(sessionContext);
+};
+
+/**
+ * Initialize or swap the terminal adapter for the current session.
+ *
+ * @param {Object} [sessionContext={ kind: 'local' }] — session metadata
+ * @returns {Promise<void>}
+ *
+ * @example
+ * ```js
+ * await initTerminalAdapter({ kind: 'local', isRemote: false });
+ * ```
+ */
+export const initTerminalAdapter = async (sessionContext = { kind: 'local' }) => {
+  const wsId = getActiveWorkspaceId();
+  const adapterType = resolveAdapterForSession(sessionContext, wsId);
+  const config = getTerminalRendererConfig(wsId);
+
+  // Destroy existing adapter if type changed
+  if (state.terminalAdapter && state.terminalAdapter.type() !== adapterType) {
+    state.terminalAdapter.destroy();
+    state.terminalAdapter = null;
+  }
+
+  // Create new adapter if needed
+  if (!state.terminalAdapter) {
+    const container = $('terminalOutput');
+    if (!container) return;
+
+    const adapter = createAdapter(adapterType, {
+      theme: document.documentElement.classList.contains('light') ? 'light' : 'dark',
+      fontSize: config.fontSize,
+      scrollback: config.scrollback,
+      fontFamily: "'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',monospace",
+    });
+
+    try {
+      await adapter.init(container);
+    } catch (err) {
+      console.warn(`[clawser] ${adapterType} adapter failed, falling back to custom-dom:`, err);
+      const fallback = createAdapter('custom-dom', { fontSize: config.fontSize });
+      await fallback.init(container);
+      state.terminalAdapter = fallback;
+      return;
+    }
+
+    state.terminalAdapter = adapter;
+
+    // Hide input row when wterm is active (it handles its own keyboard input)
+    const inputRow = document.querySelector('.terminal-input-row');
+    if (inputRow) {
+      inputRow.style.display = adapter.type() === 'wterm' ? 'none' : '';
+    }
+  }
+};
 
 /** Track terminal agent mode state */
 let _terminalAgentMode = false;
@@ -785,6 +951,9 @@ export function renderTerminalSessionBar() {
     exportFormats: [
       { label: 'Export as script', fn: () => ts.exportAsScript(), filename: `${ts.activeName || 'session'}.sh`, mime: 'text/x-shellscript' },
       { label: 'Export as log', fn: () => ts.exportAsLog('text'), filename: `${ts.activeName || 'session'}.log`, mime: 'text/plain' },
+      { label: 'Export as HTML', fn: async () => { const { exportSessionAsHTML } = await import('./clawser-session-export.js'); return exportSessionAsHTML(ts.cloneEvents(), { title: ts.activeName || 'Clawser Session' }); }, filename: `${ts.activeName || 'session'}.html`, mime: 'text/html' },
+      { label: 'Export as Markdown', fn: async () => { const { exportSessionAsMarkdown } = await import('./clawser-session-export.js'); return exportSessionAsMarkdown(ts.cloneEvents(), { title: ts.activeName || 'Clawser Session' }); }, filename: `${ts.activeName || 'session'}.md`, mime: 'text/markdown' },
+      { label: 'Export as JSON', fn: async () => { const { exportSessionAsJSON } = await import('./clawser-session-export.js'); return exportSessionAsJSON(ts.cloneEvents(), { title: ts.activeName || 'Clawser Session' }); }, filename: `${ts.activeName || 'session'}.json`, mime: 'application/json' },
     ],
     renderMeta: (item) => {
       const ago = _relativeTime(item.lastUsed);
@@ -1257,7 +1426,7 @@ function renderAgentPickerDropdown(agents, activeId, accts = []) {
       try {
         const { saveConfig } = await import('./clawser-accounts.js');
         saveConfig();
-      } catch { /* non-fatal */ }
+      } catch (e) { silentCatch('clawser-ui-panels', 'non-fatal', e) }
 
       // Show credential warning if agent needs an API key
       const warning = state.agent.agentCredentialWarning;
@@ -1286,15 +1455,59 @@ function renderAgentPickerDropdown(agents, activeId, accts = []) {
 
   picker.querySelector('.agent-pick-new')?.addEventListener('click', () => {
     closeAgentPicker();
+    // Set the "new agent" intent BEFORE clicking the panel button. The
+    // click fires the panel:firstrender event which calls renderAgentPanel;
+    // renderAgentPanel reads agentEditingId synchronously at the top of
+    // its body and immediately delegates to renderAgentEditor when set.
+    // The previous setTimeout(...100ms)→dispatchEvent dance was racing
+    // against `await state.agentStorage.listAll()` inside renderAgentPanel.
+    agentEditingId = '__new__';
     const btn = document.querySelector('nav.sidebar button[data-panel="agents"]');
     if (btn) btn.click();
-    setTimeout(() => document.dispatchEvent(new CustomEvent('agent:edit', { detail: { new: true } })), 100);
   });
   picker.querySelector('.agent-pick-manage')?.addEventListener('click', () => {
     closeAgentPicker();
     const btn = document.querySelector('nav.sidebar button[data-panel="agents"]');
     if (btn) btn.click();
   });
+}
+
+// ── Guest VM (v86 Linux guest) ────────────────────────────────────
+
+/** @type {ReturnType<typeof import('./clawser-guest-vm-controller.mjs').buildGuestVmController>|null} */
+let _guestVmController = null;
+
+/**
+ * Lazily build the Guest VM controller with real production dependencies.
+ * Memoized so repeated boot/shutdown clicks share one guest reference.
+ * @returns {Promise<object>}
+ */
+async function getGuestVmController() {
+  if (_guestVmController) return _guestVmController;
+  const [{ LinuxGuest }, { autoMountGuest }, { renderGuestFsPanel }, { buildGuestVmController }] = await Promise.all([
+    import('./clawser-v86-guest.mjs'),
+    import('./clawser-fs-guest-mount.mjs'),
+    import('./clawser-ui-guest-fs.mjs'),
+    import('./clawser-guest-vm-controller.mjs'),
+  ]);
+  _guestVmController = buildGuestVmController({
+    createGuest: () => new LinuxGuest(),
+    autoMountGuest,
+    renderPanel: (guest, container) => { if (container) renderGuestFsPanel(guest, container); },
+    mountableFs: state.workspaceFs,
+    container: $('guestFsContainer'),
+  });
+  return _guestVmController;
+}
+
+/** Shut down and discard the Guest VM controller, if one exists. Called on workspace teardown. */
+export async function shutdownGuestVm() {
+  if (!_guestVmController) return;
+  const ctrl = _guestVmController;
+  _guestVmController = null;
+  if (ctrl.getGuest()) {
+    try { await ctrl.shutdown(); } catch (e) { console.warn('[clawser] guest VM shutdown failed:', e.message); }
+  }
 }
 
 // ── Agent Management Panel (Block 37) ─────────────────────────────
@@ -1385,10 +1598,11 @@ export async function renderAgentPanel() {
     }
   });
 
-  // Listen for new-agent event from picker
-  document.addEventListener('agent:edit', (e) => {
-    if (e.detail?.new) { agentEditingId = '__new__'; renderAgentPanel(); }
-  }, { once: true });
+  // (Previously this registered a one-shot `agent:edit` listener as part
+  //  of a setTimeout→dispatchEvent dance from the agent-picker. The
+  //  picker now sets `agentEditingId = '__new__'` directly before
+  //  clicking the panel button, so the listener is no longer needed.
+  //  Each renderAgentPanel() call would otherwise leak a listener.)
 }
 
 async function renderAgentEditor(panelBody, agentId) {
@@ -1429,12 +1643,40 @@ async function renderAgentEditor(panelBody, agentId) {
       <div class="config-group"><label>Max Tokens</label><input id="aeditMaxTok" type="number" value="${agent.maxTokens || 4096}" ${isBuiltin ? 'disabled' : ''} /></div>
       <div class="config-group"><label>Autonomy</label><select id="aeditAutonomy" ${isBuiltin ? 'disabled' : ''}><option value="full" ${agent.autonomy === 'full' ? 'selected' : ''}>Full</option><option value="balanced" ${agent.autonomy === 'balanced' ? 'selected' : ''}>Balanced</option><option value="cautious" ${agent.autonomy === 'cautious' ? 'selected' : ''}>Cautious</option><option value="manual" ${agent.autonomy === 'manual' ? 'selected' : ''}>Manual</option></select></div>
       <div class="config-group"><label>Tool Mode</label><select id="aeditToolMode" ${isBuiltin ? 'disabled' : ''}><option value="all" ${agent.tools?.mode === 'all' ? 'selected' : ''}>All tools</option><option value="none" ${agent.tools?.mode === 'none' ? 'selected' : ''}>No tools</option><option value="allowlist" ${agent.tools?.mode === 'allowlist' ? 'selected' : ''}>Allowlist</option><option value="blocklist" ${agent.tools?.mode === 'blocklist' ? 'selected' : ''}>Blocklist</option></select></div>
+      <div class="config-group" id="aeditToolListWrap" style="display:none"><label>Tools <span style="font-size:9px;color:var(--dim);" id="aeditToolListHint"></span></label><div id="aeditToolList" class="tool-picker"></div></div>
       <div class="config-group"><label>Max Turns/Run</label><input id="aeditMaxTurns" type="number" value="${agent.maxTurnsPerRun || 20}" ${isBuiltin ? 'disabled' : ''} /></div>
       ${!isBuiltin ? `<div class="btn-row"><button class="btn-sm" id="agentSaveBtn">Save</button><button class="btn-sm btn-surface2" id="agentCancelBtn">Cancel</button>${agentId !== '__new__' ? `<button class="btn-sm btn-danger" id="agentDeleteBtn">Delete</button>` : ''}</div>` : `<div class="btn-row"><button class="btn-sm" id="agentSaveBuiltinBtn">Save as Custom Copy</button><button class="btn-sm btn-surface2" id="agentCancelBtn">Back</button></div>`}
     </div>
   `;
 
   panelBody.querySelector('#aeditTemp')?.addEventListener('input', (e) => { panelBody.querySelector('#aeditTempVal').textContent = e.target.value; });
+
+  // Tool picker — visible only for allowlist/blocklist modes (a bare
+  // allowlist with an empty list silently denies the agent every tool)
+  {
+    const { buildToolPickerModel, renderToolPickerHtml } = await import('./clawser-tool-picker.mjs');
+    const wrap = panelBody.querySelector('#aeditToolListWrap');
+    const listEl = panelBody.querySelector('#aeditToolList');
+    const hintEl = panelBody.querySelector('#aeditToolListHint');
+    const modeSel = panelBody.querySelector('#aeditToolMode');
+    const syncPicker = () => {
+      const mode = modeSel.value;
+      const showList = mode === 'allowlist' || mode === 'blocklist';
+      wrap.style.display = showList ? '' : 'none';
+      if (showList && !listEl.dataset.rendered) {
+        const model = buildToolPickerModel(state.browserTools.allSpecs(), agent.tools?.list || []);
+        listEl.innerHTML = renderToolPickerHtml(model);
+        listEl.dataset.rendered = '1';
+      }
+      if (showList) {
+        hintEl.textContent = mode === 'allowlist'
+          ? '(checked tools are ALLOWED — an empty list denies everything)'
+          : '(checked tools are BLOCKED)';
+      }
+    };
+    modeSel?.addEventListener('change', syncPicker);
+    syncPicker();
+  }
   panelBody.querySelector('#aeditAccount')?.addEventListener('change', (e) => {
     const acct = allAccounts.find(a => a.id === e.target.value);
     if (acct && !$('aeditModel').value.trim()) $('aeditModel').value = acct.model || '';
@@ -1461,9 +1703,18 @@ async function renderAgentEditor(panelBody, agentId) {
       temperature: parseFloat($('aeditTemp').value) || 0.7,
       maxTokens: parseInt($('aeditMaxTok').value) || 4096,
       autonomy: $('aeditAutonomy').value,
-      tools: { ...agent.tools, mode: $('aeditToolMode').value },
+      tools: {
+        ...agent.tools,
+        mode: $('aeditToolMode').value,
+        list: (await import('./clawser-tool-picker.mjs'))
+          .collectToolPickerSelection(panelBody.querySelector('#aeditToolList')) ,
+      },
       maxTurnsPerRun: parseInt($('aeditMaxTurns').value) || 20,
     };
+    // Preserve the existing list when the picker was never rendered (mode all/none)
+    if (!panelBody.querySelector('#aeditToolList')?.dataset.rendered) {
+      updated.tools.list = agent.tools?.list || [];
+    }
     await state.agentStorage.save(updated);
     agentEditingId = null;
     renderAgentPanel();
@@ -1537,6 +1788,9 @@ export function initPanelListeners() {
   // File browser
   $('refreshFiles').addEventListener('click', () => refreshFiles());
   $('mountFolder').addEventListener('click', () => mountLocalFolder());
+  // Drag-drop folder mounting via DropHandler (clawser-ui-drop.js).
+  // Lazy import keeps the cost off the critical path.
+  import('./clawser-ui-files.js').then(m => m.installFileDropHandler?.()).catch(() => {});
   $('toggleDotfiles').addEventListener('click', () => {
     const wsId = state.agent?.getWorkspace() || 'default';
     const current = localStorage.getItem(lsKey.showDotfiles(wsId)) === 'true';
@@ -1639,6 +1893,97 @@ export function initPanelListeners() {
     addMsg('system', 'Security settings applied.');
   });
 
+  // Mesh / Relay
+  $('meshRelayToggle')?.addEventListener('click', () => {
+    const section = $('meshRelaySection');
+    const arrow = $('meshRelayArrow');
+    if (!section || !arrow) return;
+    section.classList.toggle('visible');
+    arrow.innerHTML = section.classList.contains('visible') ? '&#x25BC;' : '&#x25B6;';
+    if (section.classList.contains('visible')) renderMeshRelaySection();
+  });
+
+  $('btnApplyMeshRelay')?.addEventListener('click', () => {
+    applyMeshRelaySettings();
+    addMsg('system', 'Mesh / Relay settings saved. Restart the workspace to reconnect with new endpoints.');
+  });
+
+  // Guest VM (v86 Linux guest, Phase 9 PoC) — collapsible section + boot/shutdown.
+  // Everything (LinuxGuest, autoMountGuest, renderGuestFsPanel) is dynamically
+  // imported since the guest pulls v86 from a CDN on first boot.
+  $('guestVmToggle')?.addEventListener('click', () => {
+    const section = $('guestVmSection');
+    const arrow = $('guestVmArrow');
+    if (!section || !arrow) return;
+    section.classList.toggle('visible');
+    arrow.innerHTML = section.classList.contains('visible') ? '&#x25BC;' : '&#x25B6;';
+  });
+
+  $('guestVmBootBtn')?.addEventListener('click', async () => {
+    const bootBtn = $('guestVmBootBtn');
+    const shutdownBtn = $('guestVmShutdownBtn');
+    const statusEl = $('guestVmStatus');
+    bootBtn.disabled = true;
+    statusEl.textContent = 'Booting (downloading v86 + Linux image, this can take a while)…';
+    try {
+      const ctrl = await getGuestVmController();
+      const result = await ctrl.boot();
+      if (result.ok) {
+        statusEl.textContent = `Running (booted in ${result.bootMs}ms).`;
+        bootBtn.style.display = 'none';
+        shutdownBtn.style.display = '';
+      } else {
+        statusEl.textContent = `Boot failed: ${result.error}`;
+        bootBtn.disabled = false;
+      }
+    } catch (e) {
+      statusEl.textContent = `Boot failed: ${e.message}`;
+      bootBtn.disabled = false;
+    }
+  });
+
+  $('guestVmShutdownBtn')?.addEventListener('click', async () => {
+    const bootBtn = $('guestVmBootBtn');
+    const shutdownBtn = $('guestVmShutdownBtn');
+    const statusEl = $('guestVmStatus');
+    shutdownBtn.disabled = true;
+    const ctrl = await getGuestVmController();
+    await ctrl.shutdown();
+    statusEl.textContent = 'Not running.';
+    shutdownBtn.style.display = 'none';
+    shutdownBtn.disabled = false;
+    bootBtn.style.display = '';
+    bootBtn.disabled = false;
+  });
+
+  // My Devices + Trusted Publishers — wired via clawser-multi-device-panels.mjs.
+  // Lazily initialize on first toggle so we don't mount the panels for
+  // workspaces that never open them.
+  $('myDevicesToggle')?.addEventListener('click', async () => {
+    const section = $('myDevicesSection');
+    const arrow = $('myDevicesArrow');
+    if (!section || !arrow) return;
+    section.classList.toggle('visible');
+    arrow.innerHTML = section.classList.contains('visible') ? '&#x25BC;' : '&#x25B6;';
+    if (section.classList.contains('visible')) {
+      const { mountMyDevicesPanel } = await import('./clawser-multi-device-panels.mjs');
+      const { buildDeployFlowOpts } = await import('./clawser-deploy-flow.mjs');
+      await mountMyDevicesPanel(state, buildDeployFlowOpts(state));
+    }
+  });
+
+  $('trustedPubsToggle')?.addEventListener('click', async () => {
+    const section = $('trustedPubsSection');
+    const arrow = $('trustedPubsArrow');
+    if (!section || !arrow) return;
+    section.classList.toggle('visible');
+    arrow.innerHTML = section.classList.contains('visible') ? '&#x25BC;' : '&#x25B6;';
+    if (section.classList.contains('visible')) {
+      const { mountTrustedPublishersPanel } = await import('./clawser-multi-device-panels.mjs');
+      await mountTrustedPublishersPanel(state);
+    }
+  });
+
   // Clear data
   $('btnClearData').addEventListener('click', async () => {
     const wsId = state.agent?.getWorkspace() || 'default';
@@ -1650,10 +1995,18 @@ export function initPanelListeners() {
     localStorage.removeItem(`clawser_conversations_${wsId}`);
 
     const root = await navigator.storage.getDirectory();
+    // New namespace: clawser/workspaces/{wsId}
+    try {
+      const wsDir = await getWorkspaceDir(wsId);
+      const parent = await root.getDirectoryHandle('clawser');
+      const wsRoot = await parent.getDirectoryHandle('workspaces');
+      await wsRoot.removeEntry(wsId, { recursive: true });
+    } catch (e) { console.debug('[clawser] OPFS clear (new ns) error', e); }
+    // Legacy namespace fallback
     try {
       const base = await root.getDirectoryHandle('clawser_workspaces');
       await base.removeEntry(wsId, { recursive: true });
-    } catch (e) { console.debug('[clawser] OPFS clear error', e); }
+    } catch (e) { console.debug('[clawser] OPFS clear (legacy) error', e); }
     try {
       const dir = await root.getDirectoryHandle('clawser_checkpoints');
       await dir.removeEntry(wsId, { recursive: true });
@@ -1847,10 +2200,13 @@ export function initPanelListeners() {
   });
 
   // ── Batch 4: Terminal panel ──
+  let _tabCycleIdx = 0;
+  let _lastTabCompletion = null;
   $('terminalInput')?.addEventListener('keydown', async (e) => {
     if (e.key === 'Enter') {
       const cmd = $('terminalInput').value;
       $('terminalInput').value = '';
+      _lastTabCompletion = null;
       await terminalExec(cmd);
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
@@ -1860,6 +2216,53 @@ export function initPanelListeners() {
       e.preventDefault();
       termHistoryIdx = Math.max(termHistoryIdx - 1, -1);
       $('terminalInput').value = termHistoryIdx >= 0 ? terminalHistory[termHistoryIdx] : '';
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      const inputEl = $('terminalInput');
+      if (!inputEl || !state.shell) return;
+      const value = inputEl.value;
+      const cursor = inputEl.selectionStart ?? value.length;
+      const { getCompletions } = await import('./clawser-shell.js');
+      const result = await getCompletions(value, cursor, {
+        registry: state.shell.registry,
+        fs: state.shell.fs,
+        cwd: state.shell.state?.cwd || '/',
+      });
+      if (!result.suggestions.length) return;
+
+      // Cache the completion set for cycle behaviour: second Tab on the
+      // same input cycles to the next match.
+      const sameAsLast = _lastTabCompletion
+        && _lastTabCompletion.value === value
+        && _lastTabCompletion.cursor === cursor;
+      if (!sameAsLast) {
+        _tabCycleIdx = 0;
+        _lastTabCompletion = { value, cursor, suggestions: result.suggestions };
+      } else {
+        _tabCycleIdx = (_tabCycleIdx + 1) % _lastTabCompletion.suggestions.length;
+      }
+
+      // If a unique match, complete directly. Otherwise cycle through.
+      const replacement = result.suggestions.length === 1
+        ? result.suggestions[0]
+        : _lastTabCompletion.suggestions[_tabCycleIdx];
+
+      const prefix = value.slice(0, result.start);
+      const suffix = value.slice(result.end);
+      const newValue = prefix + replacement + suffix;
+      inputEl.value = newValue;
+      const newCursor = (prefix + replacement).length;
+      inputEl.setSelectionRange(newCursor, newCursor);
+
+      // Reset the cycle cache after we apply, but keep it tied to the
+      // resulting value so a second Tab immediately cycles further.
+      _lastTabCompletion = {
+        value: newValue,
+        cursor: newCursor,
+        suggestions: result.suggestions,
+      };
+    } else {
+      _lastTabCompletion = null;
     }
   });
 

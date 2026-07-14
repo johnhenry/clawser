@@ -149,7 +149,7 @@ export declare function execute(
 export interface ShellFsLike {
   readFile(path: string): Promise<string>;
   writeFile(path: string, content: string): Promise<void>;
-  listDir(path: string): Promise<Array<{ name: string; kind: string }>>;
+  listDir(path: string, opts?: { showDotfiles?: boolean }): Promise<Array<{ name: string; kind: string }>>;
   mkdir(path: string): Promise<void>;
   delete(path: string, recursive?: boolean): Promise<void>;
   copy(src: string, dst: string): Promise<void>;
@@ -161,7 +161,7 @@ export declare class ShellFs implements ShellFsLike {
   constructor(ws: WorkspaceFs);
   readFile(path: string): Promise<string>;
   writeFile(path: string, content: string): Promise<void>;
-  listDir(path: string): Promise<Array<{ name: string; kind: string }>>;
+  listDir(path: string, opts?: { showDotfiles?: boolean }): Promise<Array<{ name: string; kind: string }>>;
   mkdir(path: string): Promise<void>;
   delete(path: string, recursive?: boolean): Promise<void>;
   copy(src: string, dst: string): Promise<void>;
@@ -172,7 +172,7 @@ export declare class ShellFs implements ShellFsLike {
 export declare class MemoryFs implements ShellFsLike {
   readFile(path: string): Promise<string>;
   writeFile(path: string, content: string): Promise<void>;
-  listDir(path: string): Promise<Array<{ name: string; kind: string }>>;
+  listDir(path: string, opts?: { showDotfiles?: boolean }): Promise<Array<{ name: string; kind: string }>>;
   mkdir(path: string): Promise<void>;
   delete(path: string, recursive?: boolean): Promise<void>;
   copy(src: string, dst: string): Promise<void>;

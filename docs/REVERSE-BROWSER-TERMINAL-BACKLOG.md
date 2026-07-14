@@ -1,5 +1,13 @@
 # Reverse Browser Terminal Backlog
 
+> **Status:** Shipped (verified 2026-05-02). All "New Modules To Add" listed
+> below exist: `clawser-shell-factory.js`, `clawser-terminal-session-store.js`,
+> `clawser-wsh-virtual-terminal-session.js`, `clawser-wsh-virtual-terminal-manager.js`,
+> plus the protocol pieces in `web/packages/wsh/`. The Rust CLI side
+> (`crates/wsh-*`) is also in place. The one item still flagged in
+> `docs/implementation-status.md` is `wsh copy-id`'s transport, which is
+> noted as a stub in `ROADMAP-ARCHIVE.md`.
+
 This backlog defines the clean implementation path for a high-fidelity browser-backed reverse `wsh` terminal in Clawser.
 
 The goal is to let the Rust CLI open an interactive shell into a live browser tab without duplicating the shell stack, without weakening capability boundaries, and without regressing existing local terminal features.

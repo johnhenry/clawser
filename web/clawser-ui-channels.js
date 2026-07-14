@@ -14,7 +14,7 @@ import { TabWatcherPlugin, SITE_PROFILES } from './clawser-channel-tabwatch.js';
 const CHANNEL_FIELDS = {
   telegram:  [{ key: 'botToken', label: 'Bot Token', type: 'password' }, { key: 'chatId', label: 'Chat ID', type: 'text' }],
   discord:   [{ key: 'botToken', label: 'Bot Token', type: 'password' }, { key: 'guildId', label: 'Guild ID', type: 'text' }],
-  slack:     [{ key: 'botToken', label: 'Bot Token', type: 'password' }, { key: 'channel', label: 'Channel', type: 'text' }, { key: 'signingSecret', label: 'Signing Secret', type: 'password' }],
+  slack:     [{ key: 'botToken', label: 'Bot Token', type: 'password' }, { key: 'channel', label: 'Channel', type: 'text' }, { key: 'appToken', label: 'App Token (Socket Mode)', type: 'password' }, { key: 'signingSecret', label: 'Signing Secret (webhook only)', type: 'password' }],
   matrix:    [{ key: 'homeserverUrl', label: 'Homeserver URL', type: 'text' }, { key: 'accessToken', label: 'Access Token', type: 'password' }, { key: 'roomId', label: 'Room ID', type: 'text' }],
   email:     [{ key: 'imapHost', label: 'IMAP Host', type: 'text' }, { key: 'smtpHost', label: 'SMTP Host', type: 'text' }, { key: 'username', label: 'Username', type: 'text' }, { key: 'password', label: 'Password', type: 'password' }],
   irc:       [{ key: 'server', label: 'Server', type: 'text' }, { key: 'nick', label: 'Nick', type: 'text' }, { key: 'channels', label: 'Channels (comma-sep)', type: 'text' }],
@@ -367,6 +367,10 @@ export function renderTabWatcherSection() {
 /** Get active tab watchers (for testing/diagnostics). */
 export function getActiveWatchers() { return _activeWatchers; }
 
+// Hold the active channelManager subscription so successive panel
+// inits don't pile up listeners.
+let _channelSubUnsub = null;
+
 /**
  * Initialize the Channels panel event listeners.
  * Called from initPanelListeners.
@@ -374,4 +378,21 @@ export function getActiveWatchers() { return _activeWatchers; }
 export function initChannelPanelListeners() {
   $('channelNewBtn')?.addEventListener('click', () => showChannelForm(null));
   renderTabWatcherSection();
+
+  // Subscribe to channelManager mutations so out-of-panel writes
+  // (slash commands, scheduled tasks, MCP tools) re-render the list.
+  if (state.channelManager?.subscribe && !_channelSubUnsub) {
+    _channelSubUnsub = state.channelManager.subscribe(() => {
+      renderChannelPanel();
+      updateChannelBadge();
+    });
+  }
+}
+
+/**
+ * Tear down the channel-manager subscription. Idempotent. Called on
+ * workspace switch via `cleanupWorkspace`.
+ */
+export function uninstallChannelPanelListeners() {
+  if (_channelSubUnsub) { try { _channelSubUnsub(); } catch { /* ignore */ } _channelSubUnsub = null; }
 }

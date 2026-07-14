@@ -5,6 +5,7 @@
 // Agent tools: agent_undo, agent_undo_status
 
 import { BrowserTool } from './clawser-tools.js';
+import { silentCatch } from './clawser-silent-catch.mjs'
 
 // ── TurnCheckpoint ──────────────────────────────────────────────
 
@@ -150,7 +151,7 @@ export class UndoManager {
             cp.snapshot._removedMessages = removed;
             details.messagesRemoved = removed.length;
           }
-        } catch { /* ignore */ }
+        } catch (e) { silentCatch('clawser-undo', 'ignore', e) }
       }
 
       // 2. Revert memory operations (reverse order)
@@ -160,7 +161,7 @@ export class UndoManager {
           try {
             await this.#handlers.revertMemory(op);
             details.memoryOpsReverted++;
-          } catch { /* ignore */ }
+          } catch (e) { silentCatch('clawser-undo', 'ignore', e) }
         }
       }
 
@@ -186,7 +187,7 @@ export class UndoManager {
           try {
             await this.#handlers.revertGoal(op);
             details.goalOpsReverted++;
-          } catch { /* ignore */ }
+          } catch (e) { silentCatch('clawser-undo', 'ignore', e) }
         }
       }
 
@@ -204,6 +205,16 @@ export class UndoManager {
 
   /** Whether undo is possible. */
   get canUndo() { return this.#checkpoints.length > 0; }
+
+  /**
+   * File ops of the most recent undoable checkpoint (copies), for the
+   * undo UI's "view changes" diff preview.
+   * @returns {Array<object>}
+   */
+  latestFileOps() {
+    const cp = this.#checkpoints[this.#checkpoints.length - 1];
+    return cp ? cp.snapshot.fileOps.map(op => ({ ...op })) : [];
+  }
 
   /** Number of undoable turns. */
   get undoDepth() { return this.#checkpoints.length; }
@@ -295,9 +306,7 @@ export class UndoManager {
       if (cp.snapshot) {
         // Restore conversation history removed during undo
         if (cp.snapshot._removedMessages && this.#handlers.restoreHistory) {
-          try {
-            await this.#handlers.restoreHistory(cp.snapshot._removedMessages);
-          } catch { /* ignore */ }
+          try { await this.#handlers.restoreHistory(cp.snapshot._removedMessages); } catch (e) { silentCatch('clawser-undo', 'this', e) }
         }
         for (const op of cp.snapshot.memoryOps) {
           await this.#applyForward({ ...op, layer: 'memory' });

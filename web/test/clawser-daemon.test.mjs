@@ -1,5 +1,5 @@
 // Run with: node --import ./web/test/_setup-globals.mjs --test web/test/clawser-daemon.test.mjs
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 globalThis.BrowserTool = class { constructor() {} };
@@ -12,8 +12,8 @@ import {
   TabCoordinator,
   InputLockManager,
   AgentBusyIndicator,
+  /* CrossTabToolBridge — deleted 2026-05-06 (unused orphan) */
   WorkerProtocol,
-  CrossTabToolBridge,
   HeadlessRunner,
   AwaySummaryBuilder,
   NotificationCenter,
@@ -212,6 +212,47 @@ describe('TabCoordinator', () => {
     // After stop, only self remains (tabs map cleared, but activeTabs still shows self)
     assert.equal(coord.tabCount, 1);
   });
+
+  it('isLeader: only one of two coordinators wins, and it is the older one', async () => {
+    // Build a paired BroadcastChannel mock so two coordinators can talk.
+    const subA = []; const subB = [];
+    const chA = {
+      postMessage(msg) { for (const fn of subB) fn({ data: msg }); },
+      close() {}, set onmessage(fn) { subA.push(fn); },
+    };
+    const chB = {
+      postMessage(msg) { for (const fn of subA) fn({ data: msg }); },
+      close() {}, set onmessage(fn) { subB.push(fn); },
+    };
+    const oldCoord = new TabCoordinator({ channel: chA });
+    // start() runs a real setInterval heartbeat — both must be stop()'d
+    // even if an assertion below throws, or the interval outlives this
+    // test and blocks the process from exiting (same bug class as the
+    // AgentBusyIndicator keepalive fix above).
+    let newCoord;
+    try {
+      oldCoord.start();
+      // #joinedAt is captured as Date.now() at construction time (see
+      // clawser-daemon.js) with no artificial ordering guarantee — on a
+      // fast machine two back-to-back `new TabCoordinator()` calls can
+      // land in the same millisecond, in which case the tie-break
+      // (lexicographic tabId, which includes a random suffix) is
+      // genuinely non-deterministic and does NOT imply "older wins".
+      // A real delay (not a comment claiming one) is required for this
+      // test's "older coordinator wins" premise to hold. This was a
+      // real, reproducible flake (~50% failure rate) found while
+      // debugging an unrelated test-suite hang.
+      await new Promise(r => setTimeout(r, 5));
+      newCoord = new TabCoordinator({ channel: chB });
+      newCoord.start();
+      // Both should now have learned of each other via the swap.
+      assert.equal(oldCoord.isLeader, true, 'older coordinator wins');
+      assert.equal(newCoord.isLeader, false, 'newer coordinator does NOT also claim leader');
+    } finally {
+      oldCoord.stop();
+      newCoord?.stop();
+    }
+  });
 });
 
 // ── InputLockManager ────────────────────────────────────────────
@@ -268,6 +309,12 @@ describe('AgentBusyIndicator', () => {
     indicator = new AgentBusyIndicator({ channel: ch });
   });
 
+  afterEach(() => {
+    // setBusy(true) starts a keepalive setInterval — without this the
+    // interval outlives the test and blocks the process from exiting.
+    indicator.close();
+  });
+
   it('isBusy defaults to false', () => {
     assert.equal(indicator.isBusy, false);
   });
@@ -292,6 +339,75 @@ describe('AgentBusyIndicator', () => {
     assert.equal(s.reason, 'test');
     assert.ok(typeof s.since === 'number');
     assert.ok(s.since > 0);
+  });
+
+  it('subscribe receives remote-tab busy state via paired channel', () => {
+    // Build a paired BroadcastChannel mock so two indicators talk.
+    let aHandler = null;
+    let bHandler = null;
+    const chA = {
+      postMessage(msg) { if (bHandler) bHandler({ data: msg }); },
+      close() {}, set onmessage(fn) { aHandler = fn; },
+    };
+    const chB = {
+      postMessage(msg) { if (aHandler) aHandler({ data: msg }); },
+      close() {}, set onmessage(fn) { bHandler = fn; },
+    };
+    const a = new AgentBusyIndicator({ channel: chA });
+    const b = new AgentBusyIndicator({ channel: chB });
+    const events = [];
+    b.subscribe((e) => events.push(e));
+    a.setBusy(true, 'thinking');
+    assert.equal(events.length, 1);
+    assert.equal(events[0].busy, true);
+    assert.equal(events[0].reason, 'thinking');
+    assert.equal(events[0].tabId, a.tabId);
+    assert.equal(b.isAnyPeerBusy(), true);
+    a.setBusy(false);
+    assert.equal(events.length, 2);
+    assert.equal(events[1].busy, false);
+    assert.equal(b.isAnyPeerBusy(), false);
+    a.close();
+    b.close();
+  });
+
+  it('peerStates() returns a snapshot of remote tabs', () => {
+    let aHandler = null;
+    let bHandler = null;
+    const chA = {
+      postMessage(msg) { if (bHandler) bHandler({ data: msg }); },
+      close() {}, set onmessage(fn) { aHandler = fn; },
+    };
+    const chB = {
+      postMessage(msg) { if (aHandler) aHandler({ data: msg }); },
+      close() {}, set onmessage(fn) { bHandler = fn; },
+    };
+    const a = new AgentBusyIndicator({ channel: chA });
+    const b = new AgentBusyIndicator({ channel: chB });
+    a.setBusy(true, 'r1');
+    const peers = b.peerStates();
+    assert.equal(peers.length, 1);
+    assert.equal(peers[0].tabId, a.tabId);
+    assert.equal(peers[0].busy, true);
+    a.close();
+    b.close();
+  });
+
+  it('ignores echoes of own broadcasts (tabId match)', () => {
+    // BroadcastChannel doesn't deliver to sender, but the unit test
+    // can simulate an explicit echo and verify the guard.
+    let handler = null;
+    const ch = {
+      postMessage() {},
+      close() {},
+      set onmessage(fn) { handler = fn; },
+    };
+    const ind = new AgentBusyIndicator({ channel: ch });
+    let called = 0;
+    ind.subscribe(() => called++);
+    handler({ data: { type: 'agent_busy', tabId: ind.tabId, busy: true, reason: 'self', since: 1 } });
+    assert.equal(called, 0, 'self-message must be ignored');
+    ind.close();
   });
 });
 
@@ -330,41 +446,9 @@ describe('WorkerProtocol', () => {
   });
 });
 
-// ── CrossTabToolBridge ──────────────────────────────────────────
-
-describe('CrossTabToolBridge', () => {
-  let bridge;
-
-  beforeEach(() => {
-    const ch = { postMessage() {}, close() {} };
-    bridge = new CrossTabToolBridge({ channel: ch });
-  });
-
-  it('registerTool + listTools', () => {
-    bridge.registerTool('ping', async () => ({ success: true, output: 'pong' }));
-    assert.deepEqual(bridge.listTools(), ['ping']);
-  });
-
-  it('invoke returns result from registered tool', async () => {
-    bridge.registerTool('echo', async (args) => ({ success: true, output: args.msg }));
-    const result = await bridge.invoke('echo', { msg: 'hello' });
-    assert.equal(result.success, true);
-    assert.equal(result.output, 'hello');
-  });
-
-  it('invoke returns error for unknown tool', async () => {
-    const result = await bridge.invoke('nonexistent', {});
-    assert.equal(result.success, false);
-    assert.ok(result.error.includes('not found'));
-  });
-
-  it('unregisterTool removes', () => {
-    bridge.registerTool('temp', async () => ({ success: true, output: '' }));
-    assert.deepEqual(bridge.listTools(), ['temp']);
-    bridge.unregisterTool('temp');
-    assert.deepEqual(bridge.listTools(), []);
-  });
-});
+// CrossTabToolBridge tests removed 2026-05-06 — class was deleted as
+// an unused orphan with a half-implemented receive side. See the
+// note in clawser-daemon.js where the export used to live.
 
 // ── HeadlessRunner ──────────────────────────────────────────────
 
@@ -725,5 +809,80 @@ describe('DaemonResumeTool', () => {
     const result = await tool.execute();
     assert.equal(result.success, false);
     assert.ok(result.error.includes('Cannot resume'));
+  });
+});
+
+// ── AgentBusyIndicator keepalive (long-run pruning fix) ──────────
+
+describe('AgentBusyIndicator keepalive', () => {
+  // Tracked here (not closed inline at the end of each test body) so
+  // afterEach always closes every indicator a test created — even if an
+  // assertion throws first. An indicator left open leaks a live
+  // setInterval (keepalive and/or prune timer) that keeps the process
+  // alive forever; a thrown assertion must still report as a failed
+  // test, not hang the whole test run. This bit twice already: once in
+  // clawser-sprint19.test.mjs (inline-cleanup-after-assertions, same
+  // mistake), and here, where the peer-pruning test's timing assertions
+  // can legitimately fail under heavy concurrent test-runner load
+  // (many parallel `node --test` processes stretch out real setInterval
+  // timing), skipping the trailing a.close()/b.close() calls.
+  let created;
+
+  beforeEach(() => {
+    created = [];
+  });
+
+  afterEach(() => {
+    for (const indicator of created) indicator.close();
+  });
+
+  const pair = () => {
+    let aHandler = null, bHandler = null;
+    const chA = {
+      postMessage(msg) { if (bHandler) bHandler({ data: msg }); },
+      close() {}, set onmessage(fn) { aHandler = fn; },
+    };
+    const chB = {
+      postMessage(msg) { if (aHandler) aHandler({ data: msg }); },
+      close() {}, set onmessage(fn) { bHandler = fn; },
+    };
+    return [chA, chB];
+  };
+
+  function makeIndicator(opts) {
+    const indicator = new AgentBusyIndicator(opts);
+    created.push(indicator);
+    return indicator;
+  }
+
+  it('re-broadcasts while busy so long runs survive peer pruning', async () => {
+    const [chA, chB] = pair();
+    // staleMs=90 → prune interval ~500ms floor... keepalive floor is 500 too;
+    // use large-enough windows: staleMs=1500 → keepalive every 500ms,
+    // prune checks every 500ms. Busy run of ~1.2s must NOT be pruned.
+    const a = makeIndicator({ channel: chA, staleMs: 1500 });
+    const b = makeIndicator({ channel: chB, staleMs: 1500 });
+    const events = [];
+    b.subscribe((e) => events.push(e));
+
+    a.setBusy(true, 'long run');
+    await new Promise(r => setTimeout(r, 1200));
+
+    assert.equal(b.isAnyPeerBusy(), true, 'peer still busy after > 2 keepalive intervals');
+    assert.ok(!events.some(e => e.pruned), 'peer must not be pruned while keepalives flow');
+    // Keepalives are change-deduped: exactly one busy notification
+    assert.equal(events.filter(e => e.busy).length, 1);
+
+    a.setBusy(false);
+    assert.equal(b.isAnyPeerBusy(), false);
+  });
+
+  it('keepalive timer stops on setBusy(false) and close()', () => {
+    const sent = [];
+    const ch = { postMessage(m) { sent.push(m); }, close() {} };
+    const a = makeIndicator({ channel: ch, staleMs: 1500 });
+    a.setBusy(true, 'x');
+    a.setBusy(false);
+    assert.equal(sent.length, 2);
   });
 });

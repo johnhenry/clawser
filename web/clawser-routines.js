@@ -6,6 +6,7 @@
 // Agent tools: routine_create, routine_list, routine_delete, routine_run
 
 import { BrowserTool } from './clawser-tools.js';
+import { silentCatch } from './clawser-silent-catch.mjs'
 
 // ── Constants ───────────────────────────────────────────────────
 
@@ -55,11 +56,13 @@ export function createRoutine(opts = {}) {
     trigger: {
       type: opts.trigger?.type || TRIGGER_TYPES.CRON,
       cron: opts.trigger?.cron || null,
+      timezone: opts.trigger?.timezone || null,
       event: opts.trigger?.event || null,
       filter: opts.trigger?.filter || null,
       webhookPath: opts.trigger?.webhookPath || null,
       hmacSecret: opts.trigger?.hmacSecret || null,
     },
+    jitterMs: opts.jitterMs ?? 0,
     action: {
       type: opts.action?.type || ACTION_TYPES.PROMPT,
       prompt: opts.action?.prompt || null,
@@ -179,6 +182,18 @@ export class RoutineEngine {
   /** @type {boolean} */
   #running = false;
 
+  /** @type {number|null} Timestamp of last cron tick (for catch-up) */
+  #lastTickTime = null;
+
+  /** @type {boolean} Whether to catch up missed executions on start */
+  #catchUpMissed;
+
+  /** @type {number} Max catch-up window in ms (default 24h) */
+  #maxCatchUpMs;
+
+  /** @type {Map<string, object>} Per-routine health metrics */
+  #healthMetrics = new Map();
+
   /**
    * @param {object} [opts]
    * @param {Function} [opts.executeFn] - (routine, triggerEvent) => Promise<any>
@@ -186,6 +201,8 @@ export class RoutineEngine {
    * @param {Function} [opts.onLog] - (message) => void
    * @param {Function} [opts.onChange] - () => void — called after any routine CRUD mutation
    * @param {number} [opts.tickInterval=60000] - Cron check interval
+   * @param {boolean} [opts.catchUpMissed=true] - Execute missed jobs on start
+   * @param {number} [opts.maxCatchUpMs=86400000] - Max catch-up window (default 24h)
    */
   constructor(opts = {}) {
     this.#executeFn = opts.executeFn || null;
@@ -193,6 +210,8 @@ export class RoutineEngine {
     this.#onLog = opts.onLog || null;
     this.#onChange = opts.onChange || null;
     this.#tickInterval = opts.tickInterval || 60_000;
+    this.#catchUpMissed = opts.catchUpMissed !== false;
+    this.#maxCatchUpMs = opts.maxCatchUpMs ?? 86_400_000;
   }
 
   /** Whether engine is running. */
@@ -300,12 +319,21 @@ export class RoutineEngine {
 
   /**
    * Start the engine (cron ticker).
+   * If catchUpMissed is enabled and lastTickTime is set, catches up missed executions.
+   * @returns {Promise<Array>} Catch-up results (empty if none)
    */
-  start() {
-    if (this.#running) return;
+  async start() {
+    if (this.#running) return [];
     this.#running = true;
+
+    let catchUpResults = [];
+    if (this.#catchUpMissed && this.#lastTickTime) {
+      catchUpResults = await this.#catchUp();
+    }
+
     this.#cronTicker = setInterval(() => this.#tickCron(), this.#tickInterval);
     this.#log('Routine engine started');
+    return catchUpResults;
   }
 
   /**
@@ -403,34 +431,116 @@ export class RoutineEngine {
   async #tickCron(now) {
     const time = now || new Date();
     const results = [];
+
+    // Track tick time for catch-up
+    this.#lastTickTime = time.getTime ? time.getTime() : Date.now();
+
+    // Cron routines — each wrapped in its own try/catch for error isolation
     for (const routine of this.#routines.values()) {
       if (!routine.enabled) continue;
       if (routine.trigger.type !== TRIGGER_TYPES.CRON) continue;
       if (!routine.trigger.cron) continue;
 
-      if (this.#cronMatches(routine.trigger.cron, time)) {
-        const result = await this.#enqueue(routine, { type: 'cron.tick', time });
-        results.push({ routineId: routine.id, result });
+      try {
+        if (this.#cronMatchesTz(routine.trigger.cron, time, routine.trigger.timezone)) {
+          // Apply jitter: skip this tick and defer if jitter hasn't elapsed
+          if (routine.jitterMs > 0) {
+            const jitterKey = `${routine.id}:jitter`;
+            if (!routine._jitterTarget) {
+              routine._jitterTarget = time.getTime() + Math.floor(Math.random() * routine.jitterMs);
+            }
+            if (time.getTime() < routine._jitterTarget) continue;
+            routine._jitterTarget = null; // Reset for next match
+          }
+
+          const start = Date.now();
+          const result = await this.#enqueue(routine, { type: 'cron.tick', time });
+          this.#recordMetric(routine.id, result, Date.now() - start, time);
+          results.push({ routineId: routine.id, result });
+        }
+      } catch (err) {
+        this.#log(`Error ticking routine ${routine.id}: ${err.message}`);
+        this.#recordMetric(routine.id, 'error', 0, time, err.message);
+        results.push({ routineId: routine.id, result: 'error', error: err.message });
       }
     }
 
-    // Also tick agent-originated interval and once routines
+    // Interval and once routines — also with error isolation
     for (const routine of this.#routines.values()) {
       if (!routine.enabled) continue;
-      if (!routine.meta?.source) continue; // only meta-bearing routines
+      if (!routine.meta?.source) continue;
 
       const nowMs = time.getTime ? time.getTime() : Date.now();
 
-      if (routine.meta.scheduleType === 'once' && !routine.meta.fired && nowMs >= routine.meta.fireAt) {
-        routine.meta.fired = true;
-        const result = await this.#enqueue(routine, { type: 'once.fire', time });
-        results.push({ routineId: routine.id, result });
-      } else if (routine.meta.scheduleType === 'interval') {
-        const lastFired = routine.meta.lastFired || 0;
-        if (nowMs >= lastFired + routine.meta.intervalMs) {
-          routine.meta.lastFired = nowMs;
-          const result = await this.#enqueue(routine, { type: 'interval.fire', time });
+      try {
+        if (routine.meta.scheduleType === 'once' && !routine.meta.fired && nowMs >= routine.meta.fireAt) {
+          routine.meta.fired = true;
+          const start = Date.now();
+          const result = await this.#enqueue(routine, { type: 'once.fire', time });
+          this.#recordMetric(routine.id, result, Date.now() - start, time);
           results.push({ routineId: routine.id, result });
+        } else if (routine.meta.scheduleType === 'interval') {
+          const lastFired = routine.meta.lastFired || 0;
+          if (nowMs >= lastFired + routine.meta.intervalMs) {
+            routine.meta.lastFired = nowMs;
+            const start = Date.now();
+            const result = await this.#enqueue(routine, { type: 'interval.fire', time });
+            this.#recordMetric(routine.id, result, Date.now() - start, time);
+            results.push({ routineId: routine.id, result });
+          }
+        }
+      } catch (err) {
+        this.#log(`Error ticking routine ${routine.id}: ${err.message}`);
+        this.#recordMetric(routine.id, 'error', 0, time, err.message);
+        results.push({ routineId: routine.id, result: 'error', error: err.message });
+      }
+    }
+
+    return results;
+  }
+
+  // ── Missed Execution Catch-Up ──────────────────────────────
+
+  /**
+   * Check for missed cron executions between lastTickTime and now,
+   * and run them. Only fires once per missed minute (not per missed tick).
+   * @returns {Promise<Array>}
+   */
+  async #catchUp() {
+    const now = Date.now();
+    const since = this.#lastTickTime;
+    if (!since || since >= now) return [];
+
+    // Cap the catch-up window
+    const start = Math.max(since, now - this.#maxCatchUpMs);
+    const results = [];
+
+    for (const routine of this.#routines.values()) {
+      if (!routine.enabled) continue;
+      if (routine.trigger.type !== TRIGGER_TYPES.CRON) continue;
+      if (!routine.trigger.cron) continue;
+
+      // Walk minute-by-minute from start to now and check for matches
+      let missed = false;
+      const stepMs = 60_000;
+      for (let t = start; t < now; t += stepMs) {
+        const d = new Date(t);
+        if (this.#cronMatchesTz(routine.trigger.cron, d, routine.trigger.timezone)) {
+          missed = true;
+          break; // Only catch up once per routine, not per missed minute
+        }
+      }
+
+      if (missed) {
+        try {
+          this.#log(`Catch-up: executing missed routine ${routine.id} (${routine.name})`);
+          const startMs = Date.now();
+          const result = await this.#enqueue(routine, { type: 'cron.catchup', time: new Date() });
+          this.#recordMetric(routine.id, result, Date.now() - startMs, new Date());
+          results.push({ routineId: routine.id, result, catchUp: true });
+        } catch (err) {
+          this.#log(`Catch-up error for ${routine.id}: ${err.message}`);
+          results.push({ routineId: routine.id, result: 'error', error: err.message, catchUp: true });
         }
       }
     }
@@ -439,28 +549,93 @@ export class RoutineEngine {
   }
 
   /**
-   * Simple cron field matching (minute hour dom month dow).
-   * Supports: *, specific values, ranges (1-5), step (star/n).
+   * Get or set the last tick time (for persistence across reloads).
+   * @param {number} [ts] - If provided, sets lastTickTime
+   * @returns {number|null}
    */
-  #cronMatches(expr, date) {
+  get lastTickTime() { return this.#lastTickTime; }
+  set lastTickTime(ts) { this.#lastTickTime = ts; }
+
+  // ── Timezone-Aware Cron Matching ──────────────────────────
+
+  /**
+   * Cron field matching with optional timezone support.
+   * @param {string} expr - 5-field cron expression
+   * @param {Date} date
+   * @param {string|null} [timezone] - IANA timezone (e.g. 'America/New_York')
+   * @returns {boolean}
+   */
+  #cronMatchesTz(expr, date, timezone) {
     const parts = expr.trim().split(/\s+/);
     if (parts.length < 5) return false;
 
-    const fields = [
-      date.getMinutes(),
-      date.getHours(),
-      date.getDate(),
-      date.getMonth() + 1,
-      date.getDay(),
-    ];
+    let minute, hour, day, month, dow;
 
+    if (timezone) {
+      const resolved = RoutineEngine.#resolveInTimezone(date, timezone);
+      minute = resolved.minute;
+      hour = resolved.hour;
+      day = resolved.day;
+      month = resolved.month;
+      dow = resolved.dow;
+    } else {
+      minute = date.getMinutes();
+      hour = date.getHours();
+      day = date.getDate();
+      month = date.getMonth() + 1;
+      dow = date.getDay();
+    }
+
+    const fields = [minute, hour, day, month, dow];
     for (let i = 0; i < 5; i++) {
-      if (!this.#fieldMatches(parts[i], fields[i])) return false;
+      if (!RoutineEngine.#fieldMatches(parts[i], fields[i])) return false;
     }
     return true;
   }
 
-  #fieldMatches(pattern, value) {
+  /**
+   * Resolve date components in a specific IANA timezone.
+   * @param {Date} date
+   * @param {string} timezone
+   * @returns {{ minute: number, hour: number, day: number, month: number, dow: number }}
+   */
+  static #resolveInTimezone(date, timezone) {
+    // Use Intl.DateTimeFormat to extract parts in the target timezone
+    const fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      weekday: 'short',
+      hour12: false,
+    });
+    const parts = {};
+    for (const { type, value } of fmt.formatToParts(date)) {
+      parts[type] = value;
+    }
+    const dowMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+    return {
+      minute: parseInt(parts.minute, 10),
+      hour: parseInt(parts.hour, 10) % 24, // Intl can return 24 for midnight
+      day: parseInt(parts.day, 10),
+      month: parseInt(parts.month, 10),
+      dow: dowMap[parts.weekday] ?? 0,
+    };
+  }
+
+  /**
+   * Expose timezone resolution for testing.
+   * @param {Date} date
+   * @param {string} timezone
+   * @returns {{ minute: number, hour: number, day: number, month: number, dow: number }}
+   */
+  static resolveInTimezone(date, timezone) {
+    return RoutineEngine.#resolveInTimezone(date, timezone);
+  }
+
+  static #fieldMatches(pattern, value) {
     if (pattern === '*') return true;
 
     // Step: */n
@@ -481,6 +656,77 @@ export class RoutineEngine {
       }
     }
     return false;
+  }
+
+  // Keep instance-level alias for backward compat within this class
+  #cronMatches(expr, date) {
+    return this.#cronMatchesTz(expr, date, null);
+  }
+
+  // ── Health Metrics ──────────────────────────────────────────
+
+  /**
+   * Record a metric for a routine execution.
+   * @param {string} routineId
+   * @param {string} result
+   * @param {number} durationMs
+   * @param {Date} time
+   * @param {string} [error]
+   */
+  #recordMetric(routineId, result, durationMs, time, error) {
+    let m = this.#healthMetrics.get(routineId);
+    if (!m) {
+      m = { successCount: 0, failureCount: 0, errorCount: 0, totalDurationMs: 0, lastRunTime: null, lastResult: null, lastError: null };
+      this.#healthMetrics.set(routineId, m);
+    }
+    if (result === 'success') m.successCount++;
+    else if (result === 'failure') m.failureCount++;
+    else if (result === 'error') m.errorCount++;
+    m.totalDurationMs += durationMs;
+    m.lastRunTime = time.getTime ? time.getTime() : time;
+    m.lastResult = result;
+    if (error) m.lastError = error;
+  }
+
+  /**
+   * Get health metrics for a specific routine.
+   * @param {string} routineId
+   * @returns {object|null}
+   */
+  getRoutineHealth(routineId) {
+    const routine = this.#routines.get(routineId);
+    if (!routine) return null;
+    const m = this.#healthMetrics.get(routineId) || {
+      successCount: 0, failureCount: 0, errorCount: 0,
+      totalDurationMs: 0, lastRunTime: null, lastResult: null, lastError: null,
+    };
+    const totalRuns = m.successCount + m.failureCount + m.errorCount;
+    return {
+      routineId,
+      routineName: routine.name,
+      enabled: routine.enabled,
+      successCount: m.successCount,
+      failureCount: m.failureCount,
+      errorCount: m.errorCount,
+      totalRuns,
+      avgDurationMs: totalRuns > 0 ? Math.round(m.totalDurationMs / totalRuns) : 0,
+      lastRunTime: m.lastRunTime,
+      lastResult: m.lastResult,
+      lastError: m.lastError,
+      nextFireTime: RoutineEngine.nextFireTime(routine),
+    };
+  }
+
+  /**
+   * Get health metrics for all routines.
+   * @returns {object[]}
+   */
+  getAllHealth() {
+    const results = [];
+    for (const id of this.#routines.keys()) {
+      results.push(this.getRoutineHealth(id));
+    }
+    return results;
   }
 
   // ── Execution with Guardrails ─────────────────────────
@@ -608,22 +854,45 @@ export class RoutineEngine {
   }
 
   /**
-   * Serialize all routines for persistence.
-   * @returns {object[]}
+   * Serialize all routines and engine state for persistence.
+   * @returns {{ routines: object[], lastTickTime: number|null, healthMetrics: object }}
    */
   toJSON() {
-    return this.listRoutines();
+    const healthObj = {};
+    for (const [id, m] of this.#healthMetrics) {
+      healthObj[id] = { ...m };
+    }
+    return {
+      routines: this.listRoutines(),
+      lastTickTime: this.#lastTickTime,
+      healthMetrics: healthObj,
+    };
   }
 
   /**
    * Load routines from serialized data.
-   * @param {object[]} data
+   * Accepts both legacy array format and new object format.
+   * @param {object[]|object} data
    */
   fromJSON(data) {
     this.#routines.clear();
-    for (const r of data) {
+    this.#healthMetrics.clear();
+
+    // Support both legacy array and new object format
+    const routines = Array.isArray(data) ? data : (data.routines || []);
+    for (const r of routines) {
       this.#routines.set(r.id, r);
     }
+
+    if (!Array.isArray(data)) {
+      if (data.lastTickTime) this.#lastTickTime = data.lastTickTime;
+      if (data.healthMetrics) {
+        for (const [id, m] of Object.entries(data.healthMetrics)) {
+          this.#healthMetrics.set(id, { ...m });
+        }
+      }
+    }
+
     this.#emitChange();
   }
 
@@ -653,7 +922,7 @@ export class RoutineEngine {
 
   #emitChange() {
     if (this.#onChange) {
-      try { this.#onChange(); } catch { /* best-effort */ }
+      try { this.#onChange(); } catch (e) { silentCatch('clawser-routines', 'this', e) }
     }
   }
 }

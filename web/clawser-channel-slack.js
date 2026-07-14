@@ -1,8 +1,16 @@
+import { silentCatch } from './clawser-silent-catch.mjs'
 // clawser-channel-slack.js — Slack Channel Plugin
 //
-// Slack Events API webhook + Web API fetch for messaging.
+// Web API fetch for outbound messaging (chat.postMessage).
+// Inbound messages arrive one of two ways:
+//   - Socket Mode (self-contained): when `appToken` (xapp-...) is configured,
+//     the plugin opens `apps.connections.open` and connects a WebSocket
+//     directly to Slack — no public HTTPS endpoint needed, same pattern as
+//     the Discord Gateway plugin.
+//   - Events API webhook: handleEvent(payload) can still be called directly
+//     by an external HTTP server/relay that forwards Slack's webhook POSTs.
 // Normalizes inbound messages via createInboundMessage().
-// Config: botToken, signingSecret, channel.
+// Config: botToken, signingSecret, channel, appToken.
 
 // ── Constants ────────────────────────────────────────────────
 
@@ -11,8 +19,8 @@ const SLACK_API = 'https://slack.com/api';
 // ── SlackPlugin ──────────────────────────────────────────────
 
 /**
- * Slack channel plugin using Events API (webhook) + Web API (REST).
- * Receives inbound messages via handleEvent() (webhook endpoint).
+ * Slack channel plugin using Socket Mode (WebSocket) or Events API (webhook)
+ * for inbound, and Web API (REST) for outbound.
  * Sends messages via Slack Web API chat.postMessage.
  */
 export class SlackPlugin {
@@ -25,12 +33,21 @@ export class SlackPlugin {
   /** @type {Function|null} */
   _callback = null;
 
+  /** @type {object|null} Socket Mode WebSocket connection */
+  #ws = null;
+
+  /** @type {number} Reconnect attempt counter */
+  #reconnectAttempts = 0;
+
+  /** @type {number} Max reconnect attempts before giving up */
+  #maxReconnectAttempts = 10;
+
   /**
    * @param {object} opts
    * @param {string} opts.botToken — Slack bot token (xoxb-...)
    * @param {string} opts.signingSecret — Slack signing secret for webhook verification
    * @param {string} opts.channel — Default channel ID for sending
-   * @param {string} [opts.appToken] — Slack app-level token for Socket Mode
+   * @param {string} [opts.appToken] — Slack app-level token (xapp-...) enabling Socket Mode
    */
   constructor(opts = {}) {
     this.config = {
@@ -74,12 +91,17 @@ export class SlackPlugin {
 
   /**
    * Start the Slack plugin.
-   * In webhook mode, this just marks the plugin as active.
-   * Messages arrive via handleEvent() from an external HTTP server.
+   * When `appToken` is configured, opens a Socket Mode WebSocket connection
+   * directly to Slack (self-contained, no relay needed). Otherwise runs in
+   * webhook-only mode — messages arrive via handleEvent() from an external
+   * HTTP server/relay.
    */
   start() {
     if (this.running) return;
     this.running = true;
+    if (this.config.appToken) {
+      this._socketModePromise = this.#connectSocketMode();
+    }
   }
 
   /**
@@ -88,6 +110,88 @@ export class SlackPlugin {
   stop() {
     if (!this.running) return;
     this.running = false;
+
+    if (this.#ws) {
+      try { this.#ws.close(); } catch (e) { silentCatch('clawser-channel-slack', 'this', e) }
+      this.#ws = null;
+    }
+  }
+
+  // ── Socket Mode ──────────────────────────────────────────
+
+  /**
+   * Open a Socket Mode connection: request a WebSocket URL via
+   * apps.connections.open, then connect to it.
+   */
+  async #connectSocketMode() {
+    if (!this.running) return;
+
+    try {
+      const res = await fetch(`${SLACK_API}/apps.connections.open`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${this.config.appToken}` },
+      });
+      const data = await res.json();
+      if (!this.running) return;
+      if (!data.ok || !data.url) throw new Error(data.error || 'apps.connections.open failed');
+
+      this.#ws = new WebSocket(data.url);
+
+      this.#ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(typeof event.data === 'string' ? event.data : event);
+          this.#handleSocketMessage(msg);
+        } catch { /* parse error */ }
+      };
+
+      this.#ws.onopen = () => {
+        this.#reconnectAttempts = 0;
+      };
+
+      this.#ws.onclose = () => {
+        if (this.running && this.#reconnectAttempts < this.#maxReconnectAttempts) {
+          const delay = Math.min(1000 * Math.pow(1.5, this.#reconnectAttempts), 60000);
+          this.#reconnectAttempts++;
+          setTimeout(() => this.#connectSocketMode(), delay);
+        }
+      };
+
+      this.#ws.onerror = () => { /* handled by onclose */ };
+    } catch {
+      if (this.running && this.#reconnectAttempts < this.#maxReconnectAttempts) {
+        const delay = Math.min(1000 * Math.pow(1.5, this.#reconnectAttempts), 60000);
+        this.#reconnectAttempts++;
+        setTimeout(() => this.#connectSocketMode(), delay);
+      }
+    }
+  }
+
+  /**
+   * Handle a Socket Mode envelope. Acknowledges any envelope carrying an
+   * `envelope_id` (required within 3s or Slack will retry/disconnect).
+   * @param {object} data — Socket Mode envelope {type, envelope_id, payload}
+   */
+  #handleSocketMessage(data) {
+    switch (data.type) {
+      case 'events_api':
+        if (data.payload) this.handleEvent(data.payload);
+        break;
+
+      case 'disconnect':
+        // Slack is closing this connection (refresh/warning) — reconnect.
+        if (this.#ws) {
+          try { this.#ws.close(); } catch (e) { silentCatch('clawser-channel-slack', 'this', e) }
+        }
+        return;
+
+      case 'hello':
+      default:
+        break;
+    }
+
+    if (data.envelope_id && this.#ws && this.#ws.readyState === 1) {
+      this.#ws.send(JSON.stringify({ envelope_id: data.envelope_id }));
+    }
   }
 
   // ── Inbound handling ────────────────────────────────────

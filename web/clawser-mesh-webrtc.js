@@ -13,6 +13,7 @@
  */
 
 import { MeshTransport } from './clawser-mesh-transport.js'
+import { silentCatch } from './clawser-silent-catch.mjs'
 
 // ---------------------------------------------------------------------------
 // Feature detection
@@ -34,6 +35,22 @@ export function supportsWebRTC() {
 const DEFAULT_ICE_SERVERS = Object.freeze([
   { urls: 'stun:stun.l.google.com:19302' },
 ])
+
+/**
+ * Merge user-configured ICE servers (typically TURN, for NAT traversal
+ * when direct/STUN connectivity fails) with the STUN defaults. Silently
+ * ignores malformed entries rather than throwing, since this is usually
+ * fed by user-editable settings.
+ *
+ * @param {RTCIceServer[]} [userServers] - e.g. [{urls: 'turn:relay.example.com', username, credential}]
+ * @param {RTCIceServer[]} [defaults=DEFAULT_ICE_SERVERS]
+ * @returns {RTCIceServer[]}
+ */
+export function mergeIceServers(userServers, defaults = DEFAULT_ICE_SERVERS) {
+  const valid = (Array.isArray(userServers) ? userServers : [])
+    .filter(s => s && typeof s === 'object' && typeof s.urls === 'string' && s.urls.length > 0)
+  return [...defaults, ...valid]
+}
 
 // ---------------------------------------------------------------------------
 // WebRTCPeerConnection
@@ -61,6 +78,7 @@ export class WebRTCPeerConnection {
   #messageCbs = []
   #closeCbs = []
   #errorCbs = []
+  #stateChangeCbs = []
   #stats = { bytesSent: 0, bytesReceived: 0, messagesIn: 0, messagesOut: 0 }
 
   /**
@@ -121,7 +139,7 @@ export class WebRTCPeerConnection {
 
     const offer = await this.#pc.createOffer()
     await this.#pc.setLocalDescription(offer)
-    this.#state = 'connecting'
+    this.#setState('connecting')
     this.#log(`Created offer for ${this.#remotePodId}`)
     return { type: 'offer', sdp: offer.sdp }
   }
@@ -150,7 +168,7 @@ export class WebRTCPeerConnection {
     await this.#pc.setRemoteDescription({ type: 'offer', sdp: offer.sdp })
     const answer = await this.#pc.createAnswer()
     await this.#pc.setLocalDescription(answer)
-    this.#state = 'connecting'
+    this.#setState('connecting')
     this.#log(`Created answer for ${this.#remotePodId}`)
     return { type: 'answer', sdp: answer.sdp }
   }
@@ -214,6 +232,16 @@ export class WebRTCPeerConnection {
   onError(cb) { this.#errorCbs.push(cb) }
 
   /**
+   * Register a callback for every connection state transition
+   * (new/connecting/connected/closed). Used by WebRTCMeshManager's
+   * reconnect-backoff logic to detect recovery, and by the mesh health
+   * dashboard to track connectivity.
+   *
+   * @param {Function} cb - Called with (state: string)
+   */
+  onStateChange(cb) { this.#stateChangeCbs.push(cb) }
+
+  /**
    * Send data over the DataChannel.
    * Objects are JSON-serialized automatically.
    *
@@ -231,17 +259,82 @@ export class WebRTCPeerConnection {
   }
 
   /**
+   * Attempt to recover a failed/disconnected connection via ICE restart.
+   * Only valid once an underlying RTCPeerConnection exists (i.e. after
+   * createOffer() or handleOffer() has run at least once) — generates a
+   * fresh offer with `iceRestart: true`.
+   *
+   * ICE restart still requires a full signaling round-trip: the caller
+   * must send the returned offer through the same external signaling
+   * channel used originally, and route the answer back via
+   * handleAnswer() as usual. This class doesn't own signaling — see
+   * WebRTCMeshManager.onReconnectOffer() for the orchestrated version.
+   *
+   * @returns {Promise<{type: 'offer', sdp: string}>}
+   * @throws {Error} If there's no underlying connection yet, or it's closed
+   */
+  async reconnect() {
+    this.#ensureNotClosed()
+    if (!this.#pc) throw new Error('Cannot reconnect: no underlying connection — call createOffer() first')
+    this.#setState('connecting')
+    const offer = await this.#pc.createOffer({ iceRestart: true })
+    await this.#pc.setLocalDescription(offer)
+    this.#log(`ICE restart offer created for ${this.#remotePodId}`)
+    return { type: 'offer', sdp: offer.sdp }
+  }
+
+  /**
+   * Query real-time connection health via `RTCPeerConnection.getStats()`.
+   * Data channels don't expose a standard `packetsLost` counter the way
+   * RTP media tracks do (there's no media here), so `packetLossRatio` is
+   * an approximation derived from the nominated candidate pair's STUN
+   * connectivity-check retransmission ratio — a reasonable proxy for
+   * path quality, not an exact application-level loss count.
+   *
+   * @returns {Promise<{remotePodId: string, state: string, bytesSent: number,
+   *   bytesReceived: number, messagesSent: number, messagesReceived: number,
+   *   roundTripTime: number|null, packetLossRatio: number}>}
+   * @throws {Error} If there's no underlying connection yet.
+   */
+  async getConnectionStats() {
+    if (!this.#pc) throw new Error('Cannot get stats: no peer connection — call createOffer() first')
+    const report = await this.#pc.getStats()
+    let bytesSent = 0, bytesReceived = 0, messagesSent = 0, messagesReceived = 0
+    let roundTripTime = null, requestsSent = 0, responsesReceived = 0
+    for (const stat of report.values()) {
+      if (stat.type === 'data-channel') {
+        bytesSent += stat.bytesSent || 0
+        bytesReceived += stat.bytesReceived || 0
+        messagesSent += stat.messagesSent || 0
+        messagesReceived += stat.messagesReceived || 0
+      } else if (stat.type === 'candidate-pair' && stat.nominated) {
+        if (typeof stat.currentRoundTripTime === 'number') roundTripTime = stat.currentRoundTripTime
+        requestsSent += stat.requestsSent || 0
+        responsesReceived += stat.responsesReceived || 0
+      }
+    }
+    const packetLossRatio = requestsSent > 0 ? Math.max(0, 1 - responsesReceived / requestsSent) : 0
+    return {
+      remotePodId: this.#remotePodId,
+      state: this.#state,
+      bytesSent, bytesReceived, messagesSent, messagesReceived,
+      roundTripTime,
+      packetLossRatio,
+    }
+  }
+
+  /**
    * Close the connection and clean up all resources.
    */
   close() {
     if (this.#state === 'closed') return
-    this.#state = 'closed'
+    this.#setState('closed')
     if (this.#dataChannel) {
-      try { this.#dataChannel.close() } catch { /* ignore */ }
+      try { this.#dataChannel.close() } catch (e) { silentCatch('clawser-mesh-webrtc', 'this', e) }
       this.#dataChannel = null
     }
     if (this.#pc) {
-      try { this.#pc.close() } catch { /* ignore */ }
+      try { this.#pc.close() } catch (e) { silentCatch('clawser-mesh-webrtc', 'this', e) }
       this.#pc = null
     }
     this.#fireClose()
@@ -256,11 +349,19 @@ export class WebRTCPeerConnection {
     }
   }
 
+  #setState(next) {
+    if (this.#state === next) return
+    this.#state = next
+    for (const cb of this.#stateChangeCbs) {
+      try { cb(next) } catch (e) { silentCatch('clawser-mesh-webrtc', 'swallow', e) }
+    }
+  }
+
   #setupIceHandling() {
     this.#pc.onicecandidate = (event) => {
       if (event.candidate) {
         for (const cb of this.#iceCandidateCbs) {
-          try { cb(event.candidate) } catch { /* swallow */ }
+          try { cb(event.candidate) } catch (e) { silentCatch('clawser-mesh-webrtc', 'swallow', e) }
         }
       }
     }
@@ -277,7 +378,7 @@ export class WebRTCPeerConnection {
 
   #setupDataChannel(dc) {
     dc.onopen = () => {
-      this.#state = 'connected'
+      this.#setState('connected')
       this.#log(`DataChannel open with ${this.#remotePodId}`)
     }
     dc.onmessage = (event) => {
@@ -287,19 +388,19 @@ export class WebRTCPeerConnection {
       let parsed = event.data
       try { parsed = JSON.parse(event.data) } catch { /* keep as string */ }
       for (const cb of this.#messageCbs) {
-        try { cb(parsed) } catch { /* swallow */ }
+        try { cb(parsed) } catch (e) { silentCatch('clawser-mesh-webrtc', 'swallow', e) }
       }
     }
     dc.onclose = () => {
       if (this.#state !== 'closed') {
-        this.#state = 'closed'
+        this.#setState('closed')
         this.#fireClose()
       }
     }
     dc.onerror = (event) => {
       this.#fireError(event?.error || new Error('DataChannel error'))
       if (this.#state !== 'closed') {
-        this.#state = 'closed'
+        this.#setState('closed')
         this.#fireClose()
       }
     }
@@ -307,13 +408,13 @@ export class WebRTCPeerConnection {
 
   #fireClose() {
     for (const cb of this.#closeCbs) {
-      try { cb() } catch { /* swallow */ }
+      try { cb() } catch (e) { silentCatch('clawser-mesh-webrtc', 'swallow', e) }
     }
   }
 
   #fireError(err) {
     for (const cb of this.#errorCbs) {
-      try { cb(err) } catch { /* swallow */ }
+      try { cb(err) } catch (e) { silentCatch('clawser-mesh-webrtc', 'swallow', e) }
     }
   }
 
@@ -336,18 +437,28 @@ export class WebRTCMeshManager {
   #connections = new Map()   // remotePodId -> WebRTCPeerConnection
   #onLog
   #messageCbs = []
+  #reconnectOfferCbs = []
+  #reconnectAttempts = new Map()  // remotePodId -> count
+  #reconnectTimers = new Map()    // remotePodId -> timer handle
+  #maxReconnectAttempts
+  #reconnectBaseDelayMs
+  #lastStats = []
 
   /**
    * @param {object} opts
    * @param {string} opts.localPodId
    * @param {RTCIceServer[]} [opts.iceServers]
    * @param {Function} [opts.onLog]
+   * @param {number} [opts.maxReconnectAttempts=5] - Give up auto-reconnecting after this many failures
+   * @param {number} [opts.reconnectBaseDelayMs=1000] - Backoff base; doubles each attempt
    */
-  constructor({ localPodId, iceServers, onLog } = {}) {
+  constructor({ localPodId, iceServers, onLog, maxReconnectAttempts = 5, reconnectBaseDelayMs = 1000 } = {}) {
     if (!localPodId) throw new Error('localPodId is required')
     this.#localPodId = localPodId
     this.#iceServers = iceServers || [...DEFAULT_ICE_SERVERS]
     this.#onLog = onLog || null
+    this.#maxReconnectAttempts = maxReconnectAttempts
+    this.#reconnectBaseDelayMs = reconnectBaseDelayMs
   }
 
   /** Local pod identifier. */
@@ -362,6 +473,16 @@ export class WebRTCMeshManager {
    * @param {Function} cb - Called with (data, remotePodId)
    */
   onMessage(cb) { this.#messageCbs.push(cb) }
+
+  /**
+   * Register a callback fired with a fresh ICE-restart offer whenever the
+   * manager auto-retries a failed connection. The caller must forward
+   * this offer through the same external signaling channel used for the
+   * original connection.
+   *
+   * @param {Function} cb - Called with (offer: {type, sdp}, remotePodId: string)
+   */
+  onReconnectOffer(cb) { this.#reconnectOfferCbs.push(cb) }
 
   /**
    * Create or return an existing WebRTCPeerConnection for a remote pod.
@@ -383,15 +504,70 @@ export class WebRTCMeshManager {
     // Forward messages to manager-level listeners
     conn.onMessage((data) => {
       for (const cb of this.#messageCbs) {
-        try { cb(data, remotePodId) } catch { /* swallow */ }
+        try { cb(data, remotePodId) } catch (e) { silentCatch('clawser-mesh-webrtc', 'swallow', e) }
       }
     })
     // Auto-remove on close
     conn.onClose(() => {
       this.#connections.delete(remotePodId)
+      this.#clearReconnectState(remotePodId)
     })
+    // Reset backoff once the connection actually recovers
+    conn.onStateChange((state) => {
+      if (state === 'connected') this.#clearReconnectState(remotePodId)
+    })
+    // Auto-retry with exponential backoff on failure/disconnect
+    conn.onError(() => this.#scheduleReconnect(remotePodId, conn))
     this.#connections.set(remotePodId, conn)
     return conn
+  }
+
+  /**
+   * Manually trigger reconnection for a peer (bypasses backoff).
+   * @param {string} remotePodId
+   * @returns {Promise<{type: 'offer', sdp: string}|null>} null if no connection exists
+   */
+  async reconnectPeer(remotePodId) {
+    const conn = this.#connections.get(remotePodId)
+    if (!conn) return null
+    const offer = await conn.reconnect()
+    this.#notifyReconnectOffer(offer, remotePodId)
+    return offer
+  }
+
+  #clearReconnectState(remotePodId) {
+    this.#reconnectAttempts.delete(remotePodId)
+    const timer = this.#reconnectTimers.get(remotePodId)
+    if (timer) {
+      clearTimeout(timer)
+      this.#reconnectTimers.delete(remotePodId)
+    }
+  }
+
+  #notifyReconnectOffer(offer, remotePodId) {
+    for (const cb of this.#reconnectOfferCbs) {
+      try { cb(offer, remotePodId) } catch (e) { silentCatch('clawser-mesh-webrtc', 'swallow', e) }
+    }
+  }
+
+  #scheduleReconnect(remotePodId, conn) {
+    if (this.#reconnectTimers.has(remotePodId)) return // already scheduled
+    const attempts = this.#reconnectAttempts.get(remotePodId) || 0
+    if (attempts >= this.#maxReconnectAttempts) {
+      if (this.#onLog) this.#onLog(`Giving up reconnecting to ${remotePodId} after ${attempts} attempts`)
+      return
+    }
+    const delay = this.#reconnectBaseDelayMs * (2 ** attempts)
+    this.#reconnectAttempts.set(remotePodId, attempts + 1)
+    const timer = setTimeout(async () => {
+      this.#reconnectTimers.delete(remotePodId)
+      if (!this.#connections.has(remotePodId)) return // closed/removed meanwhile
+      try {
+        const offer = await conn.reconnect()
+        this.#notifyReconnectOffer(offer, remotePodId)
+      } catch (e) { silentCatch('clawser-mesh-webrtc', 'reconnect-attempt', e) }
+    }, delay)
+    this.#reconnectTimers.set(remotePodId, timer)
   }
 
   /**
@@ -425,6 +601,35 @@ export class WebRTCMeshManager {
       state: conn.state,
     }))
   }
+
+  /**
+   * Query `getConnectionStats()` on every tracked connection. A single
+   * connection's stats query failing (e.g. mid-teardown) doesn't abort
+   * the rest — its entry carries `error` instead. Result is cached on
+   * `lastStats` for synchronous readers (e.g. MeshInspector.snapshot(),
+   * which can't await this method).
+   *
+   * @returns {Promise<Array<object>>}
+   */
+  async getAllConnectionStats() {
+    const results = []
+    for (const [remotePodId, conn] of this.#connections.entries()) {
+      try {
+        results.push(await conn.getConnectionStats())
+      } catch (err) {
+        results.push({ remotePodId, state: conn.state, error: err?.message || String(err) })
+      }
+    }
+    this.#lastStats = results
+    return results
+  }
+
+  /**
+   * The result of the most recent `getAllConnectionStats()` call, read
+   * synchronously. Empty until the first call.
+   * @returns {Array<object>}
+   */
+  get lastStats() { return this.#lastStats }
 
   /**
    * Broadcast data to all connected peers.
@@ -464,7 +669,7 @@ export class WebRTCMeshManager {
    */
   closeAll() {
     for (const conn of this.#connections.values()) {
-      try { conn.close() } catch { /* ignore */ }
+      try { conn.close() } catch (e) { silentCatch('clawser-mesh-webrtc', 'conn.close', e) }
     }
     this.#connections.clear()
   }

@@ -6,6 +6,7 @@
  */
 import { $, state } from './clawser-state.js';
 import { getActiveWorkspaceId } from './clawser-workspaces.js';
+import { getWorkspaceDir } from './clawser-opfs.js';
 import { SwitchAgentTool, ConsultAgentTool } from './clawser-tools.js';
 import { registerAgentTools, AskUserQuestionTool } from './clawser-tools.js';
 import { ShellTool } from './clawser-shell.js';
@@ -50,9 +51,10 @@ import { CalendarAwarenessTool, CalendarFreeBusyTool, CalendarQuickAddTool } fro
 import { EmailDraftTool, EmailSummarizeTool, EmailTriageTool } from './clawser-integration-email.js';
 import { SlackMonitorTool, SlackDraftResponseTool } from './clawser-integration-slack.js';
 
-// Phase 9: CORS fetch proxy
-import { ExtCorsFetchTool, setCorsFetchClient } from './clawser-cors-fetch.js';
+// Phase 9: CORS fetch proxy + Block 2: WSH bridge replacement
+import { ExtCorsFetchTool, setCorsFetchClient, setCorsFetchWshProvider } from './clawser-cors-fetch.js';
 import { getExtensionClient } from './clawser-extension-tools.js';
+import { getWshConnections } from './clawser-wsh-tools.js';
 
 // Phase 5: Browser infrastructure
 import { FsObserver } from './clawser-fs-observer.js';
@@ -242,8 +244,7 @@ export async function registerAllTools({ activeWsId, configureServerRuntimeResol
     try { globalAgentDir = await opfsRoot.getDirectoryHandle('clawser_agents', { create: true }); } catch { globalAgentDir = null; }
     let wsAgentDir;
     try {
-      const wsBase = await opfsRoot.getDirectoryHandle('clawser_workspaces', { create: true });
-      const wsHandle = await wsBase.getDirectoryHandle(activeWsId, { create: true });
+      const wsHandle = await getWorkspaceDir(activeWsId, { create: true });
       wsAgentDir = await wsHandle.getDirectoryHandle('.agents', { create: true });
     } catch { wsAgentDir = null; }
     state.agentStorage = new AgentStorage({ globalDir: globalAgentDir, wsDir: wsAgentDir, wsId: activeWsId });
@@ -252,12 +253,18 @@ export async function registerAllTools({ activeWsId, configureServerRuntimeResol
     // Seed built-in accounts (echo, chrome-ai) and migrate unlinked agents
     try {
       const { seedBuiltinAccounts, loadAccounts } = await import('./clawser-accounts.js');
-      const { migrateAgentAccounts } = await import('./clawser-agent-storage.js');
+      const { migrateAgentAccounts, migrateAllToProviderConfig } = await import('./clawser-agent-storage.js');
       seedBuiltinAccounts();
       if (!localStorage.getItem('clawser_agent_acct_migrated')) {
         const migrated = await migrateAgentAccounts(loadAccounts(), state.agentStorage);
         if (migrated > 0) console.log(`[clawser] Migrated ${migrated} agents to accounts`);
         localStorage.setItem('clawser_agent_acct_migrated', '1');
+      }
+      // Block 52: Migrate legacy agents to flat providerConfig
+      if (!localStorage.getItem('clawser_provider_config_migrated')) {
+        const migrated = await migrateAllToProviderConfig(state.agentStorage);
+        if (migrated > 0) console.log(`[clawser] Migrated ${migrated} agents to providerConfig`);
+        localStorage.setItem('clawser_provider_config_migrated', '1');
       }
     } catch (e) { console.warn('[clawser] Agent account seeding/migration failed:', e); }
 
@@ -339,9 +346,11 @@ export async function registerAllTools({ activeWsId, configureServerRuntimeResol
   browserTools.register(new SlackMonitorTool(oauth));
   browserTools.register(new SlackDraftResponseTool(oauth));
 
-  // Phase 9: CORS fetch proxy (1)
+  // Phase 9: CORS fetch proxy (1) + Block 2: WSH bridge replacement
   browserTools.register(new ExtCorsFetchTool(getExtensionClient()));
   setCorsFetchClient(getExtensionClient());
+  // Wire WSH connections as the preferred CORS transport (replaces extension bridge)
+  setCorsFetchWshProvider(() => getWshConnections());
 
   // Phase 5: FileSystemObserver (optional, Chrome 129+)
   try {

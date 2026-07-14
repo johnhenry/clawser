@@ -189,8 +189,10 @@ describe('Phase 5 integration — all exports, methods, tools, relay types', () 
 
   it('ROADMAP marks Phase 5 as COMPLETE', async () => {
     const { readFileSync } = await import('node:fs');
-    const { resolve } = await import('node:path');
-    const roadmap = readFileSync(resolve(import.meta.dirname, '..', '..', 'ROADMAP.md'), 'utf8');
+    const { fileURLToPath } = await import('node:url');
+    const { resolve, dirname } = await import('node:path');
+    const __dirname = dirname(fileURLToPath(import.meta.url));
+    const roadmap = readFileSync(resolve(__dirname, '..', '..', 'ROADMAP.md'), 'utf8');
     assert.match(roadmap, /Phase 5: Remote Execution \(wsh\) -- COMPLETE/);
     assert.match(roadmap, /Phase 5\.7: Protocol Extensions — COMPLETE/);
   });

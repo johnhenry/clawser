@@ -23,7 +23,7 @@ export class WorkspaceFs {
   getWorkspace() { return this.#wsId; }
 
   /** Absolute OPFS path to the workspace home directory */
-  get homePath() { return `clawser_workspaces/${this.#wsId}`; }
+  get homePath() { return `clawser/workspaces/${this.#wsId}`; }
 
   /**
    * Resolve a user-facing path to an absolute OPFS path under workspace home.
@@ -67,6 +67,38 @@ export class BrowserTool {
 
   /** Whether this tool is idempotent (safe to retry on crash recovery). */
   get idempotent() { return false; }
+
+  /**
+   * Field names whose values should be redacted from the eventlog
+   * record of this tool's calls. Tools that accept secrets as
+   * parameters (API keys, OAuth tokens, vault passphrases, etc.)
+   * should declare those fields here so the eventlog (persisted to
+   * OPFS, included in workspace exports) doesn't carry them.
+   *
+   * Tools that don't override this still get conservative defaults
+   * applied via `redactArgs(args)` below — any field name matching
+   * the standard regex (`key|token|password|passphrase|secret|
+   * authorization|cookie|bearer|credential`) is auto-redacted.
+   *
+   * @returns {string[]}
+   */
+  get redactedFields() { return []; }
+
+  /**
+   * Field names whose values should be fully redacted from the
+   * eventlog record of this tool's RESULT (as opposed to its call
+   * arguments — see `redactedFields`). Declare this when a tool's
+   * output can itself carry a secret verbatim in a structured field
+   * (e.g. `{ token: "..." }`), not free-form text.
+   *
+   * Free-form string output (the common case — `{ output: "..." }`)
+   * is covered separately: it's scanned for high-confidence secret
+   * *value* shapes (API key prefixes, JWTs, etc.) regardless of
+   * declaration, since field-name matching doesn't help for prose.
+   *
+   * @returns {string[]}
+   */
+  get redactedResultFields() { return []; }
 
   /**
    * Execute the tool.
@@ -742,8 +774,8 @@ export class FsDeleteTool extends BrowserTool {
     if (parts.length === 0) {
       return { success: false, output: '', error: 'Cannot delete workspace root directory' };
     }
-    // Prevent deleting the workspace home itself (e.g., "clawser_workspaces/default")
-    if (parts.length <= 2 && parts[0] === 'clawser_workspaces') {
+    // Prevent deleting the workspace home itself (e.g., "clawser/workspaces/default")
+    if (parts[0] === 'clawser' && parts[1] === 'workspaces' && parts.length <= 3) {
       return { success: false, output: '', error: 'Cannot delete workspace home directory' };
     }
     const { dir, name } = await opfsWalk(resolved);

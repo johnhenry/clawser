@@ -63,6 +63,12 @@ export class PeerNode {
   /** @type {Map<string, Set<Function>>} event -> callbacks */
   #listeners = new Map()
 
+  /** @type {Set<Function>} listeners for raw incoming session data
+   *  (cb(pubKey, data, {sessionId, transport})). Used by ClawserPod
+   *  to surface a pod-level message bus on top of per-transport
+   *  inbound bytes. */
+  #dataListeners = new Set()
+
   /** @type {Function|null} bound peer connect listener for cleanup */
   #boundPeerConnect = null
 
@@ -372,6 +378,19 @@ export class PeerNode {
     }
     this.#sessions.set(sessionId, session)
 
+    // Wire inbound data fan-out — every connected transport pushes
+    // received bytes to subscribers registered via `onIncomingData`.
+    // This is what backs `ClawserPod.onMessage` so workspace consumers
+    // can route incoming sync/deploy envelopes by `envelope.type`.
+    if (transport && typeof transport.onMessage === 'function') {
+      transport.onMessage((data) => {
+        for (const cb of this.#dataListeners) {
+          try { cb(pubKey, data, { sessionId, transport: transportType }) }
+          catch (err) { this.#onLog('peer-node:data-listener-error', { error: err?.message || String(err) }) }
+        }
+      })
+    }
+
     this.#onLog('peer-node:session:created', { sessionId, pubKey, transport: transportType })
 
     // Log to audit chain
@@ -382,6 +401,70 @@ export class PeerNode {
     })
 
     return { ...session, transportInstance: undefined }
+  }
+
+  /**
+   * Send raw bytes/data to a connected peer via its current transport
+   * session. Looks up the most recently-created active session for the
+   * given pubKey and calls `transport.send(data)`.
+   *
+   * Throws when no active session exists for the peer (caller should
+   * either connect first or surface the error to the user).
+   *
+   * @param {string} pubKey - Peer fingerprint / public key hash
+   * @param {*} data - Wire payload to send. Format is transport-defined;
+   *   typical callers stringify a JSON envelope first.
+   * @returns {Promise<void>} Resolves when the underlying transport
+   *   has accepted the send (transport-defined; some are fire-and-
+   *   forget, others await an ack).
+   *
+   * @example
+   *   await peerNode.sendTo('podid_abc', JSON.stringify({ type: 'ping' }));
+   */
+  async sendTo(pubKey, data) {
+    this.#ensureRunning('sendTo');
+    let session = null;
+    for (const [, s] of this.#sessions) {
+      if (s.pubKey === pubKey && s.state === 'active') {
+        // Prefer the most recently-created active session
+        if (!session || (s.connectedAt || 0) > (session.connectedAt || 0)) session = s;
+      }
+    }
+    if (!session) {
+      throw new Error(`PeerNode.sendTo: no active session for pubKey ${pubKey}`);
+    }
+    if (!session.transportInstance || typeof session.transportInstance.send !== 'function') {
+      throw new Error(`PeerNode.sendTo: session for ${pubKey} has no transport.send`);
+    }
+    return session.transportInstance.send(data);
+  }
+
+  /**
+   * Subscribe to raw incoming data from any session. The callback
+   * receives `(pubKey, data, {sessionId, transport})`. Used by
+   * `ClawserPod.onMessage` to fan an envelope-level dispatch on
+   * top of per-transport bytes. Returns an unsubscribe function.
+   *
+   * @param {(pubKey:string, data:any, meta:{sessionId:string, transport:string}) => void} cb
+   * @returns {() => void}
+   */
+  onIncomingData(cb) {
+    if (typeof cb !== 'function') return () => {}
+    this.#dataListeners.add(cb)
+    return () => this.#dataListeners.delete(cb)
+  }
+
+  /**
+   * Whether the peer has an active session ready for `sendTo`.
+   *
+   * @param {string} pubKey
+   * @returns {boolean}
+   */
+  hasActiveSession(pubKey) {
+    for (const [, s] of this.#sessions) {
+      if (s.pubKey === pubKey && s.state === 'active') return true;
+    }
+    return false;
   }
 
   /**

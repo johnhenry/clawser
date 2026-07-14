@@ -44,7 +44,7 @@ Clawser is a browser-native AI agent platform built as pure ES modules with no b
 
 ## Core Agent
 
-**File**: `clawser-agent.js` (3,765 LOC)
+**File**: `clawser-agent.js` (~4,100 LOC)
 
 The agent core contains four classes:
 
@@ -94,7 +94,7 @@ Main orchestrator managing:
 
 ## Provider System
 
-**File**: `clawser-providers.js` (1,868 LOC)
+**File**: `clawser-providers.js` (~1,900 LOC)
 
 ### Three Tiers
 
@@ -120,7 +120,7 @@ Tier 1 (Built-in)          Tier 2 (OpenAI-Compatible)       Tier 3 (ai.matey)
 
 ## Tool System
 
-**File**: `clawser-tools.js` (1,729 LOC)
+**File**: `clawser-tools.js` (~1,700 LOC)
 
 ### Permission Engine
 
@@ -155,7 +155,7 @@ Plus 36 tools from feature modules (tool builder, channels, delegate, git, brows
 
 ## Codex (Code Execution)
 
-**File**: `clawser-codex.js` (379 LOC)
+**File**: `clawser-codex.js` (~380 LOC)
 
 For providers that don't support native tool calling (Chrome AI, Perplexity), the Codex executes JavaScript code blocks from LLM responses in a sandboxed environment.
 
@@ -168,7 +168,7 @@ The Codex uses **andbox** (`andbox` npm package, loaded via CDN) — a Worker-ba
 
 ## Skills System
 
-**File**: `clawser-skills.js` (2,016 LOC)
+**File**: `clawser-skills.js` (~2,100 LOC)
 
 Implements the [Agent Skills open standard](https://agentskills.io).
 
@@ -198,7 +198,7 @@ Discover (OPFS scan) → Enable/Disable (localStorage)
 
 ## MCP Integration
 
-**File**: `clawser-mcp.js` (425 LOC)
+**File**: `clawser-mcp.js` (~430 LOC)
 
 Model Context Protocol client using Streamable HTTP transport:
 
@@ -215,7 +215,7 @@ Tools are prefixed `mcp_*` and have `network` permission level.
 
 ## State Management
 
-**File**: `clawser-state.js` (481 LOC)
+**File**: `clawser-state.js` (~510 LOC)
 
 Global singleton with ~55 fields covering agent, conversations, tools, skills, UI state, and 25+ feature module references. Cross-module communication via a simple event bus (`on`/`off`/`emit`).
 
@@ -223,7 +223,7 @@ All persistent state uses workspace-scoped localStorage keys built by `lsKey` he
 
 ## Routing
 
-**File**: `clawser-router.js` (167 LOC)
+**File**: `clawser-router.js` (~170 LOC)
 
 Hash-based SPA routing:
 ```

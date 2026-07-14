@@ -1,3 +1,4 @@
+import { silentCatch } from './clawser-silent-catch.mjs'
 /**
  * Clawser MCP Client
  *
@@ -200,7 +201,7 @@ export class McpClient {
           method: 'DELETE',
           headers,
         });
-      } catch { /* best-effort */ }
+      } catch (e) { silentCatch('clawser-mcp', 'best-effort', e) }
     }
     this.#connected = false;
     this.#tools = [];

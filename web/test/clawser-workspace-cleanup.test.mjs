@@ -122,7 +122,7 @@ function installFullState(overrides = {}) {
     pod: mockPod(),
     gateway: mockGateway(),
     skillRegistry: mockSkillRegistry(),
-    _updateInterval: setInterval(() => {}, 999999),
+    _updateInterval: (() => { const t = setInterval(() => {}, 999999); t.unref?.(); return t })(),
   }
   const merged = { ...defaults, ...overrides }
   for (const [k, v] of Object.entries(merged)) {

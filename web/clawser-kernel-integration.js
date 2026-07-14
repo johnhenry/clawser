@@ -191,6 +191,26 @@ export class KernelIntegration {
     });
   }
 
+  // ── Distributed tracing MVP: mesh send/recv correlation ────────
+
+  /**
+   * Emit a mesh send/recv trace event for cross-hop correlation between
+   * clawser pods. The traceId is carried inside our own message envelope
+   * (not the browsermesh-primitives wire schema) — generated once at
+   * `ClawserPod.sendMessage()` and forwarded unchanged by relaying code,
+   * so every hop's mesh.send/mesh.recv events share one traceId.
+   *
+   * @param {Object} event
+   * @param {'mesh.send'|'mesh.recv'} event.type
+   * @param {string} event.traceId
+   * @param {string} [event.peerId] - Target peer (send) or sender (recv).
+   * @param {string} [event.messageType] - envelope.type of the app message.
+   */
+  traceMeshEvent({ type, traceId, peerId, messageType }) {
+    if (!this.#kernel) return;
+    this.#kernel.tracer.emit({ type, traceId, peerId, messageType });
+  }
+
   // ── Step 27: Sandbox as kernel tenant runtime ──────────────────
 
   /**
@@ -340,7 +360,7 @@ export class KernelIntegration {
     if (!this.#kernel) return;
     const svcName = this.#serverServices.get(routeId);
     if (svcName) {
-      try { this.#kernel.services.unregister(svcName); } catch {}
+      try { this.#kernel.services.unregister(svcName); } catch { /* service may already be gone */ }
       this.#serverServices.delete(routeId);
     }
   }
@@ -352,7 +372,7 @@ export class KernelIntegration {
     // Destroy all workspace tenants
     for (const [wsId, tenantId] of this.#workspaceTenants) {
       if (this.#kernel) {
-        try { this.#kernel.destroyTenant(tenantId); } catch {}
+        try { this.#kernel.destroyTenant(tenantId); } catch { /* tenant may already be gone */ }
       }
     }
     this.#workspaceTenants.clear();
@@ -360,7 +380,7 @@ export class KernelIntegration {
     // Unregister all MCP services
     for (const [name, svcName] of this.#mcpServices) {
       if (this.#kernel) {
-        try { this.#kernel.services.unregister(svcName); } catch {}
+        try { this.#kernel.services.unregister(svcName); } catch { /* service may already be gone */ }
       }
     }
     this.#mcpServices.clear();
@@ -368,7 +388,7 @@ export class KernelIntegration {
     // Unregister all server services
     for (const [routeId, svcName] of this.#serverServices) {
       if (this.#kernel) {
-        try { this.#kernel.services.unregister(svcName); } catch {}
+        try { this.#kernel.services.unregister(svcName); } catch { /* service may already be gone */ }
       }
     }
     this.#serverServices.clear();

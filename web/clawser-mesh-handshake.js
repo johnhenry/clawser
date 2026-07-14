@@ -1,3 +1,4 @@
+import { silentCatch } from './clawser-silent-catch.mjs'
 /**
 // STATUS: INTEGRATED — wired into ClawserPod lifecycle, proven via E2E testing
  * clawser-mesh-handshake.js -- Connection Handshake Protocol.
@@ -169,7 +170,7 @@ export class SignalingClient {
       this.#ws.removeEventListener('message', this.#handleMessage)
       this.#ws.removeEventListener('close', this.#handleClose)
       this.#ws.close()
-    } catch { /* ignore close errors */ }
+    } catch (e) { silentCatch('clawser-mesh-handshake', 'ignore-close-errors', e) }
     this.#ws = null
     this.#onLog(2, 'SignalingClient disconnected')
   }
@@ -284,9 +285,7 @@ export class SignalingClient {
       const data = typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data
       if (!data || !data.type) return
       this.#fire(data.type, data)
-    } catch {
-      /* ignore malformed messages */
-    }
+    } catch (e) { silentCatch('clawser-mesh-handshake', 'ignore-malformed-messages', e) }
   }
 
   /** @type {() => void} */
@@ -304,7 +303,7 @@ export class SignalingClient {
     const set = this.#listeners.get(event)
     if (!set) return
     for (const cb of set) {
-      try { cb(data, data.from) } catch { /* swallow listener errors */ }
+      try { cb(data, data.from) } catch (e) { silentCatch('clawser-mesh-handshake', 'swallow-listener-errors', e) }
     }
   }
 }
@@ -753,7 +752,7 @@ export class HandshakeCoordinator {
     const set = this.#listeners.get(event)
     if (!set) return
     for (const cb of set) {
-      try { cb(data) } catch { /* swallow listener errors */ }
+      try { cb(data) } catch (e) { silentCatch('clawser-mesh-handshake', 'swallow-listener-errors', e) }
     }
   }
 }

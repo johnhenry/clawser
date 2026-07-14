@@ -2,6 +2,11 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
+// Ensure globalThis.location exists (Node.js doesn't provide it)
+if (!globalThis.location) {
+  globalThis.location = { search: '', hash: '', href: '' };
+}
+
 import {
   TabViewManager,
   parseTabViewHash,

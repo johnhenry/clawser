@@ -1,3 +1,4 @@
+import { silentCatch } from './clawser-silent-catch.mjs'
 // clawser-channel-discord.js — Discord Channel Plugin
 //
 // Discord Gateway WebSocket + REST API for messaging.
@@ -120,7 +121,7 @@ export class DiscordPlugin {
     }
 
     if (this.#ws) {
-      try { this.#ws.close(); } catch { /* ignore */ }
+      try { this.#ws.close(); } catch (e) { silentCatch('clawser-channel-discord', 'this', e) }
       this.#ws = null;
     }
   }

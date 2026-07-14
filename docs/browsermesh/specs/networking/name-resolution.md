@@ -178,6 +178,6 @@ sequenceDiagram
 
 ## Implementation Status
 
-**Status**: Code exists in `web/clawser-mesh-naming.js`. Not wired to app bootstrap — the NamingService is instantiated only in tests. DiscoveryManager provides the active discovery layer.
+**Status**: Implemented and wired to app bootstrap. `MeshNameResolver` is instantiated in `ClawserPod.initMesh()` (`web/clawser-pod.js` ~line 458) and exposed via `pod.nameResolver`. The pod also passes the resolver to `RemoteSessionBroker` for canonical-id resolution and uses it inside its message-routing helpers (`pod.js` ~line 709) to resolve a target name to a podId before send. `DiscoveryManager` continues to be the active peer-discovery layer.
 
 **Source**: `web/clawser-mesh-naming.js`

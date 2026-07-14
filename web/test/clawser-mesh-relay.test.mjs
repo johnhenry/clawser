@@ -577,3 +577,218 @@ describe('MeshRelayClient', () => {
     assert.deepEqual(bobReceived[1].sig, { type: 'ice', candidate: 'c1' });
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────
+// MeshRelayClient — REAL WebSocket path (paired-WS fixture)
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * In-test relay server fixture. Implements the wire protocol the real
+ * `MeshRelayClient` speaks, mirroring `MockRelayServer`'s in-memory
+ * semantics. Used to drive the WS-mode tests below — does NOT use
+ * a real network.
+ */
+class FakeRelayServer {
+  constructor() { this.clients = new Map(); }
+  createConnection(fp) {
+    const server = this;
+    const fromClient = [];
+    const fromServer = [];
+    const closeListeners = [];
+    let closed = false;
+    const fakeWs = {
+      readyState: 1,
+      addEventListener(type, fn) {
+        if (type === 'message') fromServer.push(fn);
+        else if (type === 'open') queueMicrotask(fn);
+        else if (type === 'close') closeListeners.push(fn);
+      },
+      removeEventListener() {},
+      send(data) {
+        if (closed) return;
+        for (const h of fromClient) h(data);
+      },
+      close() {
+        if (closed) return;
+        closed = true;
+        server.clients.delete(fp);
+        for (const fn of closeListeners) fn({});
+      },
+      _injectMessage(msg) {
+        if (closed) return;
+        for (const fn of fromServer) fn({ data: JSON.stringify(msg) });
+      },
+    };
+    fromClient.push((raw) => server._handleClientMessage(fp, fakeWs, JSON.parse(raw)));
+    server.clients.set(fp, fakeWs);
+    return fakeWs;
+  }
+  _handleClientMessage(fp, ws, msg) {
+    if (msg.type === 'register') return;
+    if (msg.type === 'announce') {
+      ws._caps = msg.capabilities || [];
+      for (const [otherFp, other] of this.clients) {
+        if (otherFp === fp) continue;
+        other._injectMessage({ type: 'peer_announce', fingerprint: fp, capabilities: ws._caps });
+      }
+    } else if (msg.type === 'find') {
+      const peers = [...this.clients.entries()]
+        .filter(([f]) => f !== fp)
+        .map(([f, w]) => ({ fingerprint: f, capabilities: w._caps || [], endpoint: null }));
+      ws._injectMessage({ type: 'find_response', requestId: msg.requestId, peers });
+    } else if (msg.type === 'signal') {
+      const target = this.clients.get(msg.to);
+      if (target) target._injectMessage({ type: 'signal', from: msg.from, signal: msg.signal });
+      else ws._injectMessage({ type: 'error', message: `target ${msg.to} not connected` });
+    } else if (msg.type === 'unregister') {
+      this.clients.delete(fp);
+    }
+  }
+}
+
+describe('MeshRelayClient — real WebSocket path', () => {
+  it('connect + announce + find + signal end-to-end', async () => {
+    const server = new FakeRelayServer();
+    const makeWs = (fp) => function () { return server.createConnection(fp); };
+    const alice = new MeshRelayClient({
+      relayUrl: 'wss://t', identity: { fingerprint: 'alice' },
+      WebSocket: makeWs('alice'), autoReconnect: false,
+    });
+    const bob = new MeshRelayClient({
+      relayUrl: 'wss://t', identity: { fingerprint: 'bob' },
+      WebSocket: makeWs('bob'), autoReconnect: false,
+    });
+    await alice.connect();
+    await bob.connect();
+    assert.equal(alice.connected, true);
+    assert.equal(bob.connected, true);
+
+    const aliceAnnouncements = [];
+    alice.onPeerAnnounce((info) => aliceAnnouncements.push(info));
+    bob.announcePresence(['signal', 'pubsub']);
+    assert.equal(aliceAnnouncements.length, 1);
+    assert.equal(aliceAnnouncements[0].fingerprint, 'bob');
+    assert.deepEqual(aliceAnnouncements[0].capabilities, ['signal', 'pubsub']);
+
+    const peers = await alice.findPeers();
+    assert.equal(peers.length, 1);
+    assert.equal(peers[0].fingerprint, 'bob');
+
+    const bobSignals = [];
+    bob.onSignal((from, sig) => bobSignals.push({ from, sig }));
+    alice.forwardSignal('bob', { type: 'offer', sdp: 'a-sdp' });
+    assert.equal(bobSignals.length, 1);
+    assert.equal(bobSignals[0].from, 'alice');
+    assert.deepEqual(bobSignals[0].sig, { type: 'offer', sdp: 'a-sdp' });
+
+    alice.disconnect();
+    bob.disconnect();
+  });
+
+  it('connect rejects when WS constructor throws', async () => {
+    const ThrowingWs = function () { throw new Error('ws build failed'); };
+    const c = new MeshRelayClient({
+      relayUrl: 'wss://nope', identity: { fingerprint: 'x' },
+      WebSocket: ThrowingWs, autoReconnect: false,
+    });
+    await assert.rejects(() => c.connect(), /ws build failed/);
+    assert.equal(c.state, 'disconnected');
+  });
+
+  it('connect rejects when WS closes before open', async () => {
+    const CloseWs = function () {
+      const handlers = { close: [] };
+      queueMicrotask(() => { for (const fn of handlers.close) fn({}); });
+      return {
+        readyState: 1,
+        addEventListener(t, fn) { (handlers[t] = handlers[t] || []).push(fn); },
+        removeEventListener() {}, send() {}, close() {},
+      };
+    };
+    const c = new MeshRelayClient({
+      relayUrl: 'wss://nope', identity: { fingerprint: 'x' },
+      WebSocket: CloseWs, autoReconnect: false,
+    });
+    await assert.rejects(() => c.connect(), /closed before open/);
+  });
+
+  it('disconnect closes the WS and rejects pending finds', async () => {
+    // Build a fake WS that never responds to `find` so the request hangs.
+    const HangingWs = function () {
+      const handlers = { open: [], message: [], close: [] };
+      let closed = false;
+      queueMicrotask(() => { for (const fn of handlers.open) fn({}); });
+      return {
+        readyState: 1,
+        addEventListener(t, fn) { (handlers[t] = handlers[t] || []).push(fn); },
+        removeEventListener() {},
+        send() { /* swallow find */ },
+        close() {
+          if (closed) return;
+          closed = true;
+          for (const fn of handlers.close) fn({});
+        },
+      };
+    };
+    const c = new MeshRelayClient({
+      relayUrl: 'wss://t', identity: { fingerprint: 'c' },
+      WebSocket: HangingWs, autoReconnect: false,
+    });
+    await c.connect();
+    const findP = c.findPeers();
+    // Disconnect should reject the in-flight find.
+    c.disconnect();
+    await assert.rejects(() => findP, /relay disconnected/);
+  });
+
+  it('signaling unavailability — error event fires + connect rejects', async () => {
+    const ErrWs = function () {
+      const handlers = { error: [] };
+      queueMicrotask(() => {
+        for (const fn of handlers.error) fn({ error: new Error('ECONNREFUSED') });
+      });
+      return {
+        readyState: 1,
+        addEventListener(t, fn) { (handlers[t] = handlers[t] || []).push(fn); },
+        removeEventListener() {}, send() {}, close() {},
+      };
+    };
+    const errs = [];
+    const c = new MeshRelayClient({
+      relayUrl: 'wss://x', identity: { fingerprint: 'x' },
+      WebSocket: ErrWs, autoReconnect: false,
+    });
+    c.onError((e) => errs.push(e));
+    await assert.rejects(() => c.connect(), /ECONNREFUSED/);
+    assert.equal(errs.length, 1);
+  });
+
+  it('auto-reconnect fires error after exhausting attempts', async () => {
+    const FailWs = function () {
+      const handlers = { error: [], close: [] };
+      queueMicrotask(() => {
+        for (const fn of handlers.error) fn({ error: new Error('refused') });
+        for (const fn of handlers.close) fn({});
+      });
+      return {
+        readyState: 1,
+        addEventListener(t, fn) { (handlers[t] = handlers[t] || []).push(fn); },
+        removeEventListener() {}, send() {}, close() {},
+      };
+    };
+    const errs = [];
+    const c = new MeshRelayClient({
+      relayUrl: 'wss://fail', identity: { fingerprint: 'x' },
+      WebSocket: FailWs, maxReconnectAttempts: 2, reconnectDelayMs: 5,
+      autoReconnect: true,
+    });
+    c.onError((e) => errs.push(e));
+    await assert.rejects(() => c.connect(), /refused/);
+    // Allow reconnect attempts (5ms + 10ms backoff) to exhaust.
+    await new Promise(r => setTimeout(r, 100));
+    assert.ok(
+      errs.some(e => /reconnect failed after 2 attempts/.test(e.message)),
+      `expected exhaustion error among: ${errs.map(e => e.message).join(' / ')}`,
+    );
+  });
+});

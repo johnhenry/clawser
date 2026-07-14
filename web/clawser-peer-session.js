@@ -1,3 +1,4 @@
+import { silentCatch } from './clawser-silent-catch.mjs'
 /**
 // STATUS: INTEGRATED — wired into ClawserPod lifecycle, proven via E2E testing
  * clawser-peer-session.js -- Authenticated peer session management.
@@ -396,9 +397,7 @@ export class PeerSession {
     )
     try {
       this.#transport.send(pong)
-    } catch {
-      /* swallow send errors on pong */
-    }
+    } catch (e) { silentCatch('clawser-peer-session', 'swallow-send-errors-on-pong', e) }
   }
 
   /**

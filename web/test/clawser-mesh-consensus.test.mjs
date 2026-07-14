@@ -714,4 +714,152 @@ describe('ConsensusManager', () => {
     cm.propose('a', 'T1', ['y', 'n'], 'simple');
     assert.equal(cm.expireAll(), 0);
   });
+
+  // -- validator set ---------------------------------------------------------
+
+  describe('validator set', () => {
+    it('starts with open membership (empty validator set)', () => {
+      assert.deepEqual(cm.listValidators(), []);
+      assert.equal(cm.isValidator('anyone'), true);
+    });
+
+    it('addValidator registers a pod', () => {
+      cm.addValidator('pod_a');
+      assert.deepEqual(cm.listValidators(), ['pod_a']);
+      assert.equal(cm.isValidator('pod_a'), true);
+    });
+
+    it('addValidator throws on an empty/invalid podId', () => {
+      assert.throws(() => cm.addValidator(''), /podId is required/);
+      assert.throws(() => cm.addValidator(null), /podId is required/);
+    });
+
+    it('once any validator is registered, non-validators are rejected', () => {
+      cm.addValidator('pod_a');
+      assert.equal(cm.isValidator('pod_a'), true);
+      assert.equal(cm.isValidator('pod_b'), false);
+    });
+
+    it('removeValidator removes a pod and returns true', () => {
+      cm.addValidator('pod_a');
+      assert.equal(cm.removeValidator('pod_a'), true);
+      assert.deepEqual(cm.listValidators(), []);
+    });
+
+    it('removeValidator returns false for an unregistered pod', () => {
+      assert.equal(cm.removeValidator('nope'), false);
+    });
+
+    it('removing the last validator restores open membership', () => {
+      cm.addValidator('pod_a');
+      cm.removeValidator('pod_a');
+      assert.equal(cm.isValidator('anyone'), true);
+    });
+
+    it('constructor accepts an initial validators list', () => {
+      const gated = new ConsensusManager({ validators: ['pod_a', 'pod_b'] });
+      assert.deepEqual(gated.listValidators().sort(), ['pod_a', 'pod_b']);
+    });
+
+    it('propose() is ungated with an empty validator set', () => {
+      assert.doesNotThrow(() => cm.propose('anyone', 'T', ['y', 'n'], 'simple'));
+    });
+
+    it('propose() throws for a non-validator once the set is non-empty', () => {
+      cm.addValidator('pod_a');
+      assert.throws(() => cm.propose('pod_b', 'T', ['y', 'n'], 'simple'), /not a registered validator/);
+    });
+
+    it('propose() succeeds for a registered validator', () => {
+      cm.addValidator('pod_a');
+      assert.doesNotThrow(() => cm.propose('pod_a', 'T', ['y', 'n'], 'simple'));
+    });
+
+    it('vote() is ungated with an empty validator set', () => {
+      const p = cm.propose('pod_a', 'T', ['y', 'n'], 'simple');
+      assert.doesNotThrow(() => cm.vote(p.proposalId, 'anyone', 'y'));
+    });
+
+    it('vote() throws for a non-validator once the set is non-empty', () => {
+      cm.addValidator('pod_a');
+      const p = cm.propose('pod_a', 'T', ['y', 'n'], 'simple');
+      assert.throws(() => cm.vote(p.proposalId, 'pod_b', 'y'), /not a registered validator/);
+    });
+
+    it('vote() succeeds for a registered validator', () => {
+      cm.addValidator('pod_a');
+      cm.addValidator('voter_1');
+      const p = cm.propose('pod_a', 'T', ['y', 'n'], 'simple');
+      assert.doesNotThrow(() => cm.vote(p.proposalId, 'voter_1', 'y'));
+    });
+  });
+
+  // -- wireTransport validator gating ----------------------------------------
+
+  describe('wireTransport validator gating', () => {
+    function makeBus() {
+      const handlers = new Map();
+      return {
+        broadcastFn: (wireType, payload) => handlers.get(wireType)?.(payload, 'remote'),
+        subscribeFn: (wireType, handler) => handlers.set(wireType, handler),
+      };
+    }
+
+    it('accepts an inbound proposal from a non-validator when membership is open', () => {
+      const bus = makeBus();
+      cm.wireTransport(bus.broadcastFn, bus.subscribeFn);
+      cm.broadcastProposal(cm.propose('pod_a', 'T', ['y', 'n'], 'simple'));
+      // The receiving side of the same bus is this same manager in this
+      // harness — just confirming the wire path doesn't throw/reject.
+      assert.equal(cm.size, 1);
+    });
+
+    it('rejects an inbound proposal from a non-validator once gating is active', () => {
+      const sender = new ConsensusManager();
+      const receiver = new ConsensusManager({ validators: ['pod_trusted'] });
+      const bus = makeBus();
+      receiver.wireTransport(() => {}, bus.subscribeFn);
+
+      const proposal = sender.propose('pod_untrusted', 'T', ['y', 'n'], 'simple');
+      bus.broadcastFn(CONSENSUS_PROPOSE, proposal.toJSON());
+
+      assert.equal(receiver.size, 0, 'proposal from a non-validator must be dropped');
+    });
+
+    it('accepts an inbound proposal from a registered validator', () => {
+      const sender = new ConsensusManager();
+      const receiver = new ConsensusManager({ validators: ['pod_trusted'] });
+      const bus = makeBus();
+      receiver.wireTransport(() => {}, bus.subscribeFn);
+
+      const proposal = sender.propose('pod_trusted', 'T', ['y', 'n'], 'simple');
+      bus.broadcastFn(CONSENSUS_PROPOSE, proposal.toJSON());
+
+      assert.equal(receiver.size, 1);
+    });
+
+    it('rejects an inbound vote from a non-validator once gating is active', () => {
+      // makeBus() fixes fromPodId to 'remote' for every inbound message,
+      // which is not in the validator set below — the vote must be dropped.
+      const receiver = new ConsensusManager({ validators: ['pod_trusted'] });
+      const bus = makeBus();
+      receiver.wireTransport(() => {}, bus.subscribeFn);
+      const proposal = receiver.propose('pod_trusted', 'T', ['y', 'n'], 'simple');
+
+      bus.broadcastFn(CONSENSUS_VOTE, { proposalId: proposal.proposalId, choice: 'y' });
+
+      assert.equal(receiver.getTally(proposal.proposalId).totalVotes, 0);
+    });
+
+    it('accepts an inbound vote from a registered validator', () => {
+      const receiver = new ConsensusManager({ validators: ['pod_trusted', 'remote'] });
+      const bus = makeBus();
+      receiver.wireTransport(() => {}, bus.subscribeFn);
+      const proposal = receiver.propose('pod_trusted', 'T', ['y', 'n'], 'simple');
+
+      bus.broadcastFn(CONSENSUS_VOTE, { proposalId: proposal.proposalId, choice: 'y' });
+
+      assert.equal(receiver.getTally(proposal.proposalId).totalVotes, 1);
+    });
+  });
 });

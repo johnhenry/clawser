@@ -8,6 +8,7 @@
 //   browser_wait, browser_evaluate, browser_list_tabs, browser_close_tab
 
 import { BrowserTool } from './clawser-tools.js';
+import { silentCatch } from './clawser-silent-catch.mjs'
 
 // ── Constants ───────────────────────────────────────────────────
 
@@ -51,7 +52,7 @@ export function getInteractiveElements(doc) {
         enabled: !el.disabled,
       });
     }
-  } catch (e) { /* best-effort: DOM access may fail */ }
+  } catch (e) { silentCatch('clawser-browser-auto', 'best-effort-dom-access-may-fail', e) }
 
   return elements;
 }
@@ -110,7 +111,7 @@ export function getFormFields(doc) {
         required: !!el.required,
       });
     }
-  } catch (e) { /* best-effort: form field extraction */ }
+  } catch (e) { silentCatch('clawser-browser-auto', 'best-effort-form-field-extraction', e) }
 
   return fields;
 }
@@ -132,7 +133,7 @@ export function getLinks(doc) {
         href: a.href || a.getAttribute?.('href') || '',
       });
     }
-  } catch (e) { /* best-effort: link extraction */ }
+  } catch (e) { silentCatch('clawser-browser-auto', 'best-effort-link-extraction', e) }
 
   return links;
 }
@@ -192,7 +193,7 @@ export function resolveElement(doc, opts = {}) {
     try {
       const el = doc.querySelector?.(opts.selector);
       if (el) return { element: el, strategy: SELECTOR_STRATEGIES.CSS };
-    } catch (e) { /* best-effort: CSS selector resolution */ }
+    } catch (e) { silentCatch('clawser-browser-auto', 'best-effort-css-selector-resolution', e) }
   }
 
   // 4. Coordinates (no DOM element, but recognized strategy)

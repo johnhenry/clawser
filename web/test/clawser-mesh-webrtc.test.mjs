@@ -24,6 +24,11 @@ class MockRTCDataChannel {
   }
 }
 
+/** Tracks the most recently constructed mock PC/DC so tests can drive
+ * their event callbacks without the real class exposing private fields. */
+let _lastMockPC = null
+let _lastMockDC = null
+
 class MockRTCPeerConnection {
   #localDesc = null
   #remoteDesc = null
@@ -35,16 +40,21 @@ class MockRTCPeerConnection {
 
   constructor(config) {
     this.config = config
+    _lastMockPC = this
   }
 
   createDataChannel(label, opts) {
     const dc = new MockRTCDataChannel()
     dc.label = label
+    _lastMockDC = dc
     return dc
   }
 
-  async createOffer() {
-    return { type: 'offer', sdp: 'mock-offer-sdp' }
+  lastCreateOfferOpts = null
+
+  async createOffer(opts) {
+    this.lastCreateOfferOpts = opts || null
+    return { type: 'offer', sdp: opts?.iceRestart ? 'mock-restart-offer-sdp' : 'mock-offer-sdp' }
   }
 
   async createAnswer() {
@@ -63,6 +73,16 @@ class MockRTCPeerConnection {
     this._lastCandidate = c
   }
 
+  /** Test hook: set to an array of stat objects to control getStats() output. */
+  _mockStatsEntries = [
+    { type: 'data-channel', bytesSent: 1000, bytesReceived: 2000, messagesSent: 10, messagesReceived: 20 },
+    { type: 'candidate-pair', nominated: true, currentRoundTripTime: 0.05, requestsSent: 10, responsesReceived: 9 },
+  ]
+
+  async getStats() {
+    return new Map(this._mockStatsEntries.map((entry, i) => [`stat-${i}`, entry]))
+  }
+
   close() {}
 }
 
@@ -78,6 +98,7 @@ import {
   WebRTCMeshManager,
   WebRTCTransportAdapter,
   WebRTCAdapterFactory,
+  mergeIceServers,
 } from '../clawser-mesh-webrtc.js'
 
 // ── supportsWebRTC ─────────────────────────────────────────────────────
@@ -342,6 +363,280 @@ describe('WebRTCMeshManager', () => {
     mgr.closeAll()
     assert.equal(mgr.connectionCount, 0)
     assert.deepEqual(mgr.listConnections(), [])
+  })
+})
+
+// ── mergeIceServers ──────────────────────────────────────────────────
+
+describe('mergeIceServers', () => {
+  it('appends valid user servers to the defaults', () => {
+    const merged = mergeIceServers(
+      [{ urls: 'turn:relay.example.com', username: 'u', credential: 'p' }],
+      [{ urls: 'stun:stun.example.com' }],
+    )
+    assert.deepEqual(merged, [
+      { urls: 'stun:stun.example.com' },
+      { urls: 'turn:relay.example.com', username: 'u', credential: 'p' },
+    ])
+  })
+
+  it('filters out malformed entries silently', () => {
+    const merged = mergeIceServers([
+      { urls: 'turn:ok.example.com' },
+      { username: 'no-urls-field' },
+      null,
+      'not-an-object',
+      { urls: '' },
+    ], [])
+    assert.deepEqual(merged, [{ urls: 'turn:ok.example.com' }])
+  })
+
+  it('returns just the defaults when no user servers are given', () => {
+    assert.deepEqual(mergeIceServers(undefined, [{ urls: 'stun:x' }]), [{ urls: 'stun:x' }])
+    assert.deepEqual(mergeIceServers(null, [{ urls: 'stun:x' }]), [{ urls: 'stun:x' }])
+  })
+})
+
+// ── WebRTCPeerConnection.reconnect / onStateChange ─────────────────────
+
+describe('WebRTCPeerConnection reconnect', () => {
+  it('reconnect() requests an ICE restart and returns a fresh offer', async () => {
+    const conn = new WebRTCPeerConnection({ localPodId: 'a', remotePodId: 'b' })
+    await conn.createOffer()
+    const offer = await conn.reconnect()
+    assert.equal(offer.type, 'offer')
+    assert.equal(offer.sdp, 'mock-restart-offer-sdp')
+    assert.equal(conn.state, 'connecting')
+  })
+
+  it('reconnect() throws when no underlying connection exists yet', async () => {
+    const conn = new WebRTCPeerConnection({ localPodId: 'a', remotePodId: 'b' })
+    await assert.rejects(() => conn.reconnect(), /call createOffer/)
+  })
+
+  it('reconnect() throws on a closed connection', async () => {
+    const conn = new WebRTCPeerConnection({ localPodId: 'a', remotePodId: 'b' })
+    await conn.createOffer()
+    conn.close()
+    await assert.rejects(() => conn.reconnect(), /closed/)
+  })
+
+  it('onStateChange fires connecting, then connected on data-channel open, then closed', async () => {
+    const conn = new WebRTCPeerConnection({ localPodId: 'a', remotePodId: 'b' })
+    const transitions = []
+    conn.onStateChange((s) => transitions.push(s))
+
+    await conn.createOffer()
+    assert.deepEqual(transitions, ['connecting'])
+
+    _lastMockDC.onopen() // simulate the data channel opening
+    assert.deepEqual(transitions, ['connecting', 'connected'])
+
+    conn.close()
+    assert.deepEqual(transitions, ['connecting', 'connected', 'closed'])
+  })
+
+  it('onStateChange does not fire duplicate entries for a repeated state', async () => {
+    const conn = new WebRTCPeerConnection({ localPodId: 'a', remotePodId: 'b' })
+    const transitions = []
+    conn.onStateChange((s) => transitions.push(s))
+    await conn.createOffer()
+    conn.close()
+    conn.close() // second call is a no-op guarded before #setState — no duplicate 'closed'
+    assert.deepEqual(transitions, ['connecting', 'closed'])
+  })
+})
+
+// ── getConnectionStats / getAllConnectionStats (mesh health metrics) ──
+
+describe('WebRTCPeerConnection.getConnectionStats', () => {
+  it('throws when there is no underlying connection yet', async () => {
+    const conn = new WebRTCPeerConnection({ localPodId: 'a', remotePodId: 'b' })
+    await assert.rejects(() => conn.getConnectionStats(), /no peer connection/)
+  })
+
+  it('aggregates data-channel byte/message counters from getStats()', async () => {
+    const conn = new WebRTCPeerConnection({ localPodId: 'a', remotePodId: 'b' })
+    await conn.createOffer()
+    const stats = await conn.getConnectionStats()
+    assert.equal(stats.remotePodId, 'b')
+    assert.equal(stats.state, 'connecting')
+    assert.equal(stats.bytesSent, 1000)
+    assert.equal(stats.bytesReceived, 2000)
+    assert.equal(stats.messagesSent, 10)
+    assert.equal(stats.messagesReceived, 20)
+  })
+
+  it('derives roundTripTime from the nominated candidate pair', async () => {
+    const conn = new WebRTCPeerConnection({ localPodId: 'a', remotePodId: 'b' })
+    await conn.createOffer()
+    const stats = await conn.getConnectionStats()
+    assert.equal(stats.roundTripTime, 0.05)
+  })
+
+  it('derives packetLossRatio from the STUN request/response ratio', async () => {
+    const conn = new WebRTCPeerConnection({ localPodId: 'a', remotePodId: 'b' })
+    await conn.createOffer()
+    const stats = await conn.getConnectionStats()
+    assert.ok(Math.abs(stats.packetLossRatio - 0.1) < 1e-9) // 1 - 9/10
+  })
+
+  it('reports zero loss and null RTT when no candidate-pair stat is present', async () => {
+    const conn = new WebRTCPeerConnection({ localPodId: 'a', remotePodId: 'b' })
+    await conn.createOffer()
+    _lastMockPC._mockStatsEntries = [
+      { type: 'data-channel', bytesSent: 5, bytesReceived: 5, messagesSent: 1, messagesReceived: 1 },
+    ]
+    const stats = await conn.getConnectionStats()
+    assert.equal(stats.roundTripTime, null)
+    assert.equal(stats.packetLossRatio, 0)
+  })
+
+  it('ignores a non-nominated candidate pair', async () => {
+    const conn = new WebRTCPeerConnection({ localPodId: 'a', remotePodId: 'b' })
+    await conn.createOffer()
+    _lastMockPC._mockStatsEntries = [
+      { type: 'candidate-pair', nominated: false, currentRoundTripTime: 0.9, requestsSent: 100, responsesReceived: 1 },
+    ]
+    const stats = await conn.getConnectionStats()
+    assert.equal(stats.roundTripTime, null)
+    assert.equal(stats.packetLossRatio, 0)
+  })
+})
+
+describe('WebRTCMeshManager.getAllConnectionStats', () => {
+  it('returns an empty array with no connections', async () => {
+    const mgr = new WebRTCMeshManager({ localPodId: 'node-1' })
+    assert.deepEqual(await mgr.getAllConnectionStats(), [])
+  })
+
+  it('collects stats for every tracked connection', async () => {
+    const mgr = new WebRTCMeshManager({ localPodId: 'node-1' })
+    const connA = await mgr.connectToPeer('node-2')
+    await connA.createOffer()
+    const connB = await mgr.connectToPeer('node-3')
+    await connB.createOffer()
+
+    const stats = await mgr.getAllConnectionStats()
+    assert.equal(stats.length, 2)
+    const podIds = stats.map(s => s.remotePodId).sort()
+    assert.deepEqual(podIds, ['node-2', 'node-3'])
+  })
+
+  it('caches the result on lastStats', async () => {
+    const mgr = new WebRTCMeshManager({ localPodId: 'node-1' })
+    assert.deepEqual(mgr.lastStats, [])
+    const conn = await mgr.connectToPeer('node-2')
+    await conn.createOffer()
+    const stats = await mgr.getAllConnectionStats()
+    assert.deepEqual(mgr.lastStats, stats)
+  })
+
+  it('records an error entry instead of throwing when one connection fails', async () => {
+    const mgr = new WebRTCMeshManager({ localPodId: 'node-1' })
+    await mgr.connectToPeer('node-2') // never calls createOffer() — getConnectionStats() will throw
+
+    const stats = await mgr.getAllConnectionStats()
+    assert.equal(stats.length, 1)
+    assert.equal(stats[0].remotePodId, 'node-2')
+    assert.match(stats[0].error, /no peer connection/)
+  })
+})
+
+// ── WebRTCMeshManager reconnect-with-backoff ───────────────────────────
+
+describe('WebRTCMeshManager auto-reconnect', () => {
+  it('reconnectPeer() manually triggers an ICE restart and notifies onReconnectOffer', async () => {
+    const mgr = new WebRTCMeshManager({ localPodId: 'node-1' })
+    const conn = await mgr.connectToPeer('node-2')
+    await conn.createOffer()
+
+    const offers = []
+    mgr.onReconnectOffer((offer, remotePodId) => offers.push({ offer, remotePodId }))
+
+    const offer = await mgr.reconnectPeer('node-2')
+    assert.equal(offer.sdp, 'mock-restart-offer-sdp')
+    assert.equal(offers.length, 1)
+    assert.equal(offers[0].remotePodId, 'node-2')
+  })
+
+  it('reconnectPeer() returns null for an unknown pod', async () => {
+    const mgr = new WebRTCMeshManager({ localPodId: 'node-1' })
+    assert.equal(await mgr.reconnectPeer('nope'), null)
+  })
+
+  it('auto-schedules a reconnect (with an ICE-restart offer) after a connection error', async () => {
+    const mgr = new WebRTCMeshManager({ localPodId: 'node-1', reconnectBaseDelayMs: 5 })
+    const conn = await mgr.connectToPeer('node-2')
+    await conn.createOffer()
+    const pc = _lastMockPC
+
+    const offers = []
+    mgr.onReconnectOffer((offer, remotePodId) => offers.push({ offer, remotePodId }))
+
+    // Simulate a connection failure at the RTCPeerConnection level
+    pc.connectionState = 'failed'
+    pc.onconnectionstatechange()
+
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    assert.ok(offers.length >= 1, 'expected at least one auto-reconnect offer')
+    assert.equal(offers[0].remotePodId, 'node-2')
+    assert.equal(offers[0].offer.sdp, 'mock-restart-offer-sdp')
+  })
+
+  it('gives up after maxReconnectAttempts and logs', async () => {
+    const logs = []
+    const mgr = new WebRTCMeshManager({
+      localPodId: 'node-1', reconnectBaseDelayMs: 2, maxReconnectAttempts: 2,
+      onLog: (m) => logs.push(m),
+    })
+    const conn = await mgr.connectToPeer('node-2')
+    await conn.createOffer()
+    const pc = _lastMockPC
+
+    // Fire repeated errors faster than backoff can clear, forcing exhaustion
+    for (let i = 0; i < 5; i++) {
+      pc.connectionState = 'failed'
+      pc.onconnectionstatechange()
+      await new Promise((resolve) => setTimeout(resolve, 15))
+    }
+
+    assert.ok(logs.some(l => l.includes('Giving up reconnecting')))
+  })
+
+  it('does not schedule a second reconnect while one is already pending', async () => {
+    const mgr = new WebRTCMeshManager({ localPodId: 'node-1', reconnectBaseDelayMs: 50 })
+    const conn = await mgr.connectToPeer('node-2')
+    await conn.createOffer()
+    const pc = _lastMockPC
+
+    const offers = []
+    mgr.onReconnectOffer((offer) => offers.push(offer))
+
+    pc.connectionState = 'failed'
+    pc.onconnectionstatechange() // schedules attempt #1
+    pc.onconnectionstatechange() // must be a no-op — one is already pending
+    pc.onconnectionstatechange()
+
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    assert.equal(offers.length, 1)
+  })
+
+  it('clears reconnect state when the peer connection closes', async () => {
+    const mgr = new WebRTCMeshManager({ localPodId: 'node-1', reconnectBaseDelayMs: 5 })
+    const conn = await mgr.connectToPeer('node-2')
+    await conn.createOffer()
+    const pc = _lastMockPC
+
+    pc.connectionState = 'failed'
+    pc.onconnectionstatechange() // schedules a reconnect
+
+    const offers = []
+    mgr.onReconnectOffer((offer) => offers.push(offer))
+    conn.close() // must cancel the pending timer — no reconnect fires afterward
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(offers.length, 0)
   })
 })
 

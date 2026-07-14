@@ -12,6 +12,7 @@
  */
 
 import { EmbeddingProvider } from './clawser-memory.js'
+import { silentCatch } from './clawser-silent-catch.mjs'
 
 // ── Constants ────────────────────────────────────────────────────
 
@@ -399,7 +400,7 @@ export class FsAccessBackend {
           if (!filePath) return
           const blob = await response.blob()
           await fs.writeMounted(filePath, blob)
-        } catch { /* best-effort */ }
+        } catch (e) { silentCatch('clawser-models', 'best-effort', e) }
       }
     }
   }

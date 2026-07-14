@@ -225,6 +225,7 @@ describe('Agent busy indicator', () => {
   it('starts in idle state', () => {
     const indicator = new AgentBusyIndicator({ channel: { postMessage() {}, close() {} } });
     assert.equal(indicator.isBusy, false);
+    indicator.close();
   });
 
   it('setBusy sets busy state', () => {
@@ -232,6 +233,10 @@ describe('Agent busy indicator', () => {
     indicator.setBusy(true, 'processing');
     assert.equal(indicator.isBusy, true);
     assert.equal(indicator.reason, 'processing');
+    // setBusy(true) starts a keepalive re-broadcast timer (see
+    // clawser-daemon.js) — must close() or it leaks a live setInterval
+    // that keeps the process alive forever.
+    indicator.close();
   });
 
   it('setBusy(false) clears busy state', () => {
@@ -239,6 +244,7 @@ describe('Agent busy indicator', () => {
     indicator.setBusy(true, 'working');
     indicator.setBusy(false);
     assert.equal(indicator.isBusy, false);
+    indicator.close();
   });
 
   it('status returns current state', () => {
@@ -248,6 +254,7 @@ describe('Agent busy indicator', () => {
     assert.equal(status.busy, true);
     assert.equal(status.reason, 'thinking');
     assert.equal(typeof status.since, 'number');
+    indicator.close();
   });
 });
 

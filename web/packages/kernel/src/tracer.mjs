@@ -19,6 +19,7 @@ export class Tracer {
   #capacity;
   #clock;
   #waiters = [];
+  #enabled = true;
 
   /**
    * @param {Object} [opts={}]
@@ -30,12 +31,23 @@ export class Tracer {
     this.#clock = clock || null;
   }
 
+  /** Whether emit() records events. Toggled via enable()/disable() (e.g. /sys/kernel/trace). */
+  get enabled() { return this.#enabled; }
+
+  /** Resume recording trace events. */
+  enable() { this.#enabled = true; }
+
+  /** Stop recording trace events. Buffered events remain readable. */
+  disable() { this.#enabled = false; }
+
   /**
    * Emit a trace event. The event is auto-stamped with `id` and `timestamp`.
+   * No-op while the tracer is disabled.
    *
    * @param {Object} event - Event data (must include `type` string).
    */
   emit(event) {
+    if (!this.#enabled) return;
     const stamped = {
       id: ++this.#counter,
       timestamp: this.#clock ? this.#clock.nowMonotonic() : performance.now(),

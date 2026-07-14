@@ -1,3 +1,4 @@
+import { silentCatch } from './clawser-silent-catch.mjs'
 /**
 // STATUS: INTEGRATED — wired into ClawserPod lifecycle, proven via E2E testing
  * clawser-mesh-migration.js -- Pod State Migration Between Peers.
@@ -912,7 +913,7 @@ export class MigrationEngine {
         if (valid) {
           this.#checkpoints.set(payload.migrationId || checkpoint.checkpointId, checkpoint);
         }
-      } catch { /* ignore malformed checkpoints */ }
+      } catch (e) { silentCatch('clawser-mesh-migration', 'ignore-malformed-checkpoints', e) }
     });
 
     // Inbound: state transfer payload

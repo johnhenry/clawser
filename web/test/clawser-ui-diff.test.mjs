@@ -66,3 +66,28 @@ describe('renderDiff', () => {
     assert.ok(typeof el.innerHTML === 'string');
   });
 });
+
+// ── buildUndoDiffModel ────────────────────────────────────────────
+
+describe('buildUndoDiffModel', () => {
+  it('maps write ops with previousContent to old/new pairs', async () => {
+    const { buildUndoDiffModel } = await import('../clawser-ui-diff.js');
+    const model = buildUndoDiffModel([
+      { action: 'write', path: '/notes.md', content: 'new', previousContent: 'old' },
+      { action: 'write', path: '/fresh.md', content: 'created' }, // new file — no previous
+      { action: 'delete', path: '/gone.md', previousContent: 'was here' },
+    ]);
+    assert.equal(model.length, 3);
+    assert.deepEqual(model[0], { path: '/notes.md', action: 'write', oldText: 'old', newText: 'new' });
+    assert.deepEqual(model[1], { path: '/fresh.md', action: 'write', oldText: '', newText: 'created' });
+    assert.deepEqual(model[2], { path: '/gone.md', action: 'delete', oldText: 'was here', newText: '' });
+  });
+
+  it('returns empty for no ops or non-content ops', async () => {
+    const { buildUndoDiffModel } = await import('../clawser-ui-diff.js');
+    assert.deepEqual(buildUndoDiffModel([]), []);
+    assert.deepEqual(buildUndoDiffModel(null), []);
+    // Op with neither content nor previousContent carries nothing to diff
+    assert.deepEqual(buildUndoDiffModel([{ action: 'write', path: '/x' }]), []);
+  });
+});

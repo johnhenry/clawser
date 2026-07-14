@@ -1,3 +1,4 @@
+import { silentCatch } from './clawser-silent-catch.mjs'
 // clawser-channel-irc.js — IRC Channel Plugin
 //
 // IRC over WebSocket with PING/PONG/PRIVMSG/JOIN/PART parser.
@@ -155,7 +156,7 @@ export class IrcPlugin {
         // Send QUIT before closing
         this.#send('QUIT :Goodbye');
         this._ws.close();
-      } catch { /* ignore */ }
+      } catch (e) { silentCatch('clawser-channel-irc', 'ignore', e) }
       this._ws = null;
     }
   }

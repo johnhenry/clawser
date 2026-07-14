@@ -46,6 +46,11 @@ function healthIndicator(latencyMs) {
   return badge('poor', 'mesh-badge-err')
 }
 
+function fmtPct(ratio) {
+  if (ratio == null) return '--'
+  return `${(ratio * 100).toFixed(1)}%`
+}
+
 // ── Render ───────────────────────────────────────────────────────
 
 /**
@@ -126,6 +131,33 @@ export function renderMeshPanel(opts = {}) {
     }
   }
 
+  // ── Connectivity Metrics (mesh Phase 11 health metrics) ──────────
+  const connectivity = opts.connectivity || { active: false, connectionCount: 0, stats: [] }
+  let metricsRows = ''
+  if (!connectivity.active || !connectivity.stats?.length) {
+    metricsRows = '<div class="mesh-empty">No connectivity metrics yet</div>'
+  } else {
+    for (const m of connectivity.stats) {
+      if (m.error) {
+        metricsRows += `
+          <div class="mesh-metric-row" data-pod-id="${esc(m.remotePodId)}">
+            <span class="mesh-metric-pod">${esc(truncId(m.remotePodId))}</span>
+            ${badge('error', 'mesh-badge-err')}
+            <span class="mesh-metric-detail">${esc(m.error)}</span>
+          </div>`
+        continue
+      }
+      const rttMs = m.roundTripTime != null ? Math.round(m.roundTripTime * 1000) : null
+      metricsRows += `
+        <div class="mesh-metric-row" data-pod-id="${esc(m.remotePodId)}">
+          <span class="mesh-metric-pod">${esc(truncId(m.remotePodId))}</span>
+          ${healthIndicator(rttMs)}
+          <span class="mesh-metric-rtt">${rttMs != null ? rttMs + 'ms' : '--'}</span>
+          <span class="mesh-metric-loss">${fmtPct(m.packetLossRatio)} loss</span>
+        </div>`
+    }
+  }
+
   // ── Quick Actions ─────────────────────────────────
   const quickActions = `
     <div class="mesh-actions">
@@ -158,6 +190,11 @@ export function renderMeshPanel(opts = {}) {
       </div>
 
       <div class="mesh-section">
+        <div class="mesh-section-label">Connectivity Metrics</div>
+        <div class="mesh-metrics">${metricsRows}</div>
+      </div>
+
+      <div class="mesh-section">
         <div class="mesh-section-label">Quick Actions</div>
         ${quickActions}
       </div>
@@ -180,50 +217,20 @@ export function initMeshListeners(opts = {}) {
   const drainBtn = $('meshDrainPod')
   const refreshBtn = $('meshRefresh')
 
-  if (execBtn) {
-    execBtn.onclick = () => {
-      if (opts.onExecRemote) {
-        opts.onExecRemote()
-      } else {
-        modal('Remote Exec', `
-          <div class="mesh-modal-form">
-            <div class="mesh-form-row">
-              <input type="text" id="meshExecPodId" class="mesh-input" placeholder="Target pod ID" />
-            </div>
-            <div class="mesh-form-row">
-              <input type="text" id="meshExecCommand" class="mesh-input" placeholder="Command" />
-            </div>
-            <button class="btn-sm" id="meshExecSubmit">Execute</button>
-          </div>
-        `)
-      }
+  // Each handler properly awaits and surfaces unexpected rejections
+  // via addErrorMsg. Missing-handler fallbacks are deliberately
+  // explicit "not configured" messages — the production mount in
+  // `clawser-workspace-init-mesh.js` always passes a controller, so
+  // these paths only fire if a caller wires the panel without one.
+  const wrap = (fn, name) => async () => {
+    if (typeof fn !== 'function') {
+      addErrorMsg(`Mesh ${name}: no controller wired`)
+      return
     }
+    try { await fn() } catch (e) { addErrorMsg(`Mesh ${name} failed: ${e?.message || e}`) }
   }
-
-  if (deployBtn) {
-    deployBtn.onclick = () => {
-      if (opts.onDeploySkill) {
-        opts.onDeploySkill()
-      } else {
-        addMsg('system', 'Deploy Skill: select a skill and target pod')
-      }
-    }
-  }
-
-  if (drainBtn) {
-    drainBtn.onclick = () => {
-      if (opts.onDrainPod) {
-        opts.onDrainPod()
-      } else {
-        addMsg('system', 'Drain Pod: select a pod to gracefully disconnect')
-      }
-    }
-  }
-
-  if (refreshBtn) {
-    refreshBtn.onclick = () => {
-      if (opts.onRefresh) opts.onRefresh()
-      addMsg('system', 'Refreshing mesh status...')
-    }
-  }
+  if (execBtn) execBtn.onclick = wrap(opts.onExecRemote, 'exec-remote')
+  if (deployBtn) deployBtn.onclick = wrap(opts.onDeploySkill, 'deploy-skill')
+  if (drainBtn) drainBtn.onclick = wrap(opts.onDrainPod, 'drain-pod')
+  if (refreshBtn) refreshBtn.onclick = wrap(opts.onRefresh, 'refresh')
 }

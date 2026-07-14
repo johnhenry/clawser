@@ -28,7 +28,7 @@ All source files are in `web/` and follow the naming pattern `clawser-{domain}.j
 
 - **clawser-agent.js** — Agent core: EventLog, HookPipeline, AutonomyController, ClawserAgent
 - **clawser-providers.js** — LLM providers (Tier 1: built-in, Tier 2: OpenAI-compatible, Tier 3: ai.matey)
-- **clawser-tools.js** — BrowserTool base class, 70+ tools, permission system
+- **clawser-tools.js** — BrowserTool base class, 100+ tools (240+ classes shipping), permission system
 - **clawser-codex.js** — Code-based tool execution via vimble sandbox
 - **clawser-skills.js** — SkillParser, SkillStorage, SkillRegistry
 - **clawser-shell.js** — Virtual shell with tokenizer, parser, command registry
@@ -55,21 +55,22 @@ All source files are in `web/` and follow the naming pattern `clawser-{domain}.j
 ### Test Runner
 
 ```bash
-# Run everything (253 test files)
+# Run everything (347+ test files)
 npm test
 
-# Fast feedback loop (core + channels, 97 files)
+# Fast feedback loop (core + channels, ~270 files)
 npm run test:fast
 
-# Individual groups
-npm run test:core          # 89 files — agent, tools, providers, shell, etc.
-npm run test:mesh          # 31 files — all mesh networking
-npm run test:mesh-net      # 7 files — peer, transport, relay, gateway, websocket
-npm run test:mesh-sync     # 4 files — sync, delta-sync, streams, migration
-npm run test:mesh-identity # 6 files — identity, keyring, trust, acl, capabilities
-npm run test:mesh-apps     # 6 files — apps, marketplace, payments, quotas
-npm run test:mesh-ops      # 8 files — audit, consensus, scheduler, tools, wsh-bridge
-npm run test:e2e           # 1 file — end-to-end scenarios
+# Individual groups (file counts drift — use --list for the current set)
+npm run test:core          # ~260 files — agent, tools, providers, shell, etc.
+npm run test:mesh          # ~33 files — all mesh networking
+npm run test:mesh-net      # peer, transport, relay, gateway, websocket
+npm run test:mesh-sync     # sync, delta-sync, streams, migration
+npm run test:mesh-identity # identity, keyring, trust, acl, capabilities
+npm run test:mesh-apps     # apps, marketplace, payments, quotas
+npm run test:mesh-ops      # audit, consensus, scheduler, tools, wsh-bridge
+npm run test:e2e           # end-to-end scenarios
+npm run test:stress        # concurrency/scale stress suite (slow — not in fast/core, run explicitly)
 npm run test:changed       # only files with git changes
 
 # Direct runner with options

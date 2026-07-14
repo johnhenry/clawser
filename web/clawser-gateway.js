@@ -143,10 +143,14 @@ export class ChannelGateway {
   /** @type {string|null} Default tenant ID for resource tracking */
   #tenantId = null
 
+  /** @type {object|null} DeviceFileHandler for /dev/clawser/channels/* delivery */
+  #deviceHandler = null
+
   /**
    * @param {object} opts
    * @param {object} opts.agent - ClawserAgent instance
    * @param {string} [opts.tenantId] - Default kernel tenant ID for resource tracking
+   * @param {object} [opts.deviceHandler] - DeviceFileHandler for /dev/clawser/channels/* delivery
    * @param {Function} [opts.onIngest] - (channelId, message) => void
    * @param {Function} [opts.onRespond] - (channelId, text) => void
    * @param {Function} [opts.onLog] - (msg) => void
@@ -154,6 +158,7 @@ export class ChannelGateway {
   constructor(opts = {}) {
     this.#agent = opts.agent || null
     this.#tenantId = opts.tenantId ?? null
+    this.#deviceHandler = opts.deviceHandler || null
     this.#onIngest = opts.onIngest || null
     this.#onRespond = opts.onRespond || null
     this.#onLog = opts.onLog || null
@@ -161,6 +166,9 @@ export class ChannelGateway {
 
   /** Set or replace the agent reference. @param {object|null} agent */
   setAgent(agent) { this.#agent = agent }
+
+  /** Set or replace the device handler for /dev channel delivery. @param {object|null} deviceHandler */
+  setDeviceHandler(deviceHandler) { this.#deviceHandler = deviceHandler ?? null }
 
   /**
    * Set or replace the default tenant ID for all subsequent ingests.
@@ -337,6 +345,13 @@ export class ChannelGateway {
     // Notify listener
     if (this.#onIngest) {
       this.#onIngest(channelId, msg)
+    }
+
+    // Mirror inbound message to /dev/clawser/channels/{channel} for shell reads
+    try {
+      this.#deviceHandler?.deliverToChannel?.(msg.channel, msg.content)
+    } catch (e) {
+      this.#log(`Device delivery failed for ${msg.channel}: ${e.message}`)
     }
 
     // Resolve tenant: explicit override (including null) > gateway default.

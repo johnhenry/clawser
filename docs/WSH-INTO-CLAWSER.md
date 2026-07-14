@@ -9,6 +9,8 @@ The first thing to know is that Clawser itself is a browser app. There is no alw
 
 If your goal is specifically to reach a live Clawser tab, use the reverse-connect flow below. If your goal is a real host PTY with full Unix terminal semantics, use the direct `wsh-server` path in the last section. If you want the browser-hosted guest-console path, expose a VM peer with `--type vm-guest --backend vm-console --vm-runtime demo-linux`.
 
+> **Provenance note**: the Rust `wsh-server`/`wsh-cli` this guide describes (`crates/wsh-server`, `crates/wsh-cli`, plus their `wsh-core`/`wsh-client` dependencies) was removed from this repo on 2026-03-14 as a side effect of migrating Clawser's own agent core to pure JS, then restored on 2026-07-05 once that removal turned out to have quietly dropped the *only* implementation of two real capabilities: native WebTransport/QUIC (via `wtransport`/`quinn`) and real PTYs (via `portable-pty`). Both are back and verified against the current `wsh-upon-star` npm client (the pure-JS library Clawser's own browser `wsh` shell command is built on). If you don't want to install a Rust toolchain, a lighter-weight Node-only alternative — `tools/wsh-server.mjs` + `tools/wsh-operator-cli.mjs` — also exists; see [§13](#13-lightweight-alternative-a-node-only-server--cli) for what it can and can't do compared to the Rust tools this guide otherwise assumes.
+
 ## Topology At A Glance
 
 | Mode | Source | Target | Transport Path | Terminal Type | Status |
@@ -553,3 +555,48 @@ Or through the browser tool layer:
 - `wsh_download`
 
 That path is also implemented today, provided the remote host is running `wsh-server` and has authorized the browser key.
+
+## 13. Lightweight Alternative: A Node-Only Server + CLI
+
+Everything above assumes a Rust toolchain (`cargo build -p wsh-server -p wsh-cli`). If you don't want to install one — e.g. a quick local test, a CI job, or a host where installing Rust isn't practical — [`tools/wsh-server.mjs`](../tools/wsh-server.mjs) and [`tools/wsh-operator-cli.mjs`](../tools/wsh-operator-cli.mjs) are a from-scratch Node.js reimplementation of the same wsh-v1 protocol, built directly on the same [`wsh-upon-star`](https://github.com/johnhenry/wsh-upon-star) client library Clawser's own browser `wsh` shell command uses. No `cargo build` step — just `node tools/wsh-server.mjs ...`.
+
+It covers the same two topologies (direct host, and relay for reverse-connecting into a live Clawser tab), including native WebTransport (QUIC/HTTP3, via the `@fails-components/webtransport` npm package) alongside WebSocket — but it is not a full replacement for the Rust tools, and the gap is deliberate rather than accidental:
+
+| | Rust (`wsh-server`/`wsh-cli`) | Node (`tools/wsh-server.mjs` + `wsh-operator-cli.mjs`) |
+|---|---|---|
+| Build step | `cargo build` (Rust toolchain) | none — plain `node`, deps are ordinary npm packages |
+| Real PTY sessions | Yes (`portable-pty`) | No — `kind: 'pty'` is explicitly rejected; exec-only |
+| WebSocket | Yes | Yes |
+| WebTransport (QUIC/HTTP3) | Yes (`wtransport`/`quinn`) | Yes (`@fails-components/webtransport`) |
+| Relay (reverse-connect) | Yes | Yes |
+| `reverse-connect` UX | Interactive terminal loop | Runs one command and exits |
+| `check relay` diagnostics | Yes | No |
+| `agent install` (dial-out startup unit) | Yes | No — no host-side dial-out agent at all |
+| `copy-id` (password-bootstrapped key install) | Yes | No |
+| `~/.wsh/known_hosts` TOFU pinning | Yes | No |
+| `authorized_keys` fallback paths | `~/.wsh/authorized_keys`, `~/.ssh/authorized_keys` | `~/.wsh/authorized_keys` only (override with `--authorized-keys`) |
+
+Quick start (direct host, local dev, plain WebSocket):
+
+```bash
+# Host
+node tools/wsh-server.mjs --port 4422
+
+# Operator
+node tools/wsh-operator-cli.mjs keygen operator
+# add the printed ssh-ed25519 line to ~/.wsh/authorized_keys on the host
+node tools/wsh-operator-cli.mjs exec <host> "uname -a"
+```
+
+For relay/reverse-connect into a Clawser tab, or for WebTransport/TLS via `--cert`/`--key`, the flow mirrors steps 3-9 above with `wsh-operator-cli.mjs peers`/`reverse-connect` in place of the Rust CLI's `peers`/`reverse-connect` — see the file's own `--help` output for the exact flag set, since it's deliberately smaller than the Rust CLI's.
+
+### Cross-implementation WebTransport interop
+
+Both servers' WebTransport listeners are verified end to end against a real WebTransport client (`@fails-components/webtransport`'s Node client, driven through wsh-upon-star's own unmodified `WebTransportTransport` — a genuine QUIC session, not a mock) — including cross-implementation: that Node client against *this Rust server's* `wtransport`/`quinn` listener, all the way through authentication and a real exec session (`tools/test/wsh-rust-server.test.mjs`).
+
+Getting there took two real, non-obvious fixes, found via a careful, from-scratch investigation that initially (and wrongly) concluded this gap was unfixable:
+
+1. **Certificate validity must be ≤14 days.** The WebTransport spec's certificate-hash-pinning algorithm (`serverCertificateHashes`) requires it — confirmed independently via the W3C spec and Firefox's own bugzilla history for this exact feature. rcgen's default validity window (1975–4096, a deliberately "forever" range) fails this outright; a "just make it not absurd" 365-day window was tried and *also* failed, which is what led to briefly (and incorrectly) concluding the whole thing was some unfixable native-binding quirk. `generate_self_signed_cert()` in `crates/wsh-server/src/main.rs` now uses a 13-day window.
+2. **A SERVER_HELLO/CHALLENGE race on the QUIC control stream.** `handle_webtransport()` was sending both messages back-to-back on one stream; unlike discrete WebSocket frames, a QUIC stream has no message-boundary framing at that layer, so both can arrive in a single client-side read — and wsh-upon-star's client dispatches both synchronously from that read, but only registers its *next* waiter (for CHALLENGE) in a microtask after the first message's `await` resolves. The synchronously-dispatched CHALLENGE had no waiter yet and was silently dropped, hanging until timeout — the exact same race already found and fixed on the Node server's WebSocket path in `tools/wsh-server.mjs`. Fixed the same way: skip SERVER_HELLO, send only CHALLENGE, use the client's documented `"pending"` literal session-id fallback for transcript verification.
+
+Both are genuinely fixed and verified, not worked around — `tools/test/wsh-rust-server.test.mjs`'s WebTransport suite includes a full client session (auth + exec + real output) over the Rust server's actual QUIC listener, run repeatedly to confirm it isn't flaky.

@@ -1,3 +1,4 @@
+import { silentCatch } from './clawser-silent-catch.mjs'
 /**
 // STATUS: INTEGRATED — wired into ClawserPod lifecycle, proven via E2E testing
  * clawser-mesh-websocket.js -- WebSocket, WebRTC & WebTransport Adapters.
@@ -312,7 +313,7 @@ export class WebSocketTransport {
    */
   _fireEvent(event, data) {
     for (const cb of this.#callbacks[event] || []) {
-      try { cb(data); } catch { /* swallow listener errors */ }
+      try { cb(data); } catch (e) { silentCatch('clawser-mesh-websocket', 'swallow-listener-errors', e) }
     }
   }
 
@@ -320,7 +321,14 @@ export class WebSocketTransport {
    * Attempt to reconnect with exponential backoff.
    */
   async _handleReconnect() {
-    if (this.#reconnectAttempts >= this.#maxReconnectAttempts) return;
+    if (this.#reconnectAttempts >= this.#maxReconnectAttempts) {
+      // Reconnect budget exhausted — surface a clear error to the user
+      // so the UI doesn't silently sit at "disconnected" after 5 retries.
+      this._fireEvent('error', new Error(
+        `WebSocket reconnect failed after ${this.#maxReconnectAttempts} attempts (giving up)`,
+      ));
+      return;
+    }
 
     this.#reconnectAttempts++;
     this.#stats.reconnects++;
@@ -333,10 +341,14 @@ export class WebSocketTransport {
 
     try {
       await this.connect();
-    } catch {
-      // connect() failed — will be retried via the close handler if reconnect is still enabled
+    } catch (err) {
+      // connect() failed — retry until budget exhausted, then surface.
       if (this.#reconnect && this.#reconnectAttempts < this.#maxReconnectAttempts) {
         this._handleReconnect();
+      } else {
+        this._fireEvent('error', err instanceof Error ? err : new Error(
+          `WebSocket reconnect failed: ${err?.message || err}`,
+        ));
       }
     }
   }
@@ -352,7 +364,7 @@ export class WebSocketTransport {
       try {
         this.#ws.send(ping);
         this.#stats.lastPingMs = Date.now();
-      } catch { /* ignore send errors during heartbeat */ }
+      } catch (e) { silentCatch('clawser-mesh-websocket', 'ignore-send-errors-during-heartbeat', e) }
     }, this.#heartbeatIntervalMs);
   }
 
@@ -572,7 +584,7 @@ export class WebRTCTransport {
   async close() {
     this.#state = 'closing';
     if (this.#dataChannel) {
-      try { this.#dataChannel.close(); } catch { /* ignore */ }
+      try { this.#dataChannel.close(); } catch (e) { silentCatch('clawser-mesh-websocket', 'this', e) }
     }
     if (this.#pc) {
       this.#pc.close();
@@ -649,7 +661,7 @@ export class WebRTCTransport {
    */
   _fireEvent(event, data) {
     for (const cb of this.#callbacks[event] || []) {
-      try { cb(data); } catch { /* swallow listener errors */ }
+      try { cb(data); } catch (e) { silentCatch('clawser-mesh-websocket', 'swallow-listener-errors', e) }
     }
   }
 }
@@ -784,10 +796,10 @@ export class WebTransportTransport {
     if (this.#state === 'closed' || this.#state === 'disconnected') return;
     this.#state = 'closing';
     if (this.#writer) {
-      try { await this.#writer.close(); } catch { /* ignore */ }
+      try { await this.#writer.close(); } catch (e) { silentCatch('clawser-mesh-websocket', 'this', e) }
     }
     if (this.#transport) {
-      try { this.#transport.close(); } catch { /* ignore */ }
+      try { this.#transport.close(); } catch (e) { silentCatch('clawser-mesh-websocket', 'this', e) }
     }
     this.#state = 'closed';
     this._fireEvent('close');
@@ -845,7 +857,7 @@ export class WebTransportTransport {
    */
   _fireEvent(event, data) {
     for (const cb of this.#callbacks[event] || []) {
-      try { cb(data); } catch { /* swallow listener errors */ }
+      try { cb(data); } catch (e) { silentCatch('clawser-mesh-websocket', 'swallow-listener-errors', e) }
     }
   }
 }

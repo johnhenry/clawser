@@ -272,47 +272,8 @@ describe('SharedWorker message protocol', () => {
   });
 });
 
-// ── 6. Cross-tab tool invocation (5 tests) ──────────────────────
-
-describe('Cross-tab tool invocation', () => {
-  let CrossTabToolBridge;
-
-  before(async () => {
-    const mod = await import('../clawser-daemon.js');
-    CrossTabToolBridge = mod.CrossTabToolBridge;
-  });
-
-  it('CrossTabToolBridge class exists', () => {
-    assert.ok(CrossTabToolBridge);
-  });
-
-  it('registers tools for cross-tab access', () => {
-    const bridge = new CrossTabToolBridge({ channel: { postMessage() {}, close() {} } });
-    bridge.registerTool('fetch_url', async (args) => ({ success: true, output: 'data' }));
-    const tools = bridge.listTools();
-    assert.ok(tools.includes('fetch_url'));
-  });
-
-  it('unregisters tools', () => {
-    const bridge = new CrossTabToolBridge({ channel: { postMessage() {}, close() {} } });
-    bridge.registerTool('temp_tool', async () => ({ success: true, output: '' }));
-    assert.ok(bridge.listTools().includes('temp_tool'));
-    bridge.unregisterTool('temp_tool');
-    assert.ok(!bridge.listTools().includes('temp_tool'));
-  });
-
-  it('invokes registered tool locally', async () => {
-    const bridge = new CrossTabToolBridge({ channel: { postMessage() {}, close() {} } });
-    bridge.registerTool('greet', async (args) => ({ success: true, output: `Hello ${args.name}` }));
-    const result = await bridge.invoke('greet', { name: 'World' });
-    assert.equal(result.success, true);
-    assert.equal(result.output, 'Hello World');
-  });
-
-  it('returns error for unregistered tool', async () => {
-    const bridge = new CrossTabToolBridge({ channel: { postMessage() {}, close() {} } });
-    const result = await bridge.invoke('nonexistent', {});
-    assert.equal(result.success, false);
-    assert.ok(result.error.includes('not found'));
-  });
-});
+// ── 6. Cross-tab tool invocation — REMOVED 2026-05-06 ───────────
+// CrossTabToolBridge was deleted as an unused orphan. The class
+// docstring promised cross-tab tool invocation but `invoke()` ran
+// locally only and the channel was never used. No production caller
+// existed. See the note in clawser-daemon.js.

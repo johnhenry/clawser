@@ -3,7 +3,7 @@
 // Verifies that ClawserPod wires the HandshakeCoordinator to auto-negotiate
 // WebRTC connections when peers are discovered, and auto-accept inbound offers.
 
-import { describe, it, afterEach } from 'node:test'
+import { describe, it, after, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { ClawserPod } from '../clawser-pod.js'
 import { DiscoveryStrategy, DiscoveryRecord } from '../clawser-mesh-discovery.js'

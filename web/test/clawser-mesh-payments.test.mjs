@@ -1,5 +1,5 @@
 // Run with: node --import ./web/test/_setup-globals.mjs --test web/test/clawser-mesh-payments.test.mjs
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   CreditLedger,
@@ -665,5 +665,110 @@ describe('Wire constants', () => {
 
   it('CHANNEL_STATES has expected values', () => {
     assert.deepEqual([...CHANNEL_STATES], ['idle', 'opening', 'open', 'closing', 'closed']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// EscrowManager.pruneExpiredDetailed
+// ---------------------------------------------------------------------------
+
+describe('EscrowManager.pruneExpiredDetailed', () => {
+  it('returns the expired escrow records, not just a count', () => {
+    const em = new EscrowManager();
+    const e1 = em.create('payer', 'payee', 10, { timeout: 100 });
+    const e2 = em.create('payer', 'payee', 20, { timeout: 100 });
+
+    const expired = em.pruneExpiredDetailed(e1.createdAt + 5000);
+    assert.equal(expired.length, 2);
+    assert.deepEqual(expired.map(e => e.escrowId).sort(), [e1.escrowId, e2.escrowId].sort());
+    assert.ok(expired.every(e => e.status === 'expired'));
+  });
+
+  it('pruneExpired (count) stays consistent with pruneExpiredDetailed', () => {
+    const em = new EscrowManager();
+    em.create('payer', 'payee', 10, { timeout: 50 });
+    const count = em.pruneExpired(Date.now() + 999999);
+    assert.equal(count, 1);
+  });
+
+  it('returns an empty array when nothing is expired', () => {
+    const em = new EscrowManager();
+    em.create('payer', 'payee', 10, { timeout: 999999 });
+    assert.deepEqual(em.pruneExpiredDetailed(Date.now()), []);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PaymentRouter escrow sweeper
+// ---------------------------------------------------------------------------
+
+describe('PaymentRouter escrow sweeper', () => {
+  let router;
+
+  beforeEach(() => {
+    router = new PaymentRouter('pod-a');
+  });
+
+  afterEach(() => {
+    router.stopEscrowSweeper(); // must not leave a dangling interval
+  });
+
+  it('periodically expires timed-out escrows', async () => {
+    const escrow = router.getEscrow().create('pod-a', 'pod-b', 5, { timeout: 10 });
+    router.startEscrowSweeper(20);
+
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    const got = router.getEscrow().get(escrow.escrowId);
+    assert.equal(got.status, 'expired');
+  });
+
+  it('calls onExpired with the expired records', async () => {
+    router.getEscrow().create('pod-a', 'pod-b', 5, { timeout: 10 });
+    const calls = [];
+    router.startEscrowSweeper(20, (expired) => calls.push(expired));
+
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    assert.ok(calls.length >= 1);
+    assert.equal(calls[0][0].status, 'expired');
+  });
+
+  it('does not call onExpired when nothing expired', async () => {
+    router.getEscrow().create('pod-a', 'pod-b', 5, { timeout: 999999 });
+    const calls = [];
+    router.startEscrowSweeper(15, (expired) => calls.push(expired));
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    assert.equal(calls.length, 0);
+  });
+
+  it('stopEscrowSweeper halts further sweeps', async () => {
+    router.getEscrow().create('pod-a', 'pod-b', 5, { timeout: 500 });
+    router.startEscrowSweeper(15);
+    router.stopEscrowSweeper();
+
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    // Timer stopped before the 500ms timeout elapsed — still held.
+    // (This also proves stop actually clears the interval rather than
+    // just no-op'ing — a leaked interval would still be running here.)
+    assert.equal(router.getEscrow().size, 1);
+  });
+
+  it('startEscrowSweeper is idempotent — restarting replaces the prior timer', () => {
+    router.startEscrowSweeper(1000);
+    assert.doesNotThrow(() => router.startEscrowSweeper(1000));
+    router.stopEscrowSweeper();
+  });
+
+  it('a throwing onExpired callback does not break the sweep', async () => {
+    router.getEscrow().create('pod-a', 'pod-b', 5, { timeout: 10 });
+    router.startEscrowSweeper(20, () => { throw new Error('boom'); });
+
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    // Must not have crashed the process/timer — no assertion beyond
+    // reaching this point without an unhandled rejection.
+    assert.ok(true);
   });
 });

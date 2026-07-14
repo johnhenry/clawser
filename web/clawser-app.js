@@ -13,7 +13,8 @@
  * All cross-module coordination flows through the event bus (on/emit).
  */
 import { $, state, lsKey, on, emit, migrateLocalStorageKeys, configCache } from './clawser-state.js';
-import { ensureDefaultWorkspace } from './clawser-workspaces.js';
+import { ensureDefaultWorkspace, initWorkspacesCache } from './clawser-workspaces.js';
+import { bootstrapFilesystem } from './clawser-fs-bootstrap.mjs';
 import { initAccountListeners } from './clawser-accounts.js';
 import { initRouterListeners } from './clawser-router.js';
 import { initChatListeners } from './clawser-ui-chat.js';
@@ -28,7 +29,8 @@ import { createDefaultProviders, ResponseCache } from './clawser-providers.js';
 import { McpManager } from './clawser-mcp.js';
 import { SkillRegistry, SkillRegistryClient } from './clawser-skills.js';
 import { MountableFs } from './clawser-mount.js';
-import { SecretVault, OPFSVaultStorage } from './clawser-vault.js';
+import { SecretVault, OPFSVaultStorage, MemoryVaultStorage } from './clawser-vault.js';
+import { NullCheckpointIDB } from './clawser-disposable.js';
 import { IdentityManager } from './clawser-identity.js';
 import { IntentRouter } from './clawser-intent.js';
 import { InputSanitizer, ToolCallValidator, SafetyPipeline } from './clawser-safety.js';
@@ -38,8 +40,9 @@ import { UndoManager } from './clawser-undo.js';
 import { HeartbeatRunner } from './clawser-heartbeat.js';
 import { AuthProfileManager } from './clawser-auth-profiles.js';
 import { MetricsCollector, RingBufferLog } from './clawser-metrics.js';
-import { DaemonController, CheckpointManager, AwaySummaryBuilder } from './clawser-daemon.js';
+import { DaemonController, CheckpointManager, AwaySummaryBuilder, DaemonState } from './clawser-daemon.js';
 import { RoutineEngine } from './clawser-routines.js';
+import { initExtensionRoutineBridge } from './clawser-extension-routine-bridge.js';
 import { CheckpointIndexedDB } from './clawser-checkpoint-idb.js';
 import { OAuthManager } from './clawser-oauth.js';
 import { ToolBuilder } from './clawser-tool-builder.js';
@@ -49,15 +52,23 @@ import { GitBehavior, GitEpisodicMemory } from './clawser-git.js';
 import { AutomationManager } from './clawser-browser-auto.js';
 import { SandboxManager } from './clawser-sandbox.js';
 import { PeripheralManager } from './clawser-hardware.js';
+import { TunnelManager, CloudflareTunnel, NgrokTunnel } from './clawser-tunnel.js';
+import { initPwaInstall } from './clawser-pwa-install.js';
 import { PairingManager } from './clawser-remote.js';
 import { GoalManager } from './clawser-goals.js';
 import { addEvent } from './clawser-ui-chat.js';
 import { executeRoutineAction } from './clawser-routine-runtime.js';
 
 // Extracted modules
-import { createShellSession } from './clawser-workspace-lifecycle.js';
+import { createShellSession, setKernelIntegration } from './clawser-workspace-lifecycle.js';
 import { handleRoute } from './clawser-route-handler.js';
 import { initHomeListeners } from './clawser-home-views.js';
+import { initVaultSettings, updatePasskeyUnlockButton } from './clawser-vault-settings.js';
+
+// Kernel integration (Phase 12 — Steps 23-30)
+import { Kernel } from './packages-kernel.js';
+import { KernelIntegration } from './clawser-kernel-integration.js';
+import { silentCatch } from './clawser-silent-catch.mjs'
 
 // ── Migrate localStorage keys to versioned format (Gap 13.3) ────
 migrateLocalStorageKeys();
@@ -75,7 +86,17 @@ state.mcpManager = new McpManager({
 });
 
 state.responseCache = new ResponseCache();
-state.vault = new SecretVault(new OPFSVaultStorage());
+state.vault = new SecretVault(state.disposableMode ? new MemoryVaultStorage() : new OPFSVaultStorage('clawser_vault', {
+  guard: async (sizeBytes, op) => {
+    const { guardBeforeWrite } = await import('./clawser-quota-guard.mjs');
+    return guardBeforeWrite(sizeBytes, op, {
+      onWarning: async () => {
+        const { addMsg } = await import('./clawser-ui-chat.js');
+        addMsg('system', 'Storage is running low — consider clearing old snapshots or conversations in Settings.');
+      },
+    });
+  },
+}));
 
 // ── Create advanced module singletons (Batch 6-8) ───────────────
 state.identityManager = new IdentityManager();
@@ -197,8 +218,26 @@ globalThis.addEventListener('unhandledrejection', (event) => {
   }
 });
 
-state.checkpointIDB = new CheckpointIndexedDB();
+// ── Kernel boot (Phase 12 — activates Steps 23-30) ─────────────
+// The Kernel provides: tenant isolation, service registry, tracing,
+// ByteStream pipes, IPC MessagePorts, Clock/RNG, and SignalController.
+// KernelIntegration is the adapter that wires these into Clawser subsystems.
+state.kernel = new Kernel();
+const _kernelIntegration = new KernelIntegration(state.kernel);
+setKernelIntegration(_kernelIntegration);
+// Wire kernel to MCP manager so MCP servers register as svc:// services (Step 25)
+state.mcpManager._kernelIntegration = _kernelIntegration;
+console.log('[clawser] Kernel initialized — integration active');
+
+state.checkpointIDB = state.disposableMode ? new NullCheckpointIDB() : new CheckpointIndexedDB();
+// DaemonState with onChange wired to the header badge so phase
+// transitions (RUNNING → PAUSED → ERROR → STOPPED) update the UI
+// reactively. Previously the badge only refreshed at workspace
+// switch, so mid-session phase changes left it stale.
 state.daemonController = new DaemonController({
+  state: new DaemonState({
+    onChange: (newPhase) => emit('updateDaemon', newPhase),
+  }),
   getStateFn: () => state.agent?.getState(),
   checkpoints: new CheckpointManager({
     writeFn: (key, data) => state.checkpointIDB.write(key, data),
@@ -229,6 +268,15 @@ state.routineEngine = new RoutineEngine({
   },
 });
 
+// Lets the browser extension's chrome.alarms scheduler (which has no
+// access to orchestrator/gateway/agent from its isolated service worker)
+// delegate due-routine execution into this live tab instead of only
+// updating bookkeeping. No-op if the extension isn't installed.
+initExtensionRoutineBridge({
+  routineEngine: state.routineEngine,
+  onLog: (msg) => console.log(msg),
+});
+
 state.oauthManager = new OAuthManager({
   vault: state.vault,
   redirectUri: `${location.origin}/oauth-callback.html`,
@@ -245,6 +293,14 @@ state.oauthManager = new OAuthManager({
     }, 120_000);
 
     function handler(event) {
+      // Origin/source filter: only accept messages from the popup we
+      // opened, AND only from our own origin (the oauth-callback.html
+      // page that posts back to us). Without this, any page that can
+      // get a reference to our window (e.g., via iframing us) could
+      // forge a fake OAuth callback by sending the magic message
+      // type — letting an attacker substitute their own auth `code`.
+      if (event.source !== popup) return;
+      if (event.origin !== location.origin) return;
       if (event.data?.type !== '__clawser_oauth_callback__') return;
       clearTimeout(timeout);
       window.removeEventListener('message', handler);
@@ -255,7 +311,7 @@ state.oauthManager = new OAuthManager({
 
     // Also poll in case postMessage fails (popup on different origin)
     const pollInterval = setInterval(() => {
-      try { if (popup.closed) { clearInterval(pollInterval); clearTimeout(timeout); window.removeEventListener('message', handler); reject(new Error('OAuth popup closed by user.')); } } catch { /* cross-origin — ignore */ }
+      try { if (popup.closed) { clearInterval(pollInterval); clearTimeout(timeout); window.removeEventListener('message', handler); reject(new Error('OAuth popup closed by user.')); } } catch (e) { silentCatch('clawser-app', 'cross-origin-ignore', e) }
     }, 500);
   }),
 
@@ -356,6 +412,21 @@ state.gitMemory = new GitEpisodicMemory(state.gitBehavior);
 state.automationManager = new AutomationManager({ onLog: _onLog });
 state.sandboxManager = new SandboxManager({ onLog: _onLog });
 state.peripheralManager = new PeripheralManager({ onLog: _onLog });
+
+// Tunnel Manager — Cloudflare quick tunnels + ngrok via the wsh_exec tool.
+// Providers are registered eagerly; activation only happens when the user
+// invokes a tunnel start. The exec callback resolves lazily so the wsh tool
+// has time to register itself before any tunnel is actually started.
+state.tunnelManager = new TunnelManager();
+const tunnelExec = async (cmd, args) => {
+  const tool = state.browserTools?.get?.('wsh_exec');
+  if (!tool || typeof tool.execute !== 'function') {
+    throw new Error('wsh_exec tool not available — connect to a wsh server first');
+  }
+  return tool.execute({ cmd, args });
+};
+state.tunnelManager.registerProvider('cloudflare', new CloudflareTunnel({ exec: tunnelExec }));
+state.tunnelManager.registerProvider('ngrok', new NgrokTunnel({ exec: tunnelExec }));
 state.pairingManager = new PairingManager({ onLog: _onLog });
 state.goalManager = new GoalManager();
 state.skillRegistryClient = new SkillRegistryClient();
@@ -422,17 +493,26 @@ async function showVaultModal(vault) {
   const error = document.getElementById('vaultError');
   const input = document.getElementById('vaultPassphrase');
 
+  const recoverBtn = document.getElementById('vaultRecoverBtn');
+  const destroyBtn = document.getElementById('vaultDestroyBtn');
+  if (destroyBtn) destroyBtn.style.display = 'none'; // revealed after a failed unlock
+
   if (isNew) {
     title.textContent = 'Create Vault';
     desc.textContent = 'Choose a passphrase to protect your API keys.';
     confirm.style.display = '';
     submit.textContent = 'Create';
+    if (recoverBtn) recoverBtn.style.display = 'none';
   } else {
     title.textContent = 'Unlock Vault';
     desc.textContent = 'Enter your passphrase to unlock the vault.';
     confirm.style.display = 'none';
     submit.textContent = 'Unlock';
+    if (recoverBtn) recoverBtn.style.display = (await vault.hasRecovery()) ? '' : 'none';
   }
+
+  // Show "Unlock with passkey" if any passkey wraps exist for this vault.
+  await updatePasskeyUnlockButton(vault);
 
   return new Promise((resolve) => {
     const ac = new AbortController();
@@ -443,6 +523,68 @@ async function showVaultModal(vault) {
     input.focus();
     modal.addEventListener('cancel', (e) => {
       e.preventDefault(); // prevent Escape from closing — user must submit
+    }, { signal: ac.signal });
+    // If the modal is closed via passkey unlock (which calls modal.close()
+    // directly from outside the form-submit path), resolve the boot
+    // Promise once we observe the vault is unlocked.
+    modal.addEventListener('close', () => {
+      if (!vault.isLocked) {
+        ac.abort();
+        input.value = '';
+        confirm.value = '';
+        resolve();
+      }
+    }, { signal: ac.signal });
+    recoverBtn?.addEventListener('click', async () => {
+      error.style.display = 'none';
+      try {
+        const { modal: dialogs } = await import('./clawser-modal.js');
+        const code = await dialogs.prompt('Enter your vault recovery code:', '', { title: 'Vault Recovery' });
+        if (!code) return;
+        const newPass = await dialogs.prompt('Choose a new passphrase:', '', { title: 'Vault Recovery' });
+        if (!newPass) return;
+        const result = await vault.recoverWithCode(code, newPass);
+        if (!result.success) {
+          error.textContent = result.error || 'Recovery failed';
+          error.style.display = '';
+          return;
+        }
+        await dialogs.alert(
+          `Vault recovered. Your NEW recovery code:\n\n${result.recoveryCode}\n\nSave it now — the old code no longer works and this one will not be shown again.`,
+          { title: 'Save your new recovery code' },
+        );
+        vault.resetIdleTimer();
+        modal.close();
+        ac.abort();
+        input.value = '';
+        confirm.value = '';
+        resolve();
+      } catch (err) {
+        error.textContent = err.message || 'Recovery failed';
+        error.style.display = '';
+      }
+    }, { signal: ac.signal });
+    // Last-resort escape hatch for a corrupted or fully inaccessible vault:
+    // destroys all secrets and restarts the flow in create mode.
+    destroyBtn?.addEventListener('click', async () => {
+      try {
+        const { modal: dialogs } = await import('./clawser-modal.js');
+        const sure = await dialogs.confirm(
+          'Reset the vault? ALL stored secrets (API keys, credentials) will be permanently deleted. This cannot be undone.',
+          { title: 'Reset Vault', danger: true, okLabel: 'Delete everything' },
+        );
+        if (!sure) return;
+        await vault.destroy();
+        modal.close();
+        ac.abort();
+        input.value = '';
+        confirm.value = '';
+        // Restart the flow — vault no longer exists, so this runs create mode
+        resolve(showVaultModal(vault));
+      } catch (err) {
+        error.textContent = err.message || 'Vault reset failed';
+        error.style.display = '';
+      }
     }, { signal: ac.signal });
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -466,6 +608,8 @@ async function showVaultModal(vault) {
         if (!ok) {
           error.textContent = 'Invalid passphrase';
           error.style.display = '';
+          // Reveal the destructive escape hatch after a failed unlock
+          if (!isNew && destroyBtn) destroyBtn.style.display = '';
           return;
         }
         // verify() leaves the vault unlocked with the correct key
@@ -474,12 +618,28 @@ async function showVaultModal(vault) {
         ac.abort(); // removes both cancel and submit listeners
         input.value = '';
         confirm.value = '';
+
+        // First-time setup: issue a recovery code and show it exactly once
+        if (isNew) {
+          try {
+            const { modal: dialogs } = await import('./clawser-modal.js');
+            const code = await vault.setupRecovery();
+            await dialogs.alert(
+              `Vault recovery code:\n\n${code}\n\nSave this somewhere safe NOW — it is the only way to regain access if you forget your passphrase, and it will not be shown again.`,
+              { title: 'Save your recovery code' },
+            );
+          } catch (err) {
+            console.warn('[clawser] vault recovery setup failed:', err.message);
+          }
+        }
         resolve();
       } catch (err) {
         input.value = '';
         confirm.value = '';
         error.textContent = err.message || 'Invalid passphrase';
         error.style.display = '';
+        // Decrypt errors on an existing vault may mean corruption — offer reset
+        if (!isNew && destroyBtn) destroyBtn.style.display = '';
       }
     }, { signal: ac.signal });
   });
@@ -490,7 +650,7 @@ export async function shutdown() {
   if (state.shuttingDown) return;
   state.shuttingDown = true;
 
-  const quiet = async (fn) => { try { await fn(); } catch { /* best-effort */ } };
+  const quiet = async (fn) => { try { await fn(); } catch (e) { silentCatch('clawser-app', 'fn', e) } };
 
   // Stop daemon
   if (state.daemonController) await quiet(() => state.daemonController.stop());
@@ -521,10 +681,11 @@ export async function shutdown() {
       await quiet(() => state.mcpManager.removeServer(name));
     }
   }
-  // Close kernel integration
+  // Close kernel integration, then kernel itself
   const { getKernelIntegration } = await import('./clawser-workspace-lifecycle.js');
   const ki = getKernelIntegration();
   if (ki) await quiet(() => ki.close());
+  if (state.kernel) await quiet(() => state.kernel.close());
 
   emit('shutdown'); // emitted for future extension hooks
 }
@@ -540,7 +701,10 @@ initHomeListeners();
 
 // Unlock vault before any workspace/account initialization
 (async () => {
-  if (state.vault && state.vault.isLocked && !state.demoMode) {
+  // Wire up vault settings gear icon
+  initVaultSettings();
+
+  if (state.vault && state.vault.isLocked && !state.demoMode && !state.disposableMode) {
     await showVaultModal(state.vault);
     // After unlock, migrate any plaintext account keys to vault
     const { migrateKeysToVault } = await import('./clawser-accounts.js');
@@ -554,7 +718,32 @@ initHomeListeners();
     if (banner) banner.style.display = '';
   }
 
+  // Disposable mode banner
+  if (state.disposableMode) {
+    const banner = document.getElementById('disposableBanner');
+    if (banner) banner.style.display = '';
+    console.log('[clawser] Disposable mode — nothing will persist after tab close');
+  }
+
+  // Phase 0: bootstrap OPFS directory structure + default configs.
+  // Must run BEFORE initWorkspacesCache so /etc/clawser/ exists for writes.
+  try {
+    await bootstrapFilesystem();
+  } catch (e) {
+    console.warn('[clawser] filesystem bootstrap failed (OPFS may be unavailable):', e);
+  }
+
+  // Prime the workspace cache from OPFS (with one-time migration from
+  // localStorage if OPFS is empty). After this, synchronous workspace
+  // accessors hit the in-memory cache.
+  try {
+    await initWorkspacesCache();
+  } catch (e) {
+    console.warn('[clawser] workspaces cache init failed:', e);
+  }
+
   ensureDefaultWorkspace();
+
   handleRoute();
 
   // ── Background execution: register periodicSync (Tier 3 fallback) ──
@@ -564,6 +753,33 @@ initHomeListeners();
       await reg.periodicSync.register('clawser-scheduler', { minInterval: 60 * 60 * 1000 });
     }
   } catch { /* periodicSync not available or permission denied — Tiers 1/2 still work */ }
+
+  // The SW's periodicsync handler can only detect due routines (no
+  // agent/LLM access in a SW context) — it wakes any open tab so the
+  // real in-tab RoutineEngine executes them immediately rather than
+  // waiting for its own next tick interval.
+  if (typeof navigator !== 'undefined' && navigator.serviceWorker) {
+    navigator.serviceWorker.addEventListener('message', (event) => {
+      if (event.data?.type === 'clawser-scheduler-wake') {
+        state.routineEngine?.tickCron?.().catch((e) => console.warn('[clawser] scheduler wake tick failed:', e.message));
+      }
+    });
+
+    // periodicSync's interval is browser-throttled (often hours) and not
+    // guaranteed to fire promptly, so ask the SW to check right now
+    // whenever this tab regains visibility — catches anything that became
+    // due while backgrounded without waiting for the next periodicSync tick.
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          navigator.serviceWorker.controller?.postMessage({ type: 'clawser-scheduler-check' });
+        }
+      });
+    }
+  }
+
+  // ── PWA install flow: capture beforeinstallprompt for later trigger ──
+  try { initPwaInstall(); } catch (e) { silentCatch('clawser-app', 'initPwaInstall', e) }
 
   // ── "While you were away" summary from background execution log ──
   try {
@@ -583,7 +799,7 @@ initHomeListeners();
       // Clear the log after presenting it
       await state.checkpointIDB.delete('background_execution_log');
     }
-  } catch { /* IDB not available or empty — ignore */ }
+  } catch (e) { silentCatch('clawser-app', 'idb-not-available-or-empty-ignore', e) }
 })();
 
 // Auto-save on page unload.
@@ -592,20 +808,21 @@ initHomeListeners();
 window.addEventListener('beforeunload', () => {
   if (state.shuttingDown) return;
   state.shuttingDown = true;
+  if (state.disposableMode) return; // nothing to persist
   // Sync-safe: persistMemories writes to localStorage (synchronous)
-  try { state.agent?.persistMemories(); } catch { /* best-effort */ }
+  try { state.agent?.persistMemories(); } catch (e) { silentCatch('clawser-app', 'state.agent', e) }
   // Sync-safe: vault lock clears in-memory key (no I/O)
-  try { state.vault?.lock(); } catch { /* best-effort */ }
+  try { state.vault?.lock(); } catch (e) { silentCatch('clawser-app', 'state.vault', e) }
   // Sync-safe: persistConfig writes to localStorage (synchronous)
-  try { state.agent?.persistConfig?.(); } catch { /* best-effort */ }
+  try { state.agent?.persistConfig?.(); } catch (e) { silentCatch('clawser-app', 'state.agent', e) }
 });
 
 // Primary save trigger — visibilitychange fires reliably and supports async.
 document.addEventListener('visibilitychange', () => {
-  if (state.shuttingDown) return;
+  if (state.shuttingDown || state.disposableMode) return;
   if (document.visibilityState === 'hidden' && state.agent) {
-    try { state.agent.persistMemories(); } catch { /* ignore */ }
+    try { state.agent.persistMemories(); } catch (e) { silentCatch('clawser-app', 'state.agent.persistMemories', e) }
     state.agent.persistCheckpoint().catch(e => console.warn('[clawser] Checkpoint save:', e.message));
-    try { state.agent.persistConfig?.(); } catch { /* ignore */ }
+    try { state.agent.persistConfig?.(); } catch (e) { silentCatch('clawser-app', 'state.agent.persistConfig', e) }
   }
 });

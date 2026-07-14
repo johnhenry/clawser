@@ -1,8 +1,8 @@
 # Clawser Roadmap
 
-## Current Status (Mar 2026)
+## Current Status (May 2026)
 
-Clawser is a **beta-quality** browser-native AI agent platform. The core runtime is functionally complete with 100+ JS modules (~120K LOC), 70+ tools, and 38+ LLM provider backends. The project transitioned from a Rust/WASM architecture to pure JavaScript. Phase 8 (BrowserMesh) added 30 decentralized mesh modules with 3,710 tests.
+Clawser is a **beta-quality** browser-native AI agent platform. The core runtime is functionally complete with 240+ JS modules (~120K LOC), 100+ tools, and 38+ LLM provider backends. The project transitioned from a Rust/WASM architecture to pure JavaScript. Phase 8 (BrowserMesh) added 44 decentralized mesh modules. Full test suite: **8,800+ tests passing, 0 failing.**
 
 ### What Works
 - Full agent loop with streaming, tool calling, and context compaction
@@ -35,6 +35,7 @@ Clawser is a **beta-quality** browser-native AI agent platform. The core runtime
 | **Batch 2** | Router single source of truth, state namespacing |
 | **Batch 3** | Panel enhancements, agent loop integration, 9 API mismatch fixes |
 | **0.1.0-beta** | 9 feature module integrations with 36 new agent tools. Phase 2 UI/agent loop wiring for all 30 blocks. |
+| **Phase 5** | Phase 5: Remote Execution (wsh) -- COMPLETE. Phase 5.7: Protocol Extensions — COMPLETE. Full wsh protocol: shell exec, file transfer, MCP bridging, CORS proxy, policy engine. |
 | **Phase 7** | Virtual Server subsystem — SW fetch intercept, ServerManager, function/static/proxy handlers, 8 agent tools, FetchTool auto-routing, kernel svc:// integration, Servers UI panel |
 | **Phase 8** | Remote runtime access expansion (`wsh`) — canonical runtime registry, session broker, reverse host parity, VM console peers, route policy, remote filesystems, and audit convergence |
 | **Phase 9** | BrowserMesh integration — 30 new modules for decentralized mesh: identity, trust, CRDT sync, P2P transport, naming, real transports, resource scheduling, payments, consensus, swarm coordination |
@@ -90,8 +91,9 @@ All planned package extractions are complete. The internal `web/packages/*` dire
 Items partially complete or planned for the mesh networking layer:
 
 #### Peer Type Taxonomy
-- [ ] Canonical peer type system — distinguish `chat`, `runtime`, `host-shell`, `vm-compute` peers
-- [ ] Peer type advertised in discovery records and visible in UI
+- [x] Canonical peer type system — `PEER_TYPE` enum exported from `clawser-mesh-discovery.js`: `chat`, `runtime`, `host-shell`, `vm-compute`, `unknown`
+- [x] Peer type carried in `DiscoveryRecord` (with normalization for forward-compat)
+- [ ] Peer type visible in UI (badge in peer list)
 - [ ] Routing policies based on peer type (e.g., compute jobs only go to `vm-compute` peers)
 
 #### Remote Peers as Deployment Targets
@@ -100,24 +102,24 @@ Items partially complete or planned for the mesh networking layer:
 - [ ] Mesh-native file sync between pods (beyond CRDT state sync)
 
 #### Transport Hardening
-- [ ] WebRTC data channel reliability — reconnection, ICE restart, TURN fallback
-- [ ] WebTransport production path (currently bridged, not end-to-end)
-- [ ] Transport quality metrics (latency, packet loss) exposed to routing layer
+- [x] WebRTC data channel reliability — reconnection (ICE restart via `WebRTCPeerConnection.reconnect()`), auto-reconnect with exponential backoff (`WebRTCMeshManager`), TURN fallback (`mergeIceServers()` + Settings → Mesh/Relay TURN field). Gap: `clawser-pod.js`'s production transport adapter still uses raw per-endpoint connections, not `WebRTCMeshManager` — the auto-reconnect isn't wired into the live path yet.
+- [x] WebTransport — reframed, not a gap. WebTransport is inherently client-server (HTTP/3-based); there's no P2P mode to build toward. `WebTransportBridge` is the correct, complete implementation — a bridge/relay transport like WebSocket, not a peer transport like WebRTC.
+- [x] Transport quality metrics (latency, packet loss) exposed via `WebRTCPeerConnection.getConnectionStats()` / `WebRTCMeshManager.getAllConnectionStats()` and `MeshInspector.snapshot().connectivity`. Not yet wired to a routing-layer decision (e.g. auto-failover on quality), just observability.
 
 #### Group Encryption & Key Management
-- [ ] Per-member key envelope encryption (currently metadata-only distribution)
+- [x] Per-member key envelope encryption — X25519 ECDH + AES-GCM key wrap in `clawser-mesh-group-keys.js`; falls back to metadata-only (the old behavior) with a logged warning when a member's public key isn't known yet.
 - [ ] Key rotation audit trail
 - [ ] Integrate with mesh ACL for group membership changes
 
 #### Consensus & Payments Production
-- [ ] PBFT consensus end-to-end with real validator sets (currently opt-in stub)
+- [x] Validator sets on `ConsensusManager` (membership-gated majority/super-majority/unanimous/weighted voting) — **not** PBFT. Full PBFT with real validator sets remains the opt-in `raijin-consensus` path (unchanged, still a stub integration point at `clawser-pod.js`).
 - [ ] Payment channel settlement on close (currently local-only accounting)
-- [ ] Escrow timeout enforcement via scheduler
+- [x] Escrow timeout enforcement via scheduler — `PaymentRouter.startEscrowSweeper()`.
 
 #### Observability
-- [ ] Mesh health dashboard — peer latency, message throughput, connection status
-- [ ] Distributed tracing across mesh hops
-- [ ] Alert rules for peer disconnection, consensus timeout, payment disputes
+- [x] Mesh health dashboard — peer connection stats (latency, throughput, loss) in a new "Connectivity Metrics" section of `clawser-ui-mesh.js`, sourced from `MeshInspector.snapshot().connectivity`.
+- [x] Distributed tracing across mesh hops — traceId carried in clawser's own message envelope (`ClawserPod.sendMessage`/`onMessage`), emitted to the kernel Tracer via `KernelIntegration.traceMeshEvent()`. Correlates hops between clawser pods only; full spec-level tracing remains a roadmap note.
+- [x] Alert rules for peer disconnection, latency, and packet loss — `clawser-mesh-alert-rules.mjs`'s `evaluateAlertRules()` (defaults: latency >2s, packet loss >5%, peer-drop). Consensus-timeout/payment-dispute alert rules not yet added — this covers connectivity only.
 
 ### Phase 12: Ecosystem & Integrations
 
@@ -132,8 +134,8 @@ Items partially complete or planned for the mesh networking layer:
 - [x] BroadcastChannel tab coordination
 - [x] Background task execution
 - [ ] Service Worker persistent daemon (survives all tabs closing)
-- [ ] Wake-on-message from relay/signaling server
-- [ ] Scheduled task execution in daemon mode
+- [x] Wake-on-message (in-repo half) — `sw.js` responds to a client-posted `{type: 'clawser-scheduler-check'}` message (in addition to its existing `periodicsync` handler), triggered on tab `visibilitychange`. True push-from-relay while every tab is closed needs Web Push + VAPID (a server component) — out of scope for a client-only app.
+- [x] Scheduled task execution in daemon mode — cron validation + per-routine consecutive-failure skip in `clawser-background-runner.js`.
 
 #### Kernel Extraction
 - [ ] Extract `web/packages/kernel/` to standalone npm package (`browsermesh-kernel`)
@@ -141,7 +143,7 @@ Items partially complete or planned for the mesh networking layer:
 - [ ] Kernel tenants usable from ServerPod (Node.js) — unified resource model
 
 #### Mobile & Cross-Platform
-- [ ] PWA install flow refinement for mobile browsers
+- [x] PWA install flow plumbing — `web/clawser-pwa-install.js` captures `beforeinstallprompt`, exposes `tryInstall()` / `getInstallState()` / `onInstallStateChange()`. Manifest gained `id`, `display_override`, `categories`, `shortcuts`. (UI surface for mobile browsers still needs polish work.)
 - [ ] Touch-optimized UI for mesh peer management
 - [ ] iOS Safari compatibility audit (WebRTC, BroadcastChannel, OPFS)
 

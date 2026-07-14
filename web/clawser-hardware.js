@@ -160,17 +160,17 @@ export class SerialPeripheral extends PeripheralHandle {
     this.#connected = false;
 
     if (this.#reader) {
-      try { await this.#reader.cancel(); } catch {}
+      try { await this.#reader.cancel(); } catch { /* best-effort cleanup */ }
       this.#reader = null;
     }
     if (this.#writer) {
-      try { await this.#writer.close(); } catch {}
+      try { await this.#writer.close(); } catch { /* best-effort cleanup */ }
       this.#writer = null;
     }
-    try { await this.#port.close(); } catch {}
+    try { await this.#port.close(); } catch { /* best-effort cleanup */ }
 
     for (const cb of this.#disconnectCallbacks) {
-      try { cb(); } catch {}
+      try { cb(); } catch (e) { console.warn('[clawser] hardware listener error:', e.message); }
     }
   }
 
@@ -239,7 +239,7 @@ export class SerialPeripheral extends PeripheralHandle {
               if (line.trim()) {
                 const encoded = new TextEncoder().encode(line);
                 for (const cb of this.#dataCallbacks) {
-                  try { cb(encoded); } catch {}
+                  try { cb(encoded); } catch (e) { console.warn('[clawser] hardware listener error:', e.message); }
                 }
               }
             }
@@ -301,7 +301,7 @@ export class BluetoothPeripheral extends PeripheralHandle {
       this.#gattDisconnectHandler = () => {
         this.#connected = false;
         for (const cb of this.#disconnectCallbacks) {
-          try { cb(); } catch {}
+          try { cb(); } catch (e) { console.warn('[clawser] hardware listener error:', e.message); }
         }
       };
       this.#device.addEventListener('gattserverdisconnected', this.#gattDisconnectHandler);
@@ -314,7 +314,7 @@ export class BluetoothPeripheral extends PeripheralHandle {
 
     // Unsubscribe from characteristics
     for (const char of this.#subscribedChars) {
-      try { await char.stopNotifications(); } catch {}
+      try { await char.stopNotifications(); } catch { /* best-effort cleanup */ }
     }
     this.#subscribedChars = [];
 
@@ -324,12 +324,12 @@ export class BluetoothPeripheral extends PeripheralHandle {
     }
 
     if (this.#device?.gatt?.connected) {
-      try { this.#device.gatt.disconnect(); } catch {}
+      try { this.#device.gatt.disconnect(); } catch { /* best-effort cleanup */ }
     }
     this.#server = null;
 
     for (const cb of this.#disconnectCallbacks) {
-      try { cb(); } catch {}
+      try { cb(); } catch (e) { console.warn('[clawser] hardware listener error:', e.message); }
     }
   }
 
@@ -384,7 +384,7 @@ export class BluetoothPeripheral extends PeripheralHandle {
     char.addEventListener('characteristicvaluechanged', (event) => {
       const value = new Uint8Array(event.target.value.buffer);
       for (const cb of this.#dataCallbacks) {
-        try { cb(value); } catch {}
+        try { cb(value); } catch (e) { console.warn('[clawser] hardware listener error:', e.message); }
       }
     });
   }
@@ -477,11 +477,11 @@ export class USBPeripheral extends PeripheralHandle {
     if (!this.#connected) return;
     this.#connected = false;
     this.#polling = false;
-    try { await this.#device.releaseInterface(this.#interfaceNumber); } catch {}
-    try { await this.#device.close(); } catch {}
+    try { await this.#device.releaseInterface(this.#interfaceNumber); } catch { /* best-effort cleanup */ }
+    try { await this.#device.close(); } catch { /* best-effort cleanup */ }
 
     for (const cb of this.#disconnectCallbacks) {
-      try { cb(); } catch {}
+      try { cb(); } catch (e) { console.warn('[clawser] hardware listener error:', e.message); }
     }
   }
 
@@ -719,7 +719,7 @@ export class PeripheralManager {
    */
   async disconnectAll() {
     for (const handle of this.#devices.values()) {
-      try { await handle.disconnect(); } catch {}
+      try { await handle.disconnect(); } catch { /* best-effort cleanup */ }
     }
     this.#devices.clear();
     this.#log('All devices disconnected');
@@ -780,7 +780,7 @@ export class PeripheralManager {
    */
   dispatchDeviceData(deviceId, data) {
     for (const cb of this.#dataCallbacks) {
-      try { cb(deviceId, data); } catch {}
+      try { cb(deviceId, data); } catch (e) { console.warn('[clawser] hardware listener error:', e.message); }
     }
   }
 

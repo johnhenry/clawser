@@ -1,3 +1,4 @@
+import { silentCatch } from './clawser-silent-catch.mjs'
 // clawser-channel-email.js — Email Channel Plugin
 //
 // IMAP polling via fetch (wsh-based proxy) + SMTP/Gmail API send.
@@ -215,11 +216,11 @@ export class EmailPlugin {
 
     let body = '';
     if (msg.payload?.body?.data) {
-      try { body = atob(msg.payload.body.data.replace(/-/g, '+').replace(/_/g, '/')); } catch { /* ignore */ }
+      try { body = atob(msg.payload.body.data.replace(/-/g, '+').replace(/_/g, '/')); } catch (e) { silentCatch('clawser-channel-email', 'body', e) }
     } else if (msg.payload?.parts) {
       const textPart = msg.payload.parts.find(p => p.mimeType === 'text/plain');
       if (textPart?.body?.data) {
-        try { body = atob(textPart.body.data.replace(/-/g, '+').replace(/_/g, '/')); } catch { /* ignore */ }
+        try { body = atob(textPart.body.data.replace(/-/g, '+').replace(/_/g, '/')); } catch (e) { silentCatch('clawser-channel-email', 'body', e) }
       }
     }
 

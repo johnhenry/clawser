@@ -1,7 +1,7 @@
 // Run with: node --import ./web/test/_setup-globals.mjs --test web/test/clawser-background-runner.test.mjs
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { BackgroundSchedulerRunner } from '../clawser-background-runner.js';
+import { BackgroundSchedulerRunner, validateCronExpression } from '../clawser-background-runner.js';
 
 // ── In-memory IDB stub ───────────────────────────────────────────
 
@@ -226,5 +226,152 @@ describe('BackgroundSchedulerRunner — run', () => {
     await runner.run(now);
     const saved = await idb.read('background_routine_state');
     assert.equal(saved[0].meta.lastFired, now, 'lastFired should be updated');
+  });
+});
+
+// ── validateCronExpression ────────────────────────────────────────
+
+describe('validateCronExpression', () => {
+  it('accepts valid 5-field expressions', () => {
+    for (const expr of ['* * * * *', '0 9 * * 1-5', '*/15 * * * *', '0,30 8-18 * * *']) {
+      assert.equal(validateCronExpression(expr), null, `expected valid: ${expr}`);
+    }
+  });
+
+  it('rejects the wrong number of fields', () => {
+    assert.match(validateCronExpression('* * * *'), /expected 5 fields, got 4/);
+    assert.match(validateCronExpression('* * * * * *'), /expected 5 fields, got 6/);
+  });
+
+  it('rejects out-of-range field values', () => {
+    assert.match(validateCronExpression('99 * * * *'), /minute field/);
+    assert.match(validateCronExpression('* 25 * * *'), /hour field/);
+    assert.match(validateCronExpression('* * 32 * *'), /day-of-month field/);
+    assert.match(validateCronExpression('* * * 13 *'), /month field/);
+    assert.match(validateCronExpression('* * * * 8'), /day-of-week field/);
+  });
+
+  it('rejects invalid ranges and steps', () => {
+    assert.match(validateCronExpression('10-5 * * * *'), /minute field/); // reversed range
+    assert.match(validateCronExpression('*/0 * * * *'), /minute field/); // zero step
+    assert.match(validateCronExpression('abc * * * *'), /minute field/); // non-numeric
+  });
+
+  it('rejects non-string / empty input', () => {
+    assert.match(validateCronExpression(''), /non-empty string/);
+    assert.match(validateCronExpression(null), /non-empty string/);
+  });
+});
+
+// ── run() — cron validation ────────────────────────────────────────
+
+describe('BackgroundSchedulerRunner — run cron validation', () => {
+  it('logs an invalid cron once and excludes the routine from due-checking', async () => {
+    const idb = makeStubIDB();
+    const logs = [];
+    const executed = [];
+    const runner = new BackgroundSchedulerRunner({
+      idb, onLog: (m) => logs.push(m),
+      executeFn: async (r) => { executed.push(r.id); },
+    });
+    await idb.write('background_routine_state', [{
+      id: 'bad', name: 'Bad Cron', enabled: true,
+      trigger: { type: 'cron', cron: '99 * * * *' }, state: {},
+    }]);
+
+    await runner.run(Date.now());
+    assert.equal(executed.length, 0);
+    assert.ok(logs.some(l => l.includes('Invalid cron')));
+
+    // Second run: same warning must not repeat (state.cronInvalidLogged sticks)
+    logs.length = 0;
+    await runner.run(Date.now());
+    assert.equal(logs.filter(l => l.includes('Invalid cron')).length, 0);
+  });
+
+  it('a valid cron on an otherwise-identical routine still executes', async () => {
+    const idb = makeStubIDB();
+    const executed = [];
+    const runner = new BackgroundSchedulerRunner({ idb, executeFn: async (r) => { executed.push(r.id); } });
+    await idb.write('background_routine_state', [{
+      id: 'ok', name: 'Good Cron', enabled: true,
+      trigger: { type: 'cron', cron: '* * * * *' }, state: { lastCronMinute: 0 },
+    }]);
+
+    await runner.run(Date.now());
+    assert.deepEqual(executed, ['ok']);
+  });
+});
+
+// ── run() — consecutive-failure skip ───────────────────────────────
+
+describe('BackgroundSchedulerRunner — consecutive failure skip', () => {
+  it('skips a routine after 3 consecutive failures instead of retrying forever', async () => {
+    const idb = makeStubIDB();
+    const logs = [];
+    const runner = new BackgroundSchedulerRunner({
+      idb, onLog: (m) => logs.push(m),
+      executeFn: async () => { throw new Error('boom'); },
+    });
+    await idb.write('background_routine_state', [{
+      id: 'r1', name: 'Flaky', enabled: true,
+      meta: { source: 'agent', scheduleType: 'interval', intervalMs: 1, lastFired: 0 },
+      state: {},
+    }]);
+
+    // Fail 3 times
+    let now = Date.now();
+    for (let i = 0; i < 3; i++) {
+      await runner.run(now);
+      now += 10;
+    }
+    let saved = (await idb.read('background_routine_state'))[0];
+    assert.equal(saved.state.consecutiveFailures, 3);
+
+    // 4th tick: skipped, not retried
+    const result = await runner.run(now);
+    assert.equal(result.results.length, 0);
+    assert.equal(result.skipped.length, 1);
+    assert.equal(result.skipped[0].reason, 'previous failure');
+    assert.ok(logs.some(l => l.includes('Skipped (previous failure)')));
+  });
+
+  it('resets the failure counter on a subsequent success', async () => {
+    const idb = makeStubIDB();
+    let shouldFail = true;
+    const runner = new BackgroundSchedulerRunner({
+      idb,
+      executeFn: async () => { if (shouldFail) throw new Error('boom'); },
+    });
+    await idb.write('background_routine_state', [{
+      id: 'r1', name: 'Recovers', enabled: true,
+      meta: { source: 'agent', scheduleType: 'interval', intervalMs: 1, lastFired: 0 },
+      state: {},
+    }]);
+
+    let now = Date.now();
+    await runner.run(now); now += 10;
+    await runner.run(now); now += 10;
+    shouldFail = false;
+    await runner.run(now);
+
+    const saved = (await idb.read('background_routine_state'))[0];
+    assert.equal(saved.state.consecutiveFailures, 0);
+    assert.equal(saved.state.lastResult, 'success');
+  });
+
+  it('records skipped entries in the execution log', async () => {
+    const idb = makeStubIDB();
+    const runner = new BackgroundSchedulerRunner({ idb, executeFn: async () => { throw new Error('x'); } });
+    await idb.write('background_routine_state', [{
+      id: 'r1', name: 'Flaky', enabled: true,
+      meta: { source: 'agent', scheduleType: 'interval', intervalMs: 1, lastFired: 0 },
+      state: { consecutiveFailures: 3 },
+    }]);
+
+    await runner.run(Date.now());
+    const log = await runner.readLog();
+    const last = log[log.length - 1];
+    assert.deepEqual(last.skipped, [{ routineId: 'r1', reason: 'previous failure' }]);
   });
 });

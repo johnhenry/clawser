@@ -7,6 +7,7 @@
 // Agent tools: daemon_status, daemon_checkpoint, daemon_pause, daemon_resume
 
 import { BrowserTool } from './clawser-tools.js';
+import { silentCatch } from './clawser-silent-catch.mjs'
 
 // ── DaemonState ─────────────────────────────────────────────────
 
@@ -199,7 +200,7 @@ export class CheckpointManager {
       if (Array.isArray(index)) {
         this.#index = index;
       }
-    } catch { /* ignore */ }
+    } catch (e) { silentCatch('clawser-daemon', 'ignore', e) }
   }
 
   /** List checkpoint metadata. */
@@ -220,7 +221,7 @@ export class CheckpointManager {
     this.#index.splice(idx, 1);
 
     if (this.#writeFn) {
-      try { await this.#writeFn(`checkpoint_${id}`, null); } catch { /* best-effort */ }
+      try { await this.#writeFn(`checkpoint_${id}`, null); } catch (e) { silentCatch('clawser-daemon', 'best-effort', e) }
       await this.#writeFn('checkpoint_index', this.#index);
     }
 
@@ -234,10 +235,10 @@ export class CheckpointManager {
   async clear() {
     if (this.#writeFn) {
       for (const meta of this.#index) {
-        try { await this.#writeFn(`checkpoint_${meta.id}`, null); } catch { /* best-effort */ }
+        try { await this.#writeFn(`checkpoint_${meta.id}`, null); } catch (e) { silentCatch('clawser-daemon', 'best-effort', e) }
       }
-      try { await this.#writeFn('checkpoint_latest', null); } catch { /* best-effort */ }
-      try { await this.#writeFn('checkpoint_index', null); } catch { /* best-effort */ }
+      try { await this.#writeFn('checkpoint_latest', null); } catch (e) { silentCatch('clawser-daemon', 'this', e) }
+      try { await this.#writeFn('checkpoint_index', null); } catch (e) { silentCatch('clawser-daemon', 'this', e) }
     }
     this.#index = [];
   }
@@ -255,6 +256,10 @@ export class TabCoordinator {
   #onMessage;
   #heartbeatInterval = null;
   #heartbeatMs;
+  /** @type {import('./clawser-kernel-integration.js').KernelIntegration|null} */
+  #kernelIntegration;
+  /** @type {[object, object]|null} Kernel MessagePort pair [tabPort, daemonPort] */
+  #kernelPorts;
 
   /**
    * @param {object} [opts]
@@ -262,13 +267,25 @@ export class TabCoordinator {
    * @param {object} [opts.channel] - BroadcastChannel-like object (for testing)
    * @param {number} [opts.heartbeatMs=5000]
    * @param {Function} [opts.onMessage] - (msg) callback for non-system messages
+   * @param {import('./clawser-kernel-integration.js').KernelIntegration} [opts.kernelIntegration] - Kernel integration for MessagePort IPC
    */
   constructor(opts = {}) {
     this.#tabId = `tab_${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 4)}`;
     this.#heartbeatMs = opts.heartbeatMs ?? 5000;
     this.#onMessage = opts.onMessage || null;
+    this.#kernelIntegration = opts.kernelIntegration || null;
+    this.#kernelPorts = null;
 
-    if (opts.channel) {
+    // Step 28: Use kernel MessagePorts for tab↔daemon IPC when available
+    if (this.#kernelIntegration) {
+      this.#kernelPorts = this.#kernelIntegration.createDaemonChannel();
+    }
+
+    if (this.#kernelPorts) {
+      // Use kernel MessagePort pair — tabPort for this coordinator
+      const [tabPort] = this.#kernelPorts;
+      this.#channel = tabPort;
+    } else if (opts.channel) {
       this.#channel = opts.channel;
     } else if (typeof BroadcastChannel !== 'undefined') {
       this.#channel = new BroadcastChannel(opts.channelName || 'clawser-tabs');
@@ -280,6 +297,9 @@ export class TabCoordinator {
     this.#channel.onmessage = (event) => this.#handleMessage(event.data || event);
   }
 
+  /** The kernel MessagePort pair, if kernel is active. */
+  get kernelPorts() { return this.#kernelPorts; }
+
   get tabId() { return this.#tabId; }
   get tabCount() { return this.#tabs.size + 1; } // +1 for self
 
@@ -287,9 +307,9 @@ export class TabCoordinator {
    * Start heartbeat broadcasting.
    */
   start() {
-    this.#broadcast({ type: 'tab_join', tabId: this.#tabId });
+    this.#broadcast({ type: 'tab_join', tabId: this.#tabId, joinedAt: this.#joinedAt });
     this.#heartbeatInterval = setInterval(() => {
-      this.#broadcast({ type: 'tab_heartbeat', tabId: this.#tabId });
+      this.#broadcast({ type: 'tab_heartbeat', tabId: this.#tabId, joinedAt: this.#joinedAt });
       this.#pruneStale();
     }, this.#heartbeatMs);
   }
@@ -331,11 +351,13 @@ export class TabCoordinator {
 
   /**
    * Check if this tab is the leader (first tab).
-   * Determined by earliest join time.
+   * Determined by earliest join time, with tabId as a deterministic
+   * tiebreaker if two tabs report identical `joinedAt` timestamps.
    */
   get isLeader() {
-    for (const data of this.#tabs.values()) {
+    for (const [otherId, data] of this.#tabs) {
       if (data.joinedAt < this.#joinedAt) return false;
+      if (data.joinedAt === this.#joinedAt && otherId < this.#tabId) return false;
     }
     return true;
   }
@@ -352,18 +374,31 @@ export class TabCoordinator {
     if (!data || data.tabId === this.#tabId) return;
 
     switch (data.type) {
-      case 'tab_join':
-        this.#tabs.set(data.tabId, { lastSeen: Date.now(), joinedAt: Date.now() });
-        // Respond so the new tab knows about us
-        this.#broadcast({ type: 'tab_heartbeat', tabId: this.#tabId });
+      case 'tab_join': {
+        // Use the joiner's reported `joinedAt` so leader election is
+        // consistent across tabs. Falls back to `Date.now()` for
+        // backward compat with peers that haven't yet upgraded.
+        const joinedAt = typeof data.joinedAt === 'number' ? data.joinedAt : Date.now();
+        this.#tabs.set(data.tabId, { lastSeen: Date.now(), joinedAt });
+        // Respond so the new tab knows about us — include OUR joinedAt
+        // so the new tab can correctly elect us if we're older.
+        this.#broadcast({ type: 'tab_heartbeat', tabId: this.#tabId, joinedAt: this.#joinedAt });
         break;
-      case 'tab_heartbeat':
+      }
+      case 'tab_heartbeat': {
+        const joinedAt = typeof data.joinedAt === 'number' ? data.joinedAt : Date.now();
         if (this.#tabs.has(data.tabId)) {
-          this.#tabs.get(data.tabId).lastSeen = Date.now();
+          const existing = this.#tabs.get(data.tabId);
+          existing.lastSeen = Date.now();
+          // Trust the peer's reported joinedAt if it's older than what
+          // we recorded — fixes the case where we first learned about
+          // them via heartbeat with a stamped Date.now() before this fix.
+          if (joinedAt < existing.joinedAt) existing.joinedAt = joinedAt;
         } else {
-          this.#tabs.set(data.tabId, { lastSeen: Date.now(), joinedAt: Date.now() });
+          this.#tabs.set(data.tabId, { lastSeen: Date.now(), joinedAt });
         }
         break;
+      }
       case 'tab_leave':
         this.#tabs.delete(data.tabId);
         break;
@@ -393,6 +428,8 @@ export class DaemonController {
   #autoCheckpointInterval = null;
   #autoCheckpointMs;
   #getStateFn;
+  /** @type {import('./clawser-kernel-integration.js').KernelIntegration|null} */
+  #kernelIntegration;
 
   /**
    * @param {object} [opts]
@@ -401,14 +438,19 @@ export class DaemonController {
    * @param {TabCoordinator} [opts.coordinator]
    * @param {number} [opts.autoCheckpointMs=60000] - Auto-checkpoint interval
    * @param {Function} [opts.getStateFn] - () => serializable state
+   * @param {import('./clawser-kernel-integration.js').KernelIntegration} [opts.kernelIntegration] - Kernel integration for MessagePort IPC
    */
   constructor(opts = {}) {
     this.#state = opts.state || new DaemonState();
     this.#checkpoints = opts.checkpoints || new CheckpointManager();
+    this.#kernelIntegration = opts.kernelIntegration || null;
     this.#coordinator = opts.coordinator || null;
     this.#autoCheckpointMs = opts.autoCheckpointMs ?? 60000;
     this.#getStateFn = opts.getStateFn || null;
   }
+
+  /** Kernel integration instance. */
+  get kernelIntegration() { return this.#kernelIntegration; }
 
   /**
    * Start the daemon.
@@ -749,27 +791,50 @@ export class InputLockManager {
 // ── Agent Busy Indicator ────────────────────────────────────────
 
 /**
- * Broadcasts agent busy/idle state to other tabs via BroadcastChannel.
+ * Cross-tab agent busy/idle coordination via BroadcastChannel.
+ *
+ * Each tab broadcasts its local agent state via `setBusy(...)`. The
+ * receive side maintains a map of `peerStates` (other tabs' busy
+ * state by tabId) and fires `onChange` when any peer's state shifts.
+ *
+ * Consumers can call `subscribe(cb)` to react to remote changes.
+ * Stale peers (no heartbeat in `staleMs`) auto-prune so a closed tab
+ * doesn't leave a "phantom busy" entry forever.
  */
 export class AgentBusyIndicator {
   #busy = false;
   #reason = '';
   #since = 0;
   #channel;
+  #tabId;
+  /** @type {Map<string, {busy:boolean, reason:string, since:number, lastSeen:number}>} */
+  #peerStates = new Map();
+  /** @type {Set<Function>} */
+  #subscribers = new Set();
+  #staleMs;
+  #pruneTimer = null;
+  #keepaliveTimer = null;
 
   /**
    * @param {object} [opts]
    * @param {object} [opts.channel] - BroadcastChannel-like (for testing)
    * @param {string} [opts.channelName='clawser-agent-busy']
+   * @param {number} [opts.staleMs=15000] - Drop peers not heard from this long
    */
   constructor(opts = {}) {
+    this.#tabId = `tab_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    this.#staleMs = opts.staleMs ?? 15000;
     if (opts.channel) {
       this.#channel = opts.channel;
     } else if (typeof BroadcastChannel !== 'undefined') {
       this.#channel = new BroadcastChannel(opts.channelName || 'clawser-agent-busy');
     } else {
-      this.#channel = { postMessage: () => {}, close: () => {} };
+      this.#channel = { postMessage: () => {}, close: () => {}, onmessage: null };
     }
+    // Receive side: when another tab broadcasts, update our peer
+    // state and notify subscribers. Without this the class was a
+    // half-implemented orphan (broadcast-only).
+    this.#channel.onmessage = (event) => this.#handleMessage(event?.data || event);
   }
 
   /** @returns {boolean} */
@@ -777,6 +842,9 @@ export class AgentBusyIndicator {
 
   /** @returns {string} */
   get reason() { return this.#reason; }
+
+  /** @returns {string} stable per-instance tab ID for broadcasting. */
+  get tabId() { return this.#tabId; }
 
   /**
    * Set busy state and broadcast to other tabs.
@@ -787,8 +855,25 @@ export class AgentBusyIndicator {
     this.#busy = busy;
     this.#reason = busy ? reason : '';
     this.#since = busy ? Date.now() : 0;
+    this.#broadcastState();
+    // Keepalive: peers prune tabs silent for staleMs, and agent runs
+    // routinely outlast that. Re-broadcast while busy so a long run
+    // isn't misreported as idle; stop when idle again.
+    if (busy && !this.#keepaliveTimer) {
+      this.#keepaliveTimer = setInterval(
+        () => this.#broadcastState(),
+        Math.max(this.#staleMs / 3, 500),
+      );
+    } else if (!busy && this.#keepaliveTimer) {
+      clearInterval(this.#keepaliveTimer);
+      this.#keepaliveTimer = null;
+    }
+  }
+
+  #broadcastState() {
     this.#channel.postMessage({
       type: 'agent_busy',
+      tabId: this.#tabId,
       busy: this.#busy,
       reason: this.#reason,
       since: this.#since,
@@ -796,7 +881,36 @@ export class AgentBusyIndicator {
   }
 
   /**
-   * Get current status.
+   * Subscribe to remote-tab busy-state changes. Callback fires each
+   * time a peer's state shifts (becomes busy, becomes idle, joins,
+   * or prunes). Returns an unsubscribe function.
+   *
+   * @param {Function} cb - (peerState: {tabId, busy, reason, since}) => void
+   * @returns {Function}
+   */
+  subscribe(cb) {
+    if (typeof cb !== 'function') return () => {};
+    this.#subscribers.add(cb);
+    return () => this.#subscribers.delete(cb);
+  }
+
+  /**
+   * @returns {Array<{tabId, busy, reason, since}>} Snapshot of peer states.
+   */
+  peerStates() {
+    return [...this.#peerStates.entries()].map(([tabId, s]) => ({
+      tabId, busy: s.busy, reason: s.reason, since: s.since,
+    }));
+  }
+
+  /** @returns {boolean} True if any other tab is currently busy. */
+  isAnyPeerBusy() {
+    for (const s of this.#peerStates.values()) if (s.busy) return true;
+    return false;
+  }
+
+  /**
+   * Get current LOCAL status (this tab's state).
    * @returns {{ busy: boolean, reason: string, since: number }}
    */
   status() {
@@ -807,9 +921,62 @@ export class AgentBusyIndicator {
     };
   }
 
-  /** Clean up channel. */
+  /** Clean up channel and timers. */
   close() {
+    if (this.#pruneTimer) { clearInterval(this.#pruneTimer); this.#pruneTimer = null; }
+    if (this.#keepaliveTimer) { clearInterval(this.#keepaliveTimer); this.#keepaliveTimer = null; }
+    this.#peerStates.clear();
+    this.#subscribers.clear();
     this.#channel.close();
+  }
+
+  #handleMessage(data) {
+    if (!data || data.type !== 'agent_busy' || !data.tabId) return;
+    if (data.tabId === this.#tabId) return; // ignore self
+    const prev = this.#peerStates.get(data.tabId);
+    const peer = {
+      busy: !!data.busy,
+      reason: typeof data.reason === 'string' ? data.reason : '',
+      since: typeof data.since === 'number' ? data.since : 0,
+      lastSeen: Date.now(),
+    };
+    this.#peerStates.set(data.tabId, peer);
+    // Lazy-start the stale-pruner only when we have peers to prune.
+    if (!this.#pruneTimer) this.#startPrune();
+    // Keepalive re-broadcasts refresh lastSeen silently; only notify
+    // subscribers on actual state changes (join, busy flip, new reason).
+    const changed = !prev || prev.busy !== peer.busy || prev.reason !== peer.reason;
+    if (!changed) return;
+    for (const cb of this.#subscribers) {
+      try { cb({ tabId: data.tabId, busy: peer.busy, reason: peer.reason, since: peer.since }); }
+      catch { /* swallow subscriber errors */ }
+    }
+  }
+
+  #startPrune() {
+    this.#pruneTimer = setInterval(() => {
+      const cutoff = Date.now() - this.#staleMs;
+      let pruned = 0;
+      for (const [tabId, s] of this.#peerStates) {
+        if (s.lastSeen < cutoff) {
+          this.#peerStates.delete(tabId);
+          pruned++;
+          // Notify subscribers as if the peer went idle, so consumers can
+          // react to a tab that closed without a clean shutdown.
+          for (const cb of this.#subscribers) {
+            try { cb({ tabId, busy: false, reason: '', since: 0, pruned: true }); }
+            catch { /* ignore */ }
+          }
+        }
+      }
+      // Stop pruning when no peers remain — `#handleMessage` restarts
+      // the timer when a new peer is heard from.
+      if (this.#peerStates.size === 0 && this.#pruneTimer) {
+        clearInterval(this.#pruneTimer);
+        this.#pruneTimer = null;
+      }
+      void pruned;
+    }, Math.max(this.#staleMs / 3, 500));
   }
 }
 
@@ -873,78 +1040,17 @@ export class WorkerProtocol {
   }
 }
 
-// ── CrossTabToolBridge ──────────────────────────────────────────
-
-/**
- * Enables tools to be invoked across browser tabs via BroadcastChannel.
- */
-export class CrossTabToolBridge {
-  #tools = new Map();
-  #channel;
-
-  /**
-   * @param {object} [opts]
-   * @param {object} [opts.channel] - BroadcastChannel-like (for testing)
-   * @param {string} [opts.channelName='clawser-cross-tab-tools']
-   */
-  constructor(opts = {}) {
-    if (opts.channel) {
-      this.#channel = opts.channel;
-    } else if (typeof BroadcastChannel !== 'undefined') {
-      this.#channel = new BroadcastChannel(opts.channelName || 'clawser-cross-tab-tools');
-    } else {
-      this.#channel = { postMessage: () => {}, close: () => {} };
-    }
-  }
-
-  /**
-   * Register a tool for cross-tab access.
-   * @param {string} name - Tool name
-   * @param {Function} executeFn - async (args) => ToolResult
-   */
-  registerTool(name, executeFn) {
-    this.#tools.set(name, executeFn);
-  }
-
-  /**
-   * Unregister a tool.
-   * @param {string} name
-   */
-  unregisterTool(name) {
-    this.#tools.delete(name);
-  }
-
-  /**
-   * List registered tool names.
-   * @returns {string[]}
-   */
-  listTools() {
-    return [...this.#tools.keys()];
-  }
-
-  /**
-   * Invoke a registered tool locally.
-   * @param {string} name - Tool name
-   * @param {object} args - Tool arguments
-   * @returns {Promise<{ success: boolean, output: string, error?: string }>}
-   */
-  async invoke(name, args) {
-    const fn = this.#tools.get(name);
-    if (!fn) {
-      return { success: false, output: '', error: `Tool "${name}" not found` };
-    }
-    try {
-      return await fn(args);
-    } catch (e) {
-      return { success: false, output: '', error: e.message };
-    }
-  }
-
-  /** Clean up channel. */
-  close() {
-    this.#channel.close();
-  }
-}
+// CrossTabToolBridge — REMOVED 2026-05-06.
+// Was an orphan: docstring promised cross-tab tool invocation via
+// BroadcastChannel, but `invoke()` ran locally only and the channel
+// was created but never used (no postMessage, no onmessage). The
+// receive side, request/response routing, and timeout handling
+// were never implemented. No production caller existed. The
+// multi-device deploy work (clawser-multi-device-*.mjs) covers the
+// adjacent cross-DEVICE surface; cross-TAB tool routing has no
+// current use case. If a real consumer materializes, build it from
+// scratch with the request/response protocol — don't resurrect the
+// stub.
 
 // ── HeadlessRunner ──────────────────────────────────────────────
 

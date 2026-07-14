@@ -1,5 +1,9 @@
 # raijin — Browser-Native Mesh Rollup Framework
 
+> **Status: not implemented in this repo.** The `raijin` standalone repo
+> is a separate project (referenced in `ROADMAP.md` Phase 10). Nothing in
+> this clawser repo depends on it; this file documents an external design.
+
 > A modular rollup framework that runs entirely in the browser.
 > Build sovereign rollups where the users ARE the validators.
 

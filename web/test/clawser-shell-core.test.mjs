@@ -232,9 +232,13 @@ describe('Variable expansion', () => {
     assert.equal(expandVariables('$NOPE', {}), '')
   })
 
-  it('preserves literal $ at end of string or before non-alpha', () => {
+  it('preserves literal $ at end of string, expands $N positional params', () => {
     assert.equal(expandVariables('cost$', {}), 'cost$')
-    assert.equal(expandVariables('$1', {}), '$1')
+    // $1 is a positional parameter — expands to '' when unset
+    assert.equal(expandVariables('$1', {}), '')
+    // $1 with a value set via Map
+    const env = new Map([['1', 'first']])
+    assert.equal(expandVariables('$1', env), 'first')
   })
 
   it('expands variables during command execution', async () => {

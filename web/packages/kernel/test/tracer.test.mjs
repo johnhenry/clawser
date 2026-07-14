@@ -82,3 +82,33 @@ describe('Tracer', () => {
     await iter2.return();
   });
 });
+
+describe('Tracer enable/disable', () => {
+  it('starts enabled and records events', () => {
+    const tracer = new Tracer();
+    assert.equal(tracer.enabled, true);
+    tracer.emit({ type: 'a' });
+    assert.equal(tracer.snapshot().length, 1);
+  });
+
+  it('disable() stops recording; enable() resumes', () => {
+    const tracer = new Tracer();
+    tracer.emit({ type: 'before' });
+    tracer.disable();
+    assert.equal(tracer.enabled, false);
+    tracer.emit({ type: 'suppressed' });
+    assert.equal(tracer.snapshot().length, 1);
+
+    tracer.enable();
+    tracer.emit({ type: 'after' });
+    const types = tracer.snapshot().map(e => e.type);
+    assert.deepEqual(types, ['before', 'after']);
+  });
+
+  it('buffered events remain readable while disabled', () => {
+    const tracer = new Tracer();
+    tracer.emit({ type: 'kept' });
+    tracer.disable();
+    assert.equal(tracer.snapshot()[0].type, 'kept');
+  });
+});

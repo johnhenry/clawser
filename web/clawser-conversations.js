@@ -1,9 +1,11 @@
 /**
  * clawser-conversations.js — Conversation index via OPFS
  *
- * Scans clawser_workspaces/{wsId}/.conversations/ for meta.json files.
+ * Scans clawser/workspaces/{wsId}/.conversations/ for meta.json files.
  * No localStorage index — the OPFS directory listing IS the index.
  */
+
+import { getWorkspaceDir } from './clawser-opfs.js';
 
 /**
  * Load all conversations for a workspace by scanning OPFS meta.json files.
@@ -12,9 +14,7 @@
  */
 export async function loadConversations(wsId) {
   try {
-    const root = await navigator.storage.getDirectory();
-    const base = await root.getDirectoryHandle('clawser_workspaces');
-    const wsDir = await base.getDirectoryHandle(wsId);
+    const wsDir = await getWorkspaceDir(wsId);
     const convDir = await wsDir.getDirectoryHandle('.conversations');
 
     const conversations = [];
@@ -48,13 +48,8 @@ export async function loadConversations(wsId) {
  */
 export async function updateConversationMeta(wsId, convId, updates) {
   try {
-    // Some test/browser stubs expose navigator.storage.getDirectory()
-    // but not full OPFS DirectoryHandle APIs. Treat that as a silent no-op.
-    const root = await navigator.storage.getDirectory();
-    if (!root || typeof root.getDirectoryHandle !== 'function') return;
-    const base = await root.getDirectoryHandle('clawser_workspaces', { create: true });
-    if (!base || typeof base.getDirectoryHandle !== 'function') return;
-    const wsDir = await base.getDirectoryHandle(wsId, { create: true });
+    const wsDir = await getWorkspaceDir(wsId, { create: true });
+    if (!wsDir || typeof wsDir.getDirectoryHandle !== 'function') return;
     const convDir = await wsDir.getDirectoryHandle('.conversations', { create: true });
     const convIdDir = await convDir.getDirectoryHandle(convId, { create: true });
 
@@ -87,9 +82,7 @@ export async function updateConversationMeta(wsId, convId, updates) {
  */
 export async function deleteConversation(wsId, convId) {
   try {
-    const root = await navigator.storage.getDirectory();
-    const base = await root.getDirectoryHandle('clawser_workspaces');
-    const wsDir = await base.getDirectoryHandle(wsId);
+    const wsDir = await getWorkspaceDir(wsId);
     const convDir = await wsDir.getDirectoryHandle('.conversations');
 
     await convDir.removeEntry(convId, { recursive: true });
@@ -107,9 +100,7 @@ export async function deleteConversation(wsId, convId) {
  * @returns {Promise<Object>} { meta, events }
  */
 export async function exportConversation(wsId, convId) {
-  const root = await navigator.storage.getDirectory();
-  const base = await root.getDirectoryHandle('clawser_workspaces');
-  const wsDir = await base.getDirectoryHandle(wsId);
+  const wsDir = await getWorkspaceDir(wsId);
   const convDir = await wsDir.getDirectoryHandle('.conversations');
   const convIdDir = await convDir.getDirectoryHandle(convId);
 
@@ -141,9 +132,7 @@ export async function exportConversation(wsId, convId) {
  */
 export async function importConversation(wsId, data) {
   const newConvId = generateConvId();
-  const root = await navigator.storage.getDirectory();
-  const base = await root.getDirectoryHandle('clawser_workspaces', { create: true });
-  const wsDir = await base.getDirectoryHandle(wsId, { create: true });
+  const wsDir = await getWorkspaceDir(wsId, { create: true });
   const convDir = await wsDir.getDirectoryHandle('.conversations', { create: true });
   const convIdDir = await convDir.getDirectoryHandle(newConvId, { create: true });
 
@@ -167,5 +156,7 @@ export async function importConversation(wsId, data) {
 
 /** Generate a unique conversation ID using timestamp + random suffix. @returns {string} */
 export function generateConvId() {
-  return `conv_${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 4)}`;
+  // 8 hex chars (~4.3B values) — 4 chars was little enough entropy to
+  // collide when many IDs were generated within the same millisecond
+  return `conv_${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 8)}`;
 }

@@ -33,6 +33,7 @@ const BUILTIN_AGENTS = [
     provider: 'echo',
     model: '',
     accountId: 'acct_builtin_echo',
+    providerConfig: { provider: 'echo', model: '', accountId: 'acct_builtin_echo' },
     systemPrompt: 'You are an echo bot. Repeat back what the user says.',
     temperature: 0,
     maxTokens: 4096,
@@ -56,6 +57,7 @@ const BUILTIN_AGENTS = [
     provider: 'chrome-ai',
     model: 'gemini-nano',
     accountId: 'acct_builtin_chrome_ai',
+    providerConfig: { provider: 'chrome-ai', model: 'gemini-nano', accountId: 'acct_builtin_chrome_ai' },
     systemPrompt: 'You are a helpful assistant running locally in the browser via Chrome AI.',
     temperature: 0.7,
     maxTokens: 4096,
@@ -79,6 +81,7 @@ const BUILTIN_AGENTS = [
     provider: 'anthropic',
     model: 'claude-sonnet-4-6',
     accountId: null,
+    providerConfig: { provider: 'anthropic', model: 'claude-sonnet-4-6' },
     systemPrompt: 'You are a helpful assistant with access to web browsing and file management tools. Be concise and accurate.',
     temperature: 0.7,
     maxTokens: 4096,
@@ -102,6 +105,7 @@ const BUILTIN_AGENTS = [
     provider: 'anthropic',
     model: 'claude-haiku-4-5-20251001',
     accountId: null,
+    providerConfig: { provider: 'anthropic', model: 'claude-haiku-4-5-20251001' },
     systemPrompt: 'You are a fast, concise assistant. Keep answers short and to the point.',
     temperature: 0.5,
     maxTokens: 4096,
@@ -125,6 +129,7 @@ const BUILTIN_AGENTS = [
     provider: 'openai',
     model: 'gpt-4o',
     accountId: null,
+    providerConfig: { provider: 'openai', model: 'gpt-4o' },
     systemPrompt: 'You are a helpful assistant with access to web browsing and file management tools.',
     temperature: 0.7,
     maxTokens: 4096,
@@ -333,18 +338,23 @@ export class AgentStorage {
   // ── Import / Export ───────────────────────────────────────
 
   /**
-   * Export an agent as JSON (strips accountId for safety).
+   * Export an agent as JSON (strips credential references for safety).
    * @param {Object} agent
    * @returns {string}
    */
   exportAgent(agent) {
     const exportable = { ...agent };
     delete exportable.accountId;
+    if (exportable.providerConfig) {
+      exportable.providerConfig = { ...exportable.providerConfig };
+      delete exportable.providerConfig.accountId;
+    }
     return JSON.stringify(exportable, null, 2);
   }
 
   /**
-   * Import an agent from JSON. Assigns a new ID and clears accountId.
+   * Import an agent from JSON. Assigns a new ID and clears credential references.
+   * Normalizes to providerConfig if legacy fields are present.
    * @param {string} json
    * @returns {Promise<Object>}
    */
@@ -352,9 +362,13 @@ export class AgentStorage {
     const agent = JSON.parse(json);
     if (!agent || typeof agent !== 'object' || Array.isArray(agent)) throw new Error('Invalid agent: expected an object');
     if (!agent.name || typeof agent.name !== 'string') throw new Error('Invalid agent: missing name');
-    if (!agent.provider && !agent.accountId) throw new Error('Invalid agent: missing provider or accountId');
+    const hasProvider = agent.provider || agent.providerConfig?.provider;
+    if (!hasProvider && !agent.accountId) throw new Error('Invalid agent: missing provider or accountId');
     agent.id = generateAgentId();
     agent.accountId = null;
+    // Normalize to providerConfig, strip accountId from config (credentials are local)
+    migrateToProviderConfig(agent);
+    if (agent.providerConfig) delete agent.providerConfig.accountId;
     agent.createdAt = new Date().toISOString();
     agent.updatedAt = agent.createdAt;
     await this.save(agent);
@@ -429,6 +443,76 @@ export async function migrateAgentAccounts(accounts, storage) {
       await storage.save(agent);
       migrated++;
     }
+  }
+  return migrated;
+}
+
+// ── Block 52: Agent→Provider simplification ────────────────────
+
+/**
+ * Build a flat ProviderConfig from an AgentDefinition.
+ * If the agent already has providerConfig, returns it.
+ * Otherwise, synthesizes one from legacy provider/model/accountId fields.
+ *
+ * @example
+ *   const cfg = toProviderConfig(agent);
+ *   // { provider: 'openai', model: 'gpt-4o', accountId: 'acct_100' }
+ *
+ * @param {Object} agent - AgentDefinition
+ * @returns {{ provider: string, model: string, accountId?: string|null, baseUrl?: string }}
+ */
+export function toProviderConfig(agent) {
+  if (agent.providerConfig) {
+    return { ...agent.providerConfig };
+  }
+  // Synthesize from legacy fields
+  const cfg = {
+    provider: agent.provider || '',
+    model: agent.model || '',
+  };
+  if (agent.accountId) cfg.accountId = agent.accountId;
+  return cfg;
+}
+
+/**
+ * Migrate an AgentDefinition from legacy provider/model/accountId to providerConfig.
+ * Idempotent — returns the agent unchanged if providerConfig already exists.
+ * Keeps legacy fields in sync for backward compat.
+ *
+ * @example
+ *   const migrated = migrateToProviderConfig(oldAgent);
+ *   // migrated.providerConfig = { provider: 'openai', model: 'gpt-4o', accountId: 'acct_1' }
+ *   // migrated.provider still = 'openai' (compat)
+ *
+ * @param {Object} agent - AgentDefinition
+ * @returns {Object} The same agent object, mutated with providerConfig added
+ */
+export function migrateToProviderConfig(agent) {
+  if (agent.providerConfig) return agent;
+  agent.providerConfig = toProviderConfig(agent);
+  return agent;
+}
+
+/**
+ * Batch-migrate all persisted (non-builtin) agents to providerConfig format.
+ * Skips agents that already have providerConfig.
+ *
+ * @example
+ *   const count = await migrateAllToProviderConfig(storage);
+ *   console.log(`Migrated ${count} agents to providerConfig`);
+ *
+ * @param {AgentStorage} storage
+ * @returns {Promise<number>} Number of agents migrated
+ */
+export async function migrateAllToProviderConfig(storage) {
+  const all = await storage.listAll();
+  let migrated = 0;
+  for (const agent of all) {
+    if (agent.scope === 'builtin') continue;
+    if (agent.providerConfig) continue;
+    migrateToProviderConfig(agent);
+    await storage.save(agent);
+    migrated++;
   }
   return migrated;
 }

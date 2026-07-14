@@ -43,6 +43,7 @@ describe('MeshInspector', () => {
       'pod', 'peerNode', 'swarm', 'discovery', 'transport', 'audit',
       'streams', 'files', 'services', 'sync', 'resources', 'marketplace',
       'quotas', 'payments', 'consensus', 'relay', 'naming', 'apps', 'orchestrator',
+      'connectivity',
     ]
     for (const key of expectedKeys) {
       assert.ok(key in snap, `snapshot missing key: ${key}`)
@@ -51,6 +52,28 @@ describe('MeshInspector', () => {
     assert.equal(snap.peerNode.peerCount, 2)
     assert.equal(snap.swarm.swarmCount, 1)
     assert.equal(snap.audit.entryCount, 5)
+  })
+
+  it('connectivity is inactive with empty stats when webrtcMeshManager is absent', () => {
+    const inspector = new MeshInspector(makeState())
+    const snap = inspector.snapshot()
+    assert.equal(snap.connectivity.active, false)
+    assert.equal(snap.connectivity.connectionCount, 0)
+    assert.deepEqual(snap.connectivity.stats, [])
+  })
+
+  it('connectivity reflects webrtcMeshManager connectionCount and cached lastStats', () => {
+    const inspector = new MeshInspector(makeState({
+      webrtcMeshManager: {
+        connectionCount: 2,
+        lastStats: [{ remotePodId: 'p1', roundTripTime: 0.05, packetLossRatio: 0 }],
+      },
+    }))
+    const snap = inspector.snapshot()
+    assert.equal(snap.connectivity.active, true)
+    assert.equal(snap.connectivity.connectionCount, 2)
+    assert.equal(snap.connectivity.stats.length, 1)
+    assert.equal(snap.connectivity.stats[0].remotePodId, 'p1')
   })
 
   it('healthCheck returns healthy for full state', () => {

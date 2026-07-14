@@ -1,3 +1,4 @@
+import { silentCatch } from './clawser-silent-catch.mjs'
 // clawser-sw-heartbeat.js — Service Worker heartbeat loop
 //
 // Provides a heartbeat loop that can run inside a Service Worker.
@@ -127,7 +128,7 @@ export class SwHeartbeat {
 
     // Call onTick callback if set
     if (this.onTick) {
-      try { this.onTick(message); } catch { /* ignore callback errors */ }
+      try { this.onTick(message); } catch (e) { silentCatch('clawser-sw-heartbeat', 'this.onTick', e) }
     }
 
     return message;

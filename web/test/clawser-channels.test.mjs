@@ -194,6 +194,29 @@ describe('ChannelManager', () => {
     assert.equal(mgr.listChannels().length, 2);
   });
 
+  it('subscribe fires on addChannel and removeChannel', () => {
+    let calls = 0;
+    const unsub = mgr.subscribe(() => calls++);
+    mgr.addChannel({ name: 'x' });
+    mgr.addChannel({ name: 'y' });
+    assert.equal(calls, 2);
+    mgr.removeChannel('x');
+    assert.equal(calls, 3);
+    // No-op remove does NOT fire
+    mgr.removeChannel('not-there');
+    assert.equal(calls, 3);
+    unsub();
+    mgr.addChannel({ name: 'z' });
+    assert.equal(calls, 3, 'unsubscribe stops further callbacks');
+  });
+
+  it('subscribe with non-function returns a no-op unsubscribe', () => {
+    const unsub = mgr.subscribe('not-a-fn');
+    assert.equal(typeof unsub, 'function');
+    // No throw
+    unsub();
+  });
+
   it('handleInbound stores messages in history', () => {
     mgr.handleInbound({ channel: 'webhook', content: 'test msg' });
     const history = mgr.getHistory();

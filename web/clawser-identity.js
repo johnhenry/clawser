@@ -413,6 +413,12 @@ export class IdentityManager {
   /** Get the current identity. */
   get identity() { return this.#identity; }
 
+  /** Method-form alias for the `identity` getter. The chat UI uses
+   *  `state.identityManager?.getCurrent?.()` to read the active
+   *  identity for the agent-message avatar; the optional-chain made
+   *  the missing-method failure silent (avatar never rendered). */
+  getCurrent() { return this.#identity; }
+
   /** Get the detected format. */
   get format() { return this.#format; }
 

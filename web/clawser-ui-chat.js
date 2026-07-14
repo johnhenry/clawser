@@ -2,6 +2,7 @@
 import { $, esc, state, emit, setSending, setConversation, resetConversationState } from './clawser-state.js';
 import { modal } from './clawser-modal.js';
 import { loadConversations, updateConversationMeta, generateConvId } from './clawser-conversations.js';
+import { getWorkspaceDir } from './clawser-opfs.js';
 import { loadAccounts } from './clawser-accounts.js';
 import { updateRouteHash } from './clawser-router.js';
 import { estimateCost, classifyError } from './clawser-providers.js';
@@ -25,11 +26,48 @@ async function getMarked() {
 // Eager-load on module init (non-blocking)
 getMarked();
 
+/**
+ * Strip dangerous tags + attributes from HTML. Used as a defense-in-depth
+ * post-processor over marked output, since marked (v5+) does not sanitize.
+ *
+ * Agent responses can contain attacker-controlled markdown (e.g. via prompt
+ * injection from a fetched web page or MCP tool result). Without this
+ * pass, an agent message containing `<img src=x onerror="…">` would
+ * execute in the user's session.
+ *
+ * @param {string} html - HTML produced by marked
+ * @returns {string} HTML with script/iframe/object/embed/style/link/meta
+ *   stripped, and `on*` attributes plus `javascript:` URLs removed.
+ */
+function sanitizeMarkdownHtml(html) {
+  if (typeof document === 'undefined' || !document.createElement) return html;
+  const template = document.createElement('template');
+  template.innerHTML = html;
+  // Remove script-injection elements outright.
+  for (const el of template.content.querySelectorAll(
+    'script, iframe, object, embed, style, link, meta, base, form'
+  )) {
+    el.remove();
+  }
+  // Strip on* event handlers and javascript:/data: URL schemes from every node.
+  const SCHEME_RE = /^\s*(javascript|data|vbscript)\s*:/i;
+  for (const el of template.content.querySelectorAll('*')) {
+    for (const attr of [...el.attributes]) {
+      const name = attr.name.toLowerCase();
+      if (name.startsWith('on')) { el.removeAttribute(attr.name); continue; }
+      if ((name === 'href' || name === 'src' || name === 'srcset' || name === 'action' || name === 'formaction') && SCHEME_RE.test(attr.value)) {
+        el.removeAttribute(attr.name);
+      }
+    }
+  }
+  return template.innerHTML;
+}
+
 /** Render markdown to sanitized HTML for agent messages. */
 function renderMarkdown(text) {
   if (!_marked || typeof _marked !== 'function') return esc(text);
   try {
-    return _marked(text);
+    return sanitizeMarkdownHtml(_marked(text));
   } catch {
     return esc(text);
   }
@@ -725,9 +763,7 @@ export async function forkConversationFromEvent(eventId) {
 
   // Persist the sliced events as a new conversation via OPFS
   try {
-    const root = await navigator.storage.getDirectory();
-    const base = await root.getDirectoryHandle('clawser_workspaces', { create: true });
-    const wsDir = await base.getDirectoryHandle(wsId, { create: true });
+    const wsDir = await getWorkspaceDir(wsId, { create: true });
     const convDir = await wsDir.getDirectoryHandle('.conversations', { create: true });
     const convIdDir = await convDir.getDirectoryHandle(newId, { create: true });
 
@@ -850,47 +886,94 @@ export function replaySessionHistory(history) {
 }
 
 // ── Replay from events (v2 — single source of truth) ────────────
+
+/**
+ * Registry of replay handlers, one per visual event type. Adding a new
+ * event type to the agent requires either a handler here or an entry in
+ * IGNORED_EVENT_TYPES — clawser-event-replay.test.mjs enforces this, so
+ * new types can't silently fall through replay.
+ *
+ * Handlers receive (evt, ctx) where ctx = { pendingReplayTools }.
+ * @type {Map<string, (evt: object, ctx: object) => void>}
+ */
+export const REPLAY_HANDLERS = new Map([
+  ['user_message', (evt) => addMsg('user', evt.data.content, evt.id)],
+  ['agent_message', (evt) => { if (evt.data.content) addMsg('agent', evt.data.content); }],
+  ['system_message', (evt) => addMsg('system', evt.data.content)],
+  ['tool_call', (evt, ctx) => {
+    const params = typeof evt.data.arguments === 'string'
+      ? (() => { try { return JSON.parse(evt.data.arguments); } catch { return evt.data.arguments; } })()
+      : evt.data.arguments;
+    const el = addInlineToolCall(evt.data.name, params, null);
+    ctx.pendingReplayTools.set(evt.data.call_id, { el, name: evt.data.name, params });
+  }],
+  ['tool_result', (evt, ctx) => {
+    const pending = ctx.pendingReplayTools.get(evt.data.call_id);
+    if (pending) {
+      updateInlineToolCall(pending.el, evt.data.name, pending.params, evt.data.result);
+      ctx.pendingReplayTools.delete(evt.data.call_id);
+      addToolCall(evt.data.name, pending.params, evt.data.result);
+    } else {
+      addToolCall(evt.data.name, {}, evt.data.result);
+    }
+  }],
+  ['error', (evt) => addErrorMsg(evt.data.message)],
+]);
+
+/**
+ * Event types that are intentionally NOT replayed into the chat UI.
+ * They are bookkeeping/telemetry: their effects are either derived
+ * elsewhere (goals via EventLog.deriveGoals, memories via the memory
+ * store) or purely transient. Every appended event type must appear
+ * either here or in REPLAY_HANDLERS.
+ * @type {Set<string>}
+ */
+export const IGNORED_EVENT_TYPES = new Set([
+  'agent_prompt',       // delegation internals — surfaced via sub-agent cards live, not replayed
+  'agent_response',
+  'autonomy_blocked',
+  'cache_hit',
+  'channel_inbound',
+  'channel_outbound',
+  'log',                // free-form diagnostics
+  'shell_command',      // terminal session events replay via replayTerminalSession, not chat
+  'shell_result',
+  'state_snapshot',     // checkpoint bookkeeping
+  'context_compacted',
+  'goal_added',
+  'goal_edited',
+  'goal_removed',
+  'goal_updated',
+  'idle_resume',
+  'memory_forgotten',
+  'memory_stored',
+  'provider_error',
+  'safety_input_flag',
+  'safety_output_blocked',
+  'safety_output_redacted',
+  'safety_tool_blocked',
+  'scheduler_added',
+  'scheduler_fired',
+  'scheduler_removed',
+  'stream_error',
+  'tool_result_truncated',
+]);
+
 /** Replay the chat UI from an event log array (v2 event-sourced format).
  * @param {Array<Object>} events - EventLog entries with type and data
  */
 export function replayFromEvents(events) {
   resetChatUI();
 
-  const pendingReplayTools = new Map();
+  const ctx = { pendingReplayTools: new Map() };
 
   for (const evt of events) {
-    switch (evt.type) {
-      case 'user_message':
-        addMsg('user', evt.data.content, evt.id);
-        break;
-      case 'agent_message':
-        if (evt.data.content) addMsg('agent', evt.data.content);
-        break;
-      case 'system_message':
-        addMsg('system', evt.data.content);
-        break;
-      case 'tool_call': {
-        const params = typeof evt.data.arguments === 'string'
-          ? (() => { try { return JSON.parse(evt.data.arguments); } catch { return evt.data.arguments; } })()
-          : evt.data.arguments;
-        const el = addInlineToolCall(evt.data.name, params, null);
-        pendingReplayTools.set(evt.data.call_id, { el, name: evt.data.name, params });
-        break;
-      }
-      case 'tool_result': {
-        const pending = pendingReplayTools.get(evt.data.call_id);
-        if (pending) {
-          updateInlineToolCall(pending.el, evt.data.name, pending.params, evt.data.result);
-          pendingReplayTools.delete(evt.data.call_id);
-          addToolCall(evt.data.name, pending.params, evt.data.result);
-        } else {
-          addToolCall(evt.data.name, {}, evt.data.result);
-        }
-        break;
-      }
-      case 'error':
-        addErrorMsg(evt.data.message);
-        break;
+    const handler = REPLAY_HANDLERS.get(evt.type);
+    if (handler) {
+      handler(evt, ctx);
+    } else if (!IGNORED_EVENT_TYPES.has(evt.type)) {
+      // Unknown type: don't lose it silently — surface as a system note
+      console.warn(`[clawser] replay: unregistered event type "${evt.type}"`);
     }
 
     addEvent(evt.type, JSON.stringify(evt.data).slice(0, 200));
@@ -956,16 +1039,50 @@ export function addSafetyBanner(details) {
  * @param {Function} onUndo - Callback when undo is clicked
  * @returns {HTMLElement}
  */
-export function addUndoButton(onUndo) {
+export function addUndoButton(onUndo, getFileOps = null) {
   const messagesEl = $('messages');
+  const wrap = document.createElement('div');
+  wrap.className = 'undo-wrap';
   const btn = document.createElement('button');
   btn.className = 'undo-btn';
   btn.textContent = '↩ Undo';
   btn.addEventListener('click', () => {
-    btn.remove();
+    wrap.remove();
     if (onUndo) onUndo();
   });
-  messagesEl.appendChild(btn);
+  wrap.appendChild(btn);
+
+  // "View changes" diff preview when the turn touched files
+  const fileOps = getFileOps ? getFileOps() : [];
+  if (fileOps.length > 0) {
+    const viewBtn = document.createElement('button');
+    viewBtn.className = 'undo-btn undo-diff-btn';
+    viewBtn.textContent = `± View changes (${fileOps.length})`;
+    const diffBox = document.createElement('div');
+    diffBox.className = 'undo-diff-box';
+    diffBox.style.display = 'none';
+    viewBtn.addEventListener('click', async () => {
+      const open = diffBox.style.display === 'none';
+      diffBox.style.display = open ? '' : 'none';
+      if (open && !diffBox.dataset.rendered) {
+        const { buildUndoDiffModel, renderDiff } = await import('./clawser-ui-diff.js');
+        for (const entry of buildUndoDiffModel(fileOps)) {
+          const head = document.createElement('div');
+          head.className = 'undo-diff-path';
+          head.textContent = `${entry.action}: ${entry.path}`;
+          const body = document.createElement('div');
+          renderDiff(body, entry.oldText, entry.newText);
+          diffBox.appendChild(head);
+          diffBox.appendChild(body);
+        }
+        diffBox.dataset.rendered = '1';
+      }
+    });
+    wrap.appendChild(viewBtn);
+    wrap.appendChild(diffBox);
+  }
+
+  messagesEl.appendChild(wrap);
   messagesEl.scrollTop = messagesEl.scrollHeight;
   return btn;
 }
@@ -1234,7 +1351,7 @@ export async function sendMessage() {
               await state.undoManager.undo();
               addMsg('system', 'Last turn undone.');
             } catch (e) { addErrorMsg(`Undo failed: ${e.message}`); }
-          });
+          }, () => state.undoManager.latestFileOps?.() || []);
         }
       }
     } else {
@@ -1260,7 +1377,7 @@ export async function sendMessage() {
                 await state.undoManager.undo();
                 addMsg('system', 'Last turn undone.');
               } catch (e) { addErrorMsg(`Undo failed: ${e.message}`); }
-            });
+            }, () => state.undoManager.latestFileOps?.() || []);
           }
           break;
         case -1: {

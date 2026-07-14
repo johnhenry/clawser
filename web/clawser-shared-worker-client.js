@@ -4,6 +4,7 @@
 // to the SharedWorker host via a MessagePort.
 
 import { MSG_TYPES } from './shared-worker.js';
+import { silentCatch } from './clawser-silent-catch.mjs'
 
 // ── SharedWorkerClient ──────────────────────────────────────────
 
@@ -206,7 +207,7 @@ export class SharedWorkerClient {
    */
   disconnect() {
     this.#connected = false;
-    try { this.#port.close(); } catch { /* ignore */ }
+    try { this.#port.close(); } catch (e) { silentCatch('clawser-shared-worker-client', 'this', e) }
     // Reject all pending
     for (const [, pending] of this.#pending) {
       pending.reject(new Error('Disconnected'));

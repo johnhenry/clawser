@@ -159,3 +159,155 @@ describe('SlackPlugin', () => {
     assert.equal(received.length, 0);
   });
 });
+
+// ── Socket Mode ──────────────────────────────────────────────
+
+describe('SlackPlugin Socket Mode', () => {
+  let plugin;
+  let fetchCalls;
+  let sockets;
+
+  beforeEach(() => {
+    fetchCalls = [];
+    sockets = [];
+    globalThis.fetch = async (url, opts) => {
+      fetchCalls.push({ url, opts });
+      return {
+        ok: true,
+        json: async () => ({ ok: true, url: 'wss://wss-primary.slack.com/link/?ticket=abc' }),
+      };
+    };
+    globalThis.WebSocket = class {
+      constructor(url) {
+        this.url = url;
+        this.readyState = 1;
+        this.sent = [];
+        sockets.push(this);
+      }
+      send(data) { this.sent.push(data); }
+      close() { this.readyState = 3; if (this.onclose) this.onclose(); }
+    };
+    plugin = new SlackPlugin({
+      botToken: 'xoxb-SLACK-TOKEN',
+      signingSecret: 'secret123',
+      channel: 'C01GENERAL',
+      appToken: 'xapp-APP-TOKEN',
+    });
+  });
+
+  afterEach(() => {
+    plugin.stop();
+    delete globalThis.fetch;
+    delete globalThis.WebSocket;
+  });
+
+  it('stores appToken from constructor', () => {
+    assert.equal(plugin.config.appToken, 'xapp-APP-TOKEN');
+  });
+
+  it('start() with appToken calls apps.connections.open', async () => {
+    plugin.start();
+    await plugin._socketModePromise;
+    assert.equal(fetchCalls.length, 1);
+    assert.ok(fetchCalls[0].url.includes('apps.connections.open'));
+    assert.ok(fetchCalls[0].opts.headers['Authorization'].includes('Bearer xapp-APP-TOKEN'));
+  });
+
+  it('start() without appToken does not open a socket', async () => {
+    const webhookPlugin = new SlackPlugin({
+      botToken: 'xoxb-SLACK-TOKEN',
+      signingSecret: 'secret123',
+      channel: 'C01GENERAL',
+    });
+    webhookPlugin.start();
+    await Promise.resolve();
+    assert.equal(fetchCalls.length, 0);
+    assert.equal(sockets.length, 0);
+    webhookPlugin.stop();
+  });
+
+  it('connects a WebSocket to the URL returned by apps.connections.open', async () => {
+    plugin.start();
+    await plugin._socketModePromise;
+    assert.equal(sockets.length, 1);
+    assert.equal(sockets[0].url, 'wss://wss-primary.slack.com/link/?ticket=abc');
+  });
+
+  it('dispatches events_api envelopes as inbound messages', async () => {
+    plugin.start();
+    await plugin._socketModePromise;
+    const received = [];
+    plugin.onMessage((msg) => received.push(msg));
+
+    sockets[0].onmessage({
+      data: JSON.stringify({
+        type: 'events_api',
+        envelope_id: 'env-1',
+        payload: {
+          type: 'event_callback',
+          event: {
+            type: 'message',
+            text: 'socket mode msg',
+            user: 'U789',
+            channel: 'C01GENERAL',
+            ts: '1700000002.000300',
+          },
+        },
+      }),
+    });
+
+    assert.equal(received.length, 1);
+    assert.equal(received[0].content, 'socket mode msg');
+  });
+
+  it('acknowledges events_api envelopes with envelope_id', async () => {
+    plugin.start();
+    await plugin._socketModePromise;
+
+    sockets[0].onmessage({
+      data: JSON.stringify({
+        type: 'events_api',
+        envelope_id: 'env-2',
+        payload: { type: 'event_callback', event: { type: 'message', text: 'x', ts: '1.0' } },
+      }),
+    });
+
+    assert.equal(sockets[0].sent.length, 1);
+    assert.deepEqual(JSON.parse(sockets[0].sent[0]), { envelope_id: 'env-2' });
+  });
+
+  it('ignores hello envelopes without acknowledging', async () => {
+    plugin.start();
+    await plugin._socketModePromise;
+
+    sockets[0].onmessage({ data: JSON.stringify({ type: 'hello' }) });
+
+    assert.equal(sockets[0].sent.length, 0);
+  });
+
+  it('closes and schedules a reconnect on disconnect envelopes', async () => {
+    plugin.start();
+    await plugin._socketModePromise;
+
+    const scheduled = [];
+    const originalSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = (fn, delay) => { scheduled.push(delay); return 0; };
+    try {
+      sockets[0].onmessage({ data: JSON.stringify({ type: 'disconnect', reason: 'refresh_requested' }) });
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+    }
+
+    // the stub's close() invokes onclose synchronously, closing the socket
+    assert.equal(sockets[0].readyState, 3);
+    assert.equal(scheduled.length, 1);
+  });
+
+  it('stop() closes the Socket Mode connection', async () => {
+    plugin.start();
+    await plugin._socketModePromise;
+    plugin.stop();
+    assert.equal(sockets[0].readyState, 3);
+    assert.equal(plugin.running, false);
+  });
+});
