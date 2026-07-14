@@ -1,5 +1,52 @@
 # Clawser — Outstanding Work
 
+> **2026-07-14: sync + audit pass.** Local checkout was 3 commits ahead /
+> 65 behind origin (mesh Phase 11, WSH Rust crates revival, WebTransport,
+> Slack/Discord/Telegram channels, BrowserMesh package extraction) —
+> merged clean. Full suite now **359 test files / 9,746 subtests passing,
+> 0 failing** (supersedes the 9,732 figure below, which predates the
+> merge). Found and fixed while syncing:
+> - Merge kept the pre-merge Dockerfile (root-serving), but upstream's
+>   `sw.js`/`manifest.json` now hard-code `/web/` as the PWA scope —
+>   would have 404'd the entire service-worker precache in prod. Restored
+>   `/web/`-scoped serving; also fixed the root→`/web/` redirect to honor
+>   `X-Forwarded-Proto`/`Host` (was dropping to `http://` behind the
+>   Cloudflare/nginx TLS-terminating proxy).
+> - `SessionStorageAdapter` test suite leaked state between cases —
+>   Node 26 now ships a global `sessionStorage` (previously undefined),
+>   so tests written against the old in-memory-Map-fallback assumption
+>   started failing order-dependently. Added `clear()` in `beforeEach`.
+> - `npm audit fix`: cleared 6 vulns (1 critical, 2 high) in the
+>   vitest/vite/esbuild dev-tooling chain. Zero runtime deps affected
+>   (app still has none, per its CDN-only design).
+> - `@fails-components/webtransport*` were misfiled under
+>   `"dependencies"`; only `tools/wsh-server.mjs` (a dev tool) uses them
+>   — moved to `devDependencies`.
+> - **CI gap closed**: the revived Rust `crates/` (deleted 2026-03-14,
+>   restored 2026-07-05 after that removal silently dropped the only
+>   native WebTransport/QUIC + real-PTY implementations) had zero CI
+>   coverage despite already flip-flopping once. Added a `rust` job to
+>   `.github/workflows/ci.yml` (`cargo build --workspace` +
+>   `cargo test --workspace`, 97 tests, all passing locally before wiring
+>   in). `tools/test/wsh-{server,operator-cli,webtransport}.test.mjs` also
+>   verified passing locally; not yet added to CI (would need an
+>   `npm approve-scripts` step for the webtransport native binding and a
+>   release-mode Rust binary build — left as a follow-up rather than
+>   risking an unvalidated slow/fragile CI job).
+> - Documented an undisclosed gap: reverse-host *listen* (inbound
+>   port-forwarding) is a stub (`handle_listen_request` always returns
+>   `ListenFail`) — the support matrix in `docs/WSH-INTO-CLAWSER.md` read
+>   as unconditionally "Complete." Shell/PTY/file-transfer/tools through
+>   a reverse host peer are unaffected.
+>
+> **Flagged, not yet fixed — needs a decision, see below:**
+> `packages/browsermesh-{core,apps,discovery,sync,transport}` (~9K LOC)
+> are wired into `web/index.html`'s import map but **nothing under
+> `web/` imports any of them**, and none have a `test/` directory despite
+> `package.json` declaring a test script. This looks like either
+> unfinished work merged prematurely or an abandoned refactor — deleting
+> or wiring in ~9K LOC isn't a call to make unilaterally.
+>
 > Last updated 2026-07-05 ("finish everything off" comprehensive pass).
 > **9,732 tests passing, 0 failing — full suite (`npm test`, all groups
 > incl. the new stress suite) verified green.**
