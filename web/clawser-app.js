@@ -68,6 +68,8 @@ import { initVaultSettings, updatePasskeyUnlockButton } from './clawser-vault-se
 // Kernel integration (Phase 12 — Steps 23-30)
 import { Kernel } from './packages-kernel.js';
 import { KernelIntegration } from './clawser-kernel-integration.js';
+import { KernelWshBridge } from './clawser-kernel-wsh-bridge.js';
+import { setKernelBridge } from './clawser-wsh-incoming.js';
 import { silentCatch } from './clawser-silent-catch.mjs'
 
 // ── Migrate localStorage keys to versioned format (Gap 13.3) ────
@@ -227,6 +229,15 @@ const _kernelIntegration = new KernelIntegration(state.kernel);
 setKernelIntegration(_kernelIntegration);
 // Wire kernel to MCP manager so MCP servers register as svc:// services (Step 25)
 state.mcpManager._kernelIntegration = _kernelIntegration;
+// KernelWshBridge maps wsh session participants (guest joins, copilot
+// attaches, session grants, reverse connects) to kernel tenants with
+// scoped capabilities (e.g. reverse-connect gets STDIO+CLOCK only, no
+// FS/NET) — implemented+tested but never constructed, so wsh sessions
+// ran with no kernel-level tenant isolation at all. Deprecated in favor
+// of a future WISP/ServerWebSocket-based transport migration, but that
+// migration doesn't actually replace this tenant-isolation role yet, so
+// wiring it in is still the right call until it does.
+setKernelBridge(new KernelWshBridge(state.kernel));
 console.log('[clawser] Kernel initialized — integration active');
 
 state.checkpointIDB = state.disposableMode ? new NullCheckpointIDB() : new CheckpointIndexedDB();

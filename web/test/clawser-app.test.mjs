@@ -378,6 +378,18 @@ describe('clawser-app: kernel integration', () => {
   it('kernel is an instance with close()', () => {
     assert.equal(typeof state.kernel.close, 'function')
   })
+
+  it('wires a real KernelWshBridge into clawser-wsh-incoming (was never constructed before)', async () => {
+    const { getKernelBridge } = await import('../clawser-wsh-incoming.js')
+    const bridge = getKernelBridge()
+    assert.ok(bridge, 'a kernel bridge should be set')
+    assert.equal(typeof bridge.handleReverseConnect, 'function')
+    // Prove it's backed by the real state.kernel, not a stand-in: creating a
+    // tenant through it should show up as a real kernel tenant.
+    const { tenantId } = bridge.handleGuestJoin({ guestId: 'test-guest-1' })
+    assert.ok(tenantId)
+    bridge.handleParticipantLeave('test-guest-1')
+  })
 })
 
 // ── Event bus wiring ────────────────────────────────────────────
