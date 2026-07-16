@@ -20,7 +20,7 @@ MCP tools appear alongside browser tools in the tool list, command palette, and 
 
 Press `Cmd+9` to open the **Config** panel, then expand the **MCP Servers** section.
 
-![Config MCP section](../screenshots/24-config-mcp.png)
+![Config MCP section](../screenshots/config-mcp.png)
 
 To connect:
 
@@ -66,7 +66,7 @@ The agent calls `wsh_connect` to establish the connection.
 
 ## 5. wsh Tools
 
-Ten tools interact with remote servers via wsh:
+27 tools interact with remote servers via wsh. The core set covers connection and session basics:
 
 | Tool | Permission | Description |
 |------|-----------|-------------|
@@ -80,6 +80,8 @@ Ten tools interact with remote servers via wsh:
 | `wsh_disconnect` | auto | Disconnect from a server |
 | `wsh_sessions` | read | List active sessions |
 | `wsh_mcp_call` | approve | Call an MCP tool on the server |
+
+The remaining 17 cover session sharing and guest access (`wsh_guest_invite`, `wsh_share_session`, `wsh_copilot_attach`, ...), session lifecycle (`wsh_suspend_session`, `wsh_restart_pty`, `wsh_link_session`), and policy/metrics (`wsh_policy_eval`, `wsh_metrics`, `wsh_gpu_probe`, `wsh_file_op`, ...). See [Tools Reference](../TOOLS.md) for the complete list.
 
 The CORS proxy (`wsh_fetch`) is useful for accessing URLs blocked by browser CORS restrictions, routing the request through the remote server via curl.
 

@@ -1,6 +1,6 @@
 # Clawser CLI and Shell Commands
 
-Clawser provides two layers of command-line interaction: the `clawser` CLI for agent operations and a virtual shell with 59 built-in commands.
+Clawser provides two layers of command-line interaction: the `clawser` CLI for agent operations and a virtual shell with roughly 68 built-in commands (22 base + 7 shell-scripting/job-control + 38 extended, including `jq` + `chmod` when a permission manager is active — always true in the production shell).
 
 ## Clawser CLI
 
@@ -59,6 +59,7 @@ the terminal panel:
 | `snapshot list` | List snapshots (merges OPFS-tar and legacy-IDB sources) |
 | `snapshot delete <id>` | Delete a snapshot |
 | `snapshot info <id>` | Show snapshot metadata |
+| `snapshot clear` | Delete all snapshots |
 | `wsh ...` | Browser-side `wsh` shell (see WSH CLI section below) |
 | `andbox ...` | Sandboxed JS execution CLI |
 | `model ...` | Model selection / fallback chain CLI |
@@ -75,7 +76,7 @@ the terminal panel:
 | `clawser session rename <name>` | Rename the current session |
 | `clawser session delete <name>` | Delete a session |
 | `clawser session fork [name]` | Fork the current session |
-| `clawser session export [fmt]` | Export session (`--script`, `--markdown`, `--json`, `--jsonl`) |
+| `clawser session export [fmt]` | Export session (`--script`/`-s`, `--markdown`/`--md`/`-m`, `--json`, `--jsonl`, plus rich variants `--html`/`-h`, `--rich-markdown`/`--rich-md`, `--rich-json`) |
 | `clawser session save` | Persist the current session |
 
 ### Flags
@@ -129,25 +130,29 @@ Use the browser `wsh` when the command should run inside the live Clawser tab. U
 |---------|-------------|
 | `wsh connect user@host` | Open an interactive direct-host PTY session |
 | `wsh user@host command` | Run one-off exec on a direct host |
+| `wsh sessions` | List active sessions on the most recently connected host |
+| `wsh attach <session>` | Reattach to a named/ID'd session |
+| `wsh detach` | Detach from the current session (typically Ctrl+\ in interactive mode) |
 | `wsh keygen [name]` | Generate an Ed25519 identity |
 | `wsh keys` | List stored identities |
 | `wsh copy-id user@host` | Install a public key on a host running `wsh-server` |
+| `wsh scp <src> <dst>` | Transfer files (use `[user@]host:path` syntax on either side) |
+| `wsh tools [host]` | List MCP tools available on a remote host |
 | `wsh peers relay.example.com` | List reverse peers on a relay |
 | `wsh peers relay.example.com --json` | Emit canonical peer/runtime metadata as JSON |
 | `wsh reverse relay.example.com` | Run a foreground reverse-host registration |
 | `wsh agent run relay.example.com` | Run the long-lived reverse-host agent |
 | `wsh agent install relay.example.com` | Install a user-level startup unit for the reverse-host agent |
 | `wsh agent uninstall relay.example.com` | Remove a previously installed user-level startup unit |
+| `wsh agent status [relay.example.com] [--json]` | Show the most recent reverse-host agent state snapshot |
 | `wsh reverse-connect @name relay.example.com` | Connect to a relay-registered peer by name |
 | `wsh reverse-connect @name@relay.example.com` | Connect to a relay-registered peer using a qualified selector |
 | `wsh reverse-connect <fingerprint> relay.example.com` | Connect to a relay-registered peer by fingerprint |
 | `wsh reverse-connect only relay.example.com` | Connect when exactly one relay peer is online |
 | `wsh reverse-connect last relay.example.com` | Reconnect to the last successful relay peer for this identity/relay |
 | `wsh check relay relay.example.com` | Diagnose key, known-host, transport, and auth issues against a relay |
-| `wsh vm list` | List browser-hosted VM runtimes and their budgets |
-| `wsh vm start demo-linux` | Start the demo browser VM runtime |
-| `wsh vm stop demo-linux` | Stop the demo browser VM runtime |
-| `wsh vm budget demo-linux --memory-mb 512` | Update browser VM resource budgets |
+
+`vm list` / `vm start <runtime>` / `vm stop <runtime>` / `vm budget <runtime> --memory-mb N` are **not** Rust-CLI subcommands — there is no `Vm` variant in `crates/wsh-cli/src/main.rs`. They are commands understood by the browser-side `wsh` shell (`web/clawser-wsh-cli.js`) for managing browser-hosted VM runtimes. From the Rust CLI they only work when forwarded to a live browser peer, e.g. `wsh operator@browser-peer vm list` (one-off exec) or by running `vm list` inside an interactive `wsh connect`/`wsh reverse-connect` session attached to that peer.
 
 ### Reverse Host Agent Startup
 
@@ -225,13 +230,25 @@ The shell supports pipes (`|`), output redirects (`>`, `>>`), logical operators 
 | `false` | Exit with code 1 |
 | `help [command]` | Show commands grouped by category, or detailed help for a specific command |
 
+### Shell Scripting & Job Control (7)
+
+| Command | Description |
+|---------|-------------|
+| `type <name...>` | Show whether a name is a builtin, function, or alias |
+| `local NAME[=VALUE]...` | Declare local variables (inside functions) |
+| `return [N]` | Exit a function with a status code |
+| `source <file>` | Execute commands from a file in the current shell |
+| `. <file>` | Alias for `source` (POSIX convention) |
+| `jobs` | List background jobs |
+| `fg [%job_id]` | Bring a background job to foreground |
+
 ---
 
 ## Extended Shell Builtins
 
 **File**: `web/clawser-shell-builtins.js`
 
-37 additional commands registered via `registerExtendedBuiltins(registry)`.
+37 additional commands registered via `registerExtendedBuiltins(registry)`, plus `jq` registered separately (in the same file) via `registerJqBuiltin(registry)` — both are always active in a default `ClawserShell`.
 
 ### File Operations (8)
 
@@ -283,7 +300,7 @@ The shell supports pipes (`|`), output redirects (`>`, `>>`), logical operators 
 | `unset <name>` | Remove a shell variable |
 | `read <varname>` | Read stdin into a variable |
 
-### Data & Conversion (4)
+### Data & Conversion (5, including `jq`)
 
 | Command | Description |
 |---------|-------------|
@@ -291,6 +308,7 @@ The shell supports pipes (`|`), output redirects (`>`, `>>`), logical operators 
 | `base64 [file]` | Base64 encode (supports `-d` for decode) |
 | `sha256sum` | Compute SHA-256 hash of stdin |
 | `md5sum` | Compute MD5 hash of stdin |
+| `jq <expression>` | Lightweight jq-like JSON processor (reads JSON from stdin) |
 
 ### Process-Like (3)
 
@@ -307,3 +325,17 @@ The `test` / `[` command supports:
 - Numeric tests: `n1 -eq n2`, `-ne`, `-lt`, `-le`, `-gt`, `-ge`
 - File tests: `-e path`, `-f path`, `-d path`, `-s path`
 - Logical: `! expr`, `expr -a expr`, `expr -o expr`
+
+---
+
+## Permissions Builtin
+
+**File**: `web/clawser-permissions.js`
+
+`chmod` is registered via `registerChmodBuiltin(registry, permissions)`, conditional on a `PermissionManager` being passed to the shell. The production shell (`createConfiguredShell` in `web/clawser-shell-factory.js`) always supplies one, so `chmod` is present in practice.
+
+| Command | Description |
+|---------|-------------|
+| `chmod [-R] MODE PATH...` | Change file permissions. `MODE` is `+w`/`-w`/`+x`/`-x` (symbolic) or numeric (e.g. `644`); `-R` recurses. |
+
+`chmod` also augments `stat`'s output with a `Mode:` line once permissions are active.

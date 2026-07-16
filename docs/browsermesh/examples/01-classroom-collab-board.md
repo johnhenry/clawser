@@ -70,10 +70,10 @@ const pod = await installPodRuntime(globalThis);
 pod.on('parent:connected', async (parent) => {
   console.log(`Connected to teacher: ${parent.info.id}`);
 
-  // Request drawing capability
+  // Prove identity to the teacher (capabilities advertised per identity-keys.md §8)
   const assertion = await pod.credentials.createHandshakeAssertion({
     challenge: parent.challenge,
-    capabilities: { requestedScopes: ['canvas:write', 'note:create'] },
+    capabilities: pod.capabilities,
   });
 
   sendToParent(assertion);
@@ -87,12 +87,8 @@ The teacher's pod is the sole authority for granting capabilities:
 ```typescript
 // Teacher-side: grant scoped, time-limited capabilities
 async function onStudentJoin(studentAssertion: PodHandshakeAssertion) {
-  // Verify the student's identity
-  const valid = await PodSigner.verify(
-    studentAssertion.pod.publicKey,
-    studentAssertion.assertion.challenge,
-    studentAssertion.assertion.signature
-  );
+  // Verify the student's identity (see identity-keys.md §8)
+  const { valid } = await verifyHandshakeAssertion(studentAssertion);
 
   if (!valid) return;
 
@@ -101,11 +97,8 @@ async function onStudentJoin(studentAssertion: PodHandshakeAssertion) {
 
   const token = await capabilityManager.grant(
     `board/${boardId}/canvas`,
-    studentAssertion.pod.publicKey,
-    {
-      scope: ['canvas:write', 'note:create'],
-      expires: classEndTime,
-    }
+    ['canvas:write', 'note:create'],
+    classEndTime - Date.now()
   );
 
   // Send token to student over encrypted session
@@ -163,9 +156,10 @@ broadcastChannel.onmessage = async (e) => {
   const op: DrawOperation = cbor.decode(decrypted);
 
   // Verify the author signed this operation
-  const authorKey = peers.get(op.podId)?.publicKey;
-  if (!authorKey) return;
+  const authorKeyRaw = peers.get(op.podId)?.publicKey;
+  if (!authorKeyRaw) return;
 
+  const authorKey = await PodKeyStore.importEd25519PublicKey(authorKeyRaw);
   const valid = await PodSigner.verify(authorKey, op.data, op.signature);
   if (!valid) return;
 

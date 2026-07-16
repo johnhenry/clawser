@@ -13,9 +13,9 @@ Each example demonstrates how pods, identity, session cryptography, capabilities
 | [Peer-to-Peer Encrypted Notes](03-p2p-encrypted-notes.md) | WindowPod (multi-device) | HD key derivation, device pairing, revocation |
 | [Multiplayer Game Lobby](04-multiplayer-game-lobby.md) | WindowPod | Signed move logs, host migration, mesh formation |
 | [Privacy-First Analytics](05-privacy-analytics-dashboard.md) | WindowPod, FramePod, WorkerPod, ServiceWorkerPod | Data isolation, capability-scoped sources, provenance |
-| [Pod-Hosted Web Server](06-pod-hosted-web-server.md) | ServiceWorkerPod, WindowPod | Serving web pages from a browser, FetchEvent routing, live reload |
+| [Pod-Hosted Web Server](06-pod-hosted-web-server.md) | ServiceWorkerPod, WindowPod, SharedWorkerPod | Serving web pages from a browser, FetchEvent routing, live reload |
 | [Decentralized Chat](07-decentralized-chat.md) | WindowPod, SharedWorkerPod | End-to-end encryption, offline queuing, presence |
-| [Collaborative Code Sandbox](08-collaborative-code-sandbox.md) | WindowPod, FramePod, WorkerPod | Sandboxed execution, capability-limited eval, shared state |
+| [Collaborative Code Sandbox](08-collaborative-code-sandbox.md) | WindowPod, FramePod, WorkerPod, SharedWorkerPod | Sandboxed execution, capability-limited eval, shared state |
 
 ## Conventions
 

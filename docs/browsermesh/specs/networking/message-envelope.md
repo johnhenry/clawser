@@ -566,3 +566,9 @@ const request: MeshRequest = {
 ```
 
 See [binary-request-protocol.md](binary-request-protocol.md) for the full structured fields parser/serializer.
+
+## 13. Implementation Status
+
+**Status: Not implemented as specified.** No `MeshEnvelope` class (§5, CBOR + 8-byte magic/version/flags/length header), `RequestTracker`, or `FlowController` exists in `web/` or `packages/`. A class named `MeshRouter` does exist (`web/clawser-peer-routing.js`), but it implements a different concept than §7 here — multi-hop, TTL-bounded message forwarding across intermediary peers (route table keyed by target pod ID → next hop), not this spec's podId/service/capability request routing. Do not conflate the two when cross-referencing "MeshRouter."
+
+**Wire format discrepancy**: the real `encodeMeshMessage()`/`decodeMeshMessage()` (`node_modules/browsermesh-primitives/src/wire.mjs`, re-exported via `web/packages-mesh-primitives.js`) — the actual encode/decode pair for the canonical `MESH_TYPE` registry — is **not** CBOR. It's a 5-byte header (1-byte type code + 4-byte big-endian payload length) followed by a `JSON.stringify()`-encoded payload, not the 8-byte magic/version/flags/length + CBOR format this spec (and [wire-format.md](../core/wire-format.md), and [http-interop.md](http-interop.md)) describe. Most in-realm transports (MessagePort, BroadcastChannel, postMessage) pass plain JS objects via structured clone and never call this encoder at all.

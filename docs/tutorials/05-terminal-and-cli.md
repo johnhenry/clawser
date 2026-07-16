@@ -1,6 +1,6 @@
 # Terminal & CLI
 
-Use the virtual shell with 59 built-in commands, pipe data between commands, and manage terminal sessions.
+Use the virtual shell with 68 built-in commands, pipe data between commands, and manage terminal sessions.
 
 **Time:** ~10 minutes
 
@@ -14,13 +14,13 @@ Use the virtual shell with 59 built-in commands, pipe data between commands, and
 
 Press `Cmd+8` to open the **Terminal** panel. You'll see a command input at the bottom, the current working directory indicator, and the output area above.
 
-![Terminal with pipe example](../screenshots/20-terminal-pipe.png)
+![Terminal with pipe example](../screenshots/terminal-pipe.png)
 
 Type commands directly and press `Enter` to execute. The terminal runs entirely in the browser — no server or system shell access required.
 
 ## 2. Basic Commands
 
-The shell provides 59 built-in commands organized into categories:
+The shell provides 68 built-in commands organized into categories:
 
 **File Operations:**
 
@@ -90,7 +90,7 @@ Inside the terminal, the `clawser` command provides an AI-integrated CLI with 18
 clawser status     # Show agent state, provider, costs
 ```
 
-![Terminal showing clawser status](../screenshots/21-terminal-clawser-status.png)
+![Terminal showing clawser status](../screenshots/terminal-clawser-status.png)
 
 Key CLI commands:
 
@@ -121,7 +121,7 @@ clawser --max-turns 5 do "Complex task"       # Limit iterations
 
 The terminal supports multiple sessions, each with its own command history and shell state.
 
-![Terminal sessions](../screenshots/22-terminal-sessions.png)
+![Terminal sessions](../screenshots/terminal-sessions.png)
 
 Click the **session bar** at the top of the terminal panel to open the session dropdown. From here you can:
 

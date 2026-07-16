@@ -92,14 +92,14 @@ async function createRoom(name: string): Promise<ChatRoom> {
   await startMessageHub(room);
 
   // Generate join link
-  const joinLink = generateJoinLink(room);
+  const joinLink = await generateJoinLink(room);
   return room;
 }
 
-function generateJoinLink(room: ChatRoom): string {
+async function generateJoinLink(room: ChatRoom): Promise<string> {
   // The link contains the room ID and the creator's public key
   // The room key is NOT in the link — it's shared via encrypted session after joining
-  return `${location.origin}/chat/join?room=${room.id}&host=${pod.info.id}&key=${base64urlEncode(pod.identity.publicKeyRaw)}`;
+  return `${location.origin}/chat/join?room=${room.id}&host=${pod.info.id}&key=${base64urlEncode(await pod.identity.getPublicKey())}`;
 }
 ```
 
@@ -162,8 +162,7 @@ async function approveJoin(request: JoinRequest, requesterPodId: string) {
   // Grant capability
   const token = await capabilityManager.grant(
     `chat/${room.id}`,
-    getPeerPublicKey(requesterPodId),
-    { scope: ['chat:send', 'chat:read'] }
+    ['chat:send', 'chat:read']
   );
 
   // Share the room symmetric key over encrypted session
@@ -240,8 +239,9 @@ async function handleIncomingMessage(msg: ChatMessage) {
   ));
 
   // Verify sender signature
-  const senderKey = room.members.get(msg.senderId)?.publicKey;
-  if (!senderKey) return;
+  const senderKeyRaw = room.members.get(msg.senderId)?.publicKey;
+  if (!senderKeyRaw) return;
+  const senderKey = await PodKeyStore.importEd25519PublicKey(senderKeyRaw);
   if (!await PodSigner.verify(senderKey, plaintext, msg.signature)) {
     console.warn(`Message ${msg.id} failed signature verification`);
     return;

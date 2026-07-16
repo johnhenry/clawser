@@ -5,7 +5,7 @@ Browser-native AI agent workspace with tools, memory, and goals.
 **Live demo:** https://johnhenry.github.io/clawser/
 **Browser extension:** [Clawser Browser Control](https://chromewebstore.google.com/detail/clawser-browser-control/dljchbfodafekojicopaboiegophjcbc) (Chrome Web Store)
 
-Clawser is a pure JavaScript agent platform that runs entirely in the browser. It provides a complete agent runtime with persistent memory, goal tracking, scheduled tasks, ~100 tools, and support for 38+ LLM backends — all without a server.
+Clawser is a pure JavaScript agent platform that runs entirely in the browser. It provides a complete agent runtime with persistent memory, goal tracking, scheduled tasks, ~285 tools, and support for 38+ LLM backends — all without a server.
 
 ## Screenshots
 
@@ -206,6 +206,7 @@ Clawser is a pure JavaScript agent platform that runs entirely in the browser. I
 ### External Tool Integration
 
 - **wsh Protocol** — Remote shell exec, file transfer, MCP bridging, and CORS proxy via WebSocket shell connections
+- **Native wsh Companion (Rust)** — Optional `wsh-server`/`wsh-cli` binaries in `crates/` (built with `cargo build --workspace`) provide real PTYs and native WebTransport/QUIC for reaching a host shell directly; the in-browser `wsh` client works standalone without them. See [docs/WSH-INTO-CLAWSER.md](docs/WSH-INTO-CLAWSER.md)
 - **MCP Client** — Connect to external Model Context Protocol servers via Streamable HTTP transport with JSON-RPC, tool discovery, and 30-second configurable timeout
 - **Local Filesystem Mounting** — Mount local folders via File System Access API at `/mnt/` prefix with read-only mode support
 
@@ -317,34 +318,34 @@ Clawser is built as a set of ES modules with no bundler, no build step, and no n
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for a detailed breakdown.
 
-## Module Map (~148 modules, ~120K LOC)
+## Module Map (~235 modules, ~130K LOC)
 
 ### Core Agent
 | Module | LOC | Purpose |
 |--------|-----|---------|
-| `clawser-agent.js` | 3,742 | Agent core: EventLog, HookPipeline, AutonomyController, run/stream loop, parallel tools, idle timeout |
-| `clawser-providers.js` | 1,868 | LLM providers, SSE readers, cost tracking, response cache, CostLedger, vision support |
-| `clawser-codex.js` | 292 | Code execution sandbox via andbox/vimble (30s timeout) |
-| `clawser-agent-ref.js` | 216 | @agent sub-conversation dispatch with recursion guard |
-| `clawser-agent-storage.js` | 395 | Agent definition CRUD, 5 built-in agents, OPFS persistence |
+| `clawser-agent.js` | 4,164 | Agent core: EventLog, HookPipeline, AutonomyController, run/stream loop, parallel tools, idle timeout |
+| `clawser-providers.js` | 1,882 | LLM providers, SSE readers, cost tracking, response cache, CostLedger, vision support |
+| `clawser-codex.js` | 380 | Code execution sandbox via andbox/vimble (30s timeout) |
+| `clawser-agent-ref.js` | 248 | @agent sub-conversation dispatch with recursion guard |
+| `clawser-agent-storage.js` | 520 | Agent definition CRUD, 5 built-in agents, OPFS persistence |
 
 ### Tool System
 | Module | LOC | Purpose |
 |--------|-----|---------|
-| `clawser-tools.js` | 1,373 | 29 browser tools with permission engine and BrowserToolRegistry |
-| `clawser-mcp.js` | 303 | MCP client (JSON-RPC, Streamable HTTP), tool discovery, timeout |
-| `clawser-skills.js` | 1,526 | Skills: parser, OPFS storage, registry, activation, remote install |
+| `clawser-tools.js` | 1,757 | 24 browser tools with permission engine and BrowserToolRegistry |
+| `clawser-mcp.js` | 426 | MCP client (JSON-RPC, Streamable HTTP), tool discovery, timeout |
+| `clawser-skills.js` | 2,092 | Skills: parser, OPFS storage, registry, activation, remote install |
 
 ### UI Layer
 | Module | LOC | Purpose |
 |--------|-----|---------|
-| `clawser-ui-chat.js` | 1,042 | Chat messaging, streaming, conversations, replay |
-| `clawser-ui-panels.js` | 1,455 | Panel hub: re-exports files, memory, goals, config sub-modules |
+| `clawser-ui-chat.js` | 1,476 | Chat messaging, streaming, conversations, replay |
+| `clawser-ui-panels.js` | 2,291 | Panel hub: re-exports files, memory, goals, config sub-modules |
 | `clawser-ui-files.js` | — | File browser panel |
 | `clawser-ui-memory.js` | — | Memory search and display panel |
 | `clawser-ui-goals.js` | — | Goals tracking panel |
 | `clawser-ui-config.js` | — | Configuration, autonomy, identity panels |
-| `clawser-item-bar.js` | 210 | Reusable list component (conversations, sessions) |
+| `clawser-item-bar.js` | 257 | Reusable list component (conversations, sessions) |
 | `clawser-cmd-palette.js` | — | Command palette (Cmd+K) |
 | `clawser-modal.js` | — | Modal dialog system |
 | `clawser-keys.js` | 100+ | Keyboard shortcut handler |
@@ -352,17 +353,17 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for a detailed breakdown.
 ### Shell & CLI
 | Module | LOC | Purpose |
 |--------|-----|---------|
-| `clawser-shell.js` | 1,124 | Tokenizer, parser, executor, 22 builtins, variable/glob expansion |
-| `clawser-shell-builtins.js` | ~1,500 | 37 extended commands (find, sed, tr, xargs, diff, etc.) |
-| `clawser-cli.js` | 714 | AI-integrated CLI: 18 subcommands, one-shot, sessions |
-| `clawser-terminal-sessions.js` | 800 | Session CRUD, event recording, state snapshots, export |
+| `clawser-shell.js` | 2,962 | Tokenizer, parser, executor, 22 builtins, variable/glob expansion |
+| `clawser-shell-builtins.js` | 1,492 | 37 extended commands (find, sed, tr, xargs, diff, etc.) |
+| `clawser-cli.js` | 1,082 | AI-integrated CLI: 18 subcommands, one-shot, sessions |
+| `clawser-terminal-sessions.js` | 631 | Session CRUD, event recording, state snapshots, export |
 
 ### State & Routing
 | Module | LOC | Purpose |
 |--------|-----|---------|
-| `clawser-state.js` | 336 | Namespaced state (ui, services, features, session), ConfigCache, event bus |
-| `clawser-router.js` | 143 | Hash-based SPA router, single PANELS source of truth |
-| `clawser-app.js` | 192 | Thin orchestrator, module wiring |
+| `clawser-state.js` | 514 | Namespaced state (ui, services, features, session), ConfigCache, event bus |
+| `clawser-router.js` | 167 | Hash-based SPA router, single PANELS source of truth |
+| `clawser-app.js` | 828 | Orchestrator, module wiring, workspace lifecycle |
 
 ### Feature Modules
 | Module | Purpose |
@@ -513,7 +514,7 @@ Schedule tasks with three types:
 
 ## Project Status
 
-Clawser is in **beta**. All major subsystems are implemented: core agent, ~100 tools, 38+ providers, mesh networking (via npm packages), 7 channel adapters, microkernel, hardware support, vision/multimodal, parallel tool execution, cost management (daily + monthly limits + CostLedger), and session idle timeout. See [ROADMAP.md](ROADMAP.md) for planned work.
+Clawser is in **beta**. All major subsystems are implemented: core agent, ~285 tools, 38+ providers, mesh networking (via npm packages), 8 channel adapters, microkernel, hardware support, vision/multimodal, parallel tool execution, cost management (daily + monthly limits + CostLedger), and session idle timeout. See [ROADMAP.md](ROADMAP.md) for planned work.
 
 ## Development
 
@@ -521,7 +522,7 @@ No build step required. Edit JS files in `web/` and reload the browser.
 
 **Running tests:**
 ```bash
-npm test              # All 347+ test files
+npm test              # All 359+ test files
 npm run test:fast     # Core + channels
 npm run test:core     # Agent, tools, providers, shell
 npm run test:mesh     # Mesh networking
@@ -562,13 +563,13 @@ Step-by-step guides to get productive with Clawser — see the [full tutorial in
 | [docs/CLI.md](docs/CLI.md) | CLI subcommands and shell builtins |
 | [docs/MODULES.md](docs/MODULES.md) | Feature module manifest |
 | [docs/EVENT-LOG.md](docs/EVENT-LOG.md) | Event log specification and JSONL format |
-| [docs/TOOLS.md](docs/TOOLS.md) | Complete tool reference (~100 tools with parameters and permissions) |
+| [docs/TOOLS.md](docs/TOOLS.md) | Complete tool reference (~285 tools with parameters and permissions) |
 | [docs/CONFIG.md](docs/CONFIG.md) | Configuration panel options and storage keys |
 | [docs/FEATURES.md](docs/FEATURES.md) | Advanced features guide (routines, delegation, vault, etc.) |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Static server, Docker, and production setup |
 | [docs/WSH-INTO-CLAWSER.md](docs/WSH-INTO-CLAWSER.md) | Reverse-connect setup and current status for reaching a live Clawser tab via `wsh` |
 | [docs/tutorials/](docs/tutorials/README.md) | 10 step-by-step tutorials with screenshots |
-| [guide/index.md](guide/index.md) | Comprehensive feature guide — 549 features across 19 sections |
+| [guide/index.md](guide/index.md) | Comprehensive feature guide — 586 features across 18 sections |
 
 ## `.reference/` Directory
 

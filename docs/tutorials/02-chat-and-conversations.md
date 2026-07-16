@@ -18,7 +18,7 @@ Press `Cmd+1` or click **Chat** in the sidebar. The chat panel has three areas:
 - **Message area** (center) — Displays the conversation thread
 - **Input area** (bottom) — Text field, command palette button, and send button
 
-![Workspace entry showing chat panel](../screenshots/14-workspace-entry.png)
+![Chat panel](../screenshots/panel-chat.png)
 
 Type your message and press `Cmd+Enter` to send. If your provider supports streaming, tokens render progressively with a blinking cursor.
 
@@ -32,17 +32,18 @@ If your **Autonomy** level is set to `supervised` (the default), the agent asks 
 
 ## 3. Conversation History
 
-Click the **conversation bar** at the top of the chat panel to open the conversation dropdown.
+Click the **▼** button at the top-right of the chat panel to open the conversation dropdown.
 
-![Conversation item bar](../screenshots/16-conv-item-bar.png)
+![Conversation dropdown](../screenshots/conversation-dropdown.png)
 
-The dropdown shows all conversations in the current workspace, sorted by most recently used. From here you can:
+The dropdown has a filter field, a list of conversations in the current workspace (sorted by most recently used), and action rows for the active conversation. From here you can:
 
-- **Switch** — Click any conversation to load it
-- **Rename** — Click the rename icon to give a conversation a meaningful name
-- **Delete** — Remove conversations you no longer need
-- **Fork** — Create a copy of a conversation to explore a different direction
-- **Export** — Download the conversation in multiple formats
+- **Switch** — Click any conversation in the filtered list to load it
+- **Rename** — Click **Rename** in the panel header to give the active conversation a meaningful name
+- **New** — Click **+ New** in the panel header to start a fresh conversation
+- **Delete** — Remove a conversation you no longer need (hover a row in the list)
+- **Fork current conversation** — Create a copy of the active conversation to explore a different direction
+- **Export** — Download the active conversation as JSON or plain text
 
 ## 4. Starting a New Conversation
 
@@ -58,7 +59,7 @@ Each conversation has its own:
 
 Forking creates a snapshot of the current conversation that you can take in a different direction without losing the original.
 
-Open the conversation dropdown and click the **fork icon** next to the conversation you want to fork. The fork appears in the dropdown with a "(fork)" suffix. You can rename it afterward.
+Open the conversation dropdown (**▼**) and click **Fork current conversation**. The fork appears in the conversation list; rename it afterward with **Rename** to keep track of which is which.
 
 Use forking when you want to:
 - Try a different approach to a task
@@ -67,22 +68,22 @@ Use forking when you want to:
 
 ## 6. Exporting Conversations
 
-Export conversations in four formats:
+Export the active conversation in two formats from the conversation dropdown:
 
 | Format | Use Case |
 |--------|----------|
-| **Script** | Shell-compatible log of commands |
-| **Markdown** | Readable document with messages and tool calls |
 | **JSON** | Structured data for programmatic use |
-| **JSONL** | Event log format for replay |
+| **Text** | Plain-text transcript for reading or sharing |
 
-Open the conversation dropdown and click the **export icon**. Select your preferred format and the file downloads.
+Open the conversation dropdown (**▼**) and click **Export as JSON** or **Export as text**. The file downloads immediately.
+
+> Need richer exports (HTML, Markdown, shell script) or a full replay log? Those live on the **Terminal** panel's session export (script/log/HTML/Markdown/JSON) and the `clawser session export` CLI command, not the chat conversation dropdown — see [Terminal & CLI](05-terminal-and-cli.md) and the [CLI Reference](../CLI.md#session-export).
 
 ## 7. The Events Panel
 
 Press `Cmd+6` to open the **Events** panel. This shows a chronological log of everything that happened during your session — tool calls, memory operations, goal updates, and message metadata.
 
-![Events panel](../screenshots/15-events-panel.png)
+![Events panel](../screenshots/panel-events.png)
 
 Each event row shows a timestamp, event type badge, and detail summary. The events panel is useful for:
 - Auditing what tools the agent used

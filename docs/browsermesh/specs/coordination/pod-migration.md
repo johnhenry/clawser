@@ -229,7 +229,7 @@ sequenceDiagram
 After migration, the leader must re-grant capabilities to the target pod:
 
 ```typescript
-async function regrateCapabilities(
+async function regrantCapabilities(
   leader: LeaderContext,
   migrationCtx: MigrationContext,
   capabilities: string[]
@@ -303,6 +303,8 @@ async function rollbackMigration(ctx: MigrationContext): Promise<void> {
 
 ## Implementation Status
 
-**Status**: Implemented and wired to app bootstrap. `MigrationEngine` is instantiated in `ClawserPod.initMesh()` (`web/clawser-pod.js` ~line 632) and exposed via the `pod.migrationEngine` getter. `MigrationStep`, `Checkpoint`, `MigrationPlan`, and `DualActiveWindow` are all available. Migration agent tools surfacing through the chat UI is a tighter follow-up but not blocked.
+**Status**: Implemented and wired to app bootstrap. `MigrationEngine` is instantiated in `ClawserPod.initMesh()` (`web/clawser-pod.js` ~line 706) and exposed via the `pod.migrationEngine` getter. `MigrationStep`, `Checkpoint`, `MigrationPlan`, and `DualActiveWindow` are all available. Migration agent tools surfacing through the chat UI is a tighter follow-up but not blocked.
+
+**Drift from the design above**: the shipped protocol does not match §3, §4, and §8. The real wire block is `MIGRATION_INIT` (`0xA4`), `MIGRATION_CHECKPOINT` (`0xA5`), `MIGRATION_TRANSFER` (`0xA6`), `MIGRATION_ACTIVATE` (`0xA7`) — not the `MIGRATE_PREPARE`/`MIGRATE_STATE`/`MIGRATE_COMPLETE`/`MIGRATE_ABORT` codes `0xB0`-`0xB3` described above, and payloads carry only `{ migrationId, sourcePodId, targetPodId, reason, priority }` (no `estimatedStateSize`, `capabilities`, or `urgent` fields). `MigrationPlan.state` is one of `'idle' | 'checkpointing' | 'transferring' | 'verifying' | 'activating' | 'completed' | 'failed' | 'rolledBack'` — there is no `PREPARING`, `DUAL_ACTIVE`, or `ABORTING` state. `DualActiveWindow`'s default `windowMs` is 30 seconds, not the 10-second `dualActiveWindow` value in the `MIGRATION_DEFAULTS` table (§8/§10). `MigrationEngine`'s real constructor options are `{ maxConcurrent = 3, timeoutMs = 60000 }`; there is no `MIGRATION_DEFAULTS` object, capability re-grant step (§7), or session-handoff payload (§6) in the code — those remain design intent, not implemented behavior.
 
 **Source**: `web/clawser-mesh-migration.js`

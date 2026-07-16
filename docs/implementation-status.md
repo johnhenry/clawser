@@ -1,5 +1,15 @@
 # Implementation Status — Authoritative Ledger
 
+**Status: stale as of 2026-07-16 — no longer authoritative.** This is a
+dated snapshot (last verified 2026-05-02/03), not live guidance. 51+
+commits have landed since with zero updates to this ledger, including at
+least two confirmed flipped classifications (kernel npm extraction and
+the Phase 9 v86 guest mount are both now shipped, not "Not started" /
+"Not wired") and entire subsystems this ledger never saw (Rust `crates/`
+wsh-cli revival + CI, Slack Socket Mode, mesh Phase 11, WebTransport,
+BrowserMesh package extraction). For current status, see `OUTSTANDING.md`
+(repo root, actively maintained) and `CHANGELOG.md`.
+
 Date: 2026-05-02
 Last verified: 2026-05-02 (third pass — Phase 7 read direction fully wired
 via `state.fsUiSync.registerPanel` for all six domains with dirty-aware

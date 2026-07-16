@@ -6,7 +6,7 @@ Real-time presence state for BrowserMesh pods.
 
 ## 1. Overview
 
-The presence protocol tracks which pods are active and what they are doing. It uses BroadcastChannel for same-origin transport and the wire-format presence message types (0x50-0x52) for cross-origin communication.
+The presence protocol tracks which pods are active and what they are doing. This document describes the target design: BroadcastChannel for same-origin transport, and wire-format presence message types (0x50-0x52) for cross-origin communication. Neither the `PresenceManager` class nor the 0x50-0x52 codes below exist in the canonical wire-type registry (`browsermesh-primitives` `MESH_TYPE`, which only spans `0xA0`-`0xFF`) or in `packages`/`web` source — see Implementation Status for what is actually implemented.
 
 ## 2. Presence States
 
@@ -193,6 +193,17 @@ document.addEventListener('visibilitychange', () => {
 
 ## Implementation Status
 
-**Status**: Presence behavior exists in PeerNode heartbeat mechanism and DiscoveryManager TTL-based pruning. No standalone presence service — presence is implicit in discovery records.
+**Status**: A standalone presence service exists — `PresenceService` in
+`web/clawser-presence.mjs` — but its design and API do not match the
+`PresenceManager`/BroadcastChannel/wire-code design described above. Real
+`PresenceService`:
 
-**Source**: `web/clawser-peer-node.js`, `web/clawser-mesh-discovery.js`
+- Tracks only three statuses: `online` / `idle` / `offline` (no `typing` or `away`, and no state machine like §2's `stateDiagram-v2`).
+- Is driven by subscribing to a `PeerNode`'s `peer:connect`/`peer:disconnect` events (not a dedicated heartbeat message type) plus an injectable `recordHeartbeat(peerId, timestamp?)` call from external heartbeat producers (swarm coordinator, relay, app-level).
+- Exposes `start()`/`stop()`, `getPresence(peerId)`, `getAll()`, `subscribe(cb)`, and `sweep()` (idle/offline detection on a timer) — not `setState`/`broadcast`/`getPeers`/`shutdown`.
+- Uses `idleAfterMs` (default 10s) / `offlineAfterMs` (default 60s) thresholds, not the 60s/5m/30s/90s values in §1/§4 above.
+- Has no BroadcastChannel transport and no wire-format message types; it is purely an in-process aggregation layer over `PeerNode` events, complementing (not replacing) `DiscoveryManager`'s independent TTL-based record pruning.
+
+Test file: `web/test/clawser-presence.test.mjs`.
+
+**Source**: `web/clawser-presence.mjs` (real implementation); `web/clawser-peer-node.js`, `web/clawser-mesh-discovery.js` (underlying connect/disconnect and TTL-pruning signals it consumes)

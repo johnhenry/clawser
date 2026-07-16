@@ -1,5 +1,27 @@
 # Guide expansion — 2026-05-04
 
+**Status: reverted as of 2026-07-16** (dated snapshot, not live guidance).
+The walkthroughs this pass added to `guide/safety.md`, `guide/mesh.md`, and
+`guide/shell.md` do not survive in the current tree — a later `guide/`
+regeneration from `docs/data/*.yaml` (which was never updated with this
+content) silently discarded the hand-edited additions. Re-adding this
+content (via the yaml source, not the generated output) is still
+outstanding work.
+
+**Update 2026-07-16:** re-added via the yaml source this time, so it
+survives regeneration. `docs/data/safety.yaml`'s "Secret Vault" entry was
+rewritten to describe the v2 wrapped-DEK architecture (passphrase +
+passkey/WebAuthn-PRF + recovery-code wraps, `enrollPasskey`,
+`unlockWithPasskey`, `performChangePassphrase`, etc. — see `docs/VAULT.md`).
+The multi-device sync / deploy-target content is now its own
+`docs/data/multi-device.yaml` (10 features: pairing, sync flags, sync
+engine, signed packages, ACL/approvals/audit/rollback, apply transport,
+publish/flow, wiring, and the UI panels) rather than folded into
+`mesh.yaml` — it renders as its own `guide/multi-device.md` page, linked
+from the guide index. The `/home/<name>` workspace-home view is now a
+"Workspace Home" entry in `docs/data/shell.yaml`, cross-linked from
+`workspace.yaml`'s `/proc Virtual Filesystem` entry.
+
 Compared `guide/*.md` against the actual user-facing surface of the
 codebase. Filled the largest gaps by expanding existing pages with
 walkthroughs and examples (no new files; the guide is already 11

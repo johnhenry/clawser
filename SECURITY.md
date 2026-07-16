@@ -14,7 +14,7 @@ Every tool has a `required_permission` level that maps to an enforcement policy:
 | `network` | `approve` | Requires user confirmation. Makes HTTP requests or MCP calls. |
 | `browser` | `approve` | Requires user confirmation. Navigation, notifications. |
 
-Users can override the policy for any tool to `auto`, `approve`, or `denied` via the Config panel. Overrides are stored per-workspace in localStorage (`clawser_tool_perms_{wsId}`).
+Users can override the policy for any tool to `auto`, `approve`, or `denied` via the Config panel. Overrides are stored per-workspace in localStorage (`clawser_v1_tool_perms_{wsId}`).
 
 The `denied` policy blocks tool execution entirely, regardless of the agent's request.
 
@@ -64,7 +64,7 @@ The `StorageGetTool`, `StorageSetTool`, and `StorageListTool` block access to ke
 
 ## API Key Storage
 
-API keys are stored in `localStorage` as part of the workspace config (`clawser_config_{wsId}`). This is a known limitation:
+API keys are stored in `localStorage` as part of the workspace config (`clawser_v1_config_{wsId}`). This is a known limitation:
 
 - Keys are accessible to any JavaScript running on the same origin
 - Keys are not encrypted at rest (the optional `SecretVault` module provides Web Crypto encryption, but localStorage remains the transport)

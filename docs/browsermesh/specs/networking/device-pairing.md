@@ -326,3 +326,9 @@ Unpairing removes a device from the registry and terminates all sessions:
 | Short code attempts | 3 per window |
 | Max paired devices | 32 |
 | Session ticket expiry | 24 hours |
+
+## 12. Implementation Status
+
+**Status: Not implemented.** No `PAIR_REQUEST`/`PAIR_CHALLENGE`/`PAIR_RESPONSE`/`PAIR_COMPLETE` messages, `DeviceRegistry` class, or QR/short-code generation matching this spec exist in `web/` or `packages/`. `web/clawser-remote.js` has a `PairingManager` with a similar-sounding name, but it's an unrelated subsystem (remote-control/mobile-access pairing: simple numeric codes and bearer tokens, no Ed25519/X25519 mutual authentication) and does not implement this spec.
+
+**Wire code conflict if implemented as specified.** `PAIR_REQUEST`/`PAIR_CHALLENGE`/`PAIR_RESPONSE`/`PAIR_COMPLETE` are specified at `0xC0`–`0xC3`, extending `MessageEnvelope` directly (§5). The canonical wire-type registry (`node_modules/browsermesh-primitives/src/constants.mjs`) has already assigned that exact range to swarm coordination: `SWARM_JOIN = 0xc0`, `SWARM_LEAVE = 0xc1`, `SWARM_HEARTBEAT = 0xc2`, `SWARM_TASK_ASSIGN = 0xc3` (imported as canonical constants in `web/clawser-mesh-swarm.js`). A real implementation of this spec would need a different type-code range.

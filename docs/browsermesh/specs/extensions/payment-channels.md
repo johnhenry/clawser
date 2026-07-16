@@ -15,7 +15,7 @@ per-pod facade. Wire codes are imported from the canonical registry.
 
 ## 2. Wire Codes
 
-From `MESH_TYPE` in `web/packages/mesh-primitives/src/constants.mjs`:
+From `MESH_TYPE` in the `browsermesh-primitives` package (`node_modules/browsermesh-primitives/src/constants.mjs`):
 
 | Name            | Hex    | Description                   |
 |-----------------|--------|-------------------------------|
@@ -89,6 +89,9 @@ getChannel(remotePodId) -> PaymentChannel|null
 closeChannel(remotePodId) -> ChannelSettlement|null
 listChannels() -> PaymentChannel[]
 getEscrow() -> EscrowManager
+wireTransport(broadcastFn, subscribeFn) -> void   // pumps PAYMENT_*/ESCROW_CREATE over the mesh
+startEscrowSweeper(intervalMs?, onExpired?) -> void  // periodic EscrowManager.pruneExpired()
+stopEscrowSweeper() -> void
 ```
 
 One channel per remote peer at a time; `openChannel` throws on duplicates.
@@ -106,5 +109,5 @@ Payments are sequenced; `receive` rejects stale sequence numbers.
 | All classes         | Fully implemented                               |
 | Wire code imports   | From canonical constants registry               |
 | Serialization       | toJSON/fromJSON complete                        |
-| Unit tests          | Yes (`web/test/clawser-mesh-payments.test.mjs`) |
-| App bootstrap wired | No -- not wired to app bootstrap                |
+| Unit tests          | Yes (`web/test/clawser-mesh-payments.test.mjs`, `web/test/clawser-mesh-payments-transport.test.mjs`) |
+| App bootstrap wired | Yes -- `ClawserPod` constructs a `PaymentRouter` per pod (exposed via `pod.paymentRouter`) and calls `wireTransport()` to pump `PAYMENT_OPEN`/`PAYMENT_UPDATE`/`PAYMENT_CLOSE`/`ESCROW_CREATE` (0xD0-0xD3) over the mesh transport; see `web/clawser-pod.js` and `web/clawser-workspace-init-mesh.js` |

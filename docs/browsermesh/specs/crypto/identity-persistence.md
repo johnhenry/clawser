@@ -912,7 +912,7 @@ Mapping of spec sections to implementation in `web/clawser-mesh-identity.js`.
 |---|---|---|
 | §2 Storage Architecture | `IndexedDBIdentityStorage` | IndexedDB-only (no dual localStorage layer); localStorage cross-tab index via `mesh_identity_index_{wsId}` |
 | §2 Storage Architecture | `InMemoryIdentityStorage` | Test/fallback adapter; same interface |
-| §4 PodIdentityStore | `IndexedDBIdentityStorage` | `open()`, `save()`, `load()`, `remove()`, `list()`, `clear()`, `close()` |
+| §4 PodIdentityStore | `IndexedDBIdentityStorage` | `open()`, `save()`, `load()`, `delete()`, `list()`, `clear()`, `close()` |
 | §5 Cross-Tab Sync | `IdentitySyncCoordinator` | BroadcastChannel `mesh-identity-sync`; `acquireCreateLock()` with 100ms contention window |
 | §6 Key Protection | `VaultIdentityStorage` | PBKDF2(310k, SHA-256) → AES-256-GCM; encrypts only `privateKeyJwk`; 16-byte salt, 12-byte IV |
 | §8 AutoIdentityManager | `AutoIdentityManager` | `boot(workspaceId)`, `ensureIdentity()`, `switchIdentity()`, `getActive()`, `listIdentities()`, `toJSON()/fromJSON()` |
@@ -930,7 +930,7 @@ Mapping of spec sections to implementation in `web/clawser-mesh-identity.js`.
 
 | Component | File | Purpose |
 |---|---|---|
-| `SignedKeyLink` | `web/clawser-mesh-keyring.js` | Dual Ed25519 signatures (parent + child) over canonical `parent\|child\|relation\|timestamp` payload |
+| `SignedKeyLink` | `web/clawser-mesh-keyring.js` | Dual Ed25519 signatures (parent + child) over canonical `parent\|child\|relation\|created` payload |
 | `MeshKeyring.addVerifiedLink()` | `web/clawser-mesh-keyring.js` | Validates SignedKeyLink signatures before storing |
 | `MeshKeyring.verifyCryptoChain()` | `web/clawser-mesh-keyring.js` | Walks chain, checks expiration + cryptographic signatures |
 | `MeshWshBridge` | `web/clawser-mesh-wsh-bridge.js` | Bridges WshKeyStore (hex fingerprints) ↔ MeshIdentityManager (base64url pod IDs) |

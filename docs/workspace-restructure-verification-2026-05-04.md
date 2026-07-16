@@ -1,5 +1,10 @@
 # Workspace `/home/<name>` restructure — verification pass
 
+**Status: resolved as of 2026-07-16** (dated snapshot, not live guidance).
+The two gaps flagged here (`SyncFlags` never instantiated, deploy-ACL
+classes never wired to a mesh-message dispatcher) are now closed in
+`web/clawser-multi-device.mjs`.
+
 Each lifecycle event walked end-to-end against the implementation.
 The walkthrough tests live at
 `web/test/clawser-workspace-lifecycle-verification.test.mjs` (25 tests

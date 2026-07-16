@@ -27,7 +27,7 @@ Memories are organized into four categories:
 
 Press `Cmd+4` to open the **Memory** panel.
 
-![Memory with entries](../screenshots/17-memory-with-entries.png)
+![Memory with entries](../screenshots/memory-with-entries.png)
 
 The panel shows:
 - **Add toggle** — Click to expand the form for manually adding memories
@@ -82,7 +82,7 @@ Forget the entry about deploy targets.
 
 Press `Cmd+5` to open the **Goals** panel.
 
-![Goals with entries](../screenshots/18-goals-with-entries.png)
+![Goals with entries](../screenshots/goals-with-entries.png)
 
 Goals track multi-step objectives with status, progress, and sub-goals.
 

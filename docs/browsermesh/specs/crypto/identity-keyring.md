@@ -17,8 +17,9 @@ together.
 ## 2. Wire Codes
 
 This module does not define its own wire codes. Links are exchanged via
-higher-level protocols (`IDENTITY_ANNOUNCE 0xA5`, `CAP_GRANT 0xA2` in
-`web/packages/mesh-primitives/src/constants.mjs`).
+higher-level protocols (`IDENTITY_ANNOUNCE 0xA5`, `CAP_GRANT 0xA2` in the
+`browsermesh-primitives` package's `src/constants.mjs`, re-exported for
+browser use via `web/packages-mesh-primitives.js`).
 
 ## 3. Constants
 

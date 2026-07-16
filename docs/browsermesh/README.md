@@ -37,7 +37,7 @@ The narrative guides provide conceptual overviews. The [formal specs](./specs/) 
 
 ### Technical Specifications
 
-There are 57 specs across 6 categories. See the [spec index](./specs/spec-index.md) for the complete list with dependency graph and recommended reading order, or the [specs README](./specs/README.md) for a categorized overview.
+There are 57 specs across 7 categories. See the [spec index](./specs/spec-index.md) for the complete list with dependency graph and recommended reading order, or the [specs README](./specs/README.md) for a categorized overview.
 
 **Start here:**
 
@@ -57,7 +57,7 @@ There are 57 specs across 6 categories. See the [spec index](./specs/spec-index.
 | Category | Specs | Covers |
 |----------|-------|--------|
 | [core/](./specs/core/) | 6 specs | Pod types, boot, wire format, errors, security, versioning |
-| [crypto/](./specs/crypto/) | 6 specs | Identity, sessions, capabilities, WebAuthn, groups, persistence |
+| [crypto/](./specs/crypto/) | 7 specs | Identity, key linking, sessions, capabilities, WebAuthn, groups, persistence |
 | [networking/](./specs/networking/) | 16 specs | Channels, sockets, streams, encryption, signaling, DHT, pairing |
 | [coordination/](./specs/coordination/) | 12 specs | Services, presence, pub/sub, state sync, leader election, migration |
 | [extensions/](./specs/extensions/) | 6 specs | Server pods, storage, compute offload, audit logs, artifacts |

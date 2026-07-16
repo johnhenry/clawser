@@ -1,5 +1,9 @@
 # Issue triage — 2026-05-04
 
+**Status: resolved as of 2026-07-16** (dated snapshot, not live guidance).
+All three issues confirmed fixed in current source, including the
+`/home/<name>` workspace alias that was left as a design-only item here.
+
 Triage pass on three concrete user-reported issues plus a subsystem
 sanity sweep. Fixed two real bugs inline; surfaced one design item for
 the user to decide on; verified every major subsystem is green.

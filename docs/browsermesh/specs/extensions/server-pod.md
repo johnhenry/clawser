@@ -256,11 +256,11 @@ const serverCaps: ServerPodCapabilities = {
     webTransport: { url: 'https://mesh.example.com/webtransport' },
   },
   capabilities: [
-    'compute/wasm',
-    'compute/heavy',
-    'storage/write',
-    'relay/public',
-    'ingress/http',
+    'compute/wasm:execute',
+    'compute/heavy:execute',
+    'storage:write',
+    'relay:public',
+    'ingress:http',
   ],
   resources: {
     cpu: 'high',
@@ -457,7 +457,7 @@ import { ServerPod } from '@browsermesh/server';
 
 const pod = await ServerPod.create({
   port: 8080,
-  capabilities: ['compute/wasm', 'storage/read'],
+  capabilities: ['compute/wasm:execute', 'storage:read'],
 });
 
 // Register handlers
@@ -520,7 +520,7 @@ class WebTransportServerPod extends ServerPod {
 ```typescript
 // Browser offloads heavy work to server
 const result = await browserPod.send(
-  { capability: 'compute/heavy' },
+  { capability: 'compute/heavy:execute' },
   { op: 'process', args: { data: largeDataset } }
 );
 ```
@@ -550,7 +550,7 @@ await serverPod.send(
 ```typescript
 // Compute happens wherever makes sense
 await pod.send(
-  { capability: 'compute/wasm', constraints: { prefer: 'lowest-latency' } },
+  { capability: 'compute/wasm:execute', constraints: { prefer: 'lowest-latency' } },
   { op: 'transform', args: data }
 );
 // Router decides: server, local browser, or another browser

@@ -25,7 +25,7 @@ stateDiagram-v2
     Grace --> Active: Grace period expired,<br/>old key cleared
 
     note right of Grace
-        30 second window
+        5 second window
         for in-flight messages
     end note
 ```
@@ -40,7 +40,7 @@ interface SessionKeyRotation {
 
 class SessionKeyManager {
   private rotation: SessionKeyRotation;
-  private rotationInterval = 3600000;  // 1 hour
+  private rotationInterval = 86400000;  // 24 hours (see session-keys.md MAX_SESSION_AGE / security-model.md SESSION_KEY_LIFETIME)
 
   async rotateSessionKey(): Promise<void> {
     // Generate new key
@@ -57,7 +57,7 @@ class SessionKeyManager {
     // Clear previous key after grace period
     setTimeout(() => {
       this.rotation.previousKey = undefined;
-    }, 30000);  // 30s grace period
+    }, 5000);  // 5s grace period (see session-keys.md REKEY_GRACE_PERIOD)
   }
 
   async decrypt(

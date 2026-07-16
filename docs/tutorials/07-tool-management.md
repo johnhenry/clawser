@@ -28,7 +28,7 @@ Click **Tool Management** in the sidebar to open the panel. It has two tabs:
 
 **Browser Tools tab:**
 
-![Tool detail expanded](../screenshots/25-tool-detail-expanded.png)
+![Tool detail expanded](../screenshots/panel-toolmgmt.png)
 
 Lists all ~100 registered tools grouped by category. Each tool shows:
 - Tool name and description
@@ -39,7 +39,7 @@ Click any tool row to expand it and see its parameter schema, description, and c
 
 **Shell Commands tab:**
 
-![Shell command expanded](../screenshots/26-shell-cmd-expanded.png)
+![Shell command expanded](../screenshots/shell-cmd-expanded.png)
 
 A browsable interface for all 59 CLI commands. Each command is expandable, showing description, usage syntax, and available flags. Use the search bar to find specific commands.
 
@@ -59,7 +59,7 @@ To block a tool entirely, cycle the badge to `denied`.
 
 Press `Cmd+9` to open the **Config** panel, then expand the **Autonomy & Costs** section.
 
-![Config autonomy section](../screenshots/23-config-autonomy.png)
+![Config autonomy section](../screenshots/config-autonomy.png)
 
 Three autonomy levels control the agent's overall freedom:
 
@@ -81,7 +81,7 @@ The cost meter in the header shows `$spent / $limit` and changes color at 50% (a
 
 Press `Cmd+K` (or click the palette button in the chat input area) to open the **Command Palette**.
 
-![Command palette with params](../screenshots/27-cmd-palette-params.png)
+![Command palette with params](../screenshots/cmd-palette-params.png)
 
 The palette provides quick access to any tool:
 

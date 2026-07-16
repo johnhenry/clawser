@@ -239,4 +239,4 @@ Sandboxed code execution environment using Web Workers and WASM. Multiple capabi
 
 ---
 
-[← Pods](./pods.md) | [Index](./index.md)
+[← Multi Device](./multi-device.md) | [Index](./index.md)

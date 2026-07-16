@@ -474,7 +474,7 @@ class CircuitBreaker {
 ## 8. Service Manifest
 
 ```yaml
-apiVersion: browsermesh.dev/v1
+apiVersion: browsermesh/v1
 kind: Service
 metadata:
   name: image-resizer
@@ -494,7 +494,7 @@ spec:
     timeout: 5000
     threshold: 3
 ---
-apiVersion: browsermesh.dev/v1
+apiVersion: browsermesh/v1
 kind: TrafficSplit
 metadata:
   name: image-resizer-canary
@@ -597,6 +597,18 @@ stateDiagram-v2
 
 ## Implementation Status
 
-**Status**: ServiceDirectory and ServiceEndpoint exist in `clawser-mesh-discovery.js`. Wired to app bootstrap via ClawserPod.initMesh(). Supports local registration and remote endpoint tracking.
+**Status**: Only `ServiceDirectory` and `ServiceEndpoint` (svc:// URI registration/lookup,
+§3-9 below is a distinct, aspirational API) exist in `clawser-mesh-discovery.js`. Wired to
+app bootstrap via `ClawserPod.initMesh()` (constructs `ServiceDirectory` at step 11,
+exposed as `pod.serviceDirectory`). Supports local registration and remote endpoint
+tracking, but its API (`register(name, handler)`, `lookup('svc://podId/name')`) does
+not match the `ServiceRegistry`/`TrafficSplitter`/`LoadBalancer`/`HealthChecker`/
+`CircuitBreaker` classes described in §3-7 of this document -- those are a separate,
+richer design (name+version registry, traffic-splitting, weighted load balancing,
+health checks, circuit breaking) with **no implementation anywhere** in `web/` or
+`packages/`. A same-named but unrelated `ServiceRegistry` exists in
+`web/packages/kernel/src/service-registry.mjs`; it is a plain name->listener map
+with no versioning, traffic splitting, or load balancing and should not be confused
+with the class described here.
 
-**Source**: `web/clawser-mesh-discovery.js`
+**Source**: `web/clawser-mesh-discovery.js` (real); §3-7 have no source (design only)

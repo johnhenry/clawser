@@ -14,6 +14,8 @@ Kademlia-style distributed hash table for proximity-based peer discovery in larg
 - IndexedDB persistence for peer cache across page reloads
 - Integration with service-model for proximity-aware routing
 
+> **Implementation note**: The shipped `RoutingTable` (`web/clawser-mesh-dht.js`, class name differs from this spec's `DhtRoutingTable`) uses classic Kademlia parameters — `k = 20` per bucket and `160` buckets — rather than this spec's `k = 8` and `256` buckets (see §5-§6, §11). Adjust expectations for bucket capacity and routing-table size accordingly; the XOR-distance and iterative-lookup algorithms themselves match.
+
 ```mermaid
 graph TD
     subgraph RoutingTable["Routing Table (256 buckets)"]
@@ -42,6 +44,8 @@ enum DhtMessageType {
   DHT_RETRIEVE_REPLY  = 0x37,
 }
 ```
+
+> **Implementation note**: The shipped implementation (`web/clawser-mesh-dht.js`) does not use this range at all. Its actual wire constants are `DHT_PING = 0xE8`, `DHT_FIND_NODE = 0xE9`, `DHT_FIND_VALUE = 0xEA`, `DHT_STORE = 0xEB` (there is no separate `_REPLY` type — responses correlate by request id over the same channel), plus adjacent `GOSSIP_PUSH = 0xEC` / `GOSSIP_PULL = 0xED` / `GOSSIP_DIGEST = 0xEE` and `STEALTH_SHARD = 0xEF` for epidemic state dissemination and stealth-mode sharding, neither of which this spec documents. See §12 below — those real values also collide with the canonical registry's `APP_STATE_SYNC`/`APP_RPC`/`APP_EVENT`/`CONSENSUS_CLOSE`/`CONSENSUS_RESULT`/`PBFT_PRE_PREPARE`/`PBFT_PREPARE`/`PBFT_COMMIT` (0xE8-0xEF), which is a real-code issue outside this doc's scope to fix.
 
 ### 2.1 DHT_FIND_NODE (0x33)
 
@@ -542,3 +546,9 @@ async function resolveServiceProximity(
 | Stale node threshold | 1 hour |
 | Max concurrent lookups | 8 |
 | Node store max entries | 4096 |
+
+## 12. Implementation Status
+
+**Status: Partially implemented, under different wire codes and parameters.** `web/clawser-mesh-dht.js` (`KBucket`, `RoutingTable`, `DhtNode`, `GossipProtocol`, `DhtDiscoveryStrategy`) implements the XOR-distance/k-bucket/iterative-lookup algorithms in §4-§7, but with `k = 20` / `160` buckets (not `k = 8` / `256`, see §1) and wire codes `0xE8`-`0xEF` (not `0x33`-`0x37`, see §2). It also adds a `GossipProtocol` (epidemic push/pull/digest state dissemination) and a stealth-shard mode that this spec does not document. `NodeStore` (§8, IndexedDB persistence) and the maintenance/refresh logic in §9 have no confirmed real-code counterpart checked as part of this pass.
+
+Separately — and outside the scope of a docs fix — the real `0xE8`-`0xEF` values collide byte-for-byte with the canonical `MESH_TYPE` registry's `APP_STATE_SYNC`/`APP_RPC`/`APP_EVENT`/`CONSENSUS_CLOSE`/`CONSENSUS_RESULT`/`PBFT_PRE_PREPARE`/`PBFT_PREPARE`/`PBFT_COMMIT` (`node_modules/browsermesh-primitives/src/constants.mjs`). Whether this is a real runtime ambiguity or the DHT/Gossip messages travel on a separate channel from app-distribution/consensus messages was not verified in this pass — flagged here as a suspicious finding for someone with more context on `clawser-mesh-dht.js`'s transport wiring to confirm.

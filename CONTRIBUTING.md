@@ -19,18 +19,19 @@ Clawser runs entirely in the browser with no build step. To start developing:
    npx serve web
    ```
 
-3. Open `http://localhost:8080` in Chrome (131+ recommended for Chrome AI support).
+3. Open `http://localhost:8080` in Chrome (131+ recommended for Chrome AI support). Or use the built-in HTTPS server: `npm start`.
 
-That's it. There is no `npm install`, no bundler, no transpiler.
+There is no bundler and no transpiler — the app itself has zero npm runtime dependencies. Running the test suite does require `npm install` first, since several mesh/kernel packages (`browsermesh-pod`, `browsermesh-primitives`, `browsermesh-netway`, `wsh-upon-star`, `andbox`, `vitest`, `ws`, etc.) are consumed as devDependencies from `package.json`.
 
 ## Development Setup
 
 - **Node.js**: 24+ required (for running tests)
 - **Runtime**: Modern browser with ES module support
 - **Build step**: None. All source files are ES modules loaded directly by the browser.
-- **Dependencies**: Zero npm dependencies. External libraries (vimble, ai.matey, html2canvas, fflate) are loaded via CDN at runtime.
+- **Dependencies**: Zero npm dependencies at runtime. Browser-facing external libraries (vimble, ai.matey, html2canvas, fflate) are loaded via CDN at runtime. `npm install` is required for the devDependencies used by the test suite (mesh/kernel packages, `vitest`, `ws`).
 - **Storage**: OPFS (Origin Private File System) for persistence, localStorage for configuration
-- **Testing**: `npm test` runs 253 test files via `node:test` (see Testing section below)
+- **Testing**: `npm test` runs 359+ test files via `node:test` (see Testing section below)
+- **Rust toolchain (optional)**: Only needed if you're working on the native `wsh-server`/`wsh-cli` companion in `crates/` (real PTYs + native WebTransport/QUIC — see [docs/WSH-INTO-CLAWSER.md](docs/WSH-INTO-CLAWSER.md)). Build with `cargo build --workspace`, test with `cargo test --workspace`. Not required for browser-app development.
 
 ## Code Style
 
@@ -143,19 +144,21 @@ Tests use `node:test` with `node:assert/strict`. All test files live in `web/tes
 
 ```bash
 # Full suite
-npm test                # All test files
+npm test                # All test files (359+)
 
 # Group-based execution (recommended for development)
-npm run test:fast       # Core + channels — fast feedback loop
-npm run test:core       # Agent, tools, providers, shell (89 files)
-npm run test:mesh       # All mesh networking (31 files)
-npm run test:mesh-net   # Peer, transport, relay, gateway, websocket (7 files)
+npm run test:fast       # Core + channels — fast feedback loop (~280 files)
+npm run test:core       # Agent, tools, providers, shell (~270 files)
+npm run test:mesh       # All mesh networking (33 files)
+npm run test:mesh-net   # Peer, transport, relay, gateway, websocket (8 files)
 npm run test:mesh-sync  # Sync, delta-sync, streams, migration (4 files)
 npm run test:mesh-identity # Identity, keyring, trust, ACL, capabilities (6 files)
 npm run test:mesh-apps  # Apps, marketplace, payments, quotas (6 files)
-npm run test:mesh-ops   # Audit, consensus, scheduler, tools, wsh-bridge (8 files)
-npm run test:e2e        # End-to-end scenarios (1 file)
+npm run test:mesh-ops   # Audit, consensus, scheduler, tools, wsh-bridge (9 files)
+npm run test:e2e        # End-to-end scenarios (8 files)
+npm run test:stress     # Concurrency/scale stress suite (slow — run explicitly)
 npm run test:changed    # Only files with git changes
+npm run test:vitest     # Vitest-based test files (agent hardening, CLI JSON output, etc.)
 
 # Direct runner with options
 node web/test/run-tests.mjs --group fast --concurrency 4
@@ -164,6 +167,8 @@ node web/test/run-tests.mjs --group mesh-net --list  # dry-run
 # Individual test file
 node --import ./web/test/_setup-globals.mjs --test web/test/clawser-<module>.test.mjs
 ```
+
+File counts drift as the suite grows — pass `--list` to `run-tests.mjs` for the current set.
 
 ### Writing Tests
 

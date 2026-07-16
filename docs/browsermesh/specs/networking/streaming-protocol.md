@@ -75,6 +75,8 @@ interface StreamStartMessage extends MessageEnvelope {
 }
 ```
 
+> **Implementation note**: The shipped implementation (`web/clawser-mesh-streams.js`) does not send a standalone `STREAM_START` (0x12). Streams are opened exclusively via `STREAM_OPEN` (0xAF, `MESH_TYPE.STREAM_OPEN` — see [direct-stream.md §2](direct-stream.md#2-stream_open-message-0xaf)), which carries the same `streamId`/`method`/`ordered`/`encrypted`/`initialCredits`/`metadata` fields. `STREAM_DATA` (0x13), `STREAM_END` (0x14), `STREAM_ERROR` (0x15), and `STREAM_WINDOW_UPDATE` (0x16) below are real, in-use wire codes; `0x12` should be treated as superseded rather than as the actual open handshake.
+
 ### 3.2 STREAM_DATA (0x13)
 
 ```typescript
@@ -389,6 +391,8 @@ Streams can optionally use per-stream encryption by setting `encrypted: true` in
 4. An optional running SHA-256 hash can be included in STREAM_END for end-to-end integrity verification
 
 This provides **per-stream key isolation** — compromising one stream's key does not compromise others within the same session.
+
+> **Implementation note**: the `encrypted` flag is currently a pass-through boolean in `web/clawser-mesh-streams.js` — no key derivation or chunk encryption is actually performed yet. See [stream-encryption.md](stream-encryption.md) Implementation Status.
 
 ```typescript
 // Opening an encrypted stream

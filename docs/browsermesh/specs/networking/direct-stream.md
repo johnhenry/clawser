@@ -35,6 +35,8 @@ interface StreamOpenMessage extends MessageEnvelope {
 
 On receiving `STREAM_OPEN`, the responder creates a `MeshStream` in OPEN state and notifies the application via `onStream(callback)`. The responder can write data back on the same stream (bidirectional) or close it immediately if the method is unsupported.
 
+> **Note**: `encrypted` is stored and forwarded as a plain flag by the real implementation (`web/clawser-mesh-streams.js`) but does not yet trigger any actual encryption — see [stream-encryption.md](stream-encryption.md) Implementation Status.
+
 ## 3. Method Naming Convention
 
 Methods use a `namespace/action` pattern:

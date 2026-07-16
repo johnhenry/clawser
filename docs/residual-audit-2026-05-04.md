@@ -1,5 +1,10 @@
 # Residual Hiding Spots Audit (2026-05-06)
 
+**Status: resolved as of 2026-07-16** (dated snapshot, not live guidance).
+This round's own fixed items are confirmed present in current source; the
+items it left "surfaced, not fixed" were picked up and closed by
+`docs/residual-audit-round2-2026-05-04.md`.
+
 > Four-round sweep over the residual gap areas the prior convergence
 > pass surfaced as "where issues likely still hide." Found and fixed
 > three new ghost-method silent-failure bugs, one daemon leader-

@@ -2,7 +2,7 @@
 
 ## What This Is
 
-Clawser is a browser-native AI agent workspace. It runs entirely in the browser — no server, no bundler, no build step. Pure ES modules loaded directly from `web/`. Users get a complete agent runtime with persistent memory, goal tracking, ~100 tools, a virtual shell, scheduled tasks, and 38+ LLM backends.
+Clawser is a browser-native AI agent workspace. It runs entirely in the browser — no server, no bundler, no build step. Pure ES modules loaded directly from `web/`. Users get a complete agent runtime with persistent memory, goal tracking, ~285 tools, a virtual shell, scheduled tasks, and 38+ LLM backends.
 
 ## Architecture at a Glance
 
@@ -14,7 +14,7 @@ index.html (SPA)
        │    ├─ HookPipeline — 6 lifecycle interception points
        │    └─ AutonomyController — readonly / supervised / full
        ├─ Providers (clawser-providers.js) — 3 tiers, 38+ LLM backends
-       ├─ Tools (clawser-tools.js) — ~100 browser tools with permission system
+       ├─ Tools (clawser-tools.js + feature modules) — ~285 browser tools with permission system
        ├─ Skills (clawser-skills.js) — SKILL.md files, agentskills.io standard
        ├─ Shell (clawser-shell.js) — virtual terminal with pipes, builtins, jq
        └─ UI — clawser-ui-chat.js, clawser-ui-panels.js, clawser-ui-*.js
@@ -28,7 +28,7 @@ All source files are in `web/` and follow the naming pattern `clawser-{domain}.j
 
 - **clawser-agent.js** — Agent core: EventLog, HookPipeline, AutonomyController, ClawserAgent
 - **clawser-providers.js** — LLM providers (Tier 1: built-in, Tier 2: OpenAI-compatible, Tier 3: ai.matey)
-- **clawser-tools.js** — BrowserTool base class, 100+ tools (240+ classes shipping), permission system
+- **clawser-tools.js** — BrowserTool base class, ~285 tools across all modules, permission system
 - **clawser-codex.js** — Code-based tool execution via vimble sandbox
 - **clawser-skills.js** — SkillParser, SkillStorage, SkillRegistry
 - **clawser-shell.js** — Virtual shell with tokenizer, parser, command registry
@@ -55,14 +55,14 @@ All source files are in `web/` and follow the naming pattern `clawser-{domain}.j
 ### Test Runner
 
 ```bash
-# Run everything (347+ test files)
+# Run everything (359+ test files)
 npm test
 
-# Fast feedback loop (core + channels, ~270 files)
+# Fast feedback loop (core + channels, ~280 files)
 npm run test:fast
 
 # Individual groups (file counts drift — use --list for the current set)
-npm run test:core          # ~260 files — agent, tools, providers, shell, etc.
+npm run test:core          # ~270 files — agent, tools, providers, shell, etc.
 npm run test:mesh          # ~33 files — all mesh networking
 npm run test:mesh-net      # peer, transport, relay, gateway, websocket
 npm run test:mesh-sync     # sync, delta-sync, streams, migration

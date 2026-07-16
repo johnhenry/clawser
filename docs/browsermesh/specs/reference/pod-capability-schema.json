@@ -18,7 +18,7 @@
     },
     "kind": {
       "type": "string",
-      "enum": ["window", "spawned", "iframe", "worker", "shared-worker", "service-worker", "worklet", "server"],
+      "enum": ["window", "spawned", "frame", "worker", "shared-worker", "service-worker", "worklet", "server"],
       "description": "Pod execution context type"
     },
     "origin": {

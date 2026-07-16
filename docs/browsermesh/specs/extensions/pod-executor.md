@@ -286,7 +286,7 @@ const result = await executor.execute(userCode, []);
 const result = await executor.execute(userCode, ['data:read', 'canvas:write']);
 ```
 
-Reserved scopes (`pod:*`, `mesh:*`, `cap:*`) are never granted to ephemeral workers. See [capability-scope-grammar.md](../crypto/capability-scope-grammar.md) §5.
+Reserved scopes (`pod:*`, `mesh:*`, `cap:*`, `session:*`) are never granted to ephemeral workers. See [capability-scope-grammar.md](../crypto/capability-scope-grammar.md) §5.
 
 ## 7. Resource Cleanup Checklist
 

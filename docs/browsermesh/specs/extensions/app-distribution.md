@@ -8,18 +8,18 @@ Source: `web/clawser-mesh-apps.js`
 
 ## Wire Codes
 
-Defined locally in the module (not in the canonical registry):
+Re-exported from `MESH_TYPE` in the canonical registry (`browsermesh-primitives`):
 
 | Name            | Code   | Description                      |
 |-----------------|--------|----------------------------------|
-| APP_MANIFEST    | `0x98` | App manifest announcement        |
-| APP_INSTALL     | `0x99` | App installation signal          |
-| APP_UNINSTALL   | `0x9A` | App uninstallation signal        |
-| APP_STATE_SYNC  | `0x9B` | App state synchronization        |
-| APP_RPC         | `0x9C` | Inter-app RPC message            |
-| APP_EVENT       | `0x9D` | App event broadcast              |
+| APP_MANIFEST    | `0xE5` | App manifest announcement        |
+| APP_INSTALL     | `0xE6` | App installation signal          |
+| APP_UNINSTALL   | `0xE7` | App uninstallation signal        |
+| APP_STATE_SYNC  | `0xE8` | App state synchronization        |
+| APP_RPC         | `0xE9` | Inter-app RPC message             |
+| APP_EVENT       | `0xEA` | App event broadcast              |
 
-These codes are in the `0x98-0x9D` range, below the core mesh protocol range (`0xA0+`).
+These codes are in the `0xE5-0xEA` range, within the "App distribution" block of the extended subsystems range (`0xC0-0xEC`).
 
 ## API Surface
 
@@ -111,4 +111,4 @@ Pub/sub event system scoped to an app.
 
 ## Source File Reference
 
-`web/clawser-mesh-apps.js` -- 1368 lines, pure ES module, no browser-only imports.
+`web/clawser-mesh-apps.js` -- 1351 lines, pure ES module, no browser-only imports.

@@ -69,8 +69,7 @@ async function setupServer(pod: PodRuntime): Promise<ServiceWorkerRegistration> 
   // Grant it site:serve capability
   const token = await capabilityManager.grant(
     'site/*',
-    getPeerPublicKey(swPodId),
-    { scope: ['site:serve', 'site:cache'] }
+    ['site:serve', 'site:cache']
   );
 
   // Establish encrypted session

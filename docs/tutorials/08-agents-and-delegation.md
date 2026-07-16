@@ -25,7 +25,7 @@ Clawser ships with 5 built-in starter agents. You can create unlimited custom de
 
 Click **Agents** in the sidebar to open the panel.
 
-![Agents panel](../screenshots/28-agents-form.png)
+![Agents panel](../screenshots/agents-form.png)
 
 The panel shows all available agent definitions. Click any agent card to view or edit its configuration. The active agent is highlighted.
 
@@ -41,7 +41,7 @@ Switch between agents in three ways:
 Switch to the code-review agent
 ```
 
-The agent uses the `switch_agent` tool to change the active definition.
+The agent uses the `agent_switch` tool to change the active definition.
 
 **Keyboard:** The agent picker is accessible from the header without a keyboard shortcut.
 
@@ -83,13 +83,13 @@ This creates a sub-conversation with the referenced agent. The referenced agent 
 
 ## 6. Consulting Agents
 
-Use `consult_agent` to ask another agent for input without switching:
+Use `agent_consult` to ask another agent for input without switching:
 
 ```
 Consult the code-review agent about this implementation
 ```
 
-The agent calls `consult_agent`, which sends your message to the target agent and returns its response. The active agent remains unchanged — you get a second opinion without switching context.
+The agent calls `agent_consult`, which sends your message to the target agent and returns its response. The active agent remains unchanged — you get a second opinion without switching context.
 
 ## 7. Delegating Tasks
 

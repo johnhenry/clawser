@@ -116,7 +116,7 @@ interface PodIdentity {
 type PodKind =
   | 'window'
   | 'spawned'
-  | 'frame'
+  | 'iframe'
   | 'worker'
   | 'shared-worker'
   | 'service-worker'
@@ -223,7 +223,7 @@ function detectCapabilities(): PodCapabilities {
 |------------|--------|-------|--------|--------------|---------------|---------|
 | postMessage | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ |
 | MessagePort | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| BroadcastChannel | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ |
+| BroadcastChannel | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
 | SharedWorker | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
 | fetch | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
 | WebSocket | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
@@ -389,7 +389,7 @@ pod.emit('ready');
 
 ## 5. Message Envelope
 
-All BrowserMesh messages use a standard envelope format.
+All BrowserMesh messages use a standard envelope format. This section is an illustrative summary — see [wire-format.md](../specs/core/wire-format.md) for the canonical field names (`src`/`dst`, numeric `MessageType` codes) and byte-level layout.
 
 ### 5.1 Envelope Schema (CBOR)
 
@@ -418,7 +418,7 @@ interface MeshEnvelope {
   };
 
   // Payload
-  payload: Uint8Array;           // CBOR-encoded payload
+  p: Uint8Array;                 // CBOR-encoded payload
 }
 
 type MessageType =
@@ -1126,7 +1126,7 @@ const DEFAULT_POLICIES: Record<PodKind, SandboxPolicy> = {
     maxCpu: 100,
     maxConnections: 100,
   },
-  'frame': {
+  'iframe': {
     gestures: false,            // Parent must grant
     opfs: false,                // Isolated by default
     windows: false,

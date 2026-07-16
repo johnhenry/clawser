@@ -74,4 +74,23 @@ for this bot), Clawser also supports the classic Events API webhook path:
 Outbound sending (`chat.postMessage`) works the same way regardless of
 which inbound path you use.
 
+## Troubleshooting
+
+- **Socket Mode never connects (no messages arrive)** — usually a missing
+  `connections:write` scope on the App-Level Token, or the app hasn't been
+  reinstalled to the workspace since Bot Token Scopes were last changed.
+  Scope changes only take effect after reinstalling.
+- **`not_in_channel` error when sending** — the bot must be invited to the
+  channel (`/invite @your-bot-name`); being installed to the workspace
+  isn't enough on its own.
+- **`missing_scope` on send** — add the missing scope under **OAuth &
+  Permissions** and reinstall the app.
+- **Reconnect loop** — the Socket Mode connection retries up to 10 times
+  with exponential backoff (starting at 1s, capped at 60s) before giving
+  up silently; nothing is logged to the console, so toggle the channel off
+  and on to force a fresh connection attempt.
+- **401/`invalid_auth`** — on send, the Bot Token (`xoxb-...`) is wrong or
+  was regenerated; on connect, it's the App Token (`xapp-...`) — regenerate
+  it under **Basic Information → App-Level Tokens**.
+
 See also: [`web/clawser-channel-slack.js`](../../web/clawser-channel-slack.js).

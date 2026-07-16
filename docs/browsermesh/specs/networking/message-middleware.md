@@ -478,3 +478,7 @@ function createRateLimitMiddleware(
 | Compression threshold (default) | 1 KB |
 | Max filter types per middleware | 32 |
 | Middleware name max length | 64 characters |
+
+## 9. Implementation Status
+
+**Status: Not implemented.** No `MiddlewarePipeline`, `MessageMiddleware`, `createLoggingMiddleware()`/`createCompressionMiddleware()`/`createDecompressionMiddleware()`/`createMetricsMiddleware()`, or `MeshServer`/`MeshClient` `.useMiddleware()` integration exist in `web/` or `packages/`. This spec describes a design that has not been built.

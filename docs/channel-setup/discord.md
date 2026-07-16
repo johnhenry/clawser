@@ -32,7 +32,12 @@ Open the **Channels** panel, add a new **Discord** channel, and fill in:
 | Guild ID | the server ID from step 3 |
 
 Click **Connect**. Clawser opens a Gateway WebSocket connection and starts
-receiving `MESSAGE_CREATE` events from that guild; replies go out over the
+receiving `MESSAGE_CREATE` events for every guild and channel the bot has
+been added to — the Gateway connection itself isn't scoped to a single
+guild, and the **Guild ID** field is currently just stored alongside the
+channel config rather than used to filter inbound events. If you need to
+restrict which channels the agent reacts to, use the channel manager's
+`allowedChannels`/`allowedUsers` config instead. Replies go out over the
 Discord REST API (`POST /channels/{id}/messages`).
 
 ## Troubleshooting
@@ -42,7 +47,11 @@ Discord REST API (`POST /channels/{id}/messages`).
   `content` from message events without it.
 - **401/403 on send** — the bot token is wrong, or the bot lacks the
   **Send Messages** permission in that channel/server.
-- **Reconnect loop** — the adapter retries up to 10 times with backoff
-  before giving up; check the console for the specific Gateway close code.
+- **Reconnect loop** — the adapter retries up to 10 times with exponential
+  backoff (starting at 5s, capped at 60s) before giving up silently; it
+  doesn't log the Gateway close code anywhere, so if reconnects keep
+  failing, open DevTools → Network → WS to inspect the closed frame, or
+  toggle the channel off and on to trigger a fresh connection attempt (a
+  successful reconnect resets the retry count).
 
 See also: [`web/clawser-channel-discord.js`](../../web/clawser-channel-discord.js).

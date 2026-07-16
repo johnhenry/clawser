@@ -102,10 +102,10 @@ sequenceDiagram
 ### QR Code Generation
 
 ```typescript
-function generatePairingQR(pod: PodRuntime): string {
+async function generatePairingQR(pod: PodRuntime): Promise<string> {
   const pairingData = {
     podId: pod.info.id,
-    publicKey: base64urlEncode(pod.identity.publicKeyRaw),
+    publicKey: base64urlEncode(await pod.identity.getPublicKey()),
     attested: pod.info.attested,
     // WebRTC offer for direct connection
     offer: await createWebRTCOffer(),
@@ -232,7 +232,8 @@ When a device is lost or stolen:
 // From any remaining paired device
 async function revokeDevice(lostDeviceId: string) {
   // Revoke all capability tokens granted to the lost device
-  await capabilityManager.revokePath(`notes:*`);
+  // (revokePath matches on the exact derivation path, see identity-keys.md §9)
+  await capabilityManager.revokePath(`notes/${lostDeviceId}`);
 
   // Remove from paired devices
   pairedDevices.delete(lostDeviceId);

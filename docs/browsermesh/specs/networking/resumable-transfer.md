@@ -551,3 +551,7 @@ Standard streaming-protocol has a 256 MB limit per stream. Resumable mode extend
 | Stale checkpoint prune age | 24 hours |
 | Chunk hash algorithm | SHA-256 |
 | Transfer ID format | UUID v4 |
+
+## 10. Implementation Status
+
+**Status: Not implemented.** No `TRANSFER_START`/`TRANSFER_CHECKPOINT`/`TRANSFER_RESUME`/`TRANSFER_COMPLETE`/`TRANSFER_ABORT` messages or checkpoint-persistence classes exist in `web/` or `packages/`. [file-transfer.md](file-transfer.md)'s `MeshFileTransfer` (`web/clawser-mesh-files.js`) implements a related but distinct resumability model — CID-based chunk deduplication via `ChunkStore.getReceivedChunks()` rather than this spec's range-based `TRANSFER_CHECKPOINT`/`TRANSFER_RESUME` wire messages at `0x17`-`0x1B`.

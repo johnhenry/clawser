@@ -21,6 +21,7 @@ Streaming chat with markdown rendering, code highlighting, collapsible tool call
 
 - `renderChat`
 
+![Chat Interface](../docs/screenshots/panel-chat.png)
 
 ---
 
@@ -44,6 +45,7 @@ Floating overlay (Cmd/Ctrl+K) for executing any registered tool outside the chat
 - `runCmdTool`
 - `initCmdPaletteListeners`
 
+![Command Palette](../docs/screenshots/command-palette.png)
 
 ---
 
@@ -80,6 +82,7 @@ OPFS file browser with directory navigation, file preview, local folder mounting
 - `mountLocalFolder`
 - `renderMountList`
 
+![Files Panel](../docs/screenshots/panel-files.png)
 
 ---
 
@@ -98,6 +101,7 @@ Memory search and management interface. Search memories by keyword, view results
 - `renderMemoryResults`
 - `doMemorySearch`
 
+![Memory Panel](../docs/screenshots/panel-memory.png)
 
 ---
 
@@ -116,6 +120,7 @@ Goal tracking visualization with hierarchical tree view, progress bars, expandab
 - `renderGoals`
 - `toggleGoalExpand`
 
+![Goals Panel](../docs/screenshots/panel-goals.png)
 
 ---
 
@@ -150,6 +155,7 @@ Settings interface for autonomy levels, identity configuration, routing rules, c
 - `renderOAuthSection`
 - `renderCleanConversationsSection`
 
+![Config Panel](../docs/screenshots/panel-config.png)
 
 ---
 
@@ -168,6 +174,7 @@ Browse and test all registered tools. Shows tool name, description, category, pe
 - `renderToolRegistry`
 - `renderToolManagementPanel`
 
+![Tool Registry Panel](../docs/screenshots/panel-tools.png)
 
 ---
 
@@ -202,6 +209,7 @@ Skill installation and management interface. Shows installed skills, activation 
 - `renderSkills`
 - `searchSkillRegistry`
 
+![Skills Panel](../docs/screenshots/panel-skills.png)
 
 ---
 
@@ -221,6 +229,7 @@ Agent definition picker with create, edit, switch, import/export, and delete. Sh
 - `updateAgentLabel`
 - `renderAgentPanel`
 
+![Agent Picker Panel](../docs/screenshots/panel-agents.png)
 
 ---
 
@@ -259,6 +268,7 @@ Split-pane terminal with session management. Multiple named sessions, history na
 - `replayTerminalSession`
 - `termItemBar`
 
+![Terminal Panel](../docs/screenshots/panel-terminal.png)
 
 ---
 
@@ -279,6 +289,7 @@ Home screen with workspace cards, account overview, and quick actions. Shows rec
 - `renderHomeAccountList`
 - `initHomeListeners`
 
+![Dashboard](../docs/screenshots/panel-dashboard.png)
 
 ---
 

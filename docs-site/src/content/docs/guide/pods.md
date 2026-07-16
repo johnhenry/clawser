@@ -225,4 +225,4 @@ Integration bridge with the Raijin framework for state management and WSH adapte
 
 ---
 
-[← Networking](/docs/guide/networking/) | [Index](/docs/) | [Build →](/docs/guide/build/)
+[← Networking](/docs/guide/networking/) | [Index](/docs/) | [Multi Device →](/docs/guide/multi-device/)

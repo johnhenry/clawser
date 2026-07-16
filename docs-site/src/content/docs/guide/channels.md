@@ -103,7 +103,7 @@ All inbound messages from any channel are normalized to the InboundMessage forma
 
 **Status:** ✅ Implemented · **Category:** adapter · **Since:** v1.0.0
 
-Discord bot integration via WebSocket gateway. Supports text channels and DMs. Requires Discord bot token.
+Discord bot integration via WebSocket gateway. Supports text channels in guilds. Requires Discord bot token. Fully self-contained — no server needed, the browser tab connects directly to Discord's Gateway.
 
 **Source files:**
 
@@ -113,13 +113,19 @@ Discord bot integration via WebSocket gateway. Supports text channels and DMs. R
 
 - `DiscordChannel`
 
+> **Note:** Default gateway intents (33281 = GUILDS + GUILD_MESSAGES + MESSAGE_CONTENT) do NOT include DIRECT_MESSAGES, so DMs are not received out of the box. Pass a custom `intents` bitmask (opts.intents, with the DIRECT_MESSAGES bit added) to receive DMs.
+
+**See also:**
+
+- [Setup walkthrough](../docs/channel-setup/discord.md)
+
 ---
 
 ### Slack Channel
 
-**Status:** ⚠️ Partial · **Category:** adapter · **Since:** v1.0.0
+**Status:** ✅ Implemented · **Category:** adapter · **Since:** v1.0.0
 
-Slack integration via Socket Mode. Text messages and thread replies supported. Slash commands planned for future release.
+Slack integration via Socket Mode (WebSocket, self-contained — same pattern as Discord's Gateway) when an appToken is configured, or the classic Events API webhook for deployments that run their own relay. Outbound sends via the Web API (chat.postMessage).
 
 **Source files:**
 
@@ -129,7 +135,11 @@ Slack integration via Socket Mode. Text messages and thread replies supported. S
 
 - `SlackChannel`
 
-> **Note:** Requires Slack bot token and app-level token for Socket Mode.
+> **Note:** Fully self-contained via Socket Mode — no server needed, the browser tab connects directly to Slack using an app-level token (xapp-...). The webhook path (handleEvent()) still works for anyone who'd rather run their own relay/server instead.
+
+**See also:**
+
+- [Setup walkthrough](../docs/channel-setup/slack.md)
 
 ---
 
@@ -137,7 +147,7 @@ Slack integration via Socket Mode. Text messages and thread replies supported. S
 
 **Status:** ✅ Implemented · **Category:** adapter · **Since:** v1.0.0
 
-Telegram bot integration via long-polling. Supports text messages, images, and inline keyboards.
+Telegram bot integration via long-polling. Supports text messages only — `createInboundMessage()` hardcodes `attachments: []` and there is no image or inline-keyboard support (inbound or outbound). Fully self-contained — no server needed.
 
 **Source files:**
 
@@ -147,7 +157,11 @@ Telegram bot integration via long-polling. Supports text messages, images, and i
 
 - `TelegramChannel`
 
-> **Note:** Requires bot token from BotFather.
+> **Note:** Requires bot token from BotFather. Images/attachments and inline keyboards are not implemented; tracked as a gap, not a documentation omission.
+
+**See also:**
+
+- [Setup walkthrough](../docs/channel-setup/telegram.md)
 
 ---
 
@@ -183,6 +197,8 @@ IRC client integration with channel and private message support. Connects to IRC
 
 - `IRCChannel`
 
+> **Note:** Bring your own server: the `server` field must be a `wss://` URL for a WebSocket-to-IRC gateway, not a raw IRC address — browsers can't open plain TCP sockets. Point it at a public WS-IRC bridge (e.g. the kind IRC web clients use) or run your own.
+
 ---
 
 ### Matrix Channel
@@ -198,6 +214,8 @@ Matrix protocol integration for decentralized chat. Supports encrypted rooms via
 **API surface:**
 
 - `MatrixChannel`
+
+> **Note:** Bring your own homeserver: works directly from the browser via the Matrix client-server API's long-poll /sync — no bridge needed, unlike IRC. Point homeserverUrl at any Matrix homeserver you have an account (and access token) on, self-hosted or matrix.org.
 
 ---
 

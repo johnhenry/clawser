@@ -682,3 +682,7 @@ const SIGNALING_ERRORS = {
 | HTTP polling interval | 2 seconds |
 | Max reconnect attempts | 5 |
 | Reconnect backoff max | 30 seconds |
+
+## 13. Implementation Status
+
+**Status: Not implemented.** No `SignalingService`, `WebRTCEstablisher`, `TrickleIceHandler`, `IceServerManager`, `WebSocketSignalingAdapter`, `MeshRelaySignalingAdapter`, or `HttpPollingSignalingAdapter` exist in `web/` or `packages/`. The real WebRTC-adjacent code is `web/clawser-mesh-webrtc.js` (offer/answer helpers, no signaling transport of its own) and `web/clawser-mesh-relay.js` ([relay-service.md](relay-service.md) — a real, implemented signal-forwarding relay, but with a much smaller `forwardSignal()`/`onSignal()` surface than the `SIGNAL_OFFER`/`SIGNAL_ANSWER`/`SIGNAL_ICE_CANDIDATE`/`SIGNAL_PEER_LIST`/`SIGNAL_PEER_LEFT` message set and `0x43`-`0x48` wire codes specified here).

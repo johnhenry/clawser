@@ -57,7 +57,7 @@ interface GameRoom {
   settings: GameSettings;
 }
 
-pod.on('ready', () => {
+pod.on('ready', async () => {
   const room: GameRoom = {
     id: crypto.randomUUID(),
     hostPodId: pod.info.id,
@@ -78,7 +78,7 @@ pod.on('ready', () => {
   });
 
   // Share join link
-  const joinUrl = `${location.origin}/join?room=${room.id}&host=${pod.info.id}&key=${base64urlEncode(pod.identity.publicKeyRaw)}`;
+  const joinUrl = `${location.origin}/join?room=${room.id}&host=${pod.info.id}&key=${base64urlEncode(await pod.identity.getPublicKey())}`;
   displayJoinLink(joinUrl);
 });
 ```
@@ -144,8 +144,7 @@ async function handleJoinRequest(playerId: string, request: JoinRequest) {
   // Grant game capability
   const token = await capabilityManager.grant(
     `game/${room.id}`,
-    getPeerPublicKey(playerId),
-    { scope: ['game:move', 'game:chat'] }
+    ['game:move', 'game:chat']
   );
 
   room.players.set(playerId, {
@@ -231,9 +230,10 @@ async function validateAndApplyMove(playerId: string, move: SignedMove): Promise
   }
 
   // 2. Verify signature
-  const playerKey = room.players.get(playerId)?.publicKey;
-  if (!playerKey) return false;
+  const playerKeyRaw = room.players.get(playerId)?.publicKey;
+  if (!playerKeyRaw) return false;
 
+  const playerKey = await PodKeyStore.importEd25519PublicKey(playerKeyRaw);
   const payload = cbor.encode({
     turn: move.turn,
     playerId: move.playerId,
@@ -360,8 +360,7 @@ async function claimHost() {
     if (playerId === pod.info.id) continue;
     const token = await capabilityManager.grant(
       `game/${room.id}`,
-      getPeerPublicKey(playerId),
-      { scope: ['game:move', 'game:chat'] }
+      ['game:move', 'game:chat']
     );
     const session = sessionManager.getSession(playerId);
     if (session?.isOpen()) {

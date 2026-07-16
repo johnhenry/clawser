@@ -91,9 +91,10 @@ graph TD
         L2["0x61 GOODBYE_ACK"]
     end
 
-    subgraph Audit["Audit (0x7*)"]
-        AU1["0x70 AUDIT_ENTRY"]
-        AU2["0x71 AUDIT_CHAIN_QUERY"]
+    subgraph Audit["Audit (0xC4-0xC6)"]
+        AU1["0xC4 AUDIT_ENTRY"]
+        AU2["0xC5 AUDIT_CHAIN_QUERY"]
+        AU3["0xC6 AUDIT_CHAIN_RESPONSE"]
     end
 
     style Handshake fill:#E6F3FF
@@ -148,9 +149,10 @@ enum MessageType {
   GOODBYE         = 0x60,
   GOODBYE_ACK     = 0x61,
 
-  // Audit (0x7*) — see signed-audit-log.md
-  AUDIT_ENTRY       = 0x70,
-  AUDIT_CHAIN_QUERY = 0x71,
+  // Audit (0xC4-0xC6) — see signed-audit-log.md
+  AUDIT_ENTRY          = 0xC4,
+  AUDIT_CHAIN_QUERY    = 0xC5,
+  AUDIT_CHAIN_RESPONSE = 0xC6,
 }
 ```
 
@@ -511,11 +513,17 @@ New message types MUST NOT reuse or alias existing type codes. A type code, once
 
 | Range | Purpose | Status |
 |-------|---------|--------|
-| `0x01`–`0x0F` | Core messages (HELLO, REQUEST, RESPONSE, etc.) | Assigned |
-| `0x10`–`0x1F` | Stream control (STREAM_DATA, STREAM_END, etc.) | Assigned |
-| `0x20`–`0x2F` | Coordination (PRESENCE_UPDATE, LEASE_REQUEST, etc.) | Assigned |
-| `0x30`–`0x3F` | Audit and governance (AUDIT_ENTRY, etc.) | Assigned |
-| `0x40`–`0xEF` | Unassigned — available for new message types | Open |
+| `0x01`–`0x0F` | Handshake and core messages (HELLO, HELLO_ACK, CAPS_EXCHANGE, UPGRADE_REQUEST, UPGRADE_ACK) | Assigned |
+| `0x10`–`0x1F` | Request/Response and streaming (REQUEST, RESPONSE, STREAM_START, STREAM_DATA, STREAM_END, STREAM_ERROR) | Assigned |
+| `0x20`–`0x2F` | Control (PING, PONG, CLOSE, ERROR) | Assigned |
+| `0x30`–`0x3F` | Routing (ROUTE, ROUTE_ACK, ROUTE_ERROR) | Assigned |
+| `0x40`–`0x4F` | Discovery (ANNOUNCE, DISCOVER, PEER_INFO) | Assigned |
+| `0x50`–`0x5F` | Presence (PRESENCE_UPDATE, PRESENCE_QUERY, PRESENCE_RESPONSE — see [presence-protocol.md](../coordination/presence-protocol.md)) | Assigned |
+| `0x60`–`0x6F` | Lifecycle (GOODBYE, GOODBYE_ACK — see [boot-sequence.md](boot-sequence.md) §16-17) | Assigned |
+| `0x80`–`0x83` | Group key management (GROUP_KEY_DISTRIBUTE, GROUP_KEY_ROTATE, GROUP_KEY_REQUEST, GROUP_KEY_ACK — see [group-keys.md](../crypto/group-keys.md)) | Assigned |
+| `0xC4`–`0xC6` | Audit (AUDIT_ENTRY, AUDIT_CHAIN_QUERY, AUDIT_CHAIN_RESPONSE — see [signed-audit-log.md](../extensions/signed-audit-log.md)) | Assigned |
+| `0xDC`–`0xDF` | Capability delegation and sandbox control (CAP_GRANT, CAP_REVOKE, CAP_DELEGATE, WASM_SANDBOX_CTRL) | Assigned |
+| `0x70`–`0xEF` (excluding `0x80`–`0x83`, `0xC4`–`0xC6`, `0xDC`–`0xDF`) | Unassigned — available for new message types | Open |
 | `0xF0`–`0xFE` | Binary framing and transport control | Reserved |
 | `0xFF` | Future expansion / version negotiation | Reserved |
 

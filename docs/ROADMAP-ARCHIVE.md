@@ -189,7 +189,7 @@ Priority: Browser-native remote shell, reverse relay, session management, and MC
 | `wsh sessions` | Implemented | Server-backed visible-session listing via protocol `SessionListRequest/SessionList` |
 | `wsh attach` | Implemented | Attach request/ack flow using last successful connection metadata |
 | `wsh detach` | Implemented (marker-based) | Explicit protocol detach via last attached session marker |
-| `wsh copy-id` | Limited | Transport path still placeholder/stub |
+| `wsh copy-id` | Implemented | Password-authenticated connect + remote-side `authorized_keys` install via `wsh-client` exec channel (`crates/wsh-cli/src/commands/copy_id.rs`) — no longer a stub as of the Rust crate revival; see `docs/WSH-INTO-CLAWSER.md` §11 |
 
 ### Phase 5.1: Gateway & Networking — COMPLETE
 - [x] TCP/UDP proxy, DNS resolution, bidirectional relay
@@ -226,7 +226,7 @@ Priority: Browser-native remote shell, reverse relay, session management, and MC
 - [x] Policy engine (evaluate/update with relay dispatch)
 
 ### Phase 5.8–5.12: Audit Fixes — COMPLETE
-See [AUDIT.md](AUDIT.md) for detailed security audit fix log.
+See [OUTSTANDING.md](../OUTSTANDING.md) for detailed audit fix log (AUDIT.md and GAPS.md were merged into OUTSTANDING.md 2026-03-14).
 
 ---
 
@@ -2140,7 +2140,7 @@ all coexisting without a canonical integration contract.
 
 Current situation:
 
-- [clawser-ui-remote.js](/Users/johnhenry/Projects/clawser/web/clawser-ui-remote.js) already provides remote chat, remote terminal, remote file browser, and service browsing
+- [clawser-ui-remote.js](../web/clawser-ui-remote.js) already provides remote chat, remote terminal, remote file browser, and service browsing
 - the newer `wsh` remote-runtime work now provides a more explicit session/auth/relay model
 - these are adjacent enough that they risk becoming competing architectures
 
@@ -2256,7 +2256,7 @@ Verification criteria:
 
 Current situation:
 
-- mesh ACL already has scope templates and roster semantics in [clawser-mesh-acl.js](/Users/johnhenry/Projects/clawser/web/clawser-mesh-acl.js)
+- mesh ACL already has scope templates and roster semantics in [clawser-mesh-acl.js](../web/clawser-mesh-acl.js)
 - `wsh` exposure still largely thinks in terms of local flags and low-level capability advertisement
 
 Why this matters:
@@ -2333,7 +2333,7 @@ Verification criteria:
 
 Current situation:
 
-- Netway already treats `wsh` as a gateway substrate in [gateway-backend.mjs](/Users/johnhenry/Projects/clawser/web/packages/netway/src/gateway-backend.mjs)
+- Netway already treats `wsh` as a gateway substrate in `GatewayBackend` (now [packages-netway.js](../web/packages-netway.js) — the path shown here at the time this phase was written, `web/packages/netway/src/gateway-backend.mjs`, was later consolidated)
 - mesh routing and remote-runtime access are still mostly described separately
 
 Why this matters:
@@ -2363,7 +2363,7 @@ Verification criteria:
 
 Current situation:
 
-- [clawser-peer-compute.js](/Users/johnhenry/Projects/clawser/web/clawser-peer-compute.js) already orchestrates work across peers
+- [clawser-peer-compute.js](../web/clawser-peer-compute.js) already orchestrates work across peers
 - it does not yet have a canonical way to distinguish "chat peer", "runtime peer", "host shell peer", or "VM compute peer"
 
 Why this matters:

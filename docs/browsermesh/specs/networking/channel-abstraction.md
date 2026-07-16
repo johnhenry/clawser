@@ -46,7 +46,15 @@ type PodChannelType =
   | 'worker'
   | 'broadcast-channel'
   | 'post-message'
-  | 'shared-worker-port';
+  | 'shared-worker-port'
+  | 'websocket'
+  | 'webtransport'
+  | 'webrtc-data';
+
+// Note: 'websocket' | 'webtransport' | 'webrtc-data' are required for §8's
+// SmartChannel / DEFAULT_TRANSPORT_ORDER and for transport-probing.md's
+// TransportProbeResult/TransportScore, both of which score and select among
+// all seven values, not just the five adapters implemented in §3.
 
 type PodChannelState =
   | 'connecting'
@@ -387,3 +395,7 @@ channelA.send({ type: 'HELLO' });
 ```
 
 See [test-transport.md](../operations/test-transport.md) for the full LocalChannel API and TestMesh helper.
+
+## 10. Implementation Status
+
+**Status: Not implemented as specified.** No `PodChannel` interface, `wrapChannel()` function, or `MessagePortChannel`/`WorkerChannel`/`BroadcastChannelAdapter`/`PostMessageChannel`/`SharedWorkerPortChannel` classes exist in `web/` or `packages/`. The shipped transport abstraction is `MeshTransport` (`web/clawser-mesh-transport.js`), a differently-shaped abstract base with a much smaller, network-oriented type set (`'webrtc' | 'wsh-wt' | 'wsh-ws'` — WebRTC, wsh-over-WebTransport, wsh-over-WebSocket) rather than this spec's five same-machine-channel adapters plus three network transports. `MeshTransportNegotiator` selects among adapter factories directly; there is no `wrapChannel()`-style runtime type detection.

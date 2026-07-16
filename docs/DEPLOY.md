@@ -1,7 +1,7 @@
 # Deploy — personal multi-device sync and remote deploy targets
 
 This is the protocol and threat-model document for the deploy system
-landed 2026-05-03. The implementation is split across four modules in
+landed 2026-05-03. The implementation is split across seven modules in
 `web/`:
 
 - `clawser-pairing.mjs`         — Phase A.1: device pairing flow
@@ -11,6 +11,8 @@ landed 2026-05-03. The implementation is split across four modules in
 - `clawser-deploy-package.mjs`  — Phase B.5: signed package format
 - `clawser-deploy-target.mjs`   — Phase B.1–B.4: ACL, capabilities,
                                     audit log, versioned rollback
+- `clawser-skill-capabilities.mjs` — capability-gated `{fetch, fs, mesh}`
+                                    API used by deployed-skill execution
 
 The system has two intended use cases:
 
@@ -101,6 +103,20 @@ Transport: every paired peer receives the envelope via
 not abort delivery to the others; the failure is logged but the next
 update is unaffected.
 
+### A.4 Push modes
+
+Two triggers, same engine:
+
+- **Always-sync.** `recordLocalChange(ctx, fid, kind, itemId, payload)`
+  — called by item-storage layers when an item changes locally.
+  Checks the sync flag; if set, enqueues on the engine, which flushes
+  after the debounce.
+- **Manual deploy.** `runDeploy(ctx)` — used by the "Deploy now"
+  button. Enumerates every flagged item via `flags.listFlagged()`,
+  resolves each to a snapshot, queues them, and flushes immediately.
+  `buildDeployPreview(ctx)` produces the confirmation-dialog data
+  before invoking `runDeploy`.
+
 ### A.5 Atomic apply
 
 Every inbound batch (one or more validated envelopes) is applied
@@ -116,20 +132,6 @@ The snapshot driver is optional — without one the engine still applies
 batches, but rollback becomes best-effort discard-only. Tests cover
 the rollback path including a stage-apply throw mid-batch and a
 commit-time throw.
-
-### A.4 Push modes
-
-Two triggers, same engine:
-
-- **Always-sync.** `recordLocalChange(ctx, fid, kind, itemId, payload)`
-  — called by item-storage layers when an item changes locally.
-  Checks the sync flag; if set, enqueues on the engine, which flushes
-  after the debounce.
-- **Manual deploy.** `runDeploy(ctx)` — used by the "Deploy now"
-  button. Enumerates every flagged item via `flags.listFlagged()`,
-  resolves each to a snapshot, queues them, and flushes immediately.
-  `buildDeployPreview(ctx)` produces the confirmation-dialog data
-  before invoking `runDeploy`.
 
 ---
 
@@ -151,9 +153,11 @@ runs the full `acceptPackage(pkg, ctx)` pipeline before applying.
       { "kind": "skill", "itemId": "code-review", "payloadHash": "<sha256-hex>" }
     ],
     "capabilities": {
-      "fs":   ["/tmp/", "/workspace/skills/"],
-      "net":  ["api.github.com", "*.example.com"],
-      "mesh": ["mesh:peer-list"]
+      "fs":     ["/tmp/", "/workspace/skills/"],
+      "net":    ["api.github.com", "*.example.com"],
+      "mesh":   ["mesh:peer-list"],
+      "config": ["autonomy"],
+      "memory": ["notes"]
     },
     "createdAt": 1714665600000
   },
@@ -211,9 +215,13 @@ In order:
 ### Capability tokens
 
 `buildCapabilityToken(manifest)` produces an inert
-`{fs:[...], net:[...], mesh:[...]}` object the sandbox carries through
-skill execution. `enforceCapabilityRequest(token, request)` either
-returns silently or throws `CapabilityDeniedError`.
+`{fs:[...], net:[...], mesh:[...], config:[...], memory:[...]}` object
+the sandbox carries through skill execution. (`config` and `memory`
+were added by the multi-device wiring pass to gate the `config` and
+`memory` apply-transport handlers — see
+[`multi-device-deploy.md`](multi-device-deploy.md).)
+`enforceCapabilityRequest(token, request)` either returns silently or
+throws `CapabilityDeniedError`.
 
 Matching rules:
 
@@ -221,6 +229,8 @@ Matching rules:
 - `net` — exact host or `*.suffix` glob. `'*.example.com'` matches
   `'a.example.com'` but **not** the bare `'example.com'`.
 - `mesh` — exact-string match (e.g. `'mesh:peer-list'`).
+- `config` / `memory` — exact-string match against the declared domain
+  or memory category, same as `mesh`.
 
 #### Active enforcement (skill-runtime integration)
 

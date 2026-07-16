@@ -397,16 +397,16 @@ function validateTimestamp(headers: Headers): boolean {
 
 ### 10.1 Fetch Bridge Integration
 
-The [binary-request-protocol.md](binary-request-protocol.md) defines a Fetch-compatible bridge for translating between HTTP semantics and CBOR wire format. HTTP interop endpoints SHOULD use this bridge internally:
+The [binary-request-protocol.md](binary-request-protocol.md) defines `meshFetch()`/`meshFetchHandler()`, a Fetch-compatible bridge for translating between HTTP semantics and CBOR wire format (not yet implemented — see that spec's Implementation Status). HTTP interop endpoints SHOULD use this bridge internally:
 
 ```typescript
-import { FetchBridge } from './binary-request-protocol';
+import { meshFetchHandler } from './binary-request-protocol';
 
 class HttpInteropHandler {
-  private bridge: FetchBridge;
+  private bridge: ReturnType<typeof meshFetchHandler>;
 
   constructor(pod: ServerPod) {
-    this.bridge = new FetchBridge(pod);
+    this.bridge = meshFetchHandler(pod.channel, (req) => this.handleRequest(req));
   }
 
   async handleRequest(httpReq: Request): Promise<Response> {
@@ -446,3 +446,9 @@ function negotiateContentType(req: Request): 'cbor' | 'json' {
 ### 10.3 CBOR Size Limits
 
 HTTP interop respects the same 64KB CBOR message limit defined in [wire-format.md §9](../core/wire-format.md). State values exceeding this limit MUST return `413 Payload Too Large`. HTTP intermediaries may impose their own body size limits — see [server-pod.md §13](../extensions/server-pod.md) for failure mode analysis.
+
+## 11. Implementation Status
+
+**Status: Not implemented.** No `HttpInteropHandler`, `X-Mesh-*` header helpers, `stateETag()`/CAS-via-ETag handling, or `/healthz`/`/mesh` endpoint set exists in `web/` or `packages/`. This spec, like [binary-request-protocol.md](binary-request-protocol.md) which it depends on for its Fetch bridge, describes a design that has not been built.
+
+This spec's premise ("BrowserMesh uses CBOR over WebSocket/WebTransport/WebRTC," §1) also does not match the real wire encoder — see [message-envelope.md](message-envelope.md) Implementation Status: the actual `encodeMeshMessage()`/`decodeMeshMessage()` use a 5-byte header plus JSON payload, not CBOR.

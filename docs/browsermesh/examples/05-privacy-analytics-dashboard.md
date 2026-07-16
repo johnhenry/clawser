@@ -82,11 +82,8 @@ async function addDataSource(source: DataSourceConfig): Promise<string> {
   // Grant narrow capability
   const token = await capabilityManager.grant(
     `data/${source.id}`,
-    getPeerPublicKey(podId),
-    {
-      scope: ['data:emit'],  // Can push data — cannot read other sources
-      expires: Date.now() + 24 * 60 * 60 * 1000,
-    }
+    ['data:emit'],  // Can push data — cannot read other sources
+    24 * 60 * 60 * 1000
   );
 
   const session = await sessionManager.getOrCreateSession(podId, getPeerPublicKey(podId), channel);
@@ -273,8 +270,9 @@ async function verifyDataProvenance(
   signed: { data: Uint8Array; signature: Uint8Array; capabilityToken: CapabilityToken }
 ): Promise<boolean> {
   // 1. Verify the signature matches the source pod's identity
-  const sourceKey = peers.get(sourcePodId)?.publicKey;
-  if (!sourceKey) return false;
+  const sourceKeyRaw = peers.get(sourcePodId)?.publicKey;
+  if (!sourceKeyRaw) return false;
+  const sourceKey = await PodKeyStore.importEd25519PublicKey(sourceKeyRaw);
   if (!await PodSigner.verify(sourceKey, signed.data, signed.signature)) return false;
 
   // 2. Verify the capability token is valid and not revoked

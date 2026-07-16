@@ -448,3 +448,9 @@ Use the CBOR envelope (see [message-envelope.md](message-envelope.md)) for gener
 | Max header map entries | 64 | Per request/response |
 | Max header value length | 1024 bytes | Per individual structured field value |
 | Request timeout | 30 seconds | Default; configurable per request |
+
+## 14. Implementation Status
+
+**Status: Not implemented.** No file in `web/` or `packages/` defines `BinaryRequestType`, `BinaryRequestMultiplexer`, `meshFetch()`/`meshFetchHandler()`, or the structured-field parser/serializer in §10. `http-interop.md` §10.1 references these via an `import { FetchBridge } from './binary-request-protocol'` — but this spec defines standalone functions (`meshFetch`, `meshFetchHandler`), not a `FetchBridge` class; that cross-reference does not match either this spec or any real code.
+
+**Wire code conflict if implemented as specified.** `BIN_REQ_HEADERS`/`BIN_REQ_BODY`/`BIN_RESP_HEADERS`/`BIN_RESP_BODY` are specified at `0xF3`–`0xF6`. The canonical wire-type registry (`node_modules/browsermesh-primitives/src/constants.mjs`) has already assigned `0xF3` to `SWIM_MEMBERSHIP` and `0xF4`/`0xF5` to `PBFT_VIEW_CHANGE`/`PBFT_NEW_VIEW`; `0xF6` falls in the range documented as reserved for internal/future use. As with [transport-probing.md](transport-probing.md)'s `0xF0`–`0xF2` proposal, the `0xF*` range is not actually free in the shipped implementation and a real implementation of this spec would need a different type-code allocation.

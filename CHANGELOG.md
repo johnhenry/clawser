@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added (2026-07-14 — sync + audit pass)
+- **Rust `crates/` workspace restored and CI-covered.** `crates/wsh-core`,
+  `crates/wsh-client`, `crates/wsh-cli`, and `crates/wsh-server` (deleted
+  2026-03-14 during the migration to a pure-JS agent core, restored
+  2026-07-05) are the only implementations of native WebTransport/QUIC
+  (via `quinn`/`wtransport`) and real PTYs (via `portable-pty`) in the
+  project — see `docs/WSH-INTO-CLAWSER.md`. Added a `rust` job to
+  `.github/workflows/ci.yml` (`cargo build --workspace` + `cargo test
+  --workspace`, 97 tests) plus the 4 `tools/test/wsh-*.test.mjs` Node
+  suites (44 more tests) that exercise it, closing a CI gap where this
+  code had zero coverage despite already flip-flopping once. A
+  Node-only alternative (`tools/wsh-server.mjs` +
+  `tools/wsh-operator-cli.mjs`) remains available for contributors who
+  don't want to install a Rust toolchain.
+- Merged 65 commits from origin (mesh Phase 11, WebTransport, Slack/
+  Discord/Telegram channels, BrowserMesh package extraction); full
+  suite now 359 test files / 9,746 subtests passing, 0 failing.
+
+### Fixed (2026-07-14 — sync + audit pass)
+- Dockerfile/`sw.js`/`manifest.json` PWA scope mismatch (`/web/`
+  hard-coded upstream vs. root-serving locally) that would have 404'd
+  the service-worker precache in production; also fixed the
+  root→`/web/` redirect to honor `X-Forwarded-Proto`/`Host` behind a
+  TLS-terminating proxy.
+- `SessionStorageAdapter` test suite leaked state between cases now
+  that Node ships a real global `sessionStorage`.
+- `npm audit fix` cleared 6 vulnerabilities (1 critical, 2 high) in the
+  vitest/vite/esbuild dev-tooling chain (zero runtime deps affected).
+- `@fails-components/webtransport*` moved from `dependencies` to
+  `devDependencies` (only a dev tool, `tools/wsh-server.mjs`, uses them).
+- `createTerminalSessionId()` widened from 4 to 8 hex chars of
+  randomness after a ~1.9% collision chance surfaced under concurrent
+  test-runner load.
+
 ### Added (2026-07-04 — Slack Socket Mode)
 - **Slack channel is now fully self-contained**, closing the inbound gap
   found while writing `docs/channel-setup/slack.md`: `SlackPlugin` only

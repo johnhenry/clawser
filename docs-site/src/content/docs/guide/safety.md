@@ -184,14 +184,16 @@ Two agent tools: self_repair_status (check system health) and self_repair_config
 
 ### Secret Vault
 
-**Status:** ✅ Implemented · **Category:** vault · **Since:** v1.0.0
+**Status:** ✅ Implemented · **Category:** vault · **Since:** v2.0.0
 
-AES-GCM-256 encrypted storage for API keys and secrets. Uses PBKDF2 with 600,000 iterations for key derivation. Secrets stored in OPFS. Supports passphrase strength measurement and rekeying. Two storage backends: MemoryVaultStorage (testing) and OPFSVaultStorage (production).
+AES-GCM-256 encrypted storage for API keys and secrets, on a v2 wrapped-DEK architecture: secrets are encrypted once under a random Data Encryption Key (DEK), and the DEK itself is "wrapped" separately per unlock method (passphrase-derived KEK via PBKDF2-600K, and/or one or more WebAuthn passkeys via the PRF extension). Adding, removing, or rotating an unlock method just rewraps the DEK — secrets are never re-encrypted. A recovery code is a third wrap kind for account recovery. Two storage backends: MemoryVaultStorage (testing) and OPFSVaultStorage (production).
 
 **Source files:**
 
 - `web/clawser-vault.js`
 - `web/clawser-vault.d.ts`
+- `web/clawser-vault-settings.js`
+- `web/clawser-passkey.mjs`
 
 **API surface:**
 
@@ -199,12 +201,22 @@ AES-GCM-256 encrypted storage for API keys and secrets. Uses PBKDF2 with 600,000
 - `MemoryVaultStorage`
 - `OPFSVaultStorage`
 - `VaultRekeyer`
-- `deriveKey`
+- `deriveKekFromPassphrase`
+- `deriveKekFromPrf`
+- `generateDek`
+- `wrapDek`
+- `unwrapDek`
 - `encryptSecret`
 - `decryptSecret`
 - `measurePassphraseStrength`
+- `generateRecoveryCode`
+- `isPasskeyPRFSupported`
+- `enrollPasskey`
+- `assertPasskeyForUnlock`
+- `performChangePassphrase`
+- `buildPasskeyListItems`
 
-> **Note:** Passphrase never persisted. PBKDF2 with 600K iterations. AES-GCM-256 encryption.
+> **Note:** Passphrase/PRF output never persisted, only the wrapped DEK. Wrap kinds: passphrase (PBKDF2-600K), passkey (WebAuthn PRF, `SecretVault.addPasskeyWrap` / `unlockWithPasskey` / `removeWrap`), and recovery code. See `docs/VAULT.md` for the full v2 wire format and threat model.
 
 ---
 

@@ -5,8 +5,9 @@ persisted per-workspace.
 
 As of the 2026-05-02 gap-closure pass, the persistence story is:
 
-- **Workspace registry** — OPFS-first at `/etc/clawser/workspaces.json`,
-  with one-time migration from localStorage. localStorage is a read-only
+- **Workspace registry** — OPFS-first at `clawser/etc/clawser/workspaces.json`
+  (active workspace ID at `clawser/etc/clawser/active-workspace`), with
+  one-time migration from localStorage. localStorage is a read-only
   fallback for one release. See `clawser-workspaces.js`.
 - **Per-workspace config domains** (autonomy / identity / security / daemon /
   terminal / hooks) — Saves write through to OPFS at
@@ -15,9 +16,13 @@ As of the 2026-05-02 gap-closure pass, the persistence story is:
   `clawser_v1_{domain}_{wsId}`. Reads still come from localStorage for
   speed; the OPFS file is canonical for cross-tab and external-edit
   reactivity via `FileWatcher` + `ReactiveConfigStore`.
-- **All other domains** in the table below — still localStorage-only at the
-  documented keys until the panel is migrated. Tracking in
-  `docs/implementation-status.md`.
+- **All other domains** in the table below — as of this writing all six
+  config panels (security, autonomy, identity, daemon, hooks, terminal)
+  write through `state.fsUiSync.saveValue()` per current source; treat the
+  table below as the per-key reference and see `OUTSTANDING.md` (repo
+  root) and `CHANGELOG.md` for the latest migration status.
+  (`docs/implementation-status.md` tracked this previously but is a dated
+  snapshot from 2026-05-02/03 and is no longer kept up to date.)
 
 ---
 
@@ -49,6 +54,11 @@ Also displays:
 The header badge shows autonomy level with color coding: red = readonly, amber = supervised, green = full.
 
 A cost meter in the header shows `$spent / $limit` with warning colors at 50% and 80%.
+
+Named autonomy presets (level + rate/cost limits + allowed hours) can be
+saved, loaded, and applied via `AutonomyPresetManager`
+(`clawser-autonomy-presets.js`), stored separately under
+`clawser_autonomy_presets_v1_{wsId}` in localStorage.
 
 ---
 
@@ -125,11 +135,11 @@ Checkboxes controlling which capabilities are available to sandboxed code. Unche
 
 | Capability | Default | Maps to |
 |------------|---------|---------|
-| net_fetch | on | `browser_fetch` permission |
-| fs_read | on | `browser_fs_read` permission |
-| fs_write | on | `browser_fs_write` permission |
-| dom_access | on | `browser_dom_query` permission |
-| eval | on | `browser_eval_js` permission |
+| net_fetch | on | `fetch` tool permission (backs the `browser_fetch` tool) |
+| fs_read | on | `fs_read` tool permission (backs the `browser_fs_read` tool) |
+| fs_write | on | `fs_write` tool permission (backs the `browser_fs_write` tool) |
+| dom_access | on | `dom_query` tool permission (backs the `browser_dom_query` tool) |
+| eval | on | `code_eval` tool permission (backs the `browser_eval_js` tool) |
 | crypto | on | Informational |
 
 ---
@@ -173,7 +183,10 @@ Provides a scan button that finds conversations exceeding the age threshold. Res
 
 ## Dashboard
 
-The Dashboard panel (deferred until first visit) shows real-time metrics refreshed every 5 seconds:
+The Dashboard panel (lazily rendered on first visit to the panel) shows
+metrics that update via the **Refresh** button and whenever the app emits a
+`refreshDashboard` event (e.g. after a config change) — there is no
+automatic polling interval:
 
 | Metric | Source | Description |
 |--------|--------|-------------|
@@ -212,6 +225,7 @@ All workspace-scoped keys follow the pattern `clawser_v1_{type}_{wsId}`.
 | `clawser_v1_heartbeat_{wsId}` | Heartbeat check definitions |
 | `clawser_v1_config_{wsId}` | Cache TTL, max entries, tool iterations |
 | `clawser_v1_tool_perms_{wsId}` | Per-tool permission overrides |
+| `clawser_autonomy_presets_v1_{wsId}` | Named autonomy presets |
 | `clawser_workspaces` | Workspace list |
 | `clawser_active_workspace` | Active workspace ID |
 | `clawser_debug` | Debug mode flag |

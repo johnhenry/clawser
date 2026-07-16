@@ -1,5 +1,21 @@
 # Firefox Compatibility
 
+> **Status note (as of this pass):** The browser extension described below
+> no longer lives in this repository. It was extracted to the standalone
+> [`clawser-browser-control`](https://github.com/johnhenry/clawser-browser-control)
+> repo (see `README.md` and `ARCHITECTURE.md` § Extension Injection), which
+> also publishes to the
+> [Chrome Web Store](https://chromewebstore.google.com/detail/clawser-browser-control/dljchbfodafekojicopaboiegophjcbc).
+> There is no `extension/` directory, `background.js`, or `content.js` in
+> `clawser` anymore — those paths below describe the pre-extraction layout
+> and are kept for historical reference. Firefox packaging, manifest
+> details, and AMO submission now belong to the `clawser-browser-control`
+> repo; file compatibility issues there, not here. The main app only
+> depends on the extension through `ExtensionRpcClient`
+> (`web/clawser-extension-tools.js`), which talks to whatever extension is
+> installed via `postMessage`/`window.__clawser_ext__` — it has no
+> Chrome-vs-Firefox awareness itself.
+
 ## Overview
 
 Clawser ships a Chrome Manifest V3 extension by default. For Firefox, a

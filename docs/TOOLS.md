@@ -1,6 +1,6 @@
 # Clawser Tool Reference
 
-Complete reference for all ~100 registered tools. Tools extend `BrowserTool` and are managed by `BrowserToolRegistry` in `clawser-tools.js`.
+Reference for the ~210 tools cataloged here (see "Known gaps" in the Summary section for additional registered-but-uncataloged tool families — the real app-wide total is closer to ~285). Tools extend `BrowserTool` and are managed by `BrowserToolRegistry` in `clawser-tools.js`.
 
 ## Permission Levels
 
@@ -56,7 +56,7 @@ Modify DOM elements. Set text, attributes, styles, or innerHTML.
 | `attribute` | string | no | — | Attribute name (for setAttribute) |
 
 **Permission**: `browser`
-**Notes**: Sanitizes HTML — blocks `<script>`, `<iframe>`, `on*` handlers, `javascript:` and `data:text/html` URLs. Uses native Sanitizer API when available.
+**Notes**: For `setHTML`/`insertHTML`, uses the native Sanitizer API (`el.setHTML`) when available; otherwise strips `<script>`, `<iframe>`, `<object>`, `<embed>`, `<base>`, `<meta>`, `<link>`, `<form>`, `<svg>`, `<math>`, `<style>` elements, removes all `on*` event-handler attributes, and strips `javascript:`/`data:` URLs from `href`/`src`/`action`/`formaction`. For `setAttribute`, blocks setting any `on*` attribute outright and blocks `javascript:`/`data:` values in `href`/`src`/`action`/`formaction`.
 
 ### browser_fs_read
 
@@ -79,7 +79,7 @@ Write a file to OPFS. Creates parent directories as needed.
 | `content` | string | yes | File content |
 
 **Permission**: `write`
-**Notes**: Max file size configurable (default 10MB). Checks storage quota before writing — warns at 80%, blocks at 95%.
+**Notes**: Max file size configurable (default 10MB). Blocks the write if storage usage is at or above the 95% (critical) threshold via `checkQuota()`. (An 80% "warning" threshold also exists in `checkQuota()` but is only surfaced in the Tools/storage settings panel UI — this tool itself does not act on it.)
 
 ### browser_fs_list
 
@@ -99,6 +99,16 @@ Delete a file or directory from OPFS.
 |-----------|------|----------|---------|-------------|
 | `path` | string | yes | — | Path to delete |
 | `recursive` | boolean | no | false | Delete recursively |
+
+**Permission**: `write`
+
+### browser_fs_mkdir
+
+Create a directory in OPFS. Intermediate directories are created automatically.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `path` | string | yes | Directory path to create |
 
 **Permission**: `write`
 
@@ -124,6 +134,17 @@ Write a value to localStorage.
 
 **Permission**: `write`
 **Notes**: Blocks writing to `clawser_*` keys.
+
+### browser_storage_delete
+
+Delete a key from localStorage.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `key` | string | yes | Storage key to delete |
+
+**Permission**: `write`
+**Notes**: Blocks deleting `clawser_*` keys.
 
 ### browser_storage_list
 
@@ -212,9 +233,9 @@ Capture a screenshot as a data URL (PNG).
 **Permission**: `browser`
 **Notes**: Lazy-loads `html2canvas` from CDN on first use.
 
-### ask_user_question
+### browser_ask_user
 
-Ask the user one or more questions with predefined options.
+Ask the user one or more questions with predefined options. (Registered tool name is `browser_ask_user`, not `ask_user_question`.)
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -224,27 +245,27 @@ Each question: `{ question, header (max 12 chars), options: [{ label, descriptio
 
 **Permission**: `auto`
 
-### switch_agent
+### agent_switch
 
-Switch to a different agent configuration. Omit `agent` to list available agents.
+Switch to a different agent configuration. Omit `agent` to list available agents. (Registered tool name is `agent_switch`, not `switch_agent`.)
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `agent` | string | no | Agent name |
+| `agent` | string | no | Agent name or ID to switch to |
 | `reason` | string | no | Reason for switch |
 
 **Permission**: `approve`
 
-### consult_agent
+### agent_consult
 
-Send a message to another agent and get their response.
+Send a message to another agent and get their response. (Registered tool name is `agent_consult`, not `consult_agent`.)
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `agent` | string | yes | Agent name |
 | `message` | string | yes | Message to send |
 
-**Permission**: `auto`
+**Permission**: `approve`
 
 ---
 
@@ -252,7 +273,7 @@ Send a message to another agent and get their response.
 
 **File**: `web/clawser-tools.js` (registered via `registerAgentTools()`)
 
-All have permission `internal` (auto-allowed).
+All have permission `internal` (auto-allowed). (Note: goal management is *not* handled here — there is no `agent_goal_add`/`agent_goal_update` tool. Goals are handled entirely by the separate `goal_add`/`goal_update`/etc. tools registered from `web/clawser-goals.js`; see "Enhanced Goal Tools" below.)
 
 ### agent_memory_store
 
@@ -279,23 +300,6 @@ Delete a stored memory by ID.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `id` | string | yes | Memory ID (e.g. "mem_1") |
-
-### agent_goal_add
-
-Add a new goal.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `description` | string | yes | Goal description |
-
-### agent_goal_update
-
-Update goal status.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `id` | string | yes | Goal ID |
-| `status` | enum | yes | active, completed, failed |
 
 ### agent_schedule_add
 
@@ -584,6 +588,7 @@ Activate an available skill to get its instructions and tools.
 |-----------|------|----------|-------------|
 | `name` | string | yes | Skill name |
 | `arguments` | string | no | Arguments to pass |
+| `force` | boolean | no | Skip dependency checks (default: false) |
 
 **Permission**: `internal`
 
@@ -711,7 +716,7 @@ Remove a dynamically created custom tool.
 
 **File**: `web/clawser-goals.js`
 
-Supports hierarchy, priority, artifacts, and progress tracking (extends the simpler `agent_goal_add` / `agent_goal_update`).
+Supports hierarchy, priority, artifacts, and progress tracking. (Note: there is no separate, simpler `agent_goal_add`/`agent_goal_update` tool set — these `goal_*` tools are the only goal-management tools in the app; see the note in "Agent Tools" above.)
 
 ### goal_add
 
@@ -723,7 +728,7 @@ Add a goal with optional parent and priority.
 | `parent_id` | string | no | — | Parent goal ID (for sub-goals) |
 | `priority` | enum | no | medium | low, medium, high, critical |
 
-**Permission**: `auto`
+**Permission**: `approve`
 
 ### goal_update
 
@@ -735,7 +740,7 @@ Update goal status with optional progress note.
 | `status` | enum | yes | active, paused, completed, failed |
 | `progress_note` | string | no | Progress note |
 
-**Permission**: `auto`
+**Permission**: `approve`
 
 ### goal_add_artifact
 
@@ -746,7 +751,7 @@ Link a workspace file as a goal artifact.
 | `goal_id` | string | yes | Goal ID |
 | `file_path` | string | yes | Path to file |
 
-**Permission**: `auto`
+**Permission**: `approve`
 
 ### goal_list
 
@@ -806,15 +811,51 @@ Manually trigger a routine (bypass schedule).
 
 **Permission**: `approve`
 
+### routine_history
+
+Get execution history for a routine.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `id` | string | yes | — | Routine ID |
+| `limit` | number | no | 20 | Max entries to return |
+
+**Permission**: `read`
+
+### routine_toggle
+
+Enable or disable a routine.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `routine_id` | string | yes | Routine ID to toggle |
+| `enabled` | boolean | yes | Whether to enable (true) or disable (false) |
+
+**Permission**: `approve`
+**Notes**: Uses `routine_id` as the parameter name (inconsistent with the other routine tools, which use `id`).
+
+### routine_update
+
+Update a routine's configuration (name, trigger, action).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `routine_id` | string | yes | Routine ID to update |
+| `name` | string | no | New routine name |
+| `trigger` | object | no | New trigger configuration |
+| `action` | object | no | New action configuration |
+
+**Permission**: `approve`
+
 ---
 
 ## Undo Tools
 
 **File**: `web/clawser-undo.js`
 
-### undo
+### agent_undo
 
-Undo the last N turns. Reverts conversation, files, memory, and goals.
+Undo the last N turns. Reverts conversation, files, memory, and goals. (Registered tool name is `agent_undo`, not `undo`.)
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
@@ -822,15 +863,25 @@ Undo the last N turns. Reverts conversation, files, memory, and goals.
 
 **Permission**: `approve`
 
-### undo_status
+### agent_undo_status
 
-Show undo history and preview what would be reverted.
+Show undo history and preview what would be reverted. (Registered tool name is `agent_undo_status`, not `undo_status`.)
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `preview_turns` | number | no | 1 | Turns to preview |
 
 **Permission**: `read`
+
+### agent_redo
+
+Redo previously undone operations.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `turns` | number | no | 1 | Number of turns to redo |
+
+**Permission**: `approve`
 
 ---
 
@@ -859,6 +910,8 @@ Manually run heartbeat checks.
 ## wsh Tools
 
 **File**: `web/clawser-wsh-tools.js`
+
+`registerWshTools()` registers **27 tools** (not 10 — this section previously covered only a subset).
 
 ### wsh_connect
 
@@ -891,11 +944,20 @@ Fetch a URL via curl on the remote server (CORS bypass).
 
 Transfer files to/from a remote server.
 
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `local_path` | string | yes (upload) | Local (OPFS) path |
+| `remote_path` | string | yes | Remote path |
+| `host` | string | no | Server host |
+
 **Permission**: `approve`
 
 ### wsh_pty_open / wsh_pty_write
 
 Open and interact with a remote PTY session.
+
+`wsh_pty_open`: `host`, `command`, `cols` (default 80), `rows` (default 24) — all optional.
+`wsh_pty_write`: `session_id` (string, required), `data` (string, required).
 
 **Permission**: `approve`
 
@@ -914,6 +976,216 @@ List active wsh sessions.
 ### wsh_mcp_call
 
 Call an MCP tool on a remote server.
+
+**Permission**: `approve`
+
+### wsh_file_op
+
+Perform structured file operations on a remote wsh host (stat, list, read, write, mkdir, remove, rename).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `op` | string | yes | Operation: stat, list, read, write, mkdir, remove, rename |
+| `path` | string | yes | Remote path |
+| `offset` | number | no | Byte offset (for partial read/write) |
+| `length` | number | no | Byte length (for partial read/write) |
+| `host` | string | no | Server host |
+
+**Permission**: `approve`
+
+### wsh_policy_eval
+
+Evaluate a policy action on a connected wsh server.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `action` | string | yes | Action to evaluate |
+| `principal` | string | yes | Principal to evaluate against |
+| `context` | object | no | Extra evaluation context |
+| `host` | string | no | Server host |
+
+**Permission**: `read`
+
+### wsh_policy_update
+
+Update a policy on a connected wsh server.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `policy_id` | string | yes | Policy ID |
+| `rules` | object | yes | New policy rules |
+| `version` | number | yes | Policy version |
+| `host` | string | no | Server host |
+
+**Permission**: `approve`
+
+### wsh_gpu_probe
+
+Probe a remote host for GPU capabilities (runs `nvidia-smi`).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `host` | string | yes | Remote host to probe |
+
+**Permission**: `read`
+
+### wsh_suspend_session
+
+Suspend a remote wsh session.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `session_id` | string | yes | — | Session ID |
+| `action` | string | no | suspend | suspend or hibernate |
+| `host` | string | no | — | Server host |
+
+**Permission**: `approve`
+
+### wsh_restart_pty
+
+Restart the PTY process in a remote wsh session.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `session_id` | string | yes | Session ID |
+| `command` | string | no | New command to run |
+| `host` | string | no | Server host |
+
+**Permission**: `approve`
+
+### wsh_metrics
+
+Request server metrics (CPU, memory, sessions) from a connected wsh host.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `host` | string | no | Server host |
+
+**Permission**: `read`
+
+### wsh_guest_invite
+
+Invite a guest to a wsh session with time-limited access.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `session_id` | string | yes | — | Session ID |
+| `ttl` | number | yes | — | TTL in seconds |
+| `permissions` | array | no | `['read']` | read/write/control |
+| `host` | string | no | — | Server host |
+
+**Permission**: `approve`
+
+### wsh_guest_revoke
+
+Revoke a guest invitation token.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `token` | string | yes | Guest token to revoke |
+| `reason` | string | no | Revocation reason |
+| `host` | string | no | Server host |
+
+**Permission**: `approve`
+
+### wsh_share_session
+
+Share a wsh session for multi-attach access.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `session_id` | string | yes | — | Session ID |
+| `mode` | string | no | read | read or control |
+| `ttl` | number | no | — | TTL in seconds |
+| `host` | string | no | — | Server host |
+
+**Permission**: `approve`
+
+### wsh_share_revoke
+
+Revoke a session share.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `share_id` | string | yes | Share ID to revoke |
+| `reason` | string | no | Revocation reason |
+| `host` | string | no | Server host |
+
+**Permission**: `approve`
+
+### wsh_compress
+
+Negotiate compression with a connected wsh server.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `algorithm` | string | yes | — | Compression algorithm |
+| `level` | number | no | 3 | Compression level |
+| `host` | string | no | — | Server host |
+
+**Permission**: `approve`
+
+### wsh_rate_control
+
+Set rate control parameters for a wsh session.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `session_id` | string | yes | — | Session ID |
+| `max_bytes_per_sec` | number | yes | — | Byte-rate cap |
+| `policy` | string | no | pause | pause or drop |
+| `host` | string | no | — | Server host |
+
+**Permission**: `approve`
+
+### wsh_link_session
+
+Link a wsh session to another host for cross-session routing.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `source_session` | string | yes | Source session ID |
+| `target_host` | string | yes | Target host |
+| `target_port` | number | yes | Target port |
+| `target_user` | string | no | Target user |
+| `host` | string | no | Server host |
+
+**Permission**: `approve`
+
+### wsh_unlink_session
+
+Unlink a previously linked wsh session.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `link_id` | string | yes | Link ID to remove |
+| `reason` | string | no | Reason |
+| `host` | string | no | Server host |
+
+**Permission**: `approve`
+
+### wsh_copilot_attach
+
+Attach an AI copilot to a wsh session for suggestions.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `session_id` | string | yes | Session ID |
+| `model` | string | yes | Copilot model to use |
+| `context_window` | number | no | Context window size |
+| `host` | string | no | Server host |
+
+**Permission**: `approve`
+
+### wsh_copilot_detach
+
+Detach the copilot from a wsh session.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `session_id` | string | yes | Session ID |
+| `reason` | string | no | Reason |
+| `host` | string | no | Server host |
 
 **Permission**: `approve`
 
@@ -1023,7 +1295,7 @@ Classify a message into an intent and return pipeline config.
 | `source` | string | no | Source metadata |
 
 **Permission**: `read`
-**Notes**: Returns `{ intent, config }` where config includes `useLLM`, `useTools`, `useMemory`, `modelHint`, `maxTokens`.
+**Notes**: Returns `{ intent, config }` where config includes `useLLM`, `useTools`, `useMemory`, `useGoals`, `skipUI`, `modelHint`, `maxTokens`.
 
 ### intent_add_override
 
@@ -1183,7 +1455,7 @@ Execute commands in the virtual browser shell.
 | `command` | string | yes | Shell command string |
 
 **Permission**: `internal`
-**Notes**: Supports pipes, redirects, logical operators, variable substitution, and glob expansion. 59 built-in commands including `ls`, `cat`, `grep`, `find`, `sed`, `sort`, `diff`, `base64`, `sha256sum`, `xargs`, and more. All filesystem operations use workspace OPFS.
+**Notes**: Supports pipes, redirects, logical operators, variable substitution, and glob expansion. 67 built-in commands (29 from `registerBuiltins()` + 37 from `registerExtendedBuiltins()` + `jq` from `registerJqBuiltin()`, all wired up by default) including `ls`, `cat`, `grep`, `find`, `sed`, `sort`, `diff`, `base64`, `sha256sum`, `xargs`, and more. All filesystem operations use workspace OPFS.
 
 ---
 
@@ -1191,7 +1463,7 @@ Execute commands in the virtual browser shell.
 
 **File**: `web/clawser-mesh-tools.js`
 
-Mesh stream and file transfer tools for P2P data exchange. Registered via `registerMeshTools()`.
+Mesh stream and file transfer tools for P2P data exchange, plus DHT, distributed GPU training, and IoT device tools. Registered via `registerMeshTools()` — **15 tools total** (not 7 — this section previously covered only the stream/file subset).
 
 ### mesh_stream_open
 
@@ -1268,6 +1540,100 @@ Cancel an in-progress file transfer.
 | `reason` | string | no | Cancellation reason |
 
 **Permission**: `write`
+
+### dht_store
+
+Store a key-value pair in the distributed hash table.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `key` | string | yes | DHT key |
+| `value` | string | yes | Value to store |
+| `ttl` | number | no | Time-to-live in ms |
+
+**Permission**: `network`
+
+### dht_lookup
+
+Look up a value by key in the DHT.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `key` | string | yes | DHT key to look up |
+
+**Permission**: `read`
+
+### dht_peers
+
+List peers in the DHT routing table.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `count` | number | no | 20 | Max peers to return |
+
+**Permission**: `read`
+
+### gpu_train_start
+
+Start a distributed GPU training job across mesh peers.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `jobId` | string | yes | — | Job identifier |
+| `modelConfig` | object | yes | — | Model configuration |
+| `datasetRef` | string | yes | — | Dataset reference |
+| `epochs` | number | no | 1 | Training epochs |
+| `batchSize` | number | no | 32 | Batch size |
+| `learningRate` | number | no | 0.001 | Learning rate |
+| `strategy` | string | no | — | sync_allreduce, async_parameter_server, federated_avg |
+| `shardCount` | number | no | 1 | Number of shards |
+
+**Permission**: `approve`
+
+### gpu_train_status
+
+Check the status of a distributed GPU training job.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `jobId` | string | yes | Job identifier |
+
+**Permission**: `read`
+
+### iot_list
+
+List registered IoT devices, optionally filtered by protocol or capability.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `protocol` | string | no | mqtt, http, direct, coap |
+| `capability` | string | no | read, write, stream, command |
+
+**Permission**: `read`
+
+### iot_send
+
+Send a command or payload to an IoT device.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `deviceId` | string | yes | Target device ID |
+| `payload` | object | yes | Command/payload to send |
+
+**Permission**: `approve`
+
+### iot_telemetry
+
+Query telemetry data from an IoT device.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `deviceId` | string | yes | — | Device ID |
+| `since` | number | no | — | Start timestamp |
+| `until` | number | no | — | End timestamp |
+| `stats` | boolean | no | false | Return aggregate stats instead of raw readings |
+
+**Permission**: `read`
 
 ---
 
@@ -1360,6 +1726,333 @@ Set a rule to use a specific identity when connecting to a peer.
 
 ---
 
+## Server Tools
+
+**File**: `web/clawser-server-tools.js`
+
+Tools for managing virtual HTTP servers (function/static/proxy handlers served through a Service Worker intercept). Registered via `registerServerTools()`. This entire file was previously undocumented.
+
+### server_list
+
+List all registered virtual servers (global + workspace).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `scope` | string | no | Filter by scope: `_global` or a workspace ID. Omit for all. |
+
+**Permission**: `read`
+
+### server_add
+
+Register a new virtual server route.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `hostname` | string | yes | Virtual hostname (e.g. `myapp.internal`) |
+| `type` | enum | yes | function, static, proxy, skill |
+| `port` | number | no | Port number (default: 80) |
+| `execution` | enum | no | page, sw (default: page) |
+| `code` | string | no | Inline handler code (function type) |
+| `staticRoot` | string | no | OPFS path to serve (static type) |
+| `proxyTarget` | string | no | Target URL (proxy type) |
+| `proxyRewrite` | string | no | Path rewrite rule "pattern -> replacement" (proxy type) |
+| `env` | object | no | Environment variables |
+| `scope` | string | no | `_global` or workspace ID (defaults to current workspace) |
+
+**Permission**: `approve`
+
+### server_remove
+
+Remove a registered virtual server by its route ID.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | yes | Route ID to remove |
+
+**Permission**: `approve`
+
+### server_update
+
+Update a virtual server's configuration (handler code, env vars, enabled state).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | yes | Route ID to update |
+| `code` | string | no | New handler code (function type only) |
+| `env` | object | no | Environment variables to merge |
+| `enabled` | boolean | no | Enable/disable the server |
+| `proxyTarget` | string | no | New proxy target URL |
+| `staticRoot` | string | no | New OPFS path for static serving |
+
+**Permission**: `approve`
+
+### server_start / server_stop
+
+Enable/start or disable/stop a virtual server.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | yes | Route ID |
+
+**Permission**: `approve`
+
+### server_logs
+
+Read request/response logs for a virtual server.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `id` | string | yes | — | Route ID to read logs for |
+| `limit` | number | no | 20 | Max entries to return |
+
+**Permission**: `read`
+
+### server_test
+
+Send a test HTTP request to a virtual server and return the response (routes through the SW intercept).
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `hostname` | string | yes | — | Target hostname |
+| `port` | number | no | 80 | Target port |
+| `path` | string | no | / | Request path |
+| `method` | string | no | GET | HTTP method |
+| `headers` | object | no | — | Request headers |
+| `body` | string | no | — | Request body |
+
+**Permission**: `approve`
+
+---
+
+## Chrome AI Tools
+
+**File**: `web/clawser-chrome-ai-tools.js`
+
+Wraps Chrome 138+ on-device Writer/Rewriter/Summarizer APIs (`self.ai.*` fallback for older Chrome). Registered via `registerChromeAITools()`, called directly from `clawser-app.js`. This entire file was previously undocumented.
+
+### chrome_ai_write
+
+Generate text using Chrome's on-device Writer API.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `prompt` | string | yes | Writing prompt describing what to generate |
+| `tone` | enum | no | formal, neutral (default), casual |
+| `format` | enum | no | plain-text, markdown (default) |
+| `length` | enum | no | short, medium (default), long |
+| `sharedContext` | string | no | Shared context for the writing session |
+| `context` | string | no | Per-call context for this specific write |
+
+**Permission**: `auto`
+
+### chrome_ai_rewrite
+
+Rewrite text using Chrome's on-device Rewriter API.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `text` | string | yes | The text to rewrite |
+| `tone` | enum | no | as-is (default), more-formal, more-casual |
+| `format` | enum | no | as-is (default), plain-text, markdown |
+| `length` | enum | no | as-is (default), shorter, longer |
+| `context` | string | no | Context to guide the rewriting |
+
+**Permission**: `auto`
+
+### chrome_ai_summarize
+
+Summarize text using Chrome's on-device Summarizer API.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `text` | string | yes | The text to summarize |
+| `type` | enum | no | key-points (default), tldr, teaser, headline |
+| `format` | enum | no | plain-text, markdown (default) |
+| `length` | enum | no | short, medium (default), long |
+| `context` | string | no | Context to guide summarization |
+
+**Permission**: `auto`
+
+**Notes**: All three tools throw (returning `success: false`) if the relevant Chrome AI API is unavailable on-device. These are on-device model capabilities, not LLM provider calls.
+
+---
+
+## Google Integration Tools
+
+**File**: `web/clawser-google-tools.js`
+
+Calendar/Gmail/Drive tools that call the Google APIs via `OAuthManager` (see OAuth Tools). Registered directly in `registerAllTools()`. This entire file was previously undocumented.
+
+**Caveat**: unlike other `BrowserTool` subclasses in this codebase, these classes extend a local `GoogleToolBase` that does *not* extend `BrowserTool` and has no `get permission()` override. `BrowserToolRegistry.getPermission()` falls back to `approve` for any tool whose `permission` isn't `internal`/`read`, so these tools behave as `approve` in practice, but this isn't an explicit declaration in source the way it is for other tools.
+
+### google_calendar_list
+
+List upcoming events from a Google Calendar.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `calendar_id` | string | no | primary | Calendar ID |
+| `max_results` | number | no | 10 | Max events to return |
+| `time_min` | string | no | now | Start time (ISO 8601) |
+
+**Permission**: `approve` (default fallback — see caveat above)
+
+### google_calendar_create
+
+Create a new event on Google Calendar.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `summary` | string | yes | — | Event title |
+| `start` | string | yes | — | Start time (ISO 8601) |
+| `end` | string | yes | — | End time (ISO 8601) |
+| `description` | string | no | — | Event description |
+| `location` | string | no | — | Event location |
+| `calendar_id` | string | no | primary | Calendar ID |
+
+**Permission**: `approve` (default fallback)
+
+### google_gmail_search
+
+Search Gmail messages using Gmail query syntax.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `query` | string | yes | — | Gmail search query (e.g. `from:boss subject:urgent`) |
+| `max_results` | number | no | 10 | Max messages to return |
+
+**Permission**: `approve` (default fallback)
+
+### google_gmail_send
+
+Send an email via Gmail.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `to` | string | yes | Recipient email address |
+| `subject` | string | yes | Email subject |
+| `body` | string | yes | Email body (plain text) |
+| `cc` | string | no | CC recipients (comma-separated) |
+| `bcc` | string | no | BCC recipients (comma-separated) |
+
+**Permission**: `approve` (default fallback)
+
+### google_drive_list
+
+List files in Google Drive.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `query` | string | no | — | Drive search query |
+| `max_results` | number | no | 20 | Max files to return |
+| `folder_id` | string | no | — | Folder ID to list |
+
+**Permission**: `approve` (default fallback)
+
+### google_drive_read
+
+Read metadata of a Google Drive file.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `file_id` | string | yes | Google Drive file ID |
+
+**Permission**: `approve` (default fallback)
+
+### google_drive_create
+
+Create a new file in Google Drive (metadata-only; does not upload file content).
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `name` | string | yes | — | File name |
+| `content` | string | no | — | File content (accepted but not actually uploaded — see Notes) |
+| `mime_type` | string | no | text/plain | MIME type |
+| `folder_id` | string | no | — | Parent folder ID |
+
+**Permission**: `approve` (default fallback)
+**Notes**: Source comment states this uses "metadata-only upload"; the `content` parameter is currently not sent to the Drive API.
+
+---
+
+## Linear Integration Tools
+
+**File**: `web/clawser-linear-tools.js`
+
+Tools that call the Linear GraphQL API (`https://api.linear.app/graphql`) via `OAuthManager`. Registered directly in `registerAllTools()`. This entire file was previously undocumented. Same caveat as Google Integration Tools above: classes extend a local `LinearToolBase` that doesn't extend `BrowserTool`, so permission resolves to `approve` via the registry's default fallback rather than an explicit declaration.
+
+### linear_issues
+
+List or search Linear issues with optional filters.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `team_id` | string | no | — | Filter by team ID |
+| `state_name` | string | no | — | Filter by state name (e.g. "In Progress") |
+| `assignee_id` | string | no | — | Filter by assignee user ID |
+| `first` | number | no | 20 | Max issues to return |
+| `query` | string | no | — | Search query string |
+
+**Permission**: `approve` (default fallback)
+
+### linear_create_issue
+
+Create a new issue in Linear.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `title` | string | yes | Issue title |
+| `team_id` | string | yes | Team ID to create the issue in |
+| `description` | string | no | Issue description (Markdown) |
+| `priority` | number | no | 0=none, 1=urgent, 2=high, 3=medium, 4=low |
+| `assignee_id` | string | no | Assignee user ID |
+| `label_ids` | array | no | Label IDs to attach |
+
+**Permission**: `approve` (default fallback)
+
+### linear_update_issue
+
+Update an existing Linear issue.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_id` | string | yes | Issue ID to update |
+| `title` | string | no | New title |
+| `description` | string | no | New description |
+| `state_name` | string | no | New state name (e.g. "Done") |
+| `priority` | number | no | New priority level |
+| `assignee_id` | string | no | New assignee user ID |
+
+**Permission**: `approve` (default fallback)
+
+---
+
+## Chrome Extension Bridge Tools
+
+**File**: `web/clawser-extension-tools.js`
+
+**37 tools** (`ext_*`) that proxy actions through the companion Clawser Chrome Extension via an RPC bridge, for controlling the user's real Chrome tabs (as opposed to the automated/headless sessions of the Browser Automation Tools). Registered via `registerExtensionTools()`, called directly from `clawser-workspace-init-tools.js`. This entire file was previously undocumented. All calls fail gracefully with `success: false` if the extension isn't connected, and check a required `capability` (e.g. `tabs`, `scripting`, `cookies`, `network`) before calling through.
+
+| Category | Count | Tools |
+|----------|-------|-------|
+| Status & info | 2 | `ext_status` (read), `ext_capabilities` (read) |
+| Tabs | 5 | `ext_tabs_list` (read), `ext_tab_open` (approve), `ext_tab_close`, `ext_tab_activate`, `ext_tab_reload` |
+| Navigation | 3 | `ext_navigate`, `ext_go_back`, `ext_go_forward` |
+| Screenshots & window | 3 | `ext_screenshot`, `ext_resize`, `ext_zoom` |
+| DOM | 4 | `ext_read_page`, `ext_find`, `ext_get_text`, `ext_get_html` |
+| Input | 9 | `ext_click`, `ext_double_click`, `ext_triple_click`, `ext_right_click`, `ext_hover`, `ext_drag`, `ext_scroll`, `ext_type`, `ext_key` |
+| Form | 2 | `ext_form_input`, `ext_select_option` |
+| Monitoring | 2 | `ext_console`, `ext_network` |
+| Execution | 2 | `ext_evaluate`, `ext_wait` |
+| Cookies | 1 | `ext_cookies` |
+| WebMCP | 1 | `ext_webmcp_discover` |
+| Tab watch | 3 | `ext_watch_tab`, `ext_watch_poll`, `ext_watch_stop` |
+
+**Permission**: mostly `read` for list/query-style tools (`ext_status`, `ext_capabilities`, `ext_tabs_list`) and `approve` for anything that acts on a tab (open/close/navigate/click/type/etc.) — see individual tool classes in source for exact per-tool values.
+**Notes**: Tool output is capped at 100,000 characters (truncated with a notice beyond that). Screenshots taken via the extension bridge (`createExtensionBridge()`) are written to OPFS at `clawser_screenshots/` rather than returned inline, to avoid context overflow.
+
+---
+
 ## MCP Tools (Dynamic)
 
 **File**: `web/clawser-mcp.js`
@@ -1380,7 +2073,7 @@ Not a tool itself — Codex is the code execution engine for non-native-tool pro
 
 | Category | File | Count |
 |----------|------|-------|
-| Core browser | clawser-tools.js | 19 + 8 agent |
+| Core browser | clawser-tools.js | 23 + 6 agent |
 | Browser automation | clawser-browser-auto.js | 8 |
 | Git | clawser-git.js | 6 |
 | Channels | clawser-channels.js | 3 |
@@ -1388,10 +2081,10 @@ Not a tool itself — Codex is the code execution engine for non-native-tool pro
 | Skills | clawser-skills.js | 7 |
 | Tool builder | clawser-tool-builder.js | 5 |
 | Enhanced goals | clawser-goals.js | 4 |
-| Routines | clawser-routines.js | 4 |
-| Undo | clawser-undo.js | 2 |
+| Routines | clawser-routines.js | 7 |
+| Undo | clawser-undo.js | 3 |
 | Heartbeat | clawser-heartbeat.js | 2 |
-| wsh | clawser-wsh-tools.js | 10 |
+| wsh | clawser-wsh-tools.js | 27 |
 | Delegation | clawser-delegate.js | 1 |
 | Self-repair | clawser-self-repair.js | 2 |
 | Mount | clawser-mount.js | 2 |
@@ -1401,8 +2094,32 @@ Not a tool itself — Codex is the code execution engine for non-native-tool pro
 | OAuth | clawser-oauth.js | 4 |
 | Auth profiles | clawser-auth-profiles.js | 3 |
 | Sandbox | clawser-sandbox.js | 2 |
-| Shell | clawser-shell.js | 1 (wraps 59 commands) |
-| Mesh streams/files | clawser-mesh-tools.js | 7 |
+| Shell | clawser-shell.js | 1 (wraps 67 commands) |
+| Mesh streams/files/DHT/GPU/IoT | clawser-mesh-tools.js | 15 |
 | Mesh identity | clawser-mesh-identity-tools.js | 8 |
+| Server | clawser-server-tools.js | 8 |
+| Chrome AI | clawser-chrome-ai-tools.js | 3 |
+| Google integration | clawser-google-tools.js | 7 |
+| Linear integration | clawser-linear-tools.js | 3 |
+| Chrome extension bridge | clawser-extension-tools.js | 37 |
 | MCP | clawser-mcp.js | dynamic |
-| **Total** | | **~115 named tools** |
+| **Total (cataloged above)** | | **~210 named tools** |
+
+**Known gaps — registered but not yet cataloged in this file** (found during a source audit; add sections for these if/when this doc is next revised):
+
+| File | Approx. tool count |
+|------|---------------------|
+| clawser-model-tools.js (model_list/pull/remove/status, transcribe, speak, caption, ocr, detect_objects, classify_image, classify_text) | 11 |
+| clawser-netway-tools.js (netway_connect/listen/send/read/close/resolve/status/udp_send) | 8 |
+| clawser-notion-tools.js | 4 |
+| clawser-slack-tools.js | 3 |
+| clawser-integration-github.js (PR review, issue create, code search) | 3 |
+| clawser-integration-calendar.js | 3 |
+| clawser-integration-email.js | 3 |
+| clawser-integration-slack.js (monitor/draft-response) | 2 |
+| clawser-cors-fetch.js (`ext_cors_fetch`) | 1 |
+| clawser-mesh-peer-tools.js (chat, scheduler, federated compute, swarms, escrow, router, ACL, gateway, torrent/IPFS, credits, migration/delta-sync) | ~29 |
+| clawser-mesh-orchestrator.js (`meshctl_*` builtins) | 8 |
+| clawser-mesh-devtools.js (`MeshInspectTool`, conditionally registered) | 1 |
+
+Including these gaps, the real total is closer to **~285 registered tools app-wide** — the "~100 tools" figure in this file's introduction and in the top-level `CLAUDE.md` is significantly stale and should be treated as a rough historical figure, not a current count.

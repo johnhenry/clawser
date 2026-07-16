@@ -406,8 +406,9 @@ function detectPodKind(global: typeof globalThis): PodKind {
     return 'window';
   }
 
-  // Unknown context
-  return 'unknown';
+  // Unknown context - default to top-level window (see pod-types.md, which
+  // has no 'unknown' member in its PodKind union)
+  return 'window';
 }
 ```
 

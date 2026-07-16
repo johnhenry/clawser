@@ -115,9 +115,9 @@ Group key messages use type codes 0x80-0x83, in the Group (0x8*) block.
 // Wire format additions to MessageType enum
 enum GroupMessageType {
   GROUP_KEY_DISTRIBUTE = 0x80,
-  GROUP_KEY_ACK        = 0x81,
-  GROUP_KEY_ROTATE     = 0x82,
-  GROUP_KEY_REQUEST    = 0x83,
+  GROUP_KEY_ROTATE     = 0x81,
+  GROUP_KEY_REQUEST    = 0x82,
+  GROUP_KEY_ACK        = 0x83,
 }
 ```
 
@@ -136,11 +136,11 @@ interface GroupKeyDistributeMessage extends MessageEnvelope {
 }
 ```
 
-### 5.2 GROUP_KEY_ACK (0x81)
+### 5.2 GROUP_KEY_ACK (0x83)
 
 ```typescript
 interface GroupKeyAckMessage extends MessageEnvelope {
-  t: 0x81;
+  t: 0x83;
   p: {
     groupId: string;
     epoch: number;
@@ -149,13 +149,13 @@ interface GroupKeyAckMessage extends MessageEnvelope {
 }
 ```
 
-### 5.3 GROUP_KEY_ROTATE (0x82)
+### 5.3 GROUP_KEY_ROTATE (0x81)
 
 Sent when the group key rotates (member removal, periodic rotation, or explicit request).
 
 ```typescript
 interface GroupKeyRotateMessage extends MessageEnvelope {
-  t: 0x82;
+  t: 0x81;
   p: {
     groupId: string;
     epoch: number;               // New epoch number
@@ -166,13 +166,13 @@ interface GroupKeyRotateMessage extends MessageEnvelope {
 }
 ```
 
-### 5.4 GROUP_KEY_REQUEST (0x83)
+### 5.4 GROUP_KEY_REQUEST (0x82)
 
 Sent by a member who has missed a rotation and needs the current key.
 
 ```typescript
 interface GroupKeyRequestMessage extends MessageEnvelope {
-  t: 0x83;
+  t: 0x82;
   p: {
     groupId: string;
     lastKnownEpoch: number;

@@ -268,9 +268,11 @@ Read-only virtual filesystem at /proc/clawser/ that exposes live runtime state a
 
 **API surface:**
 
-- `ProcFs`
+- `ProcFileHandler`
+- `registerProcGenerators`
+- `VirtualFs`
 
-> **Note:** Phase 2 of Unix filesystem architecture. cat /proc/clawser/status returns live agent state as JSON.
+> **Note:** Phase 2 of Unix filesystem architecture. cat /proc/clawser/status returns live agent state as JSON. `/proc/clawser/workspaces` lists every workspace's id, name, resolved `/home/<name>` path, and active marker — see Shell's "Workspace Home" entry for the naming rules.
 
 ---
 

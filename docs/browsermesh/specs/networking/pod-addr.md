@@ -493,3 +493,7 @@ class PodAddrConverter {
 ```
 
 > **Cross-reference**: See [identity-keys.md §14](../crypto/identity-keys.md#14-multiple-address-formats) for Pod ID (not PodAddr) format conversions, and Base58Check implementation details.
+
+## 13. Implementation Status
+
+**Status: Not implemented.** No `PodAddrClaim`, `deriveAddress()`/`deriveAddressKDF()`, `AddrTable`, or `PodAddrConverter` exists in `web/` or `packages/`. Pod identity today is addressed directly by base64url-encoded public key / fingerprint (see [name-resolution.md](name-resolution.md), [message-envelope.md](message-envelope.md)); there is no IPv6-shaped `PodAddr` derivation layer in the shipped code.

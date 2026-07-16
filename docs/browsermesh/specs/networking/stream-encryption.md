@@ -282,3 +282,7 @@ async function handleEncryptedChunk(
   }
 }
 ```
+
+## 10. Implementation Status
+
+**Status: Not implemented.** `web/clawser-mesh-streams.js` ([direct-stream.md](direct-stream.md), [streaming-protocol.md](streaming-protocol.md)) tracks and forwards the `encrypted` boolean on `STREAM_OPEN`/`MeshStream` as a plain pass-through flag — it has no `deriveStreamKey()`, HKDF sub-key derivation, AES-GCM chunk encryption, or nonce construction. Setting `encrypted: true` today changes nothing about how chunk bytes are transmitted; this spec's key isolation and transparent-encryption guarantees are aspirational, not enforced.

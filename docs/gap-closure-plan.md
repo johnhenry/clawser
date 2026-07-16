@@ -48,6 +48,34 @@ Date: 2026-05-02 (last verified 2026-05-03 vault Option F pass)
 > Authoritative per-item status lives in `docs/implementation-status.md`;
 > the matrix in `docs/cross-validation-2026-05-02.md` Pass 5 cross-checks
 > all four status files for coherence.
+>
+> **Note (2026-07-16):** `docs/implementation-status.md` is a dated
+> snapshot (last verified 2026-05-02/03) and has not been kept current —
+> see `OUTSTANDING.md` (repo root) and `CHANGELOG.md` for what's shipped
+> since.
+>
+> **Doc-audit spot-check (2026-07-16):** re-grepped the individual item
+> write-ups below against current code, since only A3/A6 carry inline
+> "Shipped" callouts even though the summary above says all of Batch 1 + 2
+> is done. Confirmed still true in code (no further doc changes needed,
+> just noting it here so the individual sections aren't mistaken for open
+> work): **A1** (`injectEnvIntoShell` is called from
+> `clawser-shell-factory.js`), **A2** (`clawser-workspace-lifecycle.js`
+> registers all five remaining `fsUiSync` panels: identity, security,
+> daemon, terminal, hooks), **A4** (`clawser-workspace-lifecycle.js`
+> builds a `hardwareAdapters` map and passes it to `initDeviceFs`), **A7**
+> (`getCompletions()` tab-completion lives in `clawser-shell.js`), **A9**
+> (`clawser-did-key.mjs` implements the W3C `did:key` multicodec — Ed25519
+> prefix `0xed 0x01` + base58btc), **B1–B4** (`ClawserPod` constructs
+> `MeshNameResolver`, `MigrationEngine`, `MeshRelayClient`, and
+> `AppRegistry`/`AppStore` in its init sequence), and **G1**
+> (`state.tunnelManager = new TunnelManager()` in `clawser-app.js`). **A5**
+> (workspaces.json) shipped via a different mechanism than originally
+> specified: `clawser-workspaces.js` keeps `loadWorkspaces()`/
+> `saveWorkspaces()` synchronous (not the `async` rewrite this doc
+> proposed) backed by an in-memory cache with an async OPFS persist and a
+> localStorage fallback for early-boot/uncached reads — same end result
+> (OPFS-first, localStorage safety net), different shape.
 
 Source: `docs/implementation-status.md` — every non-Done item in that ledger
 gets a planned closure here. Each entry has acceptance criteria, approach, test
@@ -945,7 +973,6 @@ Total estimated effort: ~14-18 hours.
 | C5 | PBFT end-to-end with validators | XL research-grade |
 | C6 | Payment channel settlement + escrow | Depends on rollup decision |
 | C7 | Mesh observability (3 sub-items) | Wire-format change needed |
-| C8 | Remote peers as deploy targets | Security-sensitive; depends on B4 maturity |
 | C9 | Native messaging for system tools | Cross-repo (extension + local binary) |
 | D2 | Hot-reload arbitrary extensions | State leak risk |
 | E1 | SW wake-on-message | Cross-browser SW lifetime |

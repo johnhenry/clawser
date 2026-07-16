@@ -57,11 +57,21 @@ Collects all tools from all plugins into a flat array. Each tool is annotated wi
 
 Collects all hooks from all plugins into `{ hookName: [fn1, fn2, ...] }`. Multiple plugins can register the same hook — they execute in registration order.
 
+### `enable(name)`
+
+Re-enable a previously disabled plugin. Returns `true` if found, `false` otherwise.
+
+### `disable(name)`
+
+Disable a plugin without unregistering it — the plugin stays in `list()`/`get()` but is excluded from `getTools()` and `getHooks()`. Returns `true` if found, `false` otherwise.
+
 ### `size`
 
 Number of registered plugins.
 
 ## Hook Points
+
+**Note:** `PluginLoader` is currently a standalone extension point — nothing in the codebase calls `getHooks()`/`getTools()` yet (`clawser-plugins.js` has no other importers outside its own tests). The hook names below match the agent's real `HookPipeline` lifecycle points (`HOOK_POINTS` in `clawser-agent.js`), so a future integration can wire plugin hooks into the same pipeline, but as of today registering a plugin hook has no runtime effect on the agent.
 
 Plugins can register callbacks for these hooks:
 
@@ -113,6 +123,6 @@ loader.unregister('analytics');  // true
 
 ## Related Files
 
-- `web/clawser-plugins.js` — PluginLoader class (102 LOC)
+- `web/clawser-plugins.js` — PluginLoader class (133 LOC)
 - `web/clawser-tools.js` — Built-in tool registry
 - `web/clawser-skills.js` — Skills system (similar extension mechanism)

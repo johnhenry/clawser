@@ -171,3 +171,18 @@ Enforcement is handled by the consuming module (e.g., tools, providers).
 - **Revocation propagation**: `revokeAll()` immediately invalidates all grants for an identity. Revocations are local; cross-pod revocation uses `ACL_REVOKE` wire messages.
 - **Owner bypass**: The pod owner always has full access and cannot be removed from the roster.
 - **Template immutability**: Default templates are frozen. Custom templates can be added/removed by the owner only.
+
+## 10. Implementation Status
+
+**Status**: Fully implemented as `MeshACL` (with `ScopeTemplate`, `RosterEntry`,
+`InvitationToken`) in `clawser-mesh-acl.js`, wrapping `mesh-primitives`'
+`ACLEngine`. Wired to app bootstrap via `ClawserPod.initMesh()`, exposed as
+`pod.meshACL`. `ACL_GRANT`/`ACL_REVOKE`/`ACL_INVITE` (`0xAC`/`0xAD`/`0xAE`) are
+defined in the canonical constants registry, but nothing in `web/` or
+`packages/` currently constructs or sends these wire messages -- roster
+management, invitations, and revocation (§9) are local-only today, matching
+this doc's own note that "cross-pod revocation uses `ACL_REVOKE` wire
+messages" as a stated gap rather than shipped behavior.
+
+**Source**: `web/clawser-mesh-acl.js` | `packages/browsermesh-core/src/acl.mjs`
+| Unit tests: `web/test/clawser-mesh-acl.test.mjs`

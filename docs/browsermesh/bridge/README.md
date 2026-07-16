@@ -1,5 +1,13 @@
 # BrowserMesh Server Bridge
 
+> **Implementation status**: `WebTransportBridge` is implemented (`packages/browsermesh-transport/src/webtransport.mjs`).
+> WebSocket-side transports exist under different names (`WebSocketTransport`, `WebRTCTransport`,
+> `WebTransportTransport`, `NATTraversal`, `TransportFactory` in `packages/browsermesh-transport/src/websocket.mjs`)
+> rather than the `WebSocketBridge` class shown below. `RpcClient`/`RpcServer`,
+> `ReconnectionManager`/`ResilientBridge`, and all of the External Ecosystem Bridge adapters in
+> §7 (OCI, S3, Git, NATS/Kafka, Matrix/Slack, Postgres/Redis) are doc-only — no such classes
+> exist in the codebase yet.
+
 ## 1. Overview
 
 The Server Bridge enables browser pods to communicate with external servers, providing:

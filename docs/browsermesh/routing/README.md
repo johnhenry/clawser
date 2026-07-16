@@ -1,5 +1,14 @@
 # BrowserMesh Mesh Routing
 
+> **Implementation status**: Discovery is implemented in `packages/browsermesh-discovery/src/discovery.mjs`
+> (`DiscoveryManager`, `BroadcastChannelStrategy`, `SharedWorkerRelayStrategy`, etc.), but not
+> under the `MeshCoordinator`/`SlotManager`/`HeartbeatManager` names used below. A class named
+> `RoutingTable` does exist (`packages/browsermesh-discovery/src/dht.mjs`), but it's the Kademlia
+> k-bucket table for DHT routing (`addContact`/`removeContact`/`getBucketIndex`) — a different
+> API from the `upsert`/`resolve`/`byOrigin`/`gc` table described in §2. The advanced routing
+> strategies in §8 (consistent hashing, sticky sessions, circuit breaker, hedged requests) and the
+> backpressure/failure-detection machinery in §9–10 are doc-only.
+
 ## 1. Discovery Protocol
 
 Pods discover each other through multiple complementary mechanisms, operating in parallel.

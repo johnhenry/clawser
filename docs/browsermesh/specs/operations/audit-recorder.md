@@ -8,7 +8,7 @@ Source: `web/clawser-mesh-audit.js`
 
 ## Wire Codes
 
-Imported from the canonical registry (`web/packages/mesh-primitives/src/constants.mjs`):
+Imported from the canonical registry (`browsermesh-primitives` package's `src/constants.mjs`, re-exported into `web/` via `web/packages-mesh-primitives.js`):
 
 | Name                  | Code   | Description                          |
 |-----------------------|--------|--------------------------------------|
@@ -102,11 +102,11 @@ Verifies a Merkle inclusion proof against an expected root.
 
 - All classes and functions are fully implemented with cryptographic operations via Web Crypto API (`crypto.subtle`).
 - Wire codes imported from the canonical registry.
-- `AuditChain` and `AuditStore` are instantiated during `ClawserPod.initMesh()` mesh initialization.
-- Uses `encodeBase64url` / `decodeBase64url` from `web/packages/mesh-primitives/src/index.mjs` for binary serialization.
+- `AuditChain` is instantiated during `ClawserPod.initMesh()` mesh initialization (exposed via `pod.auditChain`). `AuditStore` is defined and exported but is not currently instantiated anywhere in application code — it is available for callers that need to manage multiple named chains.
+- Uses `encodeBase64url` / `decodeBase64url` from `web/packages-mesh-primitives.js` (which re-exports the `browsermesh-primitives` package) for binary serialization.
 - Ed25519 signing and verification use the Web Crypto API directly.
 - Test file: `web/test/clawser-mesh-audit.test.mjs`
 
 ## Source File Reference
 
-`web/clawser-mesh-audit.js` -- 623 lines, imports from `web/packages/mesh-primitives/src/index.mjs` and `web/packages/mesh-primitives/src/constants.mjs`.
+`web/clawser-mesh-audit.js` -- ~620 lines, imports from `web/packages-mesh-primitives.js` (the re-export bridge to the `browsermesh-primitives` package).

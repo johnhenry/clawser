@@ -97,6 +97,35 @@ ShellFs and MemoryFs implementations that back the shell's filesystem operations
 
 ---
 
+### Workspace Home (`/home/<name>`)
+
+**Status:** ✅ Implemented · **Category:** filesystem · **Since:** v2.1.0
+
+Each workspace gets a stable `/home/<name>` directory in the shell view, derived from the workspace's user-facing `name` (not its internal `ws_<base36>_<rand>` storage id). Names are lowercased, NFKD-normalized (non-ASCII dropped), restricted to `a-z0-9_-`, and collisions are resolved with a stable numeric suffix (`-2`, `-3`, …) in workspace-list order. The `default` workspace always keeps the bare name `default`; reserved top-level names (`proc`, `etc`, `dev`, `home`, `bin`, …) fall back to `workspace` if a workspace happens to sanitize to one of them.
+
+**Source files:**
+
+- `web/clawser-workspace-name.mjs`
+- `web/clawser-home-views.js`
+
+**API surface:**
+
+- `sanitizeWorkspaceName`
+- `buildSanitizedNameMap`
+- `activeSanitizedName`
+- `wsIdForSanitizedName`
+- `renderHomeWorkspaceList`
+- `renderHomeAccountList`
+
+> **Note:** `cat /proc/clawser/workspaces` lists every workspace's id, name, resolved `/home/<name>` path, and whether it's active — see the `/proc Virtual Filesystem` entry in Workspace. Example: "Café" sanitizes to `cafe`, "My Project" to `my-project`; a second workspace also named "My Project" becomes `my-project-2`.
+
+**See also:**
+
+- OPFS Filesystem
+- [Workspace: /proc Virtual Filesystem](./workspace.md)
+
+---
+
 ### Pipes and Redirects
 
 **Status:** ✅ Implemented · **Category:** pipes · **Since:** v1.0.0

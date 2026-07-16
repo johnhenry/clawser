@@ -8,23 +8,25 @@ Append-only JSONL event log for conversation persistence.
 
 **Storage:** OPFS at `clawser_workspaces/{wsId}/.conversations/{convId}/events.jsonl`
 
-**Event types:** `user_message`, `agent_message`, `tool_call`, `tool_result`, `tool_result_truncated`, `error`, `autonomy_blocked`, `cache_hit`, `context_compacted`, `memory_stored`, `memory_forgotten`, `goal_added`, `goal_updated`, `scheduler_added`, `scheduler_fired`, `scheduler_removed`, `safety_input_flag`, `safety_tool_blocked`, `safety_output_blocked`, `safety_output_redacted`, `provider_error`, `stream_error`, `channel_inbound`, `channel_outbound`
+**Event types:** `user_message`, `agent_message`, `tool_call`, `tool_result`, `tool_result_truncated`, `error`, `autonomy_blocked`, `idle_resume`, `cache_hit`, `context_compacted`, `memory_stored`, `memory_forgotten`, `goal_added`, `goal_updated`, `goal_edited`, `goal_removed`, `scheduler_added`, `scheduler_fired`, `scheduler_removed`, `safety_input_flag`, `safety_tool_blocked`, `safety_output_blocked`, `safety_output_redacted`, `provider_error`, `stream_error`, `channel_inbound`, `channel_outbound` (the canonical set replayed/audited inside `clawser-agent.js` is exported as `KNOWN_EVENT_TYPES`; `channel_inbound`/`channel_outbound` are appended separately via `agent.recordEvent()` from `clawser-gateway.js`)
 
-**Compaction:** When token count exceeds ~12K tokens, older messages are summarized into a single `system` event containing the conversation summary. This keeps context manageable while preserving essential history.
+**Compaction:** When proactive history-token estimate exceeds ~12K tokens (`compactionThreshold`), `compactContext()` replaces older messages with a single `user`-role summary message followed by a canned assistant acknowledgment (see "Context Compaction" below), and emits a `context_compacted` event. The summary is not stored as a `system`-role message.
 
-**Recovery:** On load, events are replayed to reconstruct conversation state. State snapshots (periodic) allow fast-forward recovery — replay from last snapshot instead of beginning.
+**Recovery:** On load (`restoreConversation()`), the full `events.jsonl` file is parsed via `EventLog.fromJSONL()` and replayed in one pass via `deriveSessionHistory()`/`deriveGoals()` to reconstruct conversation state. There is no periodic state-snapshot/fast-forward mechanism — every restore replays the entire event log from the beginning.
 
 ## HookPipeline (clawser-agent.js)
 
 Hooks execute in a defined order around agent operations:
 
 ```
-beforeInbound → beforeToolCall → beforeOutbound → [LLM call] → transformResponse
+beforeInbound → [ LLM call → beforeToolCall ]* (tool iterations, 0 or more) → beforeOutbound → transformResponse
 ```
 
-Session lifecycle hooks: `onSessionStart`, `onSessionEnd`
+`beforeInbound` fires once per `run()`/`runStream()` call, against the last user message. Each tool call the model requests fires `beforeToolCall` individually (inside the tool-execution loop, interleaved with further LLM calls when the model chains tool use). Once a final textual response is ready — whether from a fresh LLM call, the response cache, or Codex execution — `beforeOutbound` fires once, immediately followed by `transformResponse`. Session lifecycle hooks `onSessionStart`/`onSessionEnd` are separate: `onSessionStart` fires on the first `sendMessage()` of a session; `onSessionEnd` fires from `clearHistory()`/`reinit()` when there is existing history.
 
-**Error isolation:** Each hook runs in a try/catch. A failing hook logs but doesn't block the pipeline.
+**Registration:** `register()` takes a single hook descriptor `{name, point, priority?, enabled?, execute}` (not `register(point, hook)`); hooks at a point run in ascending `priority` order (default 100). `unregister(name, point)` removes by name+point. `setEnabled(name, enabled)` toggles a hook without removing it.
+
+**Error isolation:** Each hook runs in a try/catch. A failing hook logs but doesn't block the pipeline (fail-open).
 
 **Hook sources:** Agent core hooks, plugin hooks (via `PluginLoader.getHooks()`), skill hooks (active skill metadata).
 
@@ -98,7 +100,7 @@ Three-stage defense pipeline:
 
 **Categories:** `core`, `learned`, `user`, `context`
 
-**Deduplication:** On workspace init, memory entries are scanned. Entries with identical `key` values are merged (newer wins).
+**Deduplication:** On workspace init (`memoryHygiene()`, called right after `restoreMemories()`), entries are scanned and deduplicated by the composite `category:key` pair (not `key` alone) — newest timestamp wins. The same pass also purges non-`core` entries older than the configured `maxAge`.
 
 **Embedding providers:**
 - `TransformersEmbeddingProvider` — Local browser-based embeddings via `@xenova/transformers` CDN (384-dim MiniLM-L6-v2)
@@ -144,9 +146,7 @@ Each workspace gets:
 
 ## Daemon Mode (clawser-daemon.js)
 
-**State machine phases:** `STOPPED → STARTING → RUNNING → CHECKPOINTING → RECOVERING → PAUSED → ERROR`
-
-Valid transitions are enforced. Invalid transitions silently fail (return `false`).
+**State machine phases:** `stopped`, `starting`, `running`, `checkpointing`, `paused`, `recovering`, `error` — not a linear sequence. Valid transitions are enforced via an explicit adjacency table (e.g. `running` → `checkpointing`/`paused`/`stopped`/`error`; `checkpointing` and `paused` both return only to `running`; `error` → `starting`/`stopped`). Invalid transitions silently fail (return `false`). Note: `recovering` is a defined phase with its own outgoing transitions (`recovering` → `running`/`error`), but no code path currently transitions *into* it — it's reserved for future use.
 
 **CheckpointManager:** Stores agent state snapshots. Configurable max checkpoints (default 10). Uses injectable `readFn`/`writeFn` for storage abstraction.
 
@@ -164,9 +164,9 @@ Stack-based undo/redo with per-turn checkpoints.
 
 **Limits:** Configurable `maxHistory` (default 20). Oldest checkpoints discarded when exceeded.
 
-## Pod Subsystem (packages/pod/ + clawser-pod.js)
+## Pod Subsystem (browsermesh-pod npm package + clawser-pod.js)
 
-The Pod base class has zero Clawser dependencies. It imports only `PodIdentity` from `packages/mesh-primitives/src/identity.mjs` for Ed25519 key generation.
+The Pod base class lives in the external `browsermesh-pod` npm package (`node_modules/browsermesh-pod/src/pod.mjs`), re-exported for internal use via the bridge module `web/packages-pod.js`. It has zero Clawser dependencies — it imports only `PodIdentity` from the sibling `browsermesh-primitives` package for Ed25519 key generation.
 
 **Boot lifecycle:** `idle → booting → ready → shutdown`. Boot runs 6 phases sequentially. If any phase throws, state resets to `idle` and `error` event fires.
 
@@ -174,7 +174,7 @@ The Pod base class has zero Clawser dependencies. It imports only `PodIdentity` 
 
 **Message routing:** `POD_MESSAGE`, `POD_RPC_REQUEST`, and `POD_RPC_RESPONSE` are delivered to the target pod via BroadcastChannel. Messages addressed to `'*'` (broadcast) are delivered to all peers. The `_onMessage()` hook allows subclasses to handle incoming messages.
 
-**ClawserPod.initMesh():** Creates `MeshIdentityManager` → `IdentityWallet` → `PeerRegistry` → `PeerNode` → `SwarmCoordinator` and returns `{ peerNode, swarmCoordinator }`. These are attached to `state.peerNode` and `state.swarmCoordinator` by `initMeshSubsystem()` in workspace lifecycle.
+**ClawserPod.initMesh():** Creates `MeshIdentityManager` → `IdentityWallet` → `PeerRegistry` → `PeerNode` → `SwarmCoordinator`, plus 25+ other mesh components (transport negotiation, audit chain, sync engine, marketplace, consensus, remote runtime registry, etc. — see `docs/browsermesh/`), and returns all of them as a single object (including `{ peerNode, swarmCoordinator, ... }`). `peerNode`/`swarmCoordinator` are attached to `state.peerNode` and `state.swarmCoordinator` by `initMeshSubsystem()` in workspace lifecycle. Tears down and recreates the peer node if one is already running, so it's safe to call multiple times.
 
 **Runtime marker:** `globalThis[Symbol.for('pod.runtime')]` stores `{ podId, kind, capabilities, pod }`. The extension injection IIFE checks this to prevent double-injection.
 
@@ -189,6 +189,6 @@ The Pod base class has zero Clawser dependencies. It imports only `PodIdentity` 
 - `web/clawser-memory.js` — Memory categories, embeddings, BM25
 - `web/clawser-daemon.js` — Daemon state machine, checkpoints, tab coordination
 - `web/clawser-undo.js` — Undo/redo stack
-- `web/packages/pod/src/pod.mjs` — Pod base class (boot, discovery, messaging)
+- `node_modules/browsermesh-pod/src/pod.mjs` (via `web/packages-pod.js`) — Pod base class (boot, discovery, messaging)
 - `web/clawser-pod.js` — ClawserPod (Pod + mesh networking)
 - `web/clawser-embed.js` — EmbeddedPod (embeddable pod for external apps)

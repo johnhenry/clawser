@@ -83,14 +83,19 @@
 - name: Discord Channel
   status: implemented
   description: >
-    Discord bot integration via WebSocket gateway. Supports text channels and DMs.
-    Requires Discord bot token. Fully self-contained — no server needed, the
-    browser tab connects directly to Discord's Gateway.
+    Discord bot integration via WebSocket gateway. Supports text channels in
+    guilds. Requires Discord bot token. Fully self-contained — no server
+    needed, the browser tab connects directly to Discord's Gateway.
   files:
     - web/clawser-channel-discord.js
   api:
     - DiscordChannel
   category: adapter
+  notes: >
+    Default gateway intents (33281 = GUILDS + GUILD_MESSAGES + MESSAGE_CONTENT)
+    do NOT include DIRECT_MESSAGES, so DMs are not received out of the box.
+    Pass a custom `intents` bitmask (opts.intents, with the DIRECT_MESSAGES
+    bit added) to receive DMs.
   since: "1.0.0"
   see_also:
     - "[Setup walkthrough](../docs/channel-setup/discord.md)"
@@ -119,14 +124,19 @@
 - name: Telegram Channel
   status: implemented
   description: >
-    Telegram bot integration via long-polling. Supports text messages, images,
-    and inline keyboards. Fully self-contained — no server needed.
+    Telegram bot integration via long-polling. Supports text messages only —
+    `createInboundMessage()` hardcodes `attachments: []` and there is no
+    image or inline-keyboard support (inbound or outbound). Fully
+    self-contained — no server needed.
   files:
     - web/clawser-channel-telegram.js
   api:
     - TelegramChannel
   category: adapter
-  notes: Requires bot token from BotFather.
+  notes: >
+    Requires bot token from BotFather. Images/attachments and inline
+    keyboards are not implemented; tracked as a gap, not a documentation
+    omission.
   since: "1.0.0"
   see_also:
     - "[Setup walkthrough](../docs/channel-setup/telegram.md)"
