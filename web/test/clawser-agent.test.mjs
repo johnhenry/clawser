@@ -12,6 +12,7 @@ import {
   HOOK_POINTS,
   createAuditLoggerHook,
 } from '../clawser-agent.js'
+import { PolicyEngine } from '../clawser-policy-engine.js'
 
 // ── Stubs & Helpers ──────────────────────────────────────────────────
 
@@ -520,12 +521,25 @@ describe('AutonomyController', () => {
     })
 
     it('respects PolicyEngine deny', () => {
+      // Matches the real PolicyEngine.evaluateToolCall contract:
+      // {valid, issues}, not {allowed, reason} (see clawser-policy-engine.js).
       const ac = new AutonomyController({ level: 'supervised' })
       ac.setPolicyEngine({
-        evaluateToolCall: (name) => ({ allowed: name !== 'dangerous_tool' }),
+        evaluateToolCall: (name) => name === 'dangerous_tool'
+          ? { valid: false, issues: ['blocked'] }
+          : { valid: true, issues: [] },
       })
       assert.equal(ac.canExecuteTool({ permission: 'write', name: 'safe_tool' }), true)
       assert.equal(ac.canExecuteTool({ permission: 'write', name: 'dangerous_tool' }), false)
+    })
+
+    it('respects a real PolicyEngine instance end-to-end', () => {
+      const engine = new PolicyEngine()
+      engine.addRule({ name: 'block-eval', target: 'tool', condition: { type: 'tool_name', value: 'eval_js' }, action: 'block' })
+      const ac = new AutonomyController({ level: 'supervised' })
+      ac.setPolicyEngine(engine)
+      assert.equal(ac.canExecuteTool({ permission: 'write', name: 'eval_js' }), false)
+      assert.equal(ac.canExecuteTool({ permission: 'write', name: 'browser_echo' }), true)
     })
   })
 

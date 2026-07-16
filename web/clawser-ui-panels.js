@@ -66,6 +66,7 @@ export {
   getCostTracker,
   recordCostEvent,
   renderHooksSection,
+  renderPolicySection,
   initIdentityEditor,
   renderCheckpointSection,
   renderFallbackChainEditor,
@@ -107,6 +108,7 @@ import {
   getCostTracker,
   recordCostEvent,
   renderHooksSection,
+  renderPolicySection,
   initIdentityEditor,
   renderCheckpointSection,
   renderFallbackChainEditor,
@@ -2155,6 +2157,7 @@ export function initPanelListeners() {
   bindToggle('cleanConvToggle', 'cleanConvSection', 'cleanConvArrow', () => renderCleanConversationsSection());
   bindToggle('checkpointToggle', 'checkpointSection', 'checkpointArrow', () => renderCheckpointSection());
   bindToggle('hooksToggle', 'hooksSection', 'hooksArrow', () => renderHooksSection());
+  bindToggle('policyToggle', 'policySection', 'policyArrow', () => renderPolicySection());
   bindToggle('discoveredToolsToggle', 'discoveredToolsSection', 'discoveredToolsArrow', () => renderDiscoveredToolsSection());
   bindToggle('identityEditorToggle', 'identityEditorSection', 'identityEditorArrow', () => initIdentityEditor());
 

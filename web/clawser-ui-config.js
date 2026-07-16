@@ -18,6 +18,7 @@ import { FallbackChain, FallbackExecutor } from './clawser-fallback.js';
 import { AutonomyPresetManager } from './clawser-autonomy-presets.js';
 import { setIfClean, setRadioIfClean, markPanelClean, bindDirtyTrackingForIds } from './clawser-panel-dirty.mjs';
 import { silentCatch } from './clawser-silent-catch.mjs'
+import { PolicyEngine } from './clawser-policy-engine.js';
 
 // ── Panel input ID groups (used by dirty-tracker registrations) ──
 const AUTONOMY_INPUT_IDS = [
@@ -1280,6 +1281,101 @@ export function renderHooksSection(config) {
           }
         }
       } catch (e) { addMsg('error', `Hook parse error: ${e.message}`); }
+    };
+  }
+  if (cancelBtn && addForm) {
+    cancelBtn.onclick = () => { addForm.style.display = 'none'; };
+  }
+}
+
+// ── Policy Rules UI ───────────────────────────────────────────
+//
+// PolicyEngine (clawser-policy-engine.js) was fully implemented + tested
+// but never had a way for a user to actually define rules, and
+// AutonomyController.setPolicyEngine() was never called anywhere in the
+// app. This section is the minimal UI to make it real: a rule list plus
+// an add-rule form, following the exact same pattern as the Hooks section
+// above (list + collapsible add form + localStorage persistence).
+
+/** Rebuild a PolicyEngine from the given rules and wire it into the live AutonomyController. */
+function applyPolicyRules(rules) {
+  if (!state.agent?.autonomy) return;
+  state.agent.autonomy.setPolicyEngine(rules.length ? PolicyEngine.fromJSON({ rules }) : null);
+}
+
+/** Load persisted policy rules for the current workspace. */
+function loadPolicyRules(wsId) {
+  try {
+    return JSON.parse(localStorage.getItem(lsKey.policyRules(wsId)) || '[]');
+  } catch { return []; }
+}
+
+/** Persist policy rules and apply them live. */
+function savePolicyRules(wsId, rules) {
+  localStorage.setItem(lsKey.policyRules(wsId), JSON.stringify(rules));
+  applyPolicyRules(rules);
+}
+
+/**
+ * Render the policy rules section in the config panel.
+ * @param {object} [config] - `{ rules: [...] }`. When omitted, reads from localStorage.
+ */
+export function renderPolicySection(config) {
+  const wsId = state.agent?.getWorkspace?.() || 'default';
+  const list = $('policyList');
+  if (!list) return;
+  list.innerHTML = '';
+
+  const rules = (config?.rules && Array.isArray(config.rules)) ? config.rules : loadPolicyRules(wsId);
+  applyPolicyRules(rules);
+
+  for (const rule of rules) {
+    const d = document.createElement('div');
+    d.className = 'hook-item';
+    d.innerHTML = `
+      <input type="checkbox" class="policy-toggle" ${rule.enabled !== false ? 'checked' : ''} title="Enabled" />
+      <span class="hook-name">${esc(rule.name || 'unnamed')}</span>
+      <span class="hook-point">${esc(rule.target || '')}:${esc(rule.condition?.type || '')}</span>
+      <span class="hook-priority">${esc(rule.action || '')}</span>
+      <button class="hook-remove" title="Remove">✕</button>
+    `;
+    d.querySelector('.policy-toggle').addEventListener('change', (e) => {
+      rule.enabled = e.target.checked;
+      savePolicyRules(wsId, rules);
+    });
+    d.querySelector('.hook-remove').addEventListener('click', () => {
+      savePolicyRules(wsId, rules.filter(r => r.name !== rule.name));
+      renderPolicySection();
+    });
+    list.appendChild(d);
+  }
+  if (rules.length === 0) {
+    list.innerHTML = '<div style="color:var(--dim);font-size:10px;padding:4px 0;">No policy rules defined. Safety defaults (SafetyPipeline) still apply.</div>';
+  }
+
+  // Wire add form
+  const addToggle = $('policyAddToggle');
+  const addForm = $('policyAddForm');
+  if (addToggle && addForm) {
+    addToggle.onclick = () => { addForm.style.display = addForm.style.display === 'none' ? '' : 'none'; };
+  }
+  const saveBtn = $('policySave');
+  const cancelBtn = $('policyCancel');
+  if (saveBtn) {
+    saveBtn.onclick = () => {
+      const name = $('policyName')?.value?.trim();
+      const target = $('policyTarget')?.value;
+      const conditionType = $('policyConditionType')?.value;
+      const conditionValue = $('policyConditionValue')?.value?.trim();
+      const action = $('policyAction')?.value;
+      if (!name || !conditionValue) { addMsg('error', 'Policy rule name and condition value required.'); return; }
+      const current = loadPolicyRules(wsId);
+      if (current.some(r => r.name === name)) { addMsg('error', `A policy rule named "${name}" already exists.`); return; }
+      current.push({ name, target, condition: { type: conditionType, value: conditionValue }, action, enabled: true });
+      savePolicyRules(wsId, current);
+      addMsg('system', `Policy rule "${name}" added.`);
+      if (addForm) addForm.style.display = 'none';
+      renderPolicySection();
     };
   }
   if (cancelBtn && addForm) {

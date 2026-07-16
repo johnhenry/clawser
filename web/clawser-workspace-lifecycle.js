@@ -700,6 +700,18 @@ export async function initWorkspace(wsId, convId) {
       state.agent.restoreHooks(defaultHookFactories());
     } catch (e) { console.warn('[clawser] hook restore failed:', e.message); }
 
+    // Rebuild the PolicyEngine from persisted rules so it's active even if
+    // the user never opens Config → Policy Rules this session (same
+    // "apply on init, not just on panel open" contract as autonomy/hooks).
+    try {
+      const wsId = state.agent?.getWorkspace?.() || 'default';
+      const rules = JSON.parse(localStorage.getItem(lsKey.policyRules(wsId)) || '[]');
+      if (Array.isArray(rules) && rules.length && state.agent.autonomy) {
+        const { PolicyEngine } = await import('./clawser-policy-engine.js');
+        state.agent.autonomy.setPolicyEngine(PolicyEngine.fromJSON({ rules }));
+      }
+    } catch (e) { console.warn('[clawser] policy rules restore failed:', e.message); }
+
     state.agent.memoryHygiene();
 
     state.agent.setSystemPrompt($('systemPrompt').value);

@@ -128,6 +128,7 @@ import {
   renderHeartbeatSection,
   renderOAuthSection,
   renderHooksSection,
+  renderPolicySection,
   renderCheckpointSection,
   renderCleanConversationsSection,
   getCostTracker,
@@ -461,6 +462,52 @@ describe('renderHooksSection', () => {
   })
 })
 
+describe('renderPolicySection', () => {
+  it('wires a PolicyEngine into state.agent.autonomy when rules are present', () => {
+    let engineSet = null
+    state.agent = {
+      getWorkspace: () => 'ws1',
+      autonomy: { setPolicyEngine: (e) => { engineSet = e } },
+    }
+    renderPolicySection({
+      rules: [{ name: 'block-eval', target: 'tool', condition: { type: 'tool_name', value: 'eval_js' }, action: 'block', enabled: true }],
+    })
+    assert.ok(engineSet, 'a PolicyEngine should have been set')
+    assert.equal(engineSet.evaluateToolCall('eval_js', {}).valid, false)
+    assert.equal(engineSet.evaluateToolCall('browser_echo', {}).valid, true)
+  })
+
+  it('clears the PolicyEngine (passes null) when there are no rules', () => {
+    let engineSet = 'not-called'
+    state.agent = {
+      getWorkspace: () => 'ws1',
+      autonomy: { setPolicyEngine: (e) => { engineSet = e } },
+    }
+    renderPolicySection({ rules: [] })
+    assert.equal(engineSet, null)
+  })
+
+  it('falls back to localStorage-persisted rules when no config is passed', () => {
+    let engineSet = null
+    localStorage.setItem(lsKey.policyRules('ws1'), JSON.stringify([
+      { name: 'r1', target: 'input', condition: { type: 'pattern', value: 'secret' }, action: 'block', enabled: true },
+    ]))
+    state.agent = {
+      getWorkspace: () => 'ws1',
+      autonomy: { setPolicyEngine: (e) => { engineSet = e } },
+    }
+    renderPolicySection()
+    assert.ok(engineSet)
+    assert.equal(engineSet.evaluateInput('this has a secret in it').blocked, true)
+  })
+
+  it('does not throw with no agent', () => {
+    state.agent = null
+    renderPolicySection({ rules: [] })
+    assert.ok(true)
+  })
+})
+
 describe('renderCheckpointSection', () => {
   it('renders', () => {
     state.agent = { getWorkspace: () => 'ws1' }
@@ -535,6 +582,7 @@ describe('module exports', () => {
     assert.equal(typeof renderHeartbeatSection, 'function')
     assert.equal(typeof renderOAuthSection, 'function')
     assert.equal(typeof renderHooksSection, 'function')
+    assert.equal(typeof renderPolicySection, 'function')
     assert.equal(typeof renderCheckpointSection, 'function')
     assert.equal(typeof renderCleanConversationsSection, 'function')
   })

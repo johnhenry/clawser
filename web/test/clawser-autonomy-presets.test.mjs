@@ -99,14 +99,20 @@ describe('AutonomyController — time-of-day restrictions', () => {
 // ── PolicyEngine integration ─────────────────────────────────────
 
 describe('AutonomyController — PolicyEngine', () => {
+  // Mocks below use {valid, issues} — the real PolicyEngine.evaluateToolCall
+  // contract (see clawser-policy-engine.js) — not {allowed, reason}. Both
+  // this file's mocks and clawser-agent.js's consumer previously agreed on
+  // the wrong shape, which would have made canExecuteTool() return false
+  // for every tool call the instant a real PolicyEngine was ever wired in
+  // (result.allowed is always undefined on the real class).
   it('canExecuteTool delegates to policy engine when set', () => {
     const ac = new AutonomyController({ level: 'full' });
     const calls = [];
     ac.setPolicyEngine({
       evaluateToolCall(toolName, params) {
         calls.push({ toolName, params });
-        if (toolName === 'dangerous_tool') return { allowed: false, reason: 'blocked by policy' };
-        return { allowed: true };
+        if (toolName === 'dangerous_tool') return { valid: false, issues: ['blocked by policy'] };
+        return { valid: true, issues: [] };
       },
     });
 
@@ -119,7 +125,7 @@ describe('AutonomyController — PolicyEngine', () => {
     const ac = new AutonomyController({ level: 'readonly' });
     let called = false;
     ac.setPolicyEngine({
-      evaluateToolCall() { called = true; return { allowed: true }; },
+      evaluateToolCall() { called = true; return { valid: true, issues: [] }; },
     });
     // write tools are blocked by readonly before policy check
     assert.ok(!ac.canExecuteTool({ permission: 'write', name: 'test' }));
@@ -134,7 +140,7 @@ describe('AutonomyController — PolicyEngine', () => {
   it('policyEngine getter returns the engine', () => {
     const ac = new AutonomyController({ level: 'full' });
     assert.equal(ac.policyEngine, null);
-    const engine = { evaluateToolCall: () => ({ allowed: true }) };
+    const engine = { evaluateToolCall: () => ({ valid: true, issues: [] }) };
     ac.setPolicyEngine(engine);
     assert.equal(ac.policyEngine, engine);
   });

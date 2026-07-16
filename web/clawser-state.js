@@ -94,6 +94,7 @@ export const lsKey = {
   modelConfig:   wsId => `clawser_${LS_VERSION}_model_config_${wsId}`,
   terminalRenderer: wsId => `clawser_${LS_VERSION}_terminal_renderer_${wsId}`,
   skillHotReload:   wsId => `clawser_${LS_VERSION}_skill_hot_reload_${wsId}`,
+  policyRules:      wsId => `clawser_${LS_VERSION}_policy_rules_${wsId}`,
 };
 
 /**

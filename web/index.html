@@ -980,6 +980,54 @@
           <button class="btn-sm" id="hookAddToggle" style="margin-top:6px;">+ Add Hook</button>
         </div>
 
+        <!-- Policy Rules -->
+        <div class="config-group config-toggle" id="policyToggle" aria-expanded="false" aria-controls="policySection">
+          <label class="config-toggle">Policy Rules <span id="policyArrow" class="config-arrow">&#x25B6;</span></label>
+        </div>
+        <div id="policySection" class="config-section-hidden">
+          <div id="policyList" class="hook-list"></div>
+          <div id="policyAddForm" class="hook-add-form" style="display:none;">
+            <div class="config-group">
+              <label>Name</label>
+              <input type="text" id="policyName" placeholder="block-secrets" />
+            </div>
+            <div class="config-group">
+              <label>Target</label>
+              <select id="policyTarget">
+                <option value="input">Input</option>
+                <option value="output">Output</option>
+                <option value="tool">Tool Call</option>
+              </select>
+            </div>
+            <div class="config-group">
+              <label>Condition Type</label>
+              <select id="policyConditionType">
+                <option value="pattern">Pattern (regex)</option>
+                <option value="tool_name">Tool Name</option>
+                <option value="domain">Domain (regex on args)</option>
+              </select>
+            </div>
+            <div class="config-group">
+              <label>Condition Value</label>
+              <input type="text" id="policyConditionValue" placeholder="e.g. eval_js or sk-[A-Za-z0-9]+" />
+            </div>
+            <div class="config-group">
+              <label>Action</label>
+              <select id="policyAction">
+                <option value="block">Block</option>
+                <option value="warn">Warn</option>
+                <option value="allow">Allow</option>
+                <option value="redact">Redact</option>
+              </select>
+            </div>
+            <div class="btn-row">
+              <button class="btn-sm" id="policySave">Add Rule</button>
+              <button class="btn-sm btn-surface2" id="policyCancel">Cancel</button>
+            </div>
+          </div>
+          <button class="btn-sm" id="policyAddToggle" style="margin-top:6px;">+ Add Rule</button>
+        </div>
+
         <!-- Clean Old Conversations (Gap 12.2) -->
         <div class="config-group config-toggle" id="cleanConvToggle" aria-expanded="false" aria-controls="cleanConvSection">
           <label class="config-toggle">Clean Old Conversations <span id="cleanConvArrow" class="config-arrow">&#x25B6;</span></label>

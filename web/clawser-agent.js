@@ -625,7 +625,7 @@ export class AutonomyController {
 
   /**
    * Set an optional PolicyEngine for tool-call evaluation.
-   * @param {{evaluateToolCall: (toolName: string, params: object) => {allowed: boolean, reason?: string}}|null} engine
+   * @param {{evaluateToolCall: (toolName: string, params: object) => {valid: boolean, issues?: string[]}}|null} engine
    */
   setPolicyEngine(engine) { this.#policyEngine = engine; }
 
@@ -671,8 +671,13 @@ export class AutonomyController {
       return READ_PERMISSIONS.has(tool.permission);
     }
     if (this.#policyEngine && typeof this.#policyEngine.evaluateToolCall === 'function') {
+      // PolicyEngine.evaluateToolCall returns {valid, issues}, not
+      // {allowed, reason} — this previously read the wrong field, which
+      // would have made canExecuteTool return false for EVERY tool call
+      // the instant a real PolicyEngine was wired in (result.allowed is
+      // always undefined on the real class), a silent full lockout.
       const result = this.#policyEngine.evaluateToolCall(tool.name || '', params || {});
-      if (result && !result.allowed) return false;
+      if (result && result.valid === false) return false;
     }
     return true;
   }
