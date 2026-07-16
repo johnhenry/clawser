@@ -228,6 +228,26 @@ describe('addMsg', () => {
     addMsg('system', 'three')
     assert.equal(_domElements.messages.children.length, 3)
   })
+
+  it('mirrors system and error messages into state.notificationCenter, but not user/agent', () => {
+    const added = []
+    state.notificationCenter = { add: (opts) => added.push(opts) }
+    try {
+      addMsg('user', 'ignored')
+      addMsg('agent', 'ignored')
+      addMsg('system', 'sys text')
+      addMsg('error', 'err text')
+      assert.equal(added.length, 2)
+      assert.deepEqual(added[0], { type: 'system', title: 'System', message: 'sys text' })
+      assert.deepEqual(added[1], { type: 'error', title: 'Error', message: 'err text' })
+    } finally {
+      delete state.notificationCenter
+    }
+  })
+
+  it('does not throw when state.notificationCenter is absent', () => {
+    assert.doesNotThrow(() => addMsg('system', 'no center configured'))
+  })
 })
 
 // ── addErrorMsg ───────────��──────────────────���──────────────────

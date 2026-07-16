@@ -468,10 +468,15 @@ export class DaemonController {
         this.#coordinator.start();
       }
 
-      // Start auto-checkpoint timer
+      // Start auto-checkpoint timer. Guarded by isLeader when a
+      // TabCoordinator is present — without this, every open tab would
+      // independently auto-checkpoint on its own interval once real
+      // multi-tab coordination is wired in.
       if (this.#autoCheckpointMs > 0 && this.#getStateFn) {
         this.#autoCheckpointInterval = setInterval(async () => {
-          await this.checkpoint('auto');
+          if (!this.#coordinator || this.#coordinator.isLeader) {
+            await this.checkpoint('auto');
+          }
         }, this.#autoCheckpointMs);
       }
 
@@ -533,10 +538,12 @@ export class DaemonController {
   async resume() {
     if (!this.#state.transition(DaemonPhase.RUNNING)) return false;
 
-    // Restart auto-checkpoint timer
+    // Restart auto-checkpoint timer (leader-guarded, see start())
     if (this.#autoCheckpointMs > 0 && this.#getStateFn && !this.#autoCheckpointInterval) {
       this.#autoCheckpointInterval = setInterval(async () => {
-        await this.checkpoint('auto');
+        if (!this.#coordinator || this.#coordinator.isLeader) {
+          await this.checkpoint('auto');
+        }
       }, this.#autoCheckpointMs);
     }
 

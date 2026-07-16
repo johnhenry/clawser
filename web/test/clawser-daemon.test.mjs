@@ -725,6 +725,55 @@ describe('DaemonController pause/resume', () => {
     assert.equal(transitions[3].from, DaemonPhase.PAUSED);
     assert.equal(transitions[3].to, DaemonPhase.RUNNING);
   });
+
+  it('auto-checkpoint is skipped when a coordinator is present and this tab is not the leader', async () => {
+    let checkpointCount = 0;
+    const ctrl = new DaemonController({
+      checkpoints: new CheckpointManager(),
+      autoCheckpointMs: 30,
+      getStateFn: () => { checkpointCount++; return {}; },
+      coordinator: { isLeader: false, start() {}, stop() {} },
+    });
+    await ctrl.start();
+    await new Promise(r => setTimeout(r, 80));
+    // Check before stop(): stop() always takes one final shutdown
+    // checkpoint regardless of leader status (a closing tab should still
+    // save its own state), which is unrelated to the interval leader-guard
+    // this test targets.
+    assert.equal(checkpointCount, 0, 'a non-leader tab must not auto-checkpoint');
+    await ctrl.stop();
+  });
+
+  it('auto-checkpoint still fires when the coordinator says this tab is the leader', async () => {
+    let checkpointCount = 0;
+    const ctrl = new DaemonController({
+      checkpoints: new CheckpointManager(),
+      autoCheckpointMs: 30,
+      getStateFn: () => { checkpointCount++; return {}; },
+      coordinator: { isLeader: true, start() {}, stop() {} },
+    });
+    await ctrl.start();
+    await new Promise(r => setTimeout(r, 80));
+    await ctrl.stop();
+    assert.ok(checkpointCount > 0, 'the leader tab must still auto-checkpoint');
+  });
+
+  it('leader-guard on resume also respects a non-leader coordinator', async () => {
+    let checkpointCount = 0;
+    const ctrl = new DaemonController({
+      checkpoints: new CheckpointManager(),
+      autoCheckpointMs: 30,
+      getStateFn: () => { checkpointCount++; return {}; },
+      coordinator: { isLeader: false, start() {}, stop() {} },
+    });
+    await ctrl.start();
+    await ctrl.pause();
+    await ctrl.resume();
+    await new Promise(r => setTimeout(r, 80));
+    // Check before stop() — see comment in the previous test.
+    assert.equal(checkpointCount, 0, 'a non-leader tab must not auto-checkpoint after resume either');
+    await ctrl.stop();
+  });
 });
 
 // ── DaemonPauseTool ─────────────────────────────────────────────

@@ -40,7 +40,7 @@ import { UndoManager } from './clawser-undo.js';
 import { HeartbeatRunner } from './clawser-heartbeat.js';
 import { AuthProfileManager } from './clawser-auth-profiles.js';
 import { MetricsCollector, RingBufferLog } from './clawser-metrics.js';
-import { DaemonController, CheckpointManager, AwaySummaryBuilder, DaemonState } from './clawser-daemon.js';
+import { DaemonController, CheckpointManager, AwaySummaryBuilder, DaemonState, TabCoordinator, InputLockManager, NotificationCenter } from './clawser-daemon.js';
 import { RoutineEngine } from './clawser-routines.js';
 import { initExtensionRoutineBridge } from './clawser-extension-routine-bridge.js';
 import { CheckpointIndexedDB } from './clawser-checkpoint-idb.js';
@@ -234,6 +234,13 @@ state.checkpointIDB = state.disposableMode ? new NullCheckpointIDB() : new Check
 // transitions (RUNNING → PAUSED → ERROR → STOPPED) update the UI
 // reactively. Previously the badge only refreshed at workspace
 // switch, so mid-session phase changes left it stale.
+// TabCoordinator enables real multi-tab leader election (BroadcastChannel
+// heartbeat) — previously implemented+tested but never constructed, so
+// every open tab ran its own auto-checkpoint independently and
+// /run/clawser/pid + /run/clawser/tabs always reported "no tab coordinator".
+state.tabCoordinator = new TabCoordinator({ kernelIntegration: _kernelIntegration });
+state.inputLockManager = new InputLockManager();
+state.notificationCenter = new NotificationCenter();
 state.daemonController = new DaemonController({
   state: new DaemonState({
     onChange: (newPhase) => emit('updateDaemon', newPhase),
@@ -243,6 +250,7 @@ state.daemonController = new DaemonController({
     writeFn: (key, data) => state.checkpointIDB.write(key, data),
     readFn: (key) => state.checkpointIDB.read(key),
   }),
+  coordinator: state.tabCoordinator,
 });
 // Routine execution routes through ChannelGateway so scheduled tasks get
 // channel badges, per-channel serialized queuing, and event recording.

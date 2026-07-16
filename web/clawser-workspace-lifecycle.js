@@ -120,6 +120,7 @@ export async function createShellSession() {
     costTracker: state.agent?.costTracker,
     memory: state.agent?.memory,
     daemonState: state.daemonController,
+    tabCoordinator: state.tabCoordinator,
     wsId: state.agent?.getWorkspace?.() || 'default',
     permissions,
     initTime: performance.now(),

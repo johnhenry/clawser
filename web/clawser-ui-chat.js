@@ -143,6 +143,13 @@ export function addMsg(type, text, eventId, source) {
   }
   messagesEl.appendChild(d);
   messagesEl.scrollTop = messagesEl.scrollHeight;
+
+  // Mirror system/error messages into the durable NotificationCenter log
+  // (read/unread tracking, queryable after the chat panel scrolls away) —
+  // previously implemented+tested but never fed by anything real.
+  if (type === 'system' || type === 'error') {
+    state.notificationCenter?.add({ type, title: type === 'error' ? 'Error' : 'System', message: text });
+  }
 }
 
 /**
