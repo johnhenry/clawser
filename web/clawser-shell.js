@@ -21,7 +21,7 @@
 
 import { BrowserTool, WorkspaceFs } from './clawser-tools.js';
 import { opfsWalk, opfsWalkDir, resolveVirtualPath } from './clawser-opfs.js';
-import { registerExtendedBuiltins, registerJqBuiltin } from './clawser-shell-builtins.js';
+import { registerExtendedBuiltins, registerJqBuiltin, registerMountBuiltins } from './clawser-shell-builtins.js';
 import { VirtualFs, ProcFileHandler } from './clawser-proc.js';
 import { PermissionManager, registerChmodBuiltin } from './clawser-permissions.js';
 import { parseEnvFile } from './clawser-fs-env.mjs';
@@ -2573,6 +2573,11 @@ export class ClawserShell {
       registerBuiltins(this.registry);
       registerExtendedBuiltins(this.registry);
       registerJqBuiltin(this.registry);
+      // mount/umount/df were implemented but never registered — their
+      // handlers also used the wrong (args) signature instead of
+      // ({args, ...}), which would have thrown the moment they were
+      // actually invoked; fixed alongside this wiring.
+      registerMountBuiltins(this.registry, { mountableFs: opts.workspaceFs });
     }
 
     // Register source builtin (delegates to this.source())

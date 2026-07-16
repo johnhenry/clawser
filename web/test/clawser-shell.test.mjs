@@ -1069,6 +1069,41 @@ describe('Built-in commands via shell.exec', () => {
     assert.equal(r.stdout, 'hello\n')
   })
 
+  // mount/umount/df — registered via ClawserShell's constructor, exercised
+  // through the real dispatch path (shell.exec), not a direct handler call.
+  // registerMountBuiltins previously used the wrong handler signature
+  // ((args) instead of ({args, ...})), which would have thrown here.
+  it('df reports the OPFS root even with no mountableFs', async () => {
+    const r = await shell.exec('df')
+    assert.match(r.stdout, /OPFS/)
+    assert.equal(r.exitCode, 0)
+  })
+
+  it('mount -l reports no mountable filesystem when the shell has none', async () => {
+    const r = await shell.exec('mount -l')
+    assert.match(r.stderr, /no mountable filesystem/)
+    assert.equal(r.exitCode, 1)
+  })
+
+  it('mount/df/umount work end-to-end through shell.exec when a mountableFs is provided', async () => {
+    const mfs = {
+      mountTable: [{ path: '/mnt/app', name: 'app', kind: 'directory', readOnly: false }],
+      isMounted(p) { return this.mountTable.some(m => m.path === p) },
+      unmount(p) { this.mountTable = this.mountTable.filter(m => m.path !== p) },
+    }
+    const mountedShell = new ClawserShell({ fs: new MemoryFs(), workspaceFs: mfs })
+
+    const mountR = await mountedShell.exec('mount -l')
+    assert.match(mountR.stdout, /\/mnt\/app on app type directory \(rw\)/)
+
+    const dfR = await mountedShell.exec('df')
+    assert.match(dfR.stdout, /app\s+directory\s+rw\s+\/mnt\/app/)
+
+    const umountR = await mountedShell.exec('umount /mnt/app')
+    assert.equal(umountR.exitCode, 0)
+    assert.equal(mfs.mountTable.length, 0)
+  })
+
   // mkdir
   it('mkdir creates directory', async () => {
     await shell.exec('mkdir /newdir')

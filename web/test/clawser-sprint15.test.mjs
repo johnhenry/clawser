@@ -99,7 +99,7 @@ describe('Shell mount builtins', () => {
     };
     registerMountBuiltins(registry, { mountableFs: mockFs });
     const { handler } = registered.get('mount');
-    const result = await handler(['-l'], {});
+    const result = await handler({ args: ['-l'] });
     assert.equal(result.exitCode, 0);
     assert.ok(result.stdout.includes('/mnt/app'));
   });
@@ -111,7 +111,7 @@ describe('Shell mount builtins', () => {
     };
     registerMountBuiltins(registry, {});
     const { handler } = registered.get('mount');
-    const result = await handler([], {});
+    const result = await handler({ args: [] });
     assert.notEqual(result.exitCode, 0);
   });
 
@@ -127,7 +127,7 @@ describe('Shell mount builtins', () => {
     };
     registerMountBuiltins(registry, { mountableFs: mockFs });
     const { handler } = registered.get('umount');
-    const result = await handler(['/mnt/app'], {});
+    const result = await handler({ args: ['/mnt/app'] });
     assert.equal(result.exitCode, 0);
     assert.equal(unmountedPath, '/mnt/app');
   });
@@ -143,7 +143,7 @@ describe('Shell mount builtins', () => {
     };
     registerMountBuiltins(registry, { mountableFs: mockFs });
     const { handler } = registered.get('umount');
-    const result = await handler(['/mnt/nothing'], {});
+    const result = await handler({ args: ['/mnt/nothing'] });
     assert.notEqual(result.exitCode, 0);
   });
 
@@ -160,7 +160,7 @@ describe('Shell mount builtins', () => {
     };
     registerMountBuiltins(registry, { mountableFs: mockFs });
     const { handler } = registered.get('df');
-    const result = await handler([], {});
+    const result = await handler({ args: [] });
     assert.equal(result.exitCode, 0);
     assert.ok(result.stdout.includes('OPFS'));
     assert.ok(result.stdout.includes('/mnt/app'));
@@ -174,7 +174,7 @@ describe('Shell mount builtins', () => {
     };
     registerMountBuiltins(registry, { mountableFs: { mountTable: [] } });
     const { handler } = registered.get('df');
-    const result = await handler([], {});
+    const result = await handler({ args: [] });
     assert.equal(result.exitCode, 0);
     assert.ok(result.stdout.includes('OPFS'));
   });

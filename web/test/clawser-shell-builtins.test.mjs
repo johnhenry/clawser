@@ -214,6 +214,85 @@ describe('registerMountBuiltins', () => {
   it('registers exactly 3 commands', () => {
     assert.equal(registry.size, 3);
   });
+
+  // Handlers are dispatched as handler({args, stdin, state, registry, fs})
+  // (see clawser-shell.js's executeCommand) — not handler(args) directly.
+  // The commands above were previously registered with the wrong (args)
+  // signature, which would have thrown the moment mount/umount/df was
+  // actually invoked (args.length/.includes on the whole context object).
+  it('mount -l reports "no mountable filesystem" without a mountableFs', async () => {
+    const result = await registry.get('mount')({ args: ['-l'] });
+    assert.match(result.stderr, /no mountable filesystem/);
+    assert.equal(result.exitCode, 1);
+  });
+
+  it('df still reports the base OPFS row without a mountableFs', async () => {
+    const result = await registry.get('df')({ args: [] });
+    assert.match(result.stdout, /OPFS/);
+    assert.equal(result.exitCode, 0);
+  });
+
+  describe('with a mountableFs', () => {
+    let mfs, mountRegistry;
+
+    beforeEach(() => {
+      mfs = {
+        mountTable: [],
+        isMounted(p) { return this.mountTable.some(m => m.path === p); },
+        unmount(p) { this.mountTable = this.mountTable.filter(m => m.path !== p); },
+      };
+      mountRegistry = new MockRegistry();
+      registerMountBuiltins(mountRegistry, { mountableFs: mfs });
+    });
+
+    it('mount -l lists an empty mount table', async () => {
+      const result = await mountRegistry.get('mount')({ args: ['-l'] });
+      assert.match(result.stdout, /No mounts active/);
+      assert.equal(result.exitCode, 0);
+    });
+
+    it('mount -l lists active mounts', async () => {
+      mfs.mountTable = [{ path: '/mnt/foo', name: 'foo', kind: 'local', readOnly: false }];
+      const result = await mountRegistry.get('mount')({ args: ['-l'] });
+      assert.match(result.stdout, /\/mnt\/foo on foo type local \(rw\)/);
+    });
+
+    it('mount with no args also lists mounts (defaults to -l behavior)', async () => {
+      const result = await mountRegistry.get('mount')({ args: [] });
+      assert.match(result.stdout, /No mounts active/);
+    });
+
+    it('mount <path> reports the UI-only limitation', async () => {
+      const result = await mountRegistry.get('mount')({ args: ['/some/path'] });
+      assert.match(result.stderr, /requires the UI Mount button/);
+      assert.equal(result.exitCode, 1);
+    });
+
+    it('umount unmounts a mounted path', async () => {
+      mfs.mountTable = [{ path: '/mnt/foo', name: 'foo', kind: 'local', readOnly: false }];
+      const result = await mountRegistry.get('umount')({ args: ['/mnt/foo'] });
+      assert.equal(result.exitCode, 0);
+      assert.equal(mfs.mountTable.length, 0);
+    });
+
+    it('umount reports an error for a path that is not mounted', async () => {
+      const result = await mountRegistry.get('umount')({ args: ['/not/mounted'] });
+      assert.match(result.stderr, /not mounted/);
+      assert.equal(result.exitCode, 1);
+    });
+
+    it('umount requires a mount point argument', async () => {
+      const result = await mountRegistry.get('umount')({ args: [] });
+      assert.match(result.stderr, /missing mount point/);
+    });
+
+    it('df includes mounted filesystems alongside OPFS', async () => {
+      mfs.mountTable = [{ path: '/mnt/foo', name: 'foo', kind: 'local', readOnly: true }];
+      const result = await mountRegistry.get('df')({ args: [] });
+      assert.match(result.stdout, /OPFS/);
+      assert.match(result.stdout, /foo\s+local\s+ro\s+\/mnt\/foo/);
+    });
+  });
 });
 
 // ── registerJqBuiltin ───────────────────────────────────────────

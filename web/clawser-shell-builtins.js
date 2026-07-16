@@ -1345,7 +1345,7 @@ export function registerMountBuiltins(registry, ctx = {}) {
 
   // ── mount ──────────────────────────────────────────────────────
 
-  registry.register('mount', async (args) => {
+  registry.register('mount', async ({ args }) => {
     if (!mfs) {
       return { stdout: '', stderr: 'mount: no mountable filesystem available', exitCode: 1 };
     }
@@ -1368,7 +1368,7 @@ export function registerMountBuiltins(registry, ctx = {}) {
 
   // ── umount ─────────────────────────────────────────────────────
 
-  registry.register('umount', async (args) => {
+  registry.register('umount', async ({ args }) => {
     if (!mfs) {
       return { stdout: '', stderr: 'umount: no mountable filesystem available', exitCode: 1 };
     }
@@ -1385,7 +1385,7 @@ export function registerMountBuiltins(registry, ctx = {}) {
 
   // ── df ─────────────────────────────────────────────────────────
 
-  registry.register('df', async (args) => {
+  registry.register('df', async () => {
     const lines = ['Filesystem      Type     Access   Mounted on'];
     lines.push('OPFS            opfs     rw       /');
 
