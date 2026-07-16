@@ -45,4 +45,23 @@ describe('theme CSS', () => {
     assert.doesNotMatch(agentRule, /background:\s*#[0-9a-fA-F]{3,6}/,
       '.msg.agent must not hardcode a background color')
   })
+
+  it('vault modal/settings/passkey selectors use theme variables, not hardcoded hex colors (#9)', async () => {
+    const css = await readFile(cssPath, 'utf8')
+    const selectors = [
+      '.vault-modal', '.vault-form input', '.vault-form button', '.vault-error',
+      '.vault-gear', '.vault-settings-panel', '.vault-settings-btn', '.vault-settings-danger',
+      '.vault-settings-hr', '.vault-change-desc', '.vault-passkey-row', '.vault-passkey-label',
+    ]
+    for (const sel of selectors) {
+      const escaped = sel.replace(/[.[\]]/g, '\\$&')
+      const rule = css.match(new RegExp(escaped.replace(/ /g, '\\s+') + '\\s*\\{[^}]*\\}'))?.[0] ?? ''
+      assert.ok(rule, `expected to find a rule for ${sel}`)
+      // #fff/#000 is allowed: fixed white/black text on a themed colored
+      // background (e.g. var(--green)) is intentional and theme-independent,
+      // matching the app's existing convention (see .goal-complete-btn).
+      assert.doesNotMatch(rule, /:\s*#(?!fff\b|ffffff\b|000\b|000000\b)[0-9a-fA-F]{3,6}\b/,
+        `${sel} must not hardcode a theme-dependent hex color — use a var(--...) theme token instead`)
+    }
+  })
 })
