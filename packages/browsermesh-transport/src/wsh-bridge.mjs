@@ -1,5 +1,11 @@
 /**
-// STATUS: INTEGRATED — wired into ClawserPod lifecycle, proven via E2E testing
+// STATUS: implemented + unit-tested (clawser-mesh-wsh-bridge.test.mjs), but
+// never instantiated in app code — `import { MeshWshBridge }` in
+// clawser-pod.js has no matching `new MeshWshBridge(...)` call site anywhere.
+// Not a functional replacement for clawser-kernel-wsh-bridge.js despite the
+// similar name and shared mention in docs/data/networking.yaml's "WSH Bridge
+// Deprecation" entry — this bridges identity key *formats*, not wsh session
+// tenant/capability routing.
  * clawser-mesh-wsh-bridge.js -- Bridge between WshKeyStore and MeshIdentityManager.
  *
  * WshKeyStore uses hex-encoded SHA-256 fingerprints.
