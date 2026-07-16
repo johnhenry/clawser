@@ -115,6 +115,9 @@ Usage:
   clawser memory list           List all memories
   clawser memory add KEY VALUE  Add a memory entry
   clawser memory remove KEY     Remove a memory entry
+  clawser goal list             List all goals
+  clawser goal add DESCRIPTION  Add a new goal
+  clawser goal remove ID        Remove a goal
   clawser mcp                   Show MCP server status
   clawser rpc                          Start JSON-RPC 2.0 server on stdin/stdout
   clawser rpc --rpc-socket PATH        Start JSON-RPC 2.0 server on Unix socket
@@ -163,6 +166,7 @@ export const CLAWSER_SUBCOMMAND_META = [
   { name: 'cost', description: 'Show session cost estimate', usage: 'clawser cost' },
   { name: 'compact', description: 'Trigger context compaction', usage: 'clawser compact' },
   { name: 'memory', description: 'Manage agent memory entries', usage: 'clawser memory [list|add|remove] [KEY] [VALUE]' },
+  { name: 'goal', description: 'Manage agent goals', usage: 'clawser goal [list|add|remove] [DESCRIPTION|ID]' },
   { name: 'mcp', description: 'Show MCP server status', usage: 'clawser mcp' },
   { name: 'rpc', description: 'Start JSON-RPC 2.0 server for programmatic access', usage: 'clawser rpc [--rpc-socket PATH]' },
   { name: 'session', description: 'Manage terminal sessions', usage: 'clawser session [list|new|switch|rename|delete|fork|export|save]' },
@@ -653,6 +657,74 @@ export function registerClawserCli(registry, getAgent, getShell) {
     return { stdout: '', stderr: `Unknown memory subcommand: ${sub}\nUsage: clawser memory [list|add|remove]`, exitCode: 1 };
   }
 
+  // ── Subcommand: goal ─────────────────────────────────────────
+
+  function cmdGoal(subArgs, json = false) {
+    const agent = getAgent();
+    if (!agent) {
+      if (json) return jsonErr({ code: 'NO_AGENT', message: 'No agent available' }, 'clawser goal');
+      return { stdout: '', stderr: 'No agent available', exitCode: 1 };
+    }
+
+    const sub = subArgs[0];
+
+    // clawser goal (no args) or clawser goal list
+    // Reads the same agent.getState().goals the Goals panel and `clawser status` use,
+    // so CLI-created goals are visible there and vice versa.
+    if (!sub || sub === 'list') {
+      const goals = agent.getState().goals || [];
+      if (goals.length === 0) {
+        if (json) return jsonOut({ goals: [] }, 'clawser goal list');
+        return { stdout: 'No goals tracked.\n', stderr: '', exitCode: 0 };
+      }
+
+      if (json) return jsonOut({ goals }, 'clawser goal list');
+
+      const lines = goals.map(g => `  [${g.status}] ${g.id}: ${g.description}`);
+      return {
+        stdout: `Goals (${goals.length}):\n${lines.join('\n')}\n`,
+        stderr: '',
+        exitCode: 0,
+      };
+    }
+
+    // clawser goal add DESCRIPTION
+    if (sub === 'add') {
+      if (subArgs.length < 2) {
+        if (json) return jsonErr({ code: 'MISSING_ARGS', message: 'Usage: clawser goal add DESCRIPTION' }, 'clawser goal add');
+        return { stdout: '', stderr: 'Usage: clawser goal add DESCRIPTION', exitCode: 1 };
+      }
+      const description = subArgs.slice(1).join(' ');
+      try {
+        const id = agent.addGoal(description);
+        if (json) return jsonOut({ id, description }, 'clawser goal add');
+        return { stdout: `Goal added: ${id} — ${description}\n`, stderr: '', exitCode: 0 };
+      } catch (e) {
+        if (json) return jsonErr({ code: 'ADD_FAILED', message: e.message }, 'clawser goal add');
+        return { stdout: '', stderr: `Failed to add goal: ${e.message}`, exitCode: 1 };
+      }
+    }
+
+    // clawser goal remove ID
+    if (sub === 'remove' || sub === 'rm' || sub === 'delete') {
+      if (subArgs.length < 2) {
+        if (json) return jsonErr({ code: 'MISSING_ARGS', message: 'Usage: clawser goal remove ID' }, 'clawser goal remove');
+        return { stdout: '', stderr: 'Usage: clawser goal remove ID', exitCode: 1 };
+      }
+      const id = subArgs[1];
+      const removed = agent.removeGoal(id);
+      if (removed) {
+        if (json) return jsonOut({ id, removed: true }, 'clawser goal remove');
+        return { stdout: `Goal removed: ${id}\n`, stderr: '', exitCode: 0 };
+      }
+      if (json) return jsonErr({ code: 'NOT_FOUND', message: `Goal not found: ${id}` }, 'clawser goal remove');
+      return { stdout: '', stderr: `Goal not found: ${id}`, exitCode: 1 };
+    }
+
+    if (json) return jsonErr({ code: 'UNKNOWN_SUBCOMMAND', message: `Unknown goal subcommand: ${sub}` }, 'clawser goal');
+    return { stdout: '', stderr: `Unknown goal subcommand: ${sub}\nUsage: clawser goal [list|add|remove]`, exitCode: 1 };
+  }
+
   // ── Subcommand: mcp ─────────────────────────────────────────
 
   function cmdMcp(json = false) {
@@ -1012,6 +1084,8 @@ export function registerClawserCli(registry, getAgent, getShell) {
         return cmdCompact(json);
       case 'memory':
         return cmdMemory(cleanSubArgs, json);
+      case 'goal':
+        return cmdGoal(cleanSubArgs, json);
       case 'mcp':
         return cmdMcp(json);
       case 'rpc':

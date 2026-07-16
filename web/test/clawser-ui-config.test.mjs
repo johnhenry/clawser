@@ -392,6 +392,31 @@ describe('renderSandboxSection', () => {
   })
 })
 
+describe('saveSandboxSettings', () => {
+  it('gates the real registered tool names, not bare short names (regression)', () => {
+    state.agent = { getWorkspace: () => 'ws1' }
+    const setCalls = []
+    state.browserTools = { setPermission: (name, level) => setCalls.push([name, level]) }
+
+    saveSandboxSettings()
+
+    const gatedNames = setCalls.map(([name]) => name)
+    // These are the actual BrowserTool.name values (see clawser-tools.js).
+    // Bare names like 'fetch'/'dom_query'/'code_eval' don't correspond to
+    // any registered tool, so setPermission() on them silently no-ops and
+    // the sandbox capability checkboxes have no real effect.
+    assert.ok(gatedNames.includes('browser_fetch'), 'net_fetch capability must gate browser_fetch')
+    assert.ok(gatedNames.includes('browser_fs_write'), 'fs_write capability must gate browser_fs_write')
+    assert.ok(gatedNames.includes('browser_fs_read'), 'fs_read capability must gate browser_fs_read')
+    assert.ok(gatedNames.includes('browser_dom_query'), 'dom_access capability must gate browser_dom_query')
+    assert.ok(gatedNames.includes('browser_eval_js'), 'eval capability must gate browser_eval_js')
+
+    assert.ok(!gatedNames.includes('fetch'))
+    assert.ok(!gatedNames.includes('dom_query'))
+    assert.ok(!gatedNames.includes('code_eval'))
+  })
+})
+
 describe('renderHeartbeatSection', () => {
   it('renders with default checks when no saved data', () => {
     state.agent = { getWorkspace: () => 'ws1' }
