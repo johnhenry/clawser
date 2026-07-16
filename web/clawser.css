@@ -3,6 +3,7 @@
   --border: #30363d; --text: #c9d1d9; --muted: #8b949e; --dim: #484f58;
   --accent: #58a6ff; --accent-dim: #1f6feb; --green: #3fb950;
   --red: #f85149; --orange: #d29922; --purple: #bc8cff;
+  --msg-user-bg: #1c2333; --msg-agent-bg: #1a2332;
   --mono: 'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',monospace;
   --sans: -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;
   --radius: 6px;
@@ -48,8 +49,8 @@ header .dot.error { background:var(--red); }
 /* ── Chat ───────────────────────────────────────────── */
 .messages { display:flex; flex-direction:column; gap:8px; padding:8px; }
 .msg { max-width:90%; padding:8px 12px; border-radius:var(--radius); font-size:var(--text-base); line-height:1.5; white-space:pre-wrap; word-break:break-word; }
-.msg.user { align-self:flex-end; background:#1c2333; border:1px solid var(--border); }
-.msg.agent { align-self:flex-start; background:#1a2332; border:1px solid var(--border); }
+.msg.user { align-self:flex-end; background:var(--msg-user-bg); border:1px solid var(--border); }
+.msg.agent { align-self:flex-start; background:var(--msg-agent-bg); border:1px solid var(--border); }
 .msg.system { align-self:center; color:var(--muted); font-size:11px; font-family:var(--mono); padding:2px 8px; }
 .msg.error { align-self:center; color:var(--red); font-size:11px; font-family:var(--mono); background:rgba(248,81,73,.08); border:1px solid rgba(248,81,73,.2); }
 .msg .label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:3px; color:var(--muted); display:flex; align-items:center; gap:4px; }
@@ -937,6 +938,7 @@ input[type="range"] { width:100%; accent-color:var(--accent); }
     --border: #d0d7de; --text: #1f2328; --muted: #656d76; --dim: #8b949e;
     --accent: #0969da; --accent-dim: #0550ae; --green: #1a7f37;
     --red: #cf222e; --orange: #bf8700; --purple: #8250df;
+    --msg-user-bg: #ddf4ff; --msg-agent-bg: #f6f8fa;
   }
 }
 
@@ -945,6 +947,7 @@ input[type="range"] { width:100%; accent-color:var(--accent); }
   --border: #d0d7de; --text: #1f2328; --muted: #656d76; --dim: #8b949e;
   --accent: #0969da; --accent-dim: #0550ae; --green: #1a7f37;
   --red: #cf222e; --orange: #bf8700; --purple: #8250df;
+  --msg-user-bg: #ddf4ff; --msg-agent-bg: #f6f8fa;
 }
 
 /* ── Gap 8.5: Reduced Motion ─────────────────────────── */

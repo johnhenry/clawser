@@ -139,3 +139,26 @@ describe('Hardware event forwarding', () => {
     assert.equal(count, 1, 'should not fire after removal');
   });
 });
+
+// ── Registration wiring (regression: HwMonitorTool existed but was never
+// imported/registered in registerAllTools, making hw_monitor unreachable
+// despite being a fully implemented, tested tool) ───────────────────────
+
+describe('hardware tool registration wiring', () => {
+  it('every Hw*Tool exported from clawser-hardware.js is imported and registered in registerAllTools', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const { fileURLToPath } = await import('node:url');
+
+    const hardwareSrc = await readFile(fileURLToPath(new URL('../clawser-hardware.js', import.meta.url)), 'utf8');
+    const initToolsSrc = await readFile(fileURLToPath(new URL('../clawser-workspace-init-tools.js', import.meta.url)), 'utf8');
+
+    const toolClassNames = [...hardwareSrc.matchAll(/export class (Hw\w*Tool) extends BrowserTool/g)].map(m => m[1]);
+    assert.ok(toolClassNames.length > 0, 'expected to find at least one Hw*Tool export');
+    assert.ok(toolClassNames.includes('HwMonitorTool'));
+
+    for (const className of toolClassNames) {
+      assert.match(initToolsSrc, new RegExp(`\\b${className}\\b`),
+        `${className} is exported from clawser-hardware.js but never imported/registered in registerAllTools (clawser-workspace-init-tools.js)`);
+    }
+  });
+});

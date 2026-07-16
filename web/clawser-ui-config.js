@@ -628,8 +628,12 @@ export function saveSandboxSettings() {
     caps[cb.value] = cb.checked;
   }
   localStorage.setItem(lsKey.sandbox(wsId), JSON.stringify(caps));
-  // Apply: update tool permissions based on capability gates
-  const toolMap = { net_fetch: 'fetch', fs_write: 'fs_write', fs_read: 'fs_read', dom_access: 'dom_query', eval: 'code_eval' };
+  // Apply: update tool permissions based on capability gates.
+  // Tool names must match the registered names exactly (BrowserTool.name),
+  // e.g. 'browser_fetch' — a bare 'fetch'/'dom_query'/'code_eval' silently
+  // no-ops against setPermission() since no tool is registered under those
+  // short names, leaving the capability toggle with no real effect.
+  const toolMap = { net_fetch: 'browser_fetch', fs_write: 'browser_fs_write', fs_read: 'browser_fs_read', dom_access: 'browser_dom_query', eval: 'browser_eval_js' };
   if (state.browserTools) {
     for (const [cap, toolName] of Object.entries(toolMap)) {
       if (caps[cap] === false) state.browserTools.setPermission(toolName, 'denied');

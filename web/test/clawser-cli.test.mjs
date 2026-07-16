@@ -5,7 +5,36 @@ import assert from 'node:assert/strict';
 import {
   parseFlags,
   CLAWSER_SUBCOMMAND_META,
+  registerClawserCli,
 } from '../clawser-cli.js';
+import { CommandRegistry } from '../clawser-shell.js';
+
+/**
+ * Minimal fake agent exposing just the goal-tracking surface `cmdGoal`
+ * touches: addGoal/removeGoal/getState().goals. Mirrors ClawserAgent's
+ * real (non-GoalManager) goal store so the same data is visible to
+ * `clawser status` and the Goals UI panel, which both read
+ * agent.getState().goals.
+ */
+function makeFakeAgentWithGoals() {
+  let goals = [];
+  let nextId = 1;
+  return {
+    addGoal(description) {
+      const id = `goal_${nextId++}`;
+      goals.push({ id, description, status: 'active' });
+      return id;
+    },
+    removeGoal(id) {
+      const before = goals.length;
+      goals = goals.filter(g => g.id !== id);
+      return goals.length < before;
+    },
+    getState() {
+      return { goals };
+    },
+  };
+}
 
 // ── parseFlags ──────────────────────────────────────────────────
 
@@ -100,5 +129,85 @@ describe('CLAWSER_SUBCOMMAND_META', () => {
     assert.ok(names.includes('status'));
     assert.ok(names.includes('tools'));
     assert.ok(names.includes('memory'));
+    assert.ok(names.includes('goal'));
+  });
+});
+
+// ── clawser goal ──────────────────────────────────────────────
+
+describe('clawser goal', () => {
+  function makeClawserCommand(agent) {
+    const registry = new CommandRegistry();
+    registerClawserCli(registry, () => agent, () => null);
+    return registry.get('clawser');
+  }
+
+  it('reports no agent when none is provided', async () => {
+    const clawser = makeClawserCommand(null);
+    const { stdout, stderr, exitCode } = await clawser({ args: ['goal', 'list'] });
+    assert.equal(exitCode, 1);
+    assert.equal(stdout, '');
+    assert.match(stderr, /No agent available/);
+  });
+
+  it('reports no goals tracked initially', async () => {
+    const clawser = makeClawserCommand(makeFakeAgentWithGoals());
+    const { stdout, exitCode } = await clawser({ args: ['goal', 'list'] });
+    assert.equal(exitCode, 0);
+    assert.match(stdout, /No goals tracked/);
+  });
+
+  it('adds a goal and it shows up in the list (regression: used to silently no-op)', async () => {
+    const agent = makeFakeAgentWithGoals();
+    const clawser = makeClawserCommand(agent);
+
+    const addResult = await clawser({ args: ['goal', 'add', 'Write', 'the', 'getting-started', 'tutorial'] });
+    assert.equal(addResult.exitCode, 0);
+    assert.match(addResult.stdout, /Goal added:/);
+    assert.match(addResult.stdout, /Write the getting-started tutorial/);
+
+    // The goal must actually exist in agent.getState().goals — the same
+    // array the Goals UI panel and `clawser status` read — not just print
+    // a success message without persisting anything.
+    assert.equal(agent.getState().goals.length, 1);
+    assert.equal(agent.getState().goals[0].description, 'Write the getting-started tutorial');
+
+    const listResult = await clawser({ args: ['goal', 'list'] });
+    assert.equal(listResult.exitCode, 0);
+    assert.match(listResult.stdout, /Write the getting-started tutorial/);
+  });
+
+  it('returns JSON output with --json', async () => {
+    const agent = makeFakeAgentWithGoals();
+    const clawser = makeClawserCommand(agent);
+    const { stdout, exitCode } = await clawser({ args: ['goal', 'add', 'Ship', 'the', 'feature', '--json'] });
+    assert.equal(exitCode, 0);
+    const parsed = JSON.parse(stdout);
+    assert.equal(parsed.data.description, 'Ship the feature');
+    assert.ok(parsed.data.id);
+  });
+
+  it('removes a goal by id', async () => {
+    const agent = makeFakeAgentWithGoals();
+    const id = agent.addGoal('Temporary goal');
+    const clawser = makeClawserCommand(agent);
+
+    const removeResult = await clawser({ args: ['goal', 'remove', id] });
+    assert.equal(removeResult.exitCode, 0);
+    assert.equal(agent.getState().goals.length, 0);
+  });
+
+  it('errors on missing description for add', async () => {
+    const clawser = makeClawserCommand(makeFakeAgentWithGoals());
+    const { stderr, exitCode } = await clawser({ args: ['goal', 'add'] });
+    assert.equal(exitCode, 1);
+    assert.match(stderr, /Usage: clawser goal add DESCRIPTION/);
+  });
+
+  it('errors on unknown goal id for remove', async () => {
+    const clawser = makeClawserCommand(makeFakeAgentWithGoals());
+    const { stderr, exitCode } = await clawser({ args: ['goal', 'remove', 'does-not-exist'] });
+    assert.equal(exitCode, 1);
+    assert.match(stderr, /Goal not found/);
   });
 });

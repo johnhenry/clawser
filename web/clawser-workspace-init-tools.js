@@ -23,7 +23,7 @@ import { BrowserOpenTool, BrowserReadPageTool, BrowserClickTool, BrowserFillTool
 import { SandboxRunTool, SandboxStatusTool } from './clawser-sandbox.js';
 import { registerWshTools } from './clawser-wsh-tools.js';
 import { registerNetwayTools } from './clawser-netway-tools.js';
-import { HwListTool, HwConnectTool, HwSendTool, HwReadTool, HwDisconnectTool, HwInfoTool } from './clawser-hardware.js';
+import { HwListTool, HwConnectTool, HwSendTool, HwReadTool, HwDisconnectTool, HwInfoTool, HwMonitorTool } from './clawser-hardware.js';
 import { RemoteStatusTool, RemotePairTool, RemoteRevokeTool } from './clawser-remote.js';
 import { GoalAddTool, GoalUpdateTool, GoalAddArtifactTool, GoalListTool } from './clawser-goals.js';
 import { DaemonStatusTool, DaemonCheckpointTool } from './clawser-daemon.js';
@@ -163,13 +163,14 @@ export async function registerAllTools({ activeWsId, configureServerRuntimeResol
   // netway — Virtual Networking (8 tools)
   registerNetwayTools(browserTools);
 
-  // Hardware (6)
+  // Hardware (7)
   browserTools.register(new HwListTool(state.peripheralManager));
   browserTools.register(new HwConnectTool(state.peripheralManager));
   browserTools.register(new HwSendTool(state.peripheralManager));
   browserTools.register(new HwReadTool(state.peripheralManager));
   browserTools.register(new HwDisconnectTool(state.peripheralManager));
   browserTools.register(new HwInfoTool(state.peripheralManager));
+  browserTools.register(new HwMonitorTool(state.peripheralManager));
 
   // Remote (3)
   browserTools.register(new RemoteStatusTool(state.pairingManager));
