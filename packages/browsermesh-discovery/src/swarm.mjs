@@ -534,16 +534,26 @@ export class TaskDistributor {
 /**
  * High-level facade for swarm management: joining/leaving, leader election,
  * task submission and lifecycle.
+ *
+ * Internally tracks a `Map<swarmId, {election, distributor, tasks}>` so a
+ * single pod can participate in more than one concurrent swarm. `'local'`
+ * is the default/legacy swarm — every method that doesn't take an explicit
+ * `swarmId` operates on it, so single-swarm callers (all production
+ * call-sites and every pre-multi-swarm test) see IDENTICAL behavior to
+ * before this refactor. No wire format changed: there's no wireTransport()
+ * on this class today (the SWARM_* constants are unused re-exports — see
+ * the file header), so there's nothing to add a swarmId field to yet;
+ * that's a separate, not-yet-written wire integration.
  */
 export class SwarmCoordinator {
-  /** @type {LeaderElection} */
-  #election;
+  /** @type {string} */
+  #localPodId;
 
-  /** @type {TaskDistributor} */
-  #distributor;
+  /** @type {Map<string, {election: LeaderElection, distributor: TaskDistributor, tasks: Map<string, SwarmTask>}>} */
+  #swarms = new Map();
 
-  /** @type {Map<string, SwarmTask>} taskId -> SwarmTask */
-  #tasks = new Map();
+  /** @type {object} Election opts (heartbeatMs, electionTimeoutMs) applied to every swarm created after construction */
+  #electionOpts;
 
   /** @type {SwimMembership|null} */
   #swim = null;
@@ -556,14 +566,13 @@ export class SwarmCoordinator {
    * @param {SwimMembership} [opts.swim] - Optional SWIM membership protocol instance
    */
   constructor(localPodId, opts = {}) {
-    this.#election = new LeaderElection(localPodId, opts);
-    this.#distributor = new TaskDistributor();
+    this.#localPodId = localPodId;
+    this.#electionOpts = opts;
+    this.#createSwarm('local');
 
-    // Add self as first member
-    const self = new SwarmMember({ podId: localPodId });
-    this.#distributor.addMember(self);
-
-    // Wire up SWIM membership protocol if provided
+    // Wire up SWIM membership protocol if provided. SWIM tracks failure
+    // detection for the local pod's default swarm only — join/leave here
+    // default to 'local', matching pre-multi-swarm behavior.
     this.#swim = opts.swim ?? null;
     if (this.#swim) {
       this.#swim.onJoin = (podId) => this.join(podId);
@@ -571,14 +580,85 @@ export class SwarmCoordinator {
     }
   }
 
-  /** @returns {LeaderElection} */
-  get election() {
-    return this.#election;
+  /**
+   * Create a new swarm state bundle, adding the local pod as its first
+   * member (mirrors the constructor's original single-swarm setup).
+   * @param {string} swarmId
+   * @returns {{election: LeaderElection, distributor: TaskDistributor, tasks: Map<string, SwarmTask>}}
+   */
+  #createSwarm(swarmId) {
+    const election = new LeaderElection(this.#localPodId, this.#electionOpts);
+    const distributor = new TaskDistributor();
+    distributor.addMember(new SwarmMember({ podId: this.#localPodId }));
+    const swarm = { election, distributor, tasks: new Map() };
+    this.#swarms.set(swarmId, swarm);
+    return swarm;
   }
 
-  /** @returns {TaskDistributor} */
+  /**
+   * Get a swarm's state bundle, auto-creating it (with the local pod as
+   * its first member) if it doesn't exist yet — mirrors how the original
+   * single-swarm constructor always had exactly one ready-to-use swarm.
+   * @param {string} [swarmId='local']
+   */
+  #getSwarm(swarmId = 'local') {
+    return this.#swarms.get(swarmId) || this.#createSwarm(swarmId);
+  }
+
+  /**
+   * Explicitly create a swarm without joining any extra members yet.
+   * Idempotent — returns the existing swarm's state if already present.
+   * @param {string} swarmId
+   * @returns {boolean} true if a new swarm was created, false if it already existed
+   */
+  createSwarm(swarmId) {
+    if (this.#swarms.has(swarmId)) return false;
+    this.#createSwarm(swarmId);
+    return true;
+  }
+
+  /**
+   * Disband a swarm and discard its state (members, election, tasks).
+   * The `'local'` swarm can't be disbanded — it's the coordinator's
+   * always-available default, matching every single-swarm call-site.
+   *
+   * @param {string} swarmId
+   * @returns {boolean} true if the swarm existed and was removed
+   */
+  disbandSwarm(swarmId) {
+    if (swarmId === 'local') {
+      throw new Error("cannot disband the 'local' swarm");
+    }
+    return this.#swarms.delete(swarmId);
+  }
+
+  /** @param {string} swarmId @returns {boolean} */
+  hasSwarm(swarmId) {
+    return this.#swarms.has(swarmId);
+  }
+
+  /**
+   * List all tracked swarms with a summary of their state.
+   * @returns {Array<{swarmId: string, size: number, isLeader: boolean, leader: string|null, taskCount: number}>}
+   */
+  listSwarms() {
+    return [...this.#swarms.entries()].map(([swarmId, swarm]) => ({
+      swarmId,
+      size: swarm.distributor.size,
+      isLeader: swarm.election.role === 'leader',
+      leader: swarm.election.leader,
+      taskCount: swarm.tasks.size,
+    }));
+  }
+
+  /** @returns {LeaderElection} The 'local' swarm's election (unchanged accessor) */
+  get election() {
+    return this.#getSwarm('local').election;
+  }
+
+  /** @returns {TaskDistributor} The 'local' swarm's distributor (unchanged accessor) */
   get distributor() {
-    return this.#distributor;
+    return this.#getSwarm('local').distributor;
   }
 
   /** @returns {SwimMembership|null} */
@@ -587,64 +667,85 @@ export class SwarmCoordinator {
   }
 
   /**
-   * Add a new member to the swarm.
+   * List member podIds of a swarm (defaults to 'local').
+   * @param {string} [swarmId='local']
+   * @returns {string[]}
+   */
+  listMembers(swarmId = 'local') {
+    return (this.#swarms.get(swarmId)?.distributor.members ?? []).map(m => m.podId);
+  }
+
+  /**
+   * Add a new member to a swarm (defaults to 'local' — unchanged
+   * behavior for every pre-multi-swarm call-site).
    *
    * @param {string} podId
    * @param {string[]} [capabilities]
+   * @param {string} [swarmId='local']
    * @returns {SwarmMember}
    */
-  join(podId, capabilities = []) {
+  join(podId, capabilities = [], swarmId = 'local') {
+    const swarm = this.#getSwarm(swarmId);
     const member = new SwarmMember({ podId, capabilities });
-    this.#distributor.addMember(member);
-    this.#election.addCandidate(podId);
-    if (this.#swim) {
+    swarm.distributor.addMember(member);
+    swarm.election.addCandidate(podId);
+    if (swarmId === 'local' && this.#swim) {
       this.#swim.addMember(podId);
     }
     return member;
   }
 
   /**
-   * Remove a member from the swarm.
+   * Remove a member from a swarm (defaults to 'local').
    *
    * @param {string} podId
+   * @param {string} [swarmId='local']
    * @returns {boolean}
    */
-  leave(podId) {
-    this.#election.removeCandidate(podId);
-    if (this.#swim) {
+  leave(podId, swarmId = 'local') {
+    const swarm = this.#swarms.get(swarmId);
+    if (!swarm) return false;
+    swarm.election.removeCandidate(podId);
+    if (swarmId === 'local' && this.#swim) {
       this.#swim.removeMember(podId);
     }
-    return this.#distributor.removeMember(podId);
+    return swarm.distributor.removeMember(podId);
   }
 
   /**
-   * Submit a new task to the swarm.
+   * Submit a new task to a swarm (defaults to 'local').
    * The task is created, distributed, and stored.
    *
    * @param {string} description
    * @param {string} [strategy]
    * @param {*} [input]
+   * @param {string} [swarmId='local']
    * @returns {SwarmTask}
    */
-  submitTask(description, strategy, input) {
+  submitTask(description, strategy, input, swarmId = 'local') {
+    const swarm = this.#getSwarm(swarmId);
     const task = new SwarmTask({
       description,
       strategy: strategy || 'leader-follower',
       input: input ?? null,
     });
-    this.#distributor.distribute(task);
-    this.#tasks.set(task.taskId, task);
+    swarm.distributor.distribute(task);
+    swarm.tasks.set(task.taskId, task);
     return task;
   }
 
   /**
-   * Get a task by ID.
-   *
+   * Find a task by ID across all swarms. Task IDs are unique per
+   * coordinator (module-level counter), so no swarmId is needed.
    * @param {string} taskId
    * @returns {SwarmTask|null}
    */
   getTask(taskId) {
-    return this.#tasks.get(taskId) || null;
+    for (const swarm of this.#swarms.values()) {
+      const task = swarm.tasks.get(taskId);
+      if (task) return task;
+    }
+    return null;
   }
 
   /**
@@ -655,7 +756,7 @@ export class SwarmCoordinator {
    * @returns {boolean} true if the task was found and completed
    */
   completeTask(taskId, output) {
-    const task = this.#tasks.get(taskId);
+    const task = this.getTask(taskId);
     if (!task) return false;
     task.status = 'completed';
     task.output = output ?? null;
@@ -671,7 +772,7 @@ export class SwarmCoordinator {
    * @returns {boolean} true if the task was found and marked failed
    */
   failTask(taskId, error) {
-    const task = this.#tasks.get(taskId);
+    const task = this.getTask(taskId);
     if (!task) return false;
     task.status = 'failed';
     task.output = error ?? null;
@@ -686,7 +787,7 @@ export class SwarmCoordinator {
    * @returns {boolean} true if the task was found and cancelled
    */
   cancelTask(taskId) {
-    const task = this.#tasks.get(taskId);
+    const task = this.getTask(taskId);
     if (!task) return false;
     if (task.status === 'completed' || task.status === 'failed') return false;
     task.status = 'cancelled';
@@ -695,28 +796,39 @@ export class SwarmCoordinator {
   }
 
   /**
-   * List tasks, optionally filtering by status.
+   * List tasks, optionally filtering by status and/or swarm. Defaults to
+   * the 'local' swarm — unchanged behavior for pre-multi-swarm callers,
+   * since they only ever submit tasks to 'local'. Pass `swarmId: null`
+   * (or any falsy-but-explicit value doesn't work — use the string
+   * `'*'`) to list across every swarm.
    *
    * @param {object} [opts]
    * @param {string} [opts.status] - Filter by task status
+   * @param {string} [opts.swarmId='local'] - Which swarm to list from, or '*' for all swarms
    * @returns {SwarmTask[]}
    */
   listTasks(opts = {}) {
-    let tasks = [...this.#tasks.values()];
+    const swarmId = opts.swarmId ?? 'local';
+    let tasks;
+    if (swarmId === '*') {
+      tasks = [...this.#swarms.values()].flatMap(s => [...s.tasks.values()]);
+    } else {
+      tasks = [...(this.#swarms.get(swarmId)?.tasks.values() ?? [])];
+    }
     if (opts.status) {
       tasks = tasks.filter(t => t.status === opts.status);
     }
     return tasks;
   }
 
-  /** @returns {number} Number of members in the swarm */
+  /** @returns {number} Number of members in the 'local' swarm (unchanged accessor) */
   get swarmSize() {
-    return this.#distributor.size;
+    return this.#getSwarm('local').distributor.size;
   }
 
-  /** @returns {boolean} true if the local pod is the elected leader */
+  /** @returns {boolean} true if the local pod is the elected leader of the 'local' swarm (unchanged accessor) */
   get isLeader() {
-    return this.#election.role === 'leader';
+    return this.#getSwarm('local').election.role === 'leader';
   }
 }
 

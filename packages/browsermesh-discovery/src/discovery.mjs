@@ -1,3 +1,4 @@
+import { silentCatch } from './silent-catch.mjs'
 /**
  * clawser-mesh-discovery.js -- Peer discovery and service directory for BrowserMesh.
  *
@@ -48,6 +49,35 @@ export const RELAY_REGISTER = 0x96;
 export const RELAY_QUERY = 0x97;
 
 // ---------------------------------------------------------------------------
+// PEER_TYPE — taxonomy
+// ---------------------------------------------------------------------------
+
+/**
+ * Canonical peer type taxonomy.
+ *
+ * - `chat`       — Standard agent peer offering conversational chat.
+ * - `runtime`    — Hosts a remote-runtime endpoint (wsh server, exec
+ *                  capable). Routing prefers these for code/file ops.
+ * - `host-shell` — A fixed host shell (e.g. browser tab acting as a
+ *                  stationary backplane); accepts inbound `wsh` sessions.
+ * - `vm-compute` — VM-backed compute peer (v86/WebVM); routing target for
+ *                  long-running compute jobs that need a real OS.
+ * - `unknown`    — Default for older peers without a `peerType` field.
+ *
+ * @readonly
+ */
+export const PEER_TYPE = Object.freeze({
+  CHAT: 'chat',
+  RUNTIME: 'runtime',
+  HOST_SHELL: 'host-shell',
+  VM_COMPUTE: 'vm-compute',
+  UNKNOWN: 'unknown',
+});
+
+/** @type {ReadonlySet<string>} Valid peer-type values. */
+export const PEER_TYPES = new Set(Object.values(PEER_TYPE));
+
+// ---------------------------------------------------------------------------
 // DiscoveryRecord
 // ---------------------------------------------------------------------------
 
@@ -66,6 +96,9 @@ export class DiscoveryRecord {
    * @param {number} [opts.ttl]          - Time-to-live in ms (default 30000)
    * @param {number} [opts.discoveredAt] - Timestamp when discovered
    * @param {string} [opts.source]       - Discovery source strategy type
+   * @param {string} [opts.peerType]     - Canonical peer type (see PEER_TYPE).
+   *   Unknown values are accepted but normalised to `'unknown'` to keep the
+   *   wire format forward-compatible with future taxonomies.
    */
   constructor({
     podId,
@@ -77,6 +110,7 @@ export class DiscoveryRecord {
     ttl = 30_000,
     discoveredAt,
     source = null,
+    peerType = PEER_TYPE.UNKNOWN,
   }) {
     if (!podId || typeof podId !== 'string') {
       throw new Error('podId is required and must be a non-empty string');
@@ -90,6 +124,7 @@ export class DiscoveryRecord {
     this.ttl = ttl;
     this.discoveredAt = discoveredAt ?? Date.now();
     this.source = source;
+    this.peerType = PEER_TYPES.has(peerType) ? peerType : PEER_TYPE.UNKNOWN;
   }
 
   /**
@@ -107,6 +142,7 @@ export class DiscoveryRecord {
    *
    * @param {object} [filter]
    * @param {string[]} [filter.capabilities] - Required capabilities
+   * @param {string|string[]} [filter.peerType] - Required peer type(s)
    * @returns {boolean}
    */
   matchesFilter(filter) {
@@ -115,6 +151,10 @@ export class DiscoveryRecord {
       for (const cap of filter.capabilities) {
         if (!this.capabilities.includes(cap)) return false;
       }
+    }
+    if (filter.peerType) {
+      const allowed = Array.isArray(filter.peerType) ? filter.peerType : [filter.peerType];
+      if (!allowed.includes(this.peerType)) return false;
     }
     return true;
   }
@@ -134,6 +174,7 @@ export class DiscoveryRecord {
       ttl: this.ttl,
       discoveredAt: this.discoveredAt,
       source: this.source,
+      peerType: this.peerType,
     };
   }
 
@@ -499,7 +540,7 @@ export class RelayStrategy extends DiscoveryStrategy {
         try {
           const msg = JSON.parse(event.data);
           this.#handleMessage(msg);
-        } catch { /* ignore malformed */ }
+        } catch (e) { silentCatch('clawser-mesh-discovery', 'ignore-malformed', e) }
       };
 
       ws.onclose = () => {
