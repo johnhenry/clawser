@@ -208,7 +208,14 @@ export class MeshSchedulerSubmitTool extends BrowserTool {
     const sched = peerToolsContext.getMeshScheduler()
     if (!sched) return { success: false, output: '', error: 'Mesh scheduler not initialized.' }
     try {
-      const { ScheduledTask } = await import('browsermesh-apps')
+      // ScheduledTask lives in the sibling browsermesh-apps package, which
+      // itself depends on browsermesh-core (peerDependency) — core can't
+      // depend back on apps without a cycle, so this reaches across via a
+      // relative path that only resolves inside this monorepo, pre-existing
+      // from before this package was re-extracted. Contained by the
+      // surrounding try/catch: if apps isn't present, this one tool fails
+      // gracefully rather than crashing the module.
+      const { ScheduledTask } = await import('../../browsermesh-apps/src/scheduler.mjs')
       const task = new ScheduledTask({
         id: crypto.randomUUID(),
         type,
@@ -876,7 +883,7 @@ export class DeltaSyncStatusTool extends BrowserTool {
 
 /**
  * Register all mesh peer tools with a BrowserToolRegistry.
- * @param {import('./clawser-tools.js').BrowserToolRegistry} registry
+ * @param {import('./compat.mjs').BrowserToolRegistry} registry
  * @param {object} deps - Subsystem instances
  */
 export function registerMeshPeerTools(registry, deps = {}) {

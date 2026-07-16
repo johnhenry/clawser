@@ -50,10 +50,10 @@ function createContact(publicKeyHex, label, trustLevel = 0.5) {
  * selection, contact storage, and capability-based access grants.
  */
 export class IdentityWallet {
-  /** @type {import('./clawser-mesh-identity.js').MeshIdentityManager} */
+  /** @type {import('./identity.mjs').MeshIdentityManager} */
   #identityManager;
 
-  /** @type {import('./clawser-mesh-identity.js').IdentitySelector|null} */
+  /** @type {import('./identity.mjs').IdentitySelector|null} */
   #identitySelector;
 
   /** @type {Map<string, Contact>} publicKeyHex → Contact */
@@ -67,8 +67,8 @@ export class IdentityWallet {
 
   /**
    * @param {object} opts
-   * @param {import('./clawser-mesh-identity.js').MeshIdentityManager} opts.identityManager
-   * @param {import('./clawser-mesh-identity.js').IdentitySelector} [opts.identitySelector]
+   * @param {import('./identity.mjs').MeshIdentityManager} opts.identityManager
+   * @param {import('./identity.mjs').IdentitySelector} [opts.identitySelector]
    * @param {Function} [opts.onLog]
    */
   constructor({ identityManager, identitySelector, onLog }) {
@@ -89,7 +89,7 @@ export class IdentityWallet {
    *
    * @param {string} label
    * @param {object} [opts]
-   * @returns {Promise<import('./clawser-mesh-identity.js').IdentitySummary>}
+   * @returns {Promise<import('./identity.mjs').IdentitySummary>}
    */
   async createIdentity(label, opts) {
     const summary = await this.#identityManager.create(label, opts);
@@ -103,7 +103,7 @@ export class IdentityWallet {
    * @param {object} exportedKey - JWK private key
    * @param {string} label
    * @param {object} [opts]
-   * @returns {Promise<import('./clawser-mesh-identity.js').IdentitySummary>}
+   * @returns {Promise<import('./identity.mjs').IdentitySummary>}
    */
   async importIdentity(exportedKey, label, opts) {
     const summary = await this.#identityManager.import(exportedKey, label, opts);
@@ -139,7 +139,7 @@ export class IdentityWallet {
   /**
    * List all identity summaries.
    *
-   * @returns {import('./clawser-mesh-identity.js').IdentitySummary[]}
+   * @returns {import('./identity.mjs').IdentitySummary[]}
    */
   listIdentities() {
     return this.#identityManager.list();
@@ -149,7 +149,7 @@ export class IdentityWallet {
    * Get a single identity summary.
    *
    * @param {string} podId
-   * @returns {import('./clawser-mesh-identity.js').IdentitySummary|null}
+   * @returns {import('./identity.mjs').IdentitySummary|null}
    */
   getIdentity(podId) {
     return this.#identityManager.get(podId);
@@ -158,7 +158,7 @@ export class IdentityWallet {
   /**
    * Get the default identity summary.
    *
-   * @returns {import('./clawser-mesh-identity.js').IdentitySummary|null}
+   * @returns {import('./identity.mjs').IdentitySummary|null}
    */
   getDefault() {
     return this.#identityManager.getDefault();
@@ -461,8 +461,8 @@ export class IdentityWallet {
    * Restore wallet state from serialized data.
    *
    * @param {object} data - Output of toJSON()
-   * @param {import('./clawser-mesh-identity.js').MeshIdentityManager} identityManager
-   * @param {import('./clawser-mesh-identity.js').IdentitySelector} [identitySelector]
+   * @param {import('./identity.mjs').MeshIdentityManager} identityManager
+   * @param {import('./identity.mjs').IdentitySelector} [identitySelector]
    * @returns {IdentityWallet}
    */
   static fromJSON(data, identityManager, identitySelector) {

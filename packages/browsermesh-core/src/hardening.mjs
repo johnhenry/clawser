@@ -1,3 +1,4 @@
+import { silentCatch } from './silent-catch.mjs'
 /**
 // STATUS: EXPERIMENTAL — production hardening for BrowserMesh transports
  * clawser-mesh-hardening.js -- Production Hardening Layer.
@@ -462,7 +463,7 @@ export class TransportHealthCheck {
     const set = this.#listeners.get(event);
     if (!set) return;
     for (const cb of [...set]) {
-      try { cb(data); } catch { /* swallow */ }
+      try { cb(data); } catch (e) { silentCatch('clawser-mesh-hardening', 'swallow', e) }
     }
   }
 }
@@ -555,7 +556,7 @@ export class ConnectionPool {
 
       const evicted = entries.splice(idleIdx, 1)[0];
       if (typeof evicted.transport.close === 'function') {
-        try { evicted.transport.close(); } catch { /* ignore */ }
+        try { evicted.transport.close(); } catch (e) { silentCatch('clawser-mesh-hardening', 'evicted.transport.close', e) }
       }
     }
 
@@ -683,7 +684,7 @@ export class ConnectionPool {
         const entry = entries[i];
         if (!entry.acquired && (now - entry.lastUsed) > this.#idleTimeoutMs) {
           if (typeof entry.transport.close === 'function') {
-            try { entry.transport.close(); } catch { /* ignore */ }
+            try { entry.transport.close(); } catch (e) { silentCatch('clawser-mesh-hardening', 'entry.transport.close', e) }
           }
           entries.splice(i, 1);
           evicted++;
@@ -704,7 +705,7 @@ export class ConnectionPool {
     for (const [, entries] of this.#pools) {
       for (const entry of entries) {
         if (typeof entry.transport.close === 'function') {
-          try { entry.transport.close(); } catch { /* ignore */ }
+          try { entry.transport.close(); } catch (e) { silentCatch('clawser-mesh-hardening', 'entry.transport.close', e) }
         }
       }
     }
@@ -1088,7 +1089,7 @@ export class TransportFailover {
         }
         // Close the old transport
         if (typeof this.#activeTransport.close === 'function') {
-          try { this.#activeTransport.close(); } catch { /* ignore */ }
+          try { this.#activeTransport.close(); } catch (e) { silentCatch('clawser-mesh-hardening', 'this', e) }
         }
         this.#activeTransport = null;
       }
@@ -1176,7 +1177,7 @@ export class TransportFailover {
     const set = this.#listeners.get(event);
     if (!set) return;
     for (const cb of [...set]) {
-      try { cb(data); } catch { /* swallow */ }
+      try { cb(data); } catch (e) { silentCatch('clawser-mesh-hardening', 'swallow', e) }
     }
   }
 }

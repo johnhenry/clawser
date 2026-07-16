@@ -139,8 +139,8 @@ export class SignedKeyLink extends KeyLink {
    * Create a signed link between two identities.
    * Both parent and child sign the canonical payload.
    *
-   * @param {import('./clawser-mesh-identity.js').PodIdentity} parentIdentity
-   * @param {import('./clawser-mesh-identity.js').PodIdentity} childIdentity
+   * @param {import('./identity.mjs').PodIdentity} parentIdentity
+   * @param {import('./identity.mjs').PodIdentity} childIdentity
    * @param {string} relation - One of VALID_RELATIONS
    * @param {object} [opts]
    * @param {string[]} [opts.scope]

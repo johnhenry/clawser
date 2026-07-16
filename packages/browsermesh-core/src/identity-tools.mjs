@@ -362,10 +362,10 @@ export class IdentitySelectRuleTool extends BrowserTool {
 
 /**
  * Register all identity tools with a BrowserToolRegistry.
- * @param {import('./clawser-tools.js').BrowserToolRegistry} registry
- * @param {import('./clawser-mesh-identity.js').AutoIdentityManager} [autoIdMgr]
+ * @param {import('./compat.mjs').BrowserToolRegistry} registry
+ * @param {import('./identity.mjs').AutoIdentityManager} [autoIdMgr]
  * @param {import('./keyring.mjs').MeshKeyring} [keyring]
- * @param {import('./clawser-mesh-identity.js').IdentitySelector} [selector]
+ * @param {import('./identity.mjs').IdentitySelector} [selector]
  */
 export function registerIdentityTools(registry, autoIdMgr, keyring, selector) {
   if (autoIdMgr) identityToolsContext.setAutoIdMgr(autoIdMgr);
