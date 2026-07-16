@@ -111,10 +111,14 @@ type ChannelType =
   | 'post-message'
   | 'message-port'
   | 'broadcast-channel'
-  | 'shared-worker'
+  | 'shared-worker-port'
   | 'webrtc-data'
   | 'websocket'
   | 'webtransport';
+
+// Note: named 'shared-worker-port' for consistency with channel-abstraction.md's
+// PodChannelType and transport-probing.md's PodChannelType, which use the same
+// value for the SharedWorker port adapter.
 ```
 
 ## 3. Message Types
@@ -421,7 +425,7 @@ class LinkNegotiator {
       'webrtc-data',
       'websocket',
       'message-port',
-      'shared-worker',
+      'shared-worker-port',
       'broadcast-channel',
       'post-message',
     ];
@@ -456,7 +460,7 @@ class LinkNegotiator {
         return local.channels.messagePort && remote.channels.messagePort &&
                local.origin === remote.origin;
 
-      case 'shared-worker':
+      case 'shared-worker-port':
         return local.channels.sharedWorker && remote.channels.sharedWorker &&
                local.origin === remote.origin;
 
@@ -671,3 +675,7 @@ class NegotiationErrorHandler {
   }
 }
 ```
+
+## 7. Implementation Status
+
+**Status: Not implemented as specified.** No `LinkNegotiator` class or `MESH_HELLO`/`MESH_HELLO_ACK`/`MESH_CAPS`/`MESH_CAPS_ACK`/`MESH_UPGRADE`/`MESH_UPGRADE_ACK` message types exist in `web/` or `packages/`, and `wrapChannel()` (referenced above and in [channel-abstraction.md](channel-abstraction.md)) is likewise unimplemented — see that spec's Implementation Status. Related, actually-shipped handshake code lives in `web/clawser-mesh-handshake.js` (`SignalingClient`, `DirectInputHandshake`, `HandshakeCoordinator`) and `packages/browsermesh-core/src/handshake.mjs`, but under different class names and message shapes than this spec's `LinkNegotiator` state machine.

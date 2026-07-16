@@ -38,5 +38,5 @@ Step-by-step guides to get productive with Clawser, from first launch to advance
 - [API Reference](../API.md) — Public APIs for core modules
 - [CLI Reference](../CLI.md) — Shell commands and clawser CLI
 - [Configuration Guide](../CONFIG.md) — All config panel options
-- [Tools Reference](../TOOLS.md) — Complete tool catalog (~100 tools)
+- [Tools Reference](../TOOLS.md) — Complete tool catalog (~285 tools)
 - [Features Guide](../FEATURES.md) — Advanced subsystems deep dive

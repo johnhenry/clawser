@@ -2,13 +2,13 @@
 
 ## Current Status (May 2026)
 
-Clawser is a **beta-quality** browser-native AI agent platform. The core runtime is functionally complete with 240+ JS modules (~120K LOC), 100+ tools, and 38+ LLM provider backends. The project transitioned from a Rust/WASM architecture to pure JavaScript. Phase 8 (BrowserMesh) added 44 decentralized mesh modules. Full test suite: **8,800+ tests passing, 0 failing.**
+Clawser is a **beta-quality** browser-native AI agent platform. The core runtime is functionally complete with 235+ JS modules (~130K LOC), 100+ tools, and 38+ LLM provider backends. The project transitioned from a Rust/WASM architecture to pure JavaScript. Phase 8 (BrowserMesh) added 44 decentralized mesh modules. Full test suite: **9,700+ tests passing, 0 failing.**
 
 ### What Works
 - Full agent loop with streaming, tool calling, and context compaction
 - Event-sourced conversation persistence with fork, replay, and export
 - 3-tier provider system supporting 38+ LLM backends with fallback chains
-- 70+ browser tools with permission engine (auto/approve/denied)
+- 100+ browser tools with permission engine (auto/approve/denied)
 - Skills system (agentskills.io standard) with OPFS storage, remote registry, and validation
 - Virtual shell with 59 commands, pipes, redirects, variable substitution, and glob expansion
 - Multi-workspace isolation with separate state per workspace
@@ -138,7 +138,7 @@ Items partially complete or planned for the mesh networking layer:
 - [x] Scheduled task execution in daemon mode — cron validation + per-routine consecutive-failure skip in `clawser-background-runner.js`.
 
 #### Kernel Extraction
-- [ ] Extract `web/packages/kernel/` to standalone npm package (`browsermesh-kernel`)
+- [x] `web/packages/kernel/` renamed and publish-ready as `browsermesh-kernel` (README/LICENSE added, `npm pack --dry-run` verified) — publishing itself is blocked only on `npm login` credentials, not a code task
 - [ ] Kernel integration adapter becomes an npm dependency like other packages
 - [ ] Kernel tenants usable from ServerPod (Node.js) — unified resource model
 

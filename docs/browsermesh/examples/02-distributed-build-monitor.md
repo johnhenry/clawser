@@ -77,16 +77,14 @@ assert(caps.webCrypto === true);
 // Any tab gets read-only access
 const readOnlyToken = await aggregator.capabilityManager.grant(
   'builds/*',
-  viewerPod.publicKey,
-  { scope: ['build:read', 'build:logs'] }
+  ['build:read', 'build:logs']
 );
 
 // WebAuthn-attested tab gets admin access
 if (viewerPod.attestationProof) {
   const adminToken = await aggregator.capabilityManager.grant(
     'builds/*',
-    viewerPod.publicKey,
-    { scope: ['build:read', 'build:logs', 'build:cancel', 'build:retry', 'build:promote'] }
+    ['build:read', 'build:logs', 'build:cancel', 'build:retry', 'build:promote']
   );
 }
 ```

@@ -236,21 +236,26 @@ Fetches from a remote HTTP endpoint or IPFS gateway. Read-only for browser pods.
 
 ## 6. Wire Format Messages
 
-Registry messages use type codes 0xD0-0xD2 in the Registry (0xD*) block.
+Registry messages use type codes 0xF6-0xF8. These fall in the `0xF6-0xFF`
+"Reserved (internal / future)" range of the `MESH_TYPE` enum in the
+`browsermesh-primitives` package -- they are not yet assigned there, so
+treat these values as provisional pending upstream allocation. (Note:
+`0xD0-0xD3` are already assigned to the payment-channel wire codes -- see
+[payment-channels.md](payment-channels.md) -- and must not be reused here.)
 
 ```typescript
 enum RegistryMessageType {
-  REGISTRY_LOOKUP   = 0xD0,
-  REGISTRY_REGISTER = 0xD1,
-  REGISTRY_NOTIFY   = 0xD2,
+  REGISTRY_LOOKUP   = 0xF6,
+  REGISTRY_REGISTER = 0xF7,
+  REGISTRY_NOTIFY   = 0xF8,
 }
 ```
 
-### 6.1 REGISTRY_LOOKUP (0xD0)
+### 6.1 REGISTRY_LOOKUP (0xF6)
 
 ```typescript
 interface RegistryLookupMessage extends MessageEnvelope {
-  t: 0xD0;
+  t: 0xF6;
   p: {
     cid?: string;                // Lookup by CID
     name?: string;               // Lookup by name
@@ -260,11 +265,11 @@ interface RegistryLookupMessage extends MessageEnvelope {
 }
 ```
 
-### 6.2 REGISTRY_REGISTER (0xD1)
+### 6.2 REGISTRY_REGISTER (0xF7)
 
 ```typescript
 interface RegistryRegisterMessage extends MessageEnvelope {
-  t: 0xD1;
+  t: 0xF7;
   p: {
     artifact: ArtifactDescriptor;
     locations: StorageLocation[];
@@ -272,13 +277,13 @@ interface RegistryRegisterMessage extends MessageEnvelope {
 }
 ```
 
-### 6.3 REGISTRY_NOTIFY (0xD2)
+### 6.3 REGISTRY_NOTIFY (0xF8)
 
 Broadcast when an artifact is registered, updated, or removed.
 
 ```typescript
 interface RegistryNotifyMessage extends MessageEnvelope {
-  t: 0xD2;
+  t: 0xF8;
   p: {
     event: 'registered' | 'updated' | 'removed';
     cid: string;
@@ -296,8 +301,8 @@ Registry operations require capabilities (see [capability-scope-grammar.md](../c
 registry:read                    // Lookup and list
 registry:write                   // Register and remove
 registry:admin                   // Pin, unpin, GC
-registry:read:wasm-module        // Type-scoped read
-registry:write:pod-image         // Type-scoped write
+registry/wasm-module:read        // Type-scoped read
+registry/pod-image:write         // Type-scoped write
 ```
 
 ## 8. Watch Interface

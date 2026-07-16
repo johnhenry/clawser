@@ -31,8 +31,8 @@ graph TD
         FIL[Filecoin]
     end
 
-    BP1 -->|"storage/read<br/>storage/write"| SP
-    BP2 -->|"storage/read<br/>storage/write"| SP
+    BP1 -->|"storage:read<br/>storage:write"| SP
+    BP2 -->|"storage:read<br/>storage:write"| SP
     SP --> SA
     SA --> IPFS
     SA --> FIL
@@ -88,7 +88,7 @@ const fetchRequest: MeshRequest = {
   type: 'REQUEST',
   id: crypto.randomUUID(),
   from: podId,
-  target: { capability: 'storage/read' },
+  target: { capability: 'storage:read' },
   payload: {
     op: 'fetchArtifact',
     args: {
@@ -107,10 +107,10 @@ interface StoragePodCapabilities {
   id: string;
   kind: 'server';
   capabilities: [
-    'storage/read',
-    'storage/write',
-    'storage/pin',
-    'storage/list',
+    'storage:read',
+    'storage:write',
+    'storage:pin',
+    'storage:list',
   ];
 }
 
@@ -253,7 +253,7 @@ class MeshFetcher {
 
     // Ask mesh for content
     const result = await meshRouter.send(
-      { capability: 'storage/read' },
+      { capability: 'storage:read' },
       { op: 'fetch', args: { cid } }
     );
 
@@ -304,7 +304,7 @@ const imageResizerManifest: ArtifactManifest = {
     size: 245760,
   },
   schema: 'bafkreigh2akisc...',
-  capabilities: ['compute/wasm', 'image/resize'],
+  capabilities: ['compute/wasm:execute', 'image:resize'],
 };
 ```
 
@@ -503,7 +503,7 @@ const storagePod = await StoragePod.create({
 
 // Browser pod requests artifact
 const manifest = await browserPod.send(
-  { capability: 'storage/read' },
+  { capability: 'storage:read' },
   { op: 'resolve', args: { name: 'image-resizer', version: '1.2.3' } }
 );
 
@@ -514,13 +514,13 @@ const content = await fetch(
 
 // Or fetch via mesh routing
 const content = await browserPod.send(
-  { capability: 'storage/read' },
+  { capability: 'storage:read' },
   { op: 'fetch', args: { cid: manifest.artifact.cid } }
 );
 
 // Upload new artifact (via server pod)
 const newManifest = await browserPod.send(
-  { capability: 'storage/write' },
+  { capability: 'storage:write' },
   {
     op: 'upload',
     args: {
@@ -528,7 +528,7 @@ const newManifest = await browserPod.send(
       metadata: {
         name: 'my-processor',
         version: '0.1.0',
-        capabilities: ['compute/wasm'],
+        capabilities: ['compute/wasm:execute'],
       },
     },
   }

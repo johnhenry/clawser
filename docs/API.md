@@ -22,6 +22,7 @@ static async create(opts) => ClawserAgent
 | `opts.mcpManager` | `McpManager` | MCP connection manager |
 | `opts.responseCache` | `ResponseCache` | LRU response cache |
 | `opts.autonomy` | `AutonomyController` | Autonomy level controller |
+| `opts.hooks` | `HookPipeline` | Lifecycle hook pipeline (defaults to a fresh instance) |
 | `opts.memory` | `SemanticMemory` | Memory backend |
 | `opts.onEvent` | `Function` | Event callback `(type, data)` |
 | `opts.onLog` | `Function` | Log callback `(level, msg)` |
@@ -127,14 +128,18 @@ Append-only event store for event-sourced conversation persistence.
 
 | Method | Signature | Returns | Description |
 |--------|-----------|---------|-------------|
-| `append` | `append(type, data, source?)` | `object` | Append an event. Returns the event object. |
+| `append` | `append(type, data, source = 'system')` | `object` | Append an event. Returns the event object. |
+| `query` | `query({type?, source?, limit?})` | `Array<object>` | Filter events by type/source, optionally limited to the last N. |
+| `summary` | `summary()` | `Object<string, number>` | Count of events per type. |
+| `events` | (getter) | `Array<object>` | Full event array. |
+| `size` | (getter) | `number` | Number of recorded events. |
 | `clear` | `clear()` | `void` | Reset the log. |
 | `load` | `load(events)` | `void` | Restore from a parsed event array. |
 | `toJSONL` | `toJSONL()` | `string` | Serialize to JSONL. |
 | `fromJSONL` | `static fromJSONL(text)` | `EventLog` | Deserialize from JSONL. |
 | `deriveSessionHistory` | `deriveSessionHistory(systemPrompt?)` | `Array<Message>` | Rebuild LLM-compatible message history. |
 | `deriveToolCallLog` | `deriveToolCallLog()` | `Array<ToolLogEntry>` | Build tool audit trail. |
-| `deriveGoals` | `deriveGoals()` | `Array<Goal>` | Rebuild goals from events. |
+| `deriveGoals` | `deriveGoals()` | `Array<Goal>` | Rebuild goals from `goal_added`/`goal_updated`/`goal_edited`/`goal_removed` events. |
 | `sliceToTurnEnd` | `sliceToTurnEnd(eventId)` | `Array<Event>\|null` | Slice events up to the turn containing the given event. |
 
 ---
@@ -149,9 +154,10 @@ Lifecycle hook system with 6 interception points.
 
 | Method | Signature | Returns | Description |
 |--------|-----------|---------|-------------|
-| `register` | `register(point, hook)` | `void` | Register a hook at a lifecycle point. |
-| `unregister` | `unregister(point, hookId)` | `void` | Remove a hook. |
-| `run` | `async run(point, ctx)` | `object` | Execute all hooks at a point. Returns final context. |
+| `register` | `register({name, point, priority?, enabled?, execute})` | `void` | Register a hook at a lifecycle point (throws if `point` is invalid). Hooks at the same point run in `priority` order (lower first, default 100). |
+| `unregister` | `unregister(name, point)` | `void` | Remove a hook by name and point. |
+| `setEnabled` | `setEnabled(name, enabled)` | `void` | Enable or disable a registered hook by name (searches all points). |
+| `run` | `async run(point, ctx)` | `{blocked: boolean, reason?: string, ctx: object}` | Execute all enabled hooks at a point in priority order. A `block` result short-circuits with `blocked: true`; a `modify` result merges `data` into `ctx` for subsequent hooks. Hook errors are caught and logged (fail-open). |
 
 ---
 
@@ -161,14 +167,43 @@ Lifecycle hook system with 6 interception points.
 
 Capability boundaries and rate limiting.
 
+### Constructor
+
+```js
+new AutonomyController({ level?, maxActionsPerHour?, maxCostPerDayCents?, maxCostPerMonthCents?, allowedHours? })
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `level` | `'readonly'\|'supervised'\|'full'` | `'supervised'` | Initial autonomy level. |
+| `maxActionsPerHour` | `number` | `Infinity` | Rate limit. |
+| `maxCostPerDayCents` | `number` | `Infinity` | Daily cost limit in cents. |
+| `maxCostPerMonthCents` | `number` | `Infinity` | Monthly cost limit in cents. |
+| `allowedHours` | `Array<{start: number, end: number}>` | `[]` | Time-of-day restriction windows (24h, supports overnight ranges). |
+
+### Accessors (get/set)
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `level` | `'readonly'\|'supervised'\|'full'` | Current autonomy level. |
+| `maxActionsPerHour` | `number` | Rate limit. |
+| `maxCostPerDayCents` | `number` | Daily cost limit in cents. |
+| `maxCostPerMonthCents` | `number` | Monthly cost limit in cents. |
+| `allowedHours` | `Array<{start, end}>` | Time-of-day restriction windows. |
+| `policyEngine` | `object\|null` | (get only) The currently set PolicyEngine, if any. |
+| `stats` | `object` | (get only) `{ level, actionsThisHour, maxActionsPerHour, costTodayCents, maxCostPerDayCents, costThisMonthCents, maxCostPerMonthCents, allowedHours }`. |
+
+### Methods
+
 | Method | Signature | Returns | Description |
 |--------|-----------|---------|-------------|
-| `setLevel` | `setLevel(level)` | `void` | Set autonomy level (`"readonly"`, `"supervised"`, `"full"`). |
-| `checkLimits` | `checkLimits()` | `{ blocked, reason? }` | Check if rate/cost limits are exceeded. |
-| `checkPermission` | `checkPermission(permLevel)` | `{ allowed, needsApproval? }` | Check if a permission level is allowed. |
+| `setPolicyEngine` | `setPolicyEngine(engine)` | `void` | Attach an optional `{evaluateToolCall(name, params) => {allowed, reason?}}` engine consulted by `canExecuteTool`. |
+| `canExecuteTool` | `canExecuteTool(tool, params?)` | `boolean` | Whether a tool call is allowed at the current level. `readonly` blocks anything but `internal`/`read` permissions; otherwise defers to the PolicyEngine (if set). |
+| `needsApproval` | `needsApproval(tool)` | `boolean` | Whether a tool needs user approval. `full` never needs approval; `readonly` is blocked outright (not "needs approval"); `supervised` requires approval for non-read permissions. |
+| `checkLimits` | `checkLimits()` | `{ blocked: boolean, reason?: string, limitType?: 'time_of_day'\|'rate'\|'cost'\|'monthly_cost', resetTime?: number, stats?: object }` | Check time-of-day, rate, and cost limits. Resets hourly/daily/monthly counters on window rollover. |
 | `recordAction` | `recordAction()` | `void` | Record an action for rate limiting. |
-| `recordCost` | `recordCost(cents)` | `void` | Record cost for daily budget. |
-| `getState` | `getState()` | `object` | Get current limits, counts, and cost. |
+| `recordCost` | `recordCost(cents)` | `void` | Record cost for the daily and monthly budgets. |
+| `reset` | `reset()` | `void` | Reset all counters (actions, cost, window start times). |
 
 ---
 
@@ -186,14 +221,19 @@ Manages tool registration, lookup, permissions, and execution.
 | `unregister` | `unregister(name)` | `boolean` | Remove a tool. |
 | `setApprovalHandler` | `setApprovalHandler(handler)` | `void` | Set callback for approval requests. `handler(name, params) => Promise<boolean>` |
 | `setPermission` | `setPermission(name, level)` | `void` | Override a tool's permission to `"auto"`, `"approve"`, or `"denied"`. |
-| `getPermission` | `getPermission(name)` | `string` | Get effective permission level. |
+| `getPermission` | `getPermission(name)` | `string` | Get effective permission level (falls back to `auto` for `internal`/`read` tools, `approve` otherwise). |
+| `getAllPermissions` | `getAllPermissions()` | `Object<string, string>` | Get all permission overrides. |
+| `loadPermissions` | `loadPermissions(perms)` | `void` | Bulk-load permission overrides from a plain object. |
+| `resetAllPermissions` | `resetAllPermissions()` | `void` | Clear all permission overrides back to defaults. |
+| `setSafety` | `setSafety(pipeline)` | `void` | Inject a `SafetyPipeline` for pre/post validation on `execute()`. |
+| `getSpec` | `getSpec(name)` | `ToolSpec\|null` | Get a single tool's spec by name. |
 | `execute` | `async execute(name, params)` | `ToolResult` | Execute a tool with permission checks. |
 | `allSpecs` | `allSpecs()` | `Array<ToolSpec>` | Get all registered tool specs. |
 | `names` | `names()` | `Array<string>` | Get all registered tool names. |
 
 **ToolResult shape**: `{ success: boolean, output: string, error?: string }`
 
-**Factory**: `createDefaultRegistry(workspaceFs?) => BrowserToolRegistry`
+**Factory**: `createDefaultRegistry(workspaceFs?, getShellState?, showDotfiles?) => BrowserToolRegistry`
 
 ---
 
@@ -208,6 +248,7 @@ Manages LLM provider instances.
 | `register` | `register(provider)` | `void` | Register an `LLMProvider` instance. |
 | `get` | `get(name)` | `LLMProvider\|null` | Look up a provider by name. |
 | `has` | `has(name)` | `boolean` | Check if a provider is registered. |
+| `remove` | `remove(name)` | `boolean` | Remove a provider by name. Returns true if found and removed. |
 | `names` | `names()` | `Array<string>` | List all registered provider names. |
 | `listWithAvailability` | `async listWithAvailability()` | `Array<ProviderInfo>` | List providers with availability status. |
 | `getBestAvailable` | `async getBestAvailable()` | `LLMProvider\|null` | Get Chrome AI if available, otherwise Echo. |
@@ -230,8 +271,8 @@ Manages LLM provider instances.
 **Factory**: `createDefaultProviders() => ProviderRegistry`
 
 **Utilities**:
-- `estimateCost(model, usage) => { inputCost, outputCost, totalCost }`
-- `classifyError(err) => { type, retryable, message }`
+- `estimateCost(model, usage) => number` — total dollar cost (0 if the model has no `MODEL_PRICING` entry). Accounts for cache-read/cache-write token pricing where available.
+- `classifyError(err) => { category, retryable, message }` — `category` is one of `rate_limit`, `server`, `auth`, `cors`, `timeout`, `network`, `content_filter`, `client`, `unknown`.
 - `validateChatResponse(raw, fallbackModel?) => ChatResponse`
 
 ---
@@ -270,6 +311,7 @@ Manages multiple MCP server connections.
 |--------|-----------|---------|-------------|
 | `addServer` | `async addServer(name, endpoint)` | `McpClient` | Connect to an MCP server. |
 | `removeServer` | `removeServer(name)` | `void` | Disconnect and remove a server. |
+| `disconnectAll` | `disconnectAll()` | `void` | Disconnect and remove all MCP servers. |
 | `allToolSpecs` | `allToolSpecs()` | `Array<ToolSpec>` | Get tool specs from all connected servers. |
 | `findClient` | `findClient(toolName)` | `McpClient\|null` | Find the client handling a tool name. |
 | `executeTool` | `async executeTool(toolName, args)` | `ToolResult` | Execute a tool on the appropriate server. |
@@ -314,13 +356,14 @@ Central gateway orchestrating channel plugins, scheduler routines, and P2P mesh 
 ### Constructor
 
 ```js
-new ChannelGateway({ agent, tenantId?, onIngest?, onRespond?, onLog? })
+new ChannelGateway({ agent, tenantId?, deviceHandler?, onIngest?, onRespond?, onLog? })
 ```
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `agent` | `object` | ClawserAgent instance |
 | `tenantId` | `string\|null` | Default kernel tenant ID for resource tracking |
+| `deviceHandler` | `object` | `DeviceFileHandler` for mirroring inbound messages to `/dev/clawser/channels/*` |
 | `onIngest` | `Function` | `(channelId, message) => void` — called on inbound message |
 | `onRespond` | `Function` | `(channelId, text) => void` — called on outbound response |
 | `onLog` | `Function` | `(msg) => void` — logging callback |
@@ -349,6 +392,7 @@ new ChannelGateway({ agent, tenantId?, onIngest?, onRespond?, onLog? })
 | Method | Signature | Returns | Description |
 |--------|-----------|---------|-------------|
 | `setAgent` | `setAgent(agent)` | `void` | Replace agent reference. |
+| `setDeviceHandler` | `setDeviceHandler(deviceHandler)` | `void` | Replace the `/dev/clawser/channels/*` device handler. |
 | `setTenantId` | `setTenantId(tenantId)` | `void` | Update default tenant ID (e.g. on workspace switch). |
 | `agent` | (getter) | `object\|null` | Current agent reference. |
 | `getChannel` | `getChannel(channelId)` | `{plugin, config, scope}\|undefined` | Get a registered channel entry. |
@@ -375,9 +419,9 @@ new ChannelGateway({ agent, tenantId?, onIngest?, onRespond?, onLog? })
 
 ## Pod
 
-**Package**: `web/packages/pod/src/pod.mjs`
+**Package**: `browsermesh-pod` (npm package in `node_modules/`, source at `browsermesh-pod/src/pod.mjs`). Re-exported for internal use via the bridge module `web/packages-pod.js` (`import { Pod } from './packages-pod.js'`).
 
-Base class for all pod types. Zero Clawser dependencies.
+Base class for all pod types. Zero Clawser dependencies (depends only on the sibling `browsermesh-primitives` package for Ed25519 identity).
 
 ### Constructor
 
@@ -454,7 +498,7 @@ Extends `Pod` with mesh networking.
 
 | Method | Signature | Returns | Description |
 |--------|-----------|---------|-------------|
-| `initMesh` | `async initMesh(opts?)` | `{ peerNode, swarmCoordinator }` | Create MeshIdentityManager, IdentityWallet, PeerRegistry, PeerNode, SwarmCoordinator. Safe to call multiple times. |
+| `initMesh` | `async initMesh(opts?)` | `{ peerNode, swarmCoordinator, ... }` | Create the mesh subsystem: MeshIdentityManager, IdentityWallet, PeerRegistry, PeerNode, SwarmCoordinator, and 25+ other mesh components (transport, audit, sync, marketplace, consensus, etc. — see `docs/browsermesh/` for the full subsystem map). Returns all instantiated components. Tears down and recreates the peer node if already running, so it's safe to call multiple times. |
 | `shutdown` | `async shutdown(opts?)` | `void` | Shuts down PeerNode then calls `Pod.shutdown()`. |
 
 ### Accessors
@@ -487,34 +531,42 @@ new EmbeddedPod(config?)
 | `model` | `string` | `null` | Default model |
 | `tools` | `object` | `{}` | Tool configuration overrides |
 | `theme` | `object` | `{}` | UI theme overrides |
+| `agent` | `ClawserAgent` | `null` | Pre-configured agent instance (can also be attached later via `setAgent()`) |
 
 ### Methods
 
 | Method | Signature | Returns | Description |
 |--------|-----------|---------|-------------|
-| `sendMessage` | `async sendMessage(text, opts?)` | `{ content, toolCalls }` | Send a user message to the agent |
+| `setAgent` | `setAgent(agent)` | `void` | Attach or replace the agent instance. |
+| `sendMessage` | `async sendMessage(text, opts?)` | `{ content: string, toolCalls: Array, usage?, model?, error?: boolean }` | Send a user message to the agent (throws if no agent is attached). On success returns `{content, toolCalls, usage, model}`; on error/blocked returns `{content, toolCalls, error: true, usage}`. |
+| `on` | `on(event, fn)` | `void` | Register an event listener. |
+| `off` | `off(event, fn)` | `void` | Remove an event listener. |
+| `emit` | `emit(event, ...args)` | `void` | Emit an event to registered listeners. |
 
 ### Accessors
 
 | Getter | Type | Description |
 |--------|------|-------------|
 | `config` | `object` | Copy of the configuration |
+| `agent` | `ClawserAgent\|null` | The attached agent instance, if any |
 
 ---
 
-## Exported Functions (packages/pod)
+## Exported Functions (browsermesh-pod)
+
+All of these are available from the bridge module `web/packages-pod.js`, which re-exports them from the `browsermesh-pod` npm package.
 
 ### detectPodKind
 
 ```js
-import { detectPodKind } from './packages/pod/src/detect-kind.mjs';
-detectPodKind(globalThis) // => 'window' | 'iframe' | 'worker' | ...
+import { detectPodKind } from './packages-pod.js';
+detectPodKind(globalThis) // => 'window' | 'iframe' | 'worker' | 'service-worker' | 'shared-worker' | 'worklet' | 'spawned' | 'server'
 ```
 
 ### detectCapabilities
 
 ```js
-import { detectCapabilities } from './packages/pod/src/capabilities.mjs';
+import { detectCapabilities } from './packages-pod.js';
 detectCapabilities(globalThis) // => { messaging, network, storage, compute }
 ```
 
@@ -522,7 +574,7 @@ detectCapabilities(globalThis) // => { messaging, network, storage, compute }
 
 ```js
 import { createHello, createHelloAck, createGoodbye, createMessage,
-         createRpcRequest, createRpcResponse } from './packages/pod/src/messages.mjs';
+         createRpcRequest, createRpcResponse } from './packages-pod.js';
 ```
 
 | Factory | Required Fields | Description |

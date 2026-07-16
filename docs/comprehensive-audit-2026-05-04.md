@@ -1,5 +1,10 @@
 # Comprehensive Audit — Rounds 1-4 (2026-05-07 → 2026-05-08)
 
+**Status: resolved as of 2026-07-16.** This is a dated snapshot, not live
+guidance — every fixed item and all three "surfaced, no fix" design gaps
+(vault corruption reset, OPFS quota eviction, tool-result output redaction)
+are confirmed present in current source.
+
 > Static-analysis-friendly sweep across security, memory leaks,
 > privacy/observability, test-mock validity (Round 1), state
 > migrations + error recovery (Round 2), OPFS quota + performance +

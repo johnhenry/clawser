@@ -151,6 +151,7 @@ interface SlotLease {
   slotId: string;
   instanceId: string;
   grantedAt: number;
+  lastRenewedAt: number;
   expiresAt: number;
   renewCount: number;
   capabilities: string[];
@@ -291,6 +292,7 @@ class SlotCoordinator {
       slotId,
       instanceId,
       grantedAt: now,
+      lastRenewedAt: now,
       expiresAt: now + this.config.leaseTimeMs,
       renewCount: 0,
       capabilities,
@@ -330,6 +332,7 @@ class SlotCoordinator {
     const now = Date.now();
     lease.expiresAt = now + this.config.leaseTimeMs;
     lease.renewCount++;
+    lease.lastRenewedAt = now;
 
     port.postMessage({
       type: 'LEASE_RENEWED',
@@ -377,7 +380,7 @@ class SlotCoordinator {
         // Evict least recently renewed
         let oldest: SlotLease | null = null;
         for (const lease of this.slots.values()) {
-          if (!oldest || lease.grantedAt < oldest.grantedAt) {
+          if (!oldest || lease.lastRenewedAt < oldest.lastRenewedAt) {
             oldest = lease;
           }
         }
@@ -387,10 +390,20 @@ class SlotCoordinator {
         }
         break;
 
-      case 'oldest-lease':
-        // Evict oldest by grant time
-        // Similar to LRU but ignores renewals
+      case 'oldest-lease': {
+        // Evict oldest by grant time (ignores renewals, unlike 'lru')
+        let earliestGrant: SlotLease | null = null;
+        for (const lease of this.slots.values()) {
+          if (!earliestGrant || lease.grantedAt < earliestGrant.grantedAt) {
+            earliestGrant = lease;
+          }
+        }
+        if (earliestGrant) {
+          this.evictSlot(earliestGrant.slotId, 'eviction');
+          return earliestGrant.slotId;
+        }
         break;
+      }
 
       case 'random':
         const slots = [...this.slots.keys()];
@@ -795,4 +808,3 @@ graph TD
 | Max slot index | 99 |
 | PartitionedStorage max size | 5 MB (localStorage limit) |
 | IndexedDB per-slot max | 50 MB |
-| Slot ID reuse cooldown | 5 seconds |

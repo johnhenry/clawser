@@ -1,5 +1,10 @@
 # Residual Hiding Spots Audit — Round 2 (2026-05-06)
 
+**Status: resolved as of 2026-07-16** (dated snapshot, not live guidance).
+All items (tiebreaker race, WebSocket error surfacing, relay transport,
+orphan classes, event-type registry, hot-reload race, workspace-switch
+race) confirmed present/closed in current source.
+
 > Hunting the remaining 8% from the prior residual audit. Five named
 > targets, four-round sweep. Found three real bugs (one HIGH-IMPACT)
 > plus two structural gaps surfaced. Tests stayed green.

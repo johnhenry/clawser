@@ -115,4 +115,4 @@ overage reported.
 | Violation tracking  | Fully implemented with callback               |
 | Serialization       | toJSON/fromJSON complete                      |
 | Unit tests          | Yes (`web/test/clawser-mesh-quotas.test.mjs`) |
-| App bootstrap wired | No -- not wired to app bootstrap              |
+| App bootstrap wired | Yes -- `ClawserPod.initMesh()` constructs `QuotaManager`+`QuotaEnforcer` (step 15) and exposes them via `pod.quotaManager`/`pod.quotaEnforcer`; propagated into workspace state by `clawser-workspace-init-mesh.js` |

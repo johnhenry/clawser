@@ -25,7 +25,7 @@ When a skill is activated, its instructions are injected into the agent's system
 
 Press `Cmd+7` to open the **Skills** panel.
 
-![Skills panel](../screenshots/08-skills.png)
+![Skills panel](../screenshots/panel-skills.png)
 
 The panel shows:
 - **Installed skills** — Toggle enable/disable, view details, delete, or export

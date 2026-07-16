@@ -17,6 +17,16 @@ Imported from the canonical registry (`web/packages/mesh-primitives/src/constant
 | SWARM_HEARTBEAT     | `0xC2` | Swarm heartbeat / liveness         |
 | SWARM_TASK_ASSIGN   | `0xC3` | Assign a task within a swarm       |
 
+`web/clawser-mesh-swarm.js` also defines four SWIM protocol wire codes as
+local module constants (not imported from the canonical registry):
+
+| Name                | Code   | Description                        |
+|---------------------|--------|-------------------------------------|
+| SWIM_PING           | `0xF0` | SWIM failure-detection ping        |
+| SWIM_ACK            | `0xF1` | SWIM ping acknowledgement          |
+| SWIM_PING_REQ       | `0xF2` | SWIM indirect ping request         |
+| SWIM_PING_ACK       | `0xF3` | SWIM indirect ping acknowledgement |
+
 ## API Surface
 
 ### Enums
@@ -26,6 +36,8 @@ Imported from the canonical registry (`web/packages/mesh-primitives/src/constant
 **TaskStrategy** -- frozen array: `['leader-follower', 'round-robin', 'load-balanced', 'redundant', 'pipeline']`
 
 **TASK_STATUSES** -- frozen array: `['pending', 'assigned', 'running', 'completed', 'failed']`
+
+**SWIM_MEMBER_STATES** -- frozen array: `['alive', 'suspect', 'dead', 'left']`
 
 ### SwarmMember
 
@@ -79,32 +91,72 @@ Distributes tasks to swarm members using pluggable strategies.
 ### SwarmCoordinator
 
 High-level facade combining LeaderElection, TaskDistributor, and task lifecycle.
+Internally tracks *multiple* named swarms (keyed by `swarmId`); a `'local'`
+swarm always exists and is the default target when `swarmId` is omitted, which
+is what the single-swarm getters below (`election`, `distributor`, `swarmSize`,
+`isLeader`) always refer to.
 
-| Method / Property                           | Returns           | Description                                    |
-|---------------------------------------------|-------------------|------------------------------------------------|
-| `constructor(localPodId, opts?)`            | --                | Creates election + distributor; adds self      |
-| `election`                                  | `LeaderElection`  | Getter: underlying election instance           |
-| `distributor`                               | `TaskDistributor` | Getter: underlying distributor instance        |
-| `join(podId, capabilities?)`                | `SwarmMember`     | Add a member to the swarm                      |
-| `leave(podId)`                              | `boolean`         | Remove a member                                |
-| `submitTask(description, strategy?, input?)`| `SwarmTask`       | Create, distribute, and store a task           |
-| `getTask(taskId)`                           | `SwarmTask\|null` | Lookup task by ID                              |
-| `completeTask(taskId, output?)`             | `boolean`         | Mark task completed                            |
-| `failTask(taskId, error?)`                  | `boolean`         | Mark task failed                               |
-| `listTasks({ status? })`                    | `SwarmTask[]`     | List tasks, optionally filtered                |
-| `swarmSize`                                 | `number`          | Getter: member count                           |
-| `isLeader`                                  | `boolean`         | Getter: true if local pod is elected leader    |
+| Method / Property                                      | Returns           | Description                                    |
+|----------------------------------------------------------|-------------------|------------------------------------------------|
+| `constructor(localPodId, opts?)`                       | --                | Creates the `'local'` swarm (election + distributor, self as first member); `opts.swim` wires an optional `SwimMembership` instance |
+| `election`                                             | `LeaderElection`  | Getter: `'local'` swarm's election instance    |
+| `distributor`                                          | `TaskDistributor` | Getter: `'local'` swarm's distributor instance |
+| `swim`                                                 | `SwimMembership\|null` | Getter: SWIM membership instance, if provided |
+| `createSwarm(swarmId)`                                 | `boolean`         | Explicitly create a new (empty) swarm; `false` if it already existed |
+| `disbandSwarm(swarmId)`                                | `boolean`         | Remove a swarm's state; throws for `'local'`   |
+| `hasSwarm(swarmId)`                                    | `boolean`         | Whether a swarm is tracked                     |
+| `listSwarms()`                                         | `object[]`        | `{ swarmId, size, isLeader, leader, taskCount }` per swarm |
+| `listMembers(swarmId?)`                                | `string[]`        | Member podIds of a swarm (default `'local'`)   |
+| `join(podId, capabilities?, swarmId?)`                 | `SwarmMember`     | Add a member to a swarm (default `'local'`); also registers with SWIM when joining `'local'` |
+| `leave(podId, swarmId?)`                               | `boolean`         | Remove a member from a swarm (default `'local'`) |
+| `submitTask(description, strategy?, input?, swarmId?)` | `SwarmTask`       | Create, distribute, and store a task in a swarm (default `'local'`) |
+| `getTask(taskId)`                                      | `SwarmTask\|null` | Lookup task by ID across all swarms            |
+| `completeTask(taskId, output?)`                        | `boolean`         | Mark task completed                            |
+| `failTask(taskId, error?)`                              | `boolean`         | Mark task failed                               |
+| `cancelTask(taskId)`                                   | `boolean`         | Cancel a pending/assigned task (no-op if already completed/failed) |
+| `listTasks({ status?, swarmId? })`                     | `SwarmTask[]`     | List tasks; `swarmId` defaults to `'local'`, pass `'*'` for all swarms |
+| `swarmSize`                                            | `number`          | Getter: `'local'` swarm member count           |
+| `isLeader`                                             | `boolean`         | Getter: true if local pod is elected leader of `'local'` |
+
+### SwimMembership
+
+Implements the SWIM protocol (Scalable Weakly-consistent Infection-style
+Membership) for decentralized failure detection, optionally wired into
+`SwarmCoordinator` via `opts.swim`. Each tick, the local node pings a random
+member; on timeout it asks `indirectPingCount` random peers to ping
+indirectly; if still unresponsive the member is marked `suspect`, then `dead`
+after `suspectTimeoutMs`.
+
+| Method / Property                        | Returns        | Description                                    |
+|-------------------------------------------|----------------|--------------------------------------------------|
+| `constructor({ localId, sendFn, pingIntervalMs?, pingTimeoutMs?, suspectTimeoutMs?, indirectPingCount?, onJoin?, onSuspect?, onDead?, onLeave?, nowFn? })` | -- | `pingIntervalMs` 1000, `pingTimeoutMs` 500, `suspectTimeoutMs` 5000, `indirectPingCount` 3 |
+| `localId`                                 | `string`       | Getter: this node's ID                          |
+| `size`                                     | `number`       | Getter: total member count                      |
+| `aliveCount`                               | `number`       | Getter: count of members in `alive` state        |
+| `start()` / `stop()`                       | `void`         | Begin/end periodic ping rounds                   |
+| `addMember(podId)`                         | `void`         | Add a member as `alive`; fires `onJoin`          |
+| `removeMember(podId)`                      | `void`         | Mark a member `left`; fires `onLeave`            |
+| `getState(podId)`                          | `string\|null` | One of `SWIM_MEMBER_STATES`, or `null` if unknown |
+| `getMembers()`                              | `Map`          | Copy of the full membership map                  |
+| `aliveMembers()`                            | `string[]`     | podIds currently `alive`                         |
+| `handleMessage(fromId, msg)`               | `void`         | Dispatch an incoming `SWIM_PING`/`SWIM_ACK`/`SWIM_PING_REQ`/`SWIM_PING_ACK` message |
+| `toJSON()`                                 | `object`       | Serialize membership state                       |
+
+`SwarmCoordinator` wires `swim.onJoin`/`swim.onDead` to its own `join()`/`leave()`
+for the `'local'` swarm only — SWIM does not track membership for other named
+swarms.
 
 ## Implementation Status
 
 **Status: Implemented, wired to app bootstrap via `ClawserPod.initMesh()`.**
 
 - All classes fully implemented with validation, serialization, and lifecycle management.
-- Wire codes imported from the canonical registry.
-- `SwarmCoordinator` is instantiated during `ClawserPod.initMesh()` mesh initialization.
+- `SWARM_*` wire codes imported from the canonical registry; `SWIM_*` wire codes are local constants defined in-module.
+- `SwarmCoordinator` is instantiated during `ClawserPod.initMesh()` mesh initialization, along with a `SwimMembership` instance passed via `opts.swim`.
+- Multi-swarm support (`createSwarm`/`disbandSwarm`/`hasSwarm`/`listSwarms`/`listMembers`, and the `swarmId` parameter on `join`/`leave`/`submitTask`/`listTasks`) is implemented.
 - Transport integration uses the wire codes for join/leave/heartbeat/task-assign messages over the mesh.
 - Test file: `web/test/clawser-mesh-swarm.test.mjs`
 
 ## Source File Reference
 
-`web/clawser-mesh-swarm.js` -- 678 lines, imports `MESH_TYPE` from `web/packages/mesh-primitives/src/constants.mjs`.
+`web/clawser-mesh-swarm.js` -- 1440 lines, imports `MESH_TYPE` from `web/packages/mesh-primitives/src/constants.mjs`.

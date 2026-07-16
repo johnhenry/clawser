@@ -760,3 +760,7 @@ class PodSocketPool {
   }
 }
 ```
+
+## Implementation Status
+
+**Status: Not implemented as specified.** No `PodSocket` interface, `PodSocketFactory`, or `PostMessageSocket`/`MessagePortSocket`/`BroadcastChannelSocket`/`WebSocketPodSocket`/`WebTransportSocket`/`WebRTCSocket` classes exist in `web/` or `packages/`. The nearest real equivalent is `MeshTransport` (`web/clawser-mesh-transport.js`), which covers a narrower transport set (`'webrtc' | 'wsh-wt' | 'wsh-ws'`) than this spec's six `TransportType` values — see [channel-abstraction.md](channel-abstraction.md)'s and [link-negotiation.md](link-negotiation.md)'s Implementation Status sections for the same gap at the layer beneath this one.

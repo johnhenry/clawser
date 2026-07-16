@@ -101,7 +101,7 @@ All inbound messages from any channel are normalized to the InboundMessage forma
 
 **Status:** ✅ Implemented · **Category:** adapter · **Since:** v1.0.0
 
-Discord bot integration via WebSocket gateway. Supports text channels and DMs. Requires Discord bot token. Fully self-contained — no server needed, the browser tab connects directly to Discord's Gateway.
+Discord bot integration via WebSocket gateway. Supports text channels in guilds. Requires Discord bot token. Fully self-contained — no server needed, the browser tab connects directly to Discord's Gateway.
 
 **Source files:**
 
@@ -111,6 +111,8 @@ Discord bot integration via WebSocket gateway. Supports text channels and DMs. R
 
 - `DiscordChannel`
 
+> **Note:** Default gateway intents (33281 = GUILDS + GUILD_MESSAGES + MESSAGE_CONTENT) do NOT include DIRECT_MESSAGES, so DMs are not received out of the box. Pass a custom `intents` bitmask (opts.intents, with the DIRECT_MESSAGES bit added) to receive DMs.
+
 **See also:**
 
 - [Setup walkthrough](../docs/channel-setup/discord.md)
@@ -119,9 +121,9 @@ Discord bot integration via WebSocket gateway. Supports text channels and DMs. R
 
 ### Slack Channel
 
-**Status:** ⚠️ Partial · **Category:** adapter · **Since:** v1.0.0
+**Status:** ✅ Implemented · **Category:** adapter · **Since:** v1.0.0
 
-Slack integration via the Events API (webhook) for inbound and the Web API for outbound (chat.postMessage). Not actually Socket Mode despite the accepted appToken config field — that field is currently unused.
+Slack integration via Socket Mode (WebSocket, self-contained — same pattern as Discord's Gateway) when an appToken is configured, or the classic Events API webhook for deployments that run their own relay. Outbound sends via the Web API (chat.postMessage).
 
 **Source files:**
 
@@ -131,11 +133,11 @@ Slack integration via the Events API (webhook) for inbound and the Web API for o
 
 - `SlackChannel`
 
-> **Note:** Outbound sending works standalone. Inbound requires a public HTTPS endpoint for Slack's Events API webhook, which a browser tab can't expose on its own — see the setup walkthrough for what's needed.
+> **Note:** Fully self-contained via Socket Mode — no server needed, the browser tab connects directly to Slack using an app-level token (xapp-...). The webhook path (handleEvent()) still works for anyone who'd rather run their own relay/server instead.
 
 **See also:**
 
-- [Setup walkthrough (incl. the webhook-relay limitation)](../docs/channel-setup/slack.md)
+- [Setup walkthrough](../docs/channel-setup/slack.md)
 
 ---
 
@@ -143,7 +145,7 @@ Slack integration via the Events API (webhook) for inbound and the Web API for o
 
 **Status:** ✅ Implemented · **Category:** adapter · **Since:** v1.0.0
 
-Telegram bot integration via long-polling. Supports text messages, images, and inline keyboards. Fully self-contained — no server needed.
+Telegram bot integration via long-polling. Supports text messages only — `createInboundMessage()` hardcodes `attachments: []` and there is no image or inline-keyboard support (inbound or outbound). Fully self-contained — no server needed.
 
 **Source files:**
 
@@ -153,7 +155,7 @@ Telegram bot integration via long-polling. Supports text messages, images, and i
 
 - `TelegramChannel`
 
-> **Note:** Requires bot token from BotFather.
+> **Note:** Requires bot token from BotFather. Images/attachments and inline keyboards are not implemented; tracked as a gap, not a documentation omission.
 
 **See also:**
 

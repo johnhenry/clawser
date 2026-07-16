@@ -29,8 +29,8 @@ Browser Tab              Service Worker              IndexedDB
 | Type | Description | Execution Modes |
 |------|-------------|-----------------|
 | `function` | Inline JS module (Blob URL import) | `page`, `sw` |
-| `static` | Serves files from OPFS | `page`, `sw` |
-| `proxy` | Forwards to external URL with optional rewrite | `page` |
+| `static` | Serves files from OPFS | `page` only — `sw` execution returns 501 (unsupported) in the current Service Worker |
+| `proxy` | Forwards to external URL with optional rewrite | `page`, `sw` |
 | `skill` | Routes to a registered skill (static API only, not via SW fetch) | `page` |
 
 ## Key Classes
@@ -70,8 +70,9 @@ Bidirectional channel emulating WebSocket over SSE + POST.
 
 - `send(message)` — Queue outbound message
 - `drain()` — Collect and clear pending messages
-- `receive(message)` — Process inbound message
-- `onMessage(fn)` — Register callback
+- `onMessage(fn)` — Register callback for incoming messages
+- `offMessage(fn)` — Unregister a callback
+- `receive(message)` — Process inbound message, dispatching to registered callbacks
 - `close()` — Close channel
 
 ## Route Record Shape

@@ -36,6 +36,7 @@ Rules:
 - `reachability`
 - `sources`
 - `conflicts`
+- `metadata`: implementation-defined descriptor extensions (replay mode, deployment hints, execution APIs, runtime classes, service/server catalogs, trust/latency hints, etc.)
 
 Rules:
 - merge capabilities by union
@@ -44,7 +45,7 @@ Rules:
 
 ### `ReachabilityDescriptor`
 
-- `kind`: `direct-host`, `reverse-relay`, `mesh-direct`, `mesh-relay`, `mesh-discovery`
+- `kind`: `direct-host`, `reverse-relay`, `mesh-direct`, `mesh-relay`, `mesh-discovery`, `mesh-peer-state`
 - `source`
 - `endpoint`
 - `relayHost`
@@ -52,6 +53,7 @@ Rules:
 - `transport`
 - `lastSeen`
 - `capabilities`
+- health/outcome tracking (implementation-defined): `health`, `lastOutcome`, `lastOutcomeReason`, `lastOutcomeLayer`, `failures`, `successCount`, `failureCount`, `successRate`
 
 Rules:
 - route identity is the tuple `(kind, source, endpoint, relayHost, relayPort, transport)`
@@ -60,9 +62,11 @@ Rules:
 ### `SessionTarget`
 
 - `selector`
-- `intent`: `terminal`, `exec`, `files`, `tools`, `gateway`, `service`, `automation`
+- `intent`: `terminal`, `exec`, `files`, `tools`, `gateway`, `service`, `automation`, `deployment`, `server-management`
 - `requiredCapabilities`
 - `preferDirect`
+
+Note: `deployment` and `server-management` are browser-side (`web/`) extensions used by the policy adapter and registry; the shared `wsh-core` Rust `SessionIntent` enum currently only carries the first seven values.
 
 Rules:
 - selectors may be canonical IDs, aliases, names, or fingerprint prefixes

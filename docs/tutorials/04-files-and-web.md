@@ -16,7 +16,7 @@ Clawser uses the browser's **Origin Private File System (OPFS)** for persistent 
 
 Press `Cmd+3` to open the **Files** panel.
 
-![Files panel with content](../screenshots/19-files-with-content.png)
+![Files panel with content](../screenshots/files-with-content.png)
 
 The panel shows a directory tree of all files in your workspace's OPFS storage. Click any file to view its contents, or use the **Refresh** button to reload the tree.
 
@@ -38,7 +38,7 @@ Show me the contents of notes/meeting-summary.md
 
 The agent calls `browser_fs_read` and displays the content.
 
-**File size limits:** Write operations are capped at 10 MB by default. The agent checks OPFS quota and warns at 80% usage, blocks at 95%. You can adjust the max file size in the **Security** section of the Config panel.
+**File size limits:** Write operations are capped at 10 MB by default. `browser_fs_write` itself blocks at 95% of the OPFS storage quota; the Files panel UI separately shows a warning indicator at 80% usage. You can adjust the max file size in the **Security** section of the Settings panel.
 
 ## 3. Managing Files
 

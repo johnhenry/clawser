@@ -231,11 +231,15 @@
   files:
     - web/clawser-proc.js
   api:
-    - ProcFs
+    - ProcFileHandler
+    - registerProcGenerators
+    - VirtualFs
   category: filesystem
   notes: >
     Phase 2 of Unix filesystem architecture. cat /proc/clawser/status returns
-    live agent state as JSON.
+    live agent state as JSON. `/proc/clawser/workspaces` lists every
+    workspace's id, name, resolved `/home/<name>` path, and active marker —
+    see Shell's "Workspace Home" entry for the naming rules.
   since: "2.1.0"
 
 - name: /run Virtual Filesystem

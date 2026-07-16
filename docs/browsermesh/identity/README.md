@@ -291,13 +291,13 @@ async function deriveSharedSecret(
 }
 ```
 
-### 3.2 Encryption with XSalsa20-Poly1305
+### 3.2 Encryption with AES-GCM
 
-After key exchange, messages are encrypted using XSalsa20-Poly1305 (NaCl secretbox):
+After key exchange, messages are encrypted using AES-GCM:
 
 ```typescript
 interface EncryptedMessage {
-  nonce: Uint8Array;      // 24 bytes
+  nonce: Uint8Array;      // 12 bytes
   ciphertext: Uint8Array; // variable length
 }
 
@@ -305,7 +305,7 @@ async function encrypt(
   plaintext: Uint8Array,
   sharedSecret: Uint8Array
 ): Promise<EncryptedMessage> {
-  const nonce = crypto.getRandomValues(new Uint8Array(24));
+  const nonce = crypto.getRandomValues(new Uint8Array(12));
 
   // Derive encryption key from shared secret
   const key = await crypto.subtle.importKey(
@@ -317,7 +317,7 @@ async function encrypt(
   );
 
   const ciphertext = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv: nonce.slice(0, 12) },
+    { name: 'AES-GCM', iv: nonce },
     key,
     plaintext
   );
@@ -601,6 +601,8 @@ interface TrustDelegation {
   signature: Uint8Array;  // Parent's signature
 }
 ```
+
+> See [identity-keyring.md](../specs/crypto/identity-keyring.md) for the formal spec covering directed identity links (`device`, `delegate`, `org`, `alias`, `recovery`), cryptographically signed links, and dead-man's-switch succession policies.
 
 ---
 

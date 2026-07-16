@@ -10,9 +10,9 @@ Comprehensive guide to every subsystem.
 
 | Metric | Count |
 |--------|-------|
-| Total features | 586 |
-| ✅ Implemented | 578 |
-| ⚠️ Partial | 3 |
+| Total features | 597 |
+| ✅ Implemented | 590 |
+| ⚠️ Partial | 2 |
 | 📋 Planned | 5 |
 
 ## Sections
@@ -21,7 +21,7 @@ Comprehensive guide to every subsystem.
 - [**Core**](/docs/guide/core/) — Agent engine, event log, hooks, autonomy, context, caching, cost, errors, identity *(25 features)*
 - [**Tools**](/docs/guide/tools/) — Complete reference for ALL registered tools (285+) *(247 features)*
 - [**Providers**](/docs/guide/providers/) — All LLM providers, models, capabilities, and configuration *(22 features)*
-- [**Shell**](/docs/guide/shell/) — Virtual shell, builtins, parser, pipes, redirects, globs, variables, OPFS, sessions *(73 features)*
+- [**Shell**](/docs/guide/shell/) — Virtual shell, builtins, parser, pipes, redirects, globs, variables, OPFS, sessions *(74 features)*
 - [**Memory**](/docs/guide/memory/) — BM25, vector search, embedding backends, categories, dedup, purging, hybrid recall *(13 features)*
 - [**Skills**](/docs/guide/skills/) — Skill system, lifecycle, registry, validation, slash commands, agentskills.io *(11 features)*
 - [**Mesh**](/docs/guide/mesh/) — BrowserMesh modules, identity, transport, CRDT, DHT, marketplace, consensus, swarm *(39 features)*
@@ -35,8 +35,9 @@ Comprehensive guide to every subsystem.
 - [**Hardware**](/docs/guide/hardware/) — Serial, Bluetooth, USB, peripheral discovery *(9 features)*
 - [**Networking**](/docs/guide/networking/) — WSH remote tools, remote access, OAuth, auth profiles, MCP client *(16 features)*
 - [**Pods**](/docs/guide/pods/) — Pod architecture, ClawserPod, EmbeddedPod, InjectedPod, Chrome extension *(8 features)*
+- [**Multi Device**](/docs/guide/multi-device/) — Device — Personal device pairing and signed deploy targets *(10 features)*
 - [**Build**](/docs/guide/build/) — Zero build step, PWA, Docker, CI/CD, browser compat, CDN deps, testing *(14 features)*
 
 ---
 
-*Generated on 2026-07-04 by `docs/generate.mjs`*
+*Generated on 2026-07-16 by `docs/generate.mjs`*

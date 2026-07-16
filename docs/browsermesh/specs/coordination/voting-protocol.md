@@ -14,15 +14,15 @@ From the canonical registry (`web/packages/mesh-primitives/src/constants.mjs`):
 |--------------------|--------|----------------------------------------------|
 | CONSENSUS_PROPOSE  | `0xA8` | Broadcast a new proposal to the mesh         |
 | CONSENSUS_VOTE     | `0xA9` | Submit a vote on a proposal                  |
+| CONSENSUS_CLOSE    | `0xEB` | Close a proposal (author or timeout)         |
+| CONSENSUS_RESULT   | `0xEC` | Broadcast final results of a closed proposal |
 
-The module also defines two local wire codes not in the canonical registry:
-
-| Name               | Code   | Description                                  |
-|--------------------|--------|----------------------------------------------|
-| CONSENSUS_CLOSE    | `0xAA` | Close a proposal (author or timeout)         |
-| CONSENSUS_RESULT   | `0xAB` | Broadcast final results of a closed proposal |
-
-Note: `0xAA` and `0xAB` overlap with `RESOURCE_CLAIM` and `RESOURCE_RELEASE` in the canonical registry. These local constants are used within the module only.
+All four codes are part of the canonical registry (`MESH_TYPE` in
+`browsermesh-primitives`'s `constants.mjs`, `0xC0`-`0xEC` "extended subsystems"
+range) — they are not local-only constants, and they do not overlap with
+`RESOURCE_CLAIM` (`0xAA`) / `RESOURCE_RELEASE` (`0xAB`), which are separate,
+unrelated codes. `clawser-pod.js` wires all four together as
+`0xA8/0xA9/0xEB/0xEC` when constructing `ConsensusManager`'s transport.
 
 ## API Surface
 
@@ -80,15 +80,29 @@ Top-level orchestrator managing multiple proposals.
 
 | Method / Property                               | Returns                                  | Description                                    |
 |-------------------------------------------------|------------------------------------------|------------------------------------------------|
-| `constructor({ maxProposals? })`                | --                                       | Default max 1000 active proposals              |
-| `propose(authorPodId, title, options, voteType, opts?)` | `Proposal`                       | Create and register a new proposal             |
+| `constructor({ maxProposals?, validators? })`   | --                                       | Default max 1000 active proposals; optional initial validator podId set (empty = open membership) |
+| `addValidator(podId)`                           | `void`                                    | Add a podId to the validator set; once non-empty, `propose`/`vote` are gated to validators only |
+| `removeValidator(podId)`                        | `boolean`                                 | Remove a podId from the validator set          |
+| `listValidators()`                              | `string[]`                                | List registered validator podIds               |
+| `isValidator(podId)`                            | `boolean`                                 | Always `true` when the validator set is empty (open membership) |
+| `propose(authorPodId, title, options, voteType, opts?)` | `Proposal`                       | Create and register a new proposal; throws if `authorPodId` is not a validator |
 | `getProposal(proposalId)`                       | `Proposal \| null`                       | Lookup by ID                                   |
-| `vote(proposalId, voterPodId, choice, weight?)` | `Ballot`                                 | Cast a vote; throws if not found or invalid    |
+| `vote(proposalId, voterPodId, choice, weight?)` | `Ballot`                                 | Cast a vote; throws if not found, invalid, or `voterPodId` is not a validator |
 | `closeProposal(proposalId)`                     | `{ winner, results }`                    | Close and return final tally                   |
 | `getTally(proposalId)`                          | `Tally \| null`                          | Get tally for a proposal                       |
 | `listProposals({ status? })`                    | `Proposal[]`                             | List all or filter by status                   |
 | `expireAll(now?)`                               | `number`                                 | Expire past-deadline proposals; returns count  |
 | `size`                                          | `number`                                 | Getter: total tracked proposals                |
+| `wireTransport(broadcastFn, subscribeFn)`       | `void`                                    | Wire the four `CONSENSUS_*` wire codes to a mesh transport (subscribes to incoming propose/vote/close/result and exposes `broadcastProposal`/`broadcastVote`/`broadcastClose`/`broadcastResult`) |
+
+The validator set is a membership gate on who may `propose`/`vote` — it is not
+a Byzantine-fault-tolerant consensus protocol. This class implements plain
+majority/super-majority/unanimous/weighted voting only (no pre-prepare/
+prepare/commit rounds, no view changes, no 3f+1 quorum guarantee). A separate,
+opt-in PBFT implementation (`raijin-consensus` package) is wired in
+`ClawserPod.initMesh({ enablePBFT: true, ... })` using its own wire codes
+(`PBFT_PRE_PREPARE`, `PBFT_PREPARE`, `PBFT_COMMIT`, `PBFT_VIEW_CHANGE`,
+`PBFT_NEW_VIEW`) — that protocol is out of scope for this document.
 
 ## Implementation Status
 
@@ -96,10 +110,11 @@ Top-level orchestrator managing multiple proposals.
 
 - All classes (`Proposal`, `Ballot`, `Tally`, `ConsensusManager`) are fully implemented with validation, serialization, and deserialization.
 - `ConsensusManager` is instantiated in `ClawserPod.initMesh()` and exposed via the pod's `consensusManager` getter.
-- Wire codes (`CONSENSUS_PROPOSE`, `CONSENSUS_VOTE`, `CONSENSUS_CLOSE`, `CONSENSUS_RESULT`) are defined and used at runtime.
+- Wire codes (`CONSENSUS_PROPOSE`, `CONSENSUS_VOTE`, `CONSENSUS_CLOSE`, `CONSENSUS_RESULT`) are defined and used at runtime, wired via `wireTransport()`.
 - Pod-level helpers `propose()`, `voteOnProposal()`, and `closeProposal()` expose the protocol to consumers.
+- Validator-set gating (`addValidator`/`removeValidator`/`listValidators`/`isValidator`) is implemented.
 - Test file: `web/test/clawser-mesh-consensus.test.mjs`
 
 ## Source File Reference
 
-`web/clawser-mesh-consensus.js` -- 619 lines, pure ES module, no browser-only imports.
+`web/clawser-mesh-consensus.js` -- 784 lines, pure ES module, no browser-only imports.

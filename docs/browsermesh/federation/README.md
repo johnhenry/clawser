@@ -1,5 +1,11 @@
 # BrowserMesh Federation
 
+> **Implementation status**: `CrossOriginBridge` is implemented
+> (`packages/browsermesh-transport/src/cross-origin.mjs`). WebRTC peer/mesh functionality exists
+> but under different names and shapes than shown below — `WebRTCPeerConnection` and
+> `WebRTCMeshManager` in `packages/browsermesh-transport/src/webrtc.mjs`, rather than `WebRTCPeer`
+> and `DeviceMesh`. `FederatedRegistry` is doc-only; no such class exists yet.
+
 ## 1. Overview
 
 Federation enables BrowserMesh pods to communicate across:

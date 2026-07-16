@@ -19,7 +19,9 @@
 > - Feature 5 (Session Sharing): **Done** — `clawser-session-export.js`
 >   with HTML/Markdown/JSON.
 >
-> See `docs/implementation-status.md` for cross-references.
+> See `docs/implementation-status.md` for cross-references (note: that
+> ledger is a dated 2026-05-02/03 snapshot, not kept current — see
+> `OUTSTANDING.md` and `CHANGELOG.md` for the latest status).
 
 Five features inspired by [pi.dev](https://pi.dev/) that extend clawser's built-in CLI with branching conversations, machine-readable interfaces, live extension reloading, and session portability.
 

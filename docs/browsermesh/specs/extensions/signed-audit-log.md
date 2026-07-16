@@ -40,7 +40,7 @@ const GENESIS_HASH = new Uint8Array(32);  // All zeros
 
 ## 3. Hash Chain Mechanics
 
-Each entry's hash is computed over its deterministic CBOR encoding (excluding the signature). The next entry links back via `previousHash`.
+Each entry's hash is computed over its deterministic canonical JSON encoding (excluding the signature) — object keys sorted recursively, `Uint8Array` fields base64url-encoded. The next entry links back via `previousHash`.
 
 ```mermaid
 graph LR
@@ -57,11 +57,31 @@ graph LR
 
 ```typescript
 /**
+ * Produce canonical JSON for an object: keys sorted recursively,
+ * Uint8Array values encoded as base64url strings.
+ */
+function canonicalJSON(obj: unknown): string {
+  return JSON.stringify(obj, (_key, value) => {
+    if (value instanceof Uint8Array) {
+      return encodeBase64url(value);
+    }
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const sorted: Record<string, unknown> = {};
+      for (const k of Object.keys(value).sort()) {
+        sorted[k] = (value as Record<string, unknown>)[k];
+      }
+      return sorted;
+    }
+    return value;
+  });
+}
+
+/**
  * Compute the hash of an audit entry (for chain linking).
  * Hash covers all fields except signature.
  */
 async function hashEntry(entry: AuditEntry): Promise<Uint8Array> {
-  const payload = cbor.encode({
+  const canonical = canonicalJSON({
     sequence: entry.sequence,
     authorPodId: entry.authorPodId,
     operation: entry.operation,
@@ -69,6 +89,7 @@ async function hashEntry(entry: AuditEntry): Promise<Uint8Array> {
     previousHash: entry.previousHash,
     timestamp: entry.timestamp,
   });
+  const payload = new TextEncoder().encode(canonical);
   return new Uint8Array(await crypto.subtle.digest('SHA-256', payload));
 }
 
@@ -88,7 +109,7 @@ async function createEntry(
   const sequence = previousEntry ? previousEntry.sequence + 1 : 0;
   const timestamp = Date.now();
 
-  const payload = cbor.encode({
+  const canonical = canonicalJSON({
     sequence,
     authorPodId: identity.podId,
     operation,
@@ -96,6 +117,7 @@ async function createEntry(
     previousHash,
     timestamp,
   });
+  const payload = new TextEncoder().encode(canonical);
 
   const signature = await identity.sign(payload);
 
@@ -152,7 +174,7 @@ async function verifyChain(
       return { valid: false, error: `Unknown author: ${entry.authorPodId}`, failedAt: i };
     }
 
-    const payload = cbor.encode({
+    const canonical = canonicalJSON({
       sequence: entry.sequence,
       authorPodId: entry.authorPodId,
       operation: entry.operation,
@@ -160,6 +182,7 @@ async function verifyChain(
       previousHash: entry.previousHash,
       timestamp: entry.timestamp,
     });
+    const payload = new TextEncoder().encode(canonical);
 
     const sigValid = await PodSigner.verify(publicKey, payload, entry.signature);
     if (!sigValid) {
@@ -186,38 +209,53 @@ In multi-author scenarios, a **leader** (see [leader-election.md](../coordinatio
 
 ## 6. Fork Detection and Resolution
 
-A fork occurs when two entries share the same `previousHash` (two competing successors to the same entry).
+A fork occurs when two or more entries share the same `sequence` number but hash to different values (two competing entries at the same position in the chain).
 
 ```typescript
 interface ForkDetection {
   /** Detect forks in a set of entries */
-  detectFork(entries: AuditEntry[]): Fork | null;
+  detectFork(entries: AuditEntry[]): Promise<Fork | null>;
 }
 
 interface Fork {
-  /** The common ancestor entry */
-  ancestor: AuditEntry;
-  /** Competing branches */
+  /** Sequence number of the last non-forked entry; -1 if the fork occurs at sequence 0 (no ancestor) */
+  ancestor: number;
+  /** Divergent branches at the forked sequence, grouped by hash */
   branches: AuditEntry[][];
 }
 
-function detectFork(entries: AuditEntry[]): Fork | null {
-  const hashToSuccessors = new Map<string, AuditEntry[]>();
+async function detectFork(entries: AuditEntry[]): Promise<Fork | null> {
+  if (entries.length === 0) return null;
 
+  // Group entries by sequence number
+  const bySequence = new Map<number, AuditEntry[]>();
   for (const entry of entries) {
-    const key = base64urlEncode(entry.previousHash);
-    const existing = hashToSuccessors.get(key) ?? [];
-    existing.push(entry);
-    hashToSuccessors.set(key, existing);
+    const group = bySequence.get(entry.sequence) ?? [];
+    group.push(entry);
+    bySequence.set(entry.sequence, group);
   }
 
-  for (const [hash, successors] of hashToSuccessors) {
-    if (successors.length > 1) {
-      // Fork detected: multiple entries claim the same predecessor
-      const ancestor = entries.find(e =>
-        base64urlEncode(hashEntry(e)) === hash
-      );
-      return { ancestor: ancestor!, branches: [successors] };
+  // Walk sequences in order looking for the first one with divergent entries
+  const sequences = [...bySequence.keys()].sort((a, b) => a - b);
+
+  for (const sequence of sequences) {
+    const group = bySequence.get(sequence)!;
+    if (group.length < 2) continue;
+
+    const hashes = await Promise.all(group.map(e => hashEntry(e)));
+    const hashStrings = hashes.map(h => encodeBase64url(h));
+    const unique = new Set(hashStrings);
+
+    if (unique.size > 1) {
+      // Fork detected: two or more entries claim the same sequence number
+      // with different content/hash. Group the divergent entries by hash.
+      const branchMap = new Map<string, AuditEntry[]>();
+      for (let i = 0; i < group.length; i++) {
+        const branch = branchMap.get(hashStrings[i]) ?? [];
+        branch.push(group[i]);
+        branchMap.set(hashStrings[i], branch);
+      }
+      return { ancestor: sequence - 1, branches: [...branchMap.values()] };
     }
   }
 
@@ -229,12 +267,13 @@ function detectFork(entries: AuditEntry[]): Fork | null {
 
 ## 7. Wire Format
 
-Audit entries use the wire-format message types 0x70-0x71 (see [wire-format.md](../core/wire-format.md)):
+Audit entries use the wire-format message types 0xC4-0xC6 (see [wire-format.md](../core/wire-format.md)):
 
 | Type | Code | Purpose |
 |------|------|---------|
-| `AUDIT_ENTRY` | 0x70 | Broadcast a new audit entry to peers |
-| `AUDIT_CHAIN_QUERY` | 0x71 | Request entries from a peer (range query) |
+| `AUDIT_ENTRY` | 0xC4 | Broadcast a new audit entry to peers |
+| `AUDIT_CHAIN_QUERY` | 0xC5 | Request entries from a peer (range query) |
+| `AUDIT_CHAIN_RESPONSE` | 0xC6 | Respond with the requested audit chain data |
 
 ## 8. Dual Signature Pattern
 

@@ -1072,15 +1072,15 @@ class TrafficRecorder {
     response: unknown,
     timing: RequestTiming
   ): MeshHarEntry {
-    const requestBody = JSON.stringify(request.args);
+    const requestBody = JSON.stringify(request.payload.args);
     const responseBody = JSON.stringify(response);
 
     return {
       startedDateTime: new Date(timing.startTime).toISOString(),
       time: timing.totalTime,
       request: {
-        method: request.method,
-        url: `mesh://${request.from}/${request.method}`,
+        method: request.payload.op,
+        url: `mesh://${request.from}/${request.payload.op}`,
         headers: [
           { name: 'X-Mesh-From', value: request.from },
           { name: 'X-Mesh-Id', value: request.id },

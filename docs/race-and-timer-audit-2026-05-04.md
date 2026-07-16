@@ -1,5 +1,10 @@
 # Race-Condition + Timer Audit (2026-05-07)
 
+**Status: resolved as of 2026-07-16** (dated snapshot, not live guidance).
+All four fixes (agent-picker race, Codex sandbox single-flight, vault
+unlock single-flight, file-watcher poll guard) confirmed present in
+current source.
+
 > Two parallel code-quality sweeps over production code.
 > **Final: 9,409 tests / 0 fail** stable.
 >

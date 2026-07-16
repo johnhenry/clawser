@@ -27,10 +27,10 @@ features:
   - name: First Run
     status: implemented
     description: >
-      On first load, Clawser opens the workspace setup flow. Configure an LLM provider
-      (API key), choose a model, and optionally import an existing workspace. The agent
-      is ready to use once a provider is connected.
+      On first load, Clawser opens the vault creation flow, then the workspace setup
+      flow. Configure an LLM provider (API key), choose a model, and optionally import
+      an existing workspace. The agent is ready to use once a provider is connected.
     source_files:
-      - web/clawser-ui.js
+      - web/clawser-app.js
       - web/clawser-state.js
-    screenshot: 14-workspace-entry.png
+    screenshot: home-screen.png

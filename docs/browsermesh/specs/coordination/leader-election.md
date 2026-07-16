@@ -233,6 +233,20 @@ presence.setState('online', { role: 'leader' });
 
 ## Implementation Status
 
-**Status**: Leader election is implemented inside SwarmCoordinator as part of swarm lifecycle. Uses highest-podId tie-breaking. Wired to app bootstrap.
+**Status**: Only the deterministic algorithm in §3 is implemented — the
+`LeaderElection` class's `elect()` method sorts candidate pod IDs and returns
+the lowest, consistent with `electLeader()` above. It is implemented inside
+`SwarmCoordinator` as part of swarm lifecycle and is wired to app bootstrap
+(`ClawserPod.initMesh()`).
 
-**Source**: `web/clawser-mesh-swarm.js`
+The signed `LEADER_CLAIM`/`LEADER_ACK`/`LEADER_REJECT` handshake (§4-6), the
+state-hash split-brain detection (§7), and the `LEADER_RESIGN` voluntary
+transfer message (§9) are design-only — no matching types or functions
+(`LeaderClaim`, `verifyLeaderClaim`, `detectSplitBrain`, `LeaderResign`) exist
+in `packages/` or `web/`. In the real implementation, stale-leader detection
+is heartbeat-timeout based (`receiveHeartbeat` / `checkLeaderAlive` /
+`yieldLeadership`) rather than claim/verify signature exchange. The §10 join
+protocol integration is likewise design-only (see
+[join-protocol.md](join-protocol.md#implementation-status)).
+
+**Source**: `web/clawser-mesh-swarm.js` (`LeaderElection` class only; §4-10 unimplemented)

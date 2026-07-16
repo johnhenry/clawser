@@ -16,6 +16,7 @@ specs/
 │
 ├── crypto/                  # Cryptographic specifications
 │   ├── identity-keys.md     # Ed25519 identity, HD derivation
+│   ├── identity-keyring.md  # Key hierarchy and identity linking
 │   ├── session-keys.md      # X25519 handshake, session encryption
 │   ├── capability-scope-grammar.md  # Scope string grammar and validation
 │   ├── webauthn-identity.md # Optional hardware-backed identity (WebAuthn)
@@ -39,7 +40,11 @@ specs/
 │   ├── dht-routing.md         # Kademlia DHT for peer discovery
 │   ├── source-route-labels.md # Compact multi-hop path encoding
 │   ├── device-pairing.md    # Cross-device pairing handshake
-│   └── session-resumption.md   # Abbreviated reconnection
+│   ├── session-resumption.md   # Abbreviated reconnection
+│   ├── direct-stream.md     # Named stream open, codec negotiation, QoS profiles
+│   ├── file-transfer.md     # Content-addressed chunked file transfer
+│   ├── name-resolution.md   # Decentralized human-friendly name resolution
+│   └── relay-service.md     # Signaling/relay layer for NAT-blocked peers
 │
 ├── coordination/            # Coordination specifications
 │   ├── service-model.md     # Service naming and discovery
@@ -53,13 +58,20 @@ specs/
 │   ├── state-sync.md        # CRDT state synchronization
 │   ├── reactive-signals.md  # Lightweight reactive state primitives
 │   ├── peer-reputation.md   # Peer quality scoring
-│   └── pod-migration.md     # Pod state migration
+│   ├── pod-migration.md     # Pod state migration
+│   ├── quota-metering.md    # Per-identity resource usage tracking and enforcement
+│   ├── remote-access.md     # Access roster, scope templates, invitations (MeshACL)
+│   ├── resource-marketplace.md  # Resource advertisement, discovery, and listings
+│   ├── swarm-protocol.md    # Leader election, task distribution, swarm lifecycle
+│   ├── trust-graph.md       # Weighted, transitive, decaying trust edges
+│   └── voting-protocol.md   # Proposal/ballot consensus decisions
 │
 ├── operations/              # Operational specifications
 │   ├── observability.md     # Tracing, logging, metrics
 │   ├── operations.md        # Key rotation, admission control
 │   ├── chaos-testing.md     # Fault injection and testing
-│   └── test-transport.md    # In-memory test transport
+│   ├── test-transport.md    # In-memory test transport
+│   └── audit-recorder.md    # OS-level "black box" event recording
 │
 ├── extensions/              # Extension specifications
 │   ├── signed-audit-log.md  # Hash-chained audit entries
@@ -67,17 +79,26 @@ specs/
 │   ├── server-pod.md        # Server-side runtime
 │   ├── storage-integration.md  # IPFS/Storacha integration
 │   ├── compute-offload.md   # WASM compute offload
-│   └── artifact-registry.md # Content-addressable artifact storage
+│   ├── artifact-registry.md # Content-addressable artifact storage
+│   ├── app-distribution.md  # Decentralized app manifest, install, and store
+│   ├── chat-protocol.md     # CRDT-backed chat rooms with moderation
+│   ├── payment-channels.md  # Credit ledger, micropayment channels, escrow
+│   └── sync-protocol.md     # Personal multi-device + signed deploy packages
 │
-└── reference/               # Reference documentation
-    ├── libp2p-alignment.md  # libp2p comparison
-    ├── design-rationale.md  # Architectural decisions
-    ├── manifest-format.md   # Kubernetes-style manifests
-    ├── pod-capability-schema.json  # JSON Schema for capabilities
-    ├── client-api.md        # MeshClient/MeshServer/MeshRuntime API
-    ├── mesh-ctl.md          # CLI command reference
-    └── utility-functions.md # Shared helper functions
+├── reference/               # Reference documentation
+│   ├── libp2p-alignment.md  # libp2p comparison
+│   ├── design-rationale.md  # Architectural decisions
+│   ├── manifest-format.md   # Kubernetes-style manifests
+│   ├── pod-capability-schema.json  # JSON Schema for capabilities
+│   ├── client-api.md        # MeshClient/MeshServer/MeshRuntime API
+│   ├── mesh-ctl.md          # CLI command reference
+│   └── utility-functions.md # Shared helper functions
+│
+└── proposals/               # Proposed additions (status: see each target spec)
+    └── clawser-integration.md  # BrowserMesh <-> Clawser integration surface proposal
 ```
+
+**Total**: 76 spec files (75 `.md` + 1 JSON schema) across 8 directories: core (6), crypto (7), networking (21), coordination (18), operations (5), extensions (10), reference (7), proposals (1).
 
 ## 2. Dependency Graph
 
@@ -92,6 +113,7 @@ flowchart TD
     subgraph Core["Core Layer"]
         IK[identity-keys<br/>Ed25519]
         IP[identity-persistence<br/>key storage]
+        KR[identity-keyring<br/>key linking]
         BS[boot-sequence<br/>discovery]
         WF[wire-format<br/>CBOR]
         PV[protocol-versioning<br/>feature flags]
@@ -156,6 +178,7 @@ flowchart TD
     CA --> TP
     CSG --> IK
     IK --> IP
+    IK --> KR
 
     IK --> SK
     IK -.-> WA
@@ -265,6 +288,7 @@ flowchart TD
     style AR fill:#FFB366
     style CT fill:#FFB366
     style IP fill:#E6F3FF
+    style KR fill:#E6F3FF
     style TP fill:#90EE90
     style SE fill:#90EE90
     style BRP fill:#90EE90
@@ -291,6 +315,7 @@ flowchart TD
 | 4 | [wire-format.md](core/wire-format.md) | Message encoding (CBOR) |
 | 5 | [session-keys.md](crypto/session-keys.md) | Secure channel establishment |
 | 2a | [identity-persistence.md](crypto/identity-persistence.md) | Key storage and at-rest protection |
+| 2b | [identity-keyring.md](crypto/identity-keyring.md) | Key hierarchy and identity linking |
 
 ### Foundation Protocols
 
@@ -316,6 +341,10 @@ flowchart TD
 | 8f | [resumable-transfer.md](networking/resumable-transfer.md) | Checkpoint-and-resume transfers |
 | 8g | [message-middleware.md](networking/message-middleware.md) | Composable transform pipeline |
 | 8h | [http-interop.md](networking/http-interop.md) | HTTP mapping for infrastructure traversal |
+| 8i | [direct-stream.md](networking/direct-stream.md) | Named streams, codec negotiation, QoS profiles |
+| 8j | [file-transfer.md](networking/file-transfer.md) | Content-addressed chunked file transfer |
+| 8k | [name-resolution.md](networking/name-resolution.md) | Human-friendly `@name` resolution |
+| 8l | [relay-service.md](networking/relay-service.md) | Relay/signaling for NAT-blocked peers |
 
 ### Coordination Layer
 
@@ -330,6 +359,12 @@ flowchart TD
 | 9f | [pod-migration.md](coordination/pod-migration.md) | Pod state transfer |
 | 9g | [reactive-signals.md](coordination/reactive-signals.md) | Lightweight reactive state |
 | 9h | [peer-reputation.md](coordination/peer-reputation.md) | Peer quality scoring |
+| 9i | [trust-graph.md](coordination/trust-graph.md) | Weighted, transitive, decaying trust edges |
+| 9j | [swarm-protocol.md](coordination/swarm-protocol.md) | Leader election, task distribution, swarm lifecycle |
+| 9k | [remote-access.md](coordination/remote-access.md) | Access roster, scope templates, invitations (MeshACL) |
+| 9l | [resource-marketplace.md](coordination/resource-marketplace.md) | Resource advertisement and listings |
+| 9m | [quota-metering.md](coordination/quota-metering.md) | Per-identity usage tracking and enforcement |
+| 9n | [voting-protocol.md](coordination/voting-protocol.md) | Proposal/ballot consensus decisions |
 | 10 | [slot-lease-protocol.md](coordination/slot-lease-protocol.md) | SharedWorker coordination |
 | 11 | [reconciliation-loop.md](coordination/reconciliation-loop.md) | Desired state management |
 
@@ -341,6 +376,7 @@ flowchart TD
 | 13 | [security-model.md](core/security-model.md) | Threat model |
 | 14 | [observability.md](operations/observability.md) | Tracing and metrics |
 | 15 | [operations.md](operations/operations.md) | Key rotation, etc. |
+| 15a | [audit-recorder.md](operations/audit-recorder.md) | OS-level "black box" event recording |
 
 ### Advanced Features
 
@@ -362,6 +398,10 @@ flowchart TD
 | — | [storage-integration.md](extensions/storage-integration.md) | IPFS integration |
 | — | [compute-offload.md](extensions/compute-offload.md) | WASM offload |
 | — | [artifact-registry.md](extensions/artifact-registry.md) | Content-addressable artifacts |
+| — | [chat-protocol.md](extensions/chat-protocol.md) | CRDT-backed chat rooms with moderation |
+| — | [payment-channels.md](extensions/payment-channels.md) | Credit ledger, micropayment channels, escrow |
+| — | [app-distribution.md](extensions/app-distribution.md) | Decentralized app manifest, install, and store |
+| — | [sync-protocol.md](extensions/sync-protocol.md) | Personal multi-device + signed deploy packages |
 
 ### Reference
 
@@ -372,6 +412,12 @@ flowchart TD
 | — | [utility-functions.md](reference/utility-functions.md) | Shared helper functions |
 | — | [chaos-testing.md](operations/chaos-testing.md) | Fault injection framework |
 | — | [test-transport.md](operations/test-transport.md) | In-memory test transport |
+
+### Proposals
+
+| Order | Spec | Description |
+|-------|------|-------------|
+| — | [clawser-integration.md](proposals/clawser-integration.md) | BrowserMesh <-> Clawser integration surface — all 15 proposed specs below have since been authored; see the proposal's status note |
 
 ## 4. Spec Dependencies
 
@@ -407,6 +453,14 @@ flowchart TD
 - [group-keys.md](crypto/group-keys.md)
 - [device-pairing.md](networking/device-pairing.md)
 - [identity-persistence.md](crypto/identity-persistence.md)
+- [identity-keyring.md](crypto/identity-keyring.md)
+
+### [crypto/identity-keyring.md](crypto/identity-keyring.md)
+
+**Depends on**:
+- [identity-keys.md](crypto/identity-keys.md)
+
+**Required by**: None (leaf spec; referenced by [trust-graph.md](coordination/trust-graph.md))
 
 ### [crypto/capability-scope-grammar.md](crypto/capability-scope-grammar.md)
 
@@ -634,6 +688,55 @@ flowchart TD
 - [join-protocol.md](coordination/join-protocol.md)
 - [presence-protocol.md](coordination/presence-protocol.md)
 - [identity-keys.md](crypto/identity-keys.md)
+
+**Required by**: None (leaf spec)
+
+### [coordination/trust-graph.md](coordination/trust-graph.md)
+
+**Depends on**:
+- [identity-keyring.md](crypto/identity-keyring.md)
+- [peer-reputation.md](coordination/peer-reputation.md)
+
+**Required by**:
+- [resource-marketplace.md](coordination/resource-marketplace.md)
+
+### [coordination/swarm-protocol.md](coordination/swarm-protocol.md)
+
+**Depends on**:
+- [leader-election.md](coordination/leader-election.md)
+
+**Required by**: None (leaf spec)
+
+### [coordination/remote-access.md](coordination/remote-access.md)
+
+**Depends on**:
+- [wire-format.md](core/wire-format.md)
+- [presence-protocol.md](coordination/presence-protocol.md)
+- [pod-addr.md](networking/pod-addr.md)
+
+**Required by**:
+- [chat-protocol.md](extensions/chat-protocol.md)
+
+### [coordination/resource-marketplace.md](coordination/resource-marketplace.md)
+
+**Depends on**:
+- [trust-graph.md](coordination/trust-graph.md)
+- [payment-channels.md](extensions/payment-channels.md)
+- [quota-metering.md](coordination/quota-metering.md)
+
+**Required by**: None (leaf spec)
+
+### [coordination/quota-metering.md](coordination/quota-metering.md)
+
+**Depends on**:
+- [payment-channels.md](extensions/payment-channels.md)
+- [resource-marketplace.md](coordination/resource-marketplace.md)
+
+**Required by**: None (leaf spec)
+
+### [coordination/voting-protocol.md](coordination/voting-protocol.md)
+
+**Depends on**: None (self-contained; consumes signed identities per [identity-keys.md](crypto/identity-keys.md))
 
 **Required by**: None (leaf spec)
 
@@ -928,6 +1031,79 @@ flowchart TD
 
 **Required by**: Referenced by all specs that use encoding, crypto, or validation helpers.
 
+### [networking/direct-stream.md](networking/direct-stream.md)
+
+**Depends on**:
+- [streaming-protocol.md](networking/streaming-protocol.md)
+- [stream-encryption.md](networking/stream-encryption.md)
+- [channel-abstraction.md](networking/channel-abstraction.md)
+- [pod-socket.md](networking/pod-socket.md)
+
+**Required by**:
+- [file-transfer.md](networking/file-transfer.md)
+
+### [networking/file-transfer.md](networking/file-transfer.md)
+
+**Depends on**:
+- [streaming-protocol.md](networking/streaming-protocol.md)
+- [direct-stream.md](networking/direct-stream.md)
+- [resumable-transfer.md](networking/resumable-transfer.md)
+- [stream-encryption.md](networking/stream-encryption.md)
+
+**Required by**: None (leaf spec)
+
+### [networking/name-resolution.md](networking/name-resolution.md)
+
+**Depends on**:
+- [pod-addr.md](networking/pod-addr.md)
+- [wire-format.md](core/wire-format.md)
+- [signaling-protocol.md](networking/signaling-protocol.md)
+
+**Required by**: None (leaf spec)
+
+### [networking/relay-service.md](networking/relay-service.md)
+
+**Depends on**: None documented (see spec's own Overview; relays WebRTC/WebSocket signaling)
+
+**Required by**: None (leaf spec)
+
+### [extensions/chat-protocol.md](extensions/chat-protocol.md)
+
+**Depends on**:
+- [wire-format.md](core/wire-format.md)
+- [presence-protocol.md](coordination/presence-protocol.md)
+- [remote-access.md](coordination/remote-access.md)
+- [state-sync.md](coordination/state-sync.md)
+
+**Required by**: None (leaf spec)
+
+### [extensions/payment-channels.md](extensions/payment-channels.md)
+
+**Depends on**: None (self-contained ledger/escrow; consumed by resource-marketplace.md and quota-metering.md)
+
+**Required by**:
+- [resource-marketplace.md](coordination/resource-marketplace.md)
+- [quota-metering.md](coordination/quota-metering.md)
+
+### [extensions/app-distribution.md](extensions/app-distribution.md)
+
+**Depends on**: None documented (see spec's own Overview; builds on manifest/permission model)
+
+**Required by**: None (leaf spec)
+
+### [extensions/sync-protocol.md](extensions/sync-protocol.md)
+
+**Depends on**: None documented (personal multi-device pairing + signed deploy packages; see spec's own Overview)
+
+**Required by**: None (leaf spec)
+
+### [operations/audit-recorder.md](operations/audit-recorder.md)
+
+**Depends on**:
+- [signed-audit-log.md](extensions/signed-audit-log.md)
+
+**Required by**: None (leaf spec)
+
 ## 5. Implementation Order
 
 For implementers, build in this order:
@@ -937,10 +1113,11 @@ For implementers, build in this order:
 1. Wire format (CBOR encoding)
 2. Identity keys (Ed25519)
 3. Identity persistence (key storage and protection)
-4. Pod type detection
-5. Channel abstraction (PodChannel interface)
-6. Capability scope grammar
-7. Utility functions
+4. Identity keyring (key hierarchy and identity linking)
+5. Pod type detection
+6. Channel abstraction (PodChannel interface)
+7. Capability scope grammar
+8. Utility functions
 
 ### Phase 2: Boot
 
@@ -1016,6 +1193,7 @@ For implementers, build in this order:
 | [webauthn-identity](crypto/webauthn-identity.md) | 📋 Draft | Optional hardware-backed identity |
 | [group-keys](crypto/group-keys.md) | 📋 Draft | Symmetric group encryption |
 | [identity-persistence](crypto/identity-persistence.md) | 📋 Draft | Key storage and at-rest protection |
+| [identity-keyring](crypto/identity-keyring.md) | ✅ Stable | Key hierarchy and identity linking; fully implemented |
 | [channel-abstraction](networking/channel-abstraction.md) | 📋 Draft | PodChannel interface |
 | [boot-sequence](core/boot-sequence.md) | ✅ Stable | 6-phase boot (Phase -1 optional) |
 | [wire-format](core/wire-format.md) | ✅ Stable | CBOR encoding |

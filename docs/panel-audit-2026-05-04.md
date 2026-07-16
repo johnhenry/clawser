@@ -1,5 +1,10 @@
 # Panel/View Wiring Audit — 2026-05-05
 
+**Status: resolved as of 2026-07-16** (dated snapshot, not live guidance).
+All surfaced gaps (orphan modules, stubbed panel actions) were closed by
+the follow-up in `docs/panel-convergence-2026-05-04.md`; this file retains
+standalone value as the baseline per-panel inventory.
+
 > A "fully wired end-to-end" sweep across every UI panel in the
 > Clawser web app. Tests still green: **9361 / 0 fail.**
 

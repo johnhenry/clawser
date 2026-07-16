@@ -18,6 +18,40 @@ node --import ./web/test/_setup-globals.mjs --test web/test/clawser-state.test.m
 node --import ./web/test/_setup-globals.mjs --test web/test/*.test.mjs
 ```
 
+### Running via npm scripts
+
+`web/test/run-tests.mjs` is the real test runner behind the `npm test*` scripts in `package.json`; it groups files in `web/test/` by filename prefix rather than by a fixed list, so group membership is whatever currently matches the prefix (use `--list` for the current set):
+
+| Script | Group | Files matched |
+|--------|-------|----------------|
+| `npm test` | `all` | `core` + `mesh` + `channels` + `sprint` + `completeness` + `e2e` + `stress` |
+| `npm run test:fast` | `fast` | `core` + `channels` (excludes the slower mesh/sprint/completeness/e2e/stress groups) |
+| `npm run test:core` | `core` | Every `*.test.mjs` file that doesn't match the mesh/channel/sprint/completeness/e2e/stress prefixes below |
+| `npm run test:mesh` | `mesh` | All `clawser-mesh-*.test.mjs` files (union of the five mesh sub-groups below) |
+| `npm run test:mesh-net` | `mesh-net` | `clawser-mesh-{peer,transport,relay,gateway,websocket,discovery,swarm,dht}.test.mjs` |
+| `npm run test:mesh-sync` | `mesh-sync` | `clawser-mesh-{sync,delta-sync,streams,migration}.test.mjs` |
+| `npm run test:mesh-identity` | `mesh-identity` | `clawser-mesh-{identity,identity-tools,keyring,trust,acl,capabilities}.test.mjs` |
+| `npm run test:mesh-apps` | `mesh-apps` | `clawser-mesh-{apps,marketplace,payments,quotas,resources,naming}.test.mjs` |
+| `npm run test:mesh-ops` | `mesh-ops` | `clawser-mesh-{audit,consensus,scheduler,visualizations,chat,tools,files,wsh-bridge,gpu,stealth}.test.mjs` |
+| `npm run test:e2e` | `e2e` | `clawser-e2e-*.test.mjs` |
+| `npm run test:stress` | `stress` | `clawser-stress*.test.mjs` (slow — excluded from `fast`/`core`, run explicitly) |
+| `npm run test:changed` | `changed` | Test files touched in `git diff HEAD` / staged changes |
+
+Direct invocation with options:
+```bash
+node web/test/run-tests.mjs --group mesh-net --concurrency 4
+node web/test/run-tests.mjs --group mesh-net --list   # dry-run, no execution
+```
+
+### Vitest track
+
+A small, separate suite runs under [Vitest](https://vitest.dev) instead of `node:test`, for cases that want Vitest's assertion/mocking API. Config: `vitest.config.js` (root), setup: `web/test/_setup-vitest.mjs`. Test files use the `*.vitest.mjs` suffix under `web/test/` (a handful of files as of this writing, e.g. `cli-json-output.vitest.mjs`, `agent-hardening.vitest.mjs`).
+
+```bash
+npm run test:vitest         # run once
+npm run test:vitest:watch   # watch mode
+```
+
 **Pattern:**
 ```js
 // Run with: node --import ./web/test/_setup-globals.mjs --test web/test/clawser-foo.test.mjs

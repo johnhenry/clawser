@@ -41,14 +41,14 @@ Start the HTTPS dev server with `npm start` (uses web/serve-https.mjs) or the HT
 
 **Status:** ✅ Implemented
 
-On first load, Clawser opens the workspace setup flow. Configure an LLM provider (API key), choose a model, and optionally import an existing workspace. The agent is ready to use once a provider is connected.
+On first load, Clawser opens the vault creation flow, then the workspace setup flow. Configure an LLM provider (API key), choose a model, and optionally import an existing workspace. The agent is ready to use once a provider is connected.
 
 **Source files:**
 
-- `web/clawser-ui.js`
+- `web/clawser-app.js`
 - `web/clawser-state.js`
 
-![First Run](../docs/screenshots/14-workspace-entry.png)
+![First Run](../docs/screenshots/home-screen.png)
 
 ---
 

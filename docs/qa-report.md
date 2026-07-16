@@ -1,5 +1,10 @@
 # QA Report — Unix FS / clsh Session Audit
 
+**Status: resolved as of 2026-07-16** (dated snapshot, not live guidance).
+All fixes from both passes are confirmed present in current source,
+including the two items left as future work (v86 guest wiring, full
+FsUiSync migration of all 6 config domains).
+
 Date: 2026-05-01
 
 Comprehensive QA pass on the recent dev session that landed Unix filesystem

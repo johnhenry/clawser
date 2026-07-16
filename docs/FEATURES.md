@@ -103,7 +103,7 @@ Each channel has configurable allowlists:
 
 Routines from `RoutineEngine` route through the gateway as virtual `scheduler` channels. Each routine gets the channel key `scheduler:{routineId}` — the same routine serializes (no concurrent runs), but different routines run concurrently. Scheduler messages appear in chat with a green badge (`#7CB342`).
 
-**Tools**: `channel_list`, `channel_send`, `channel_history`
+**Tools**: `channel_create`, `channel_list`, `channel_send`, `channel_history`, `channel_delete`
 
 ---
 
@@ -336,7 +336,7 @@ Uses `BroadcastChannel` (`clawser-tabs`) for multi-tab awareness:
 - Keeps at most 10 checkpoints in the index
 - Shutdown creates a final checkpoint
 
-**Tools**: `daemon_status`, `daemon_checkpoint`
+**Tools**: `daemon_status`, `daemon_checkpoint`, `daemon_pause`, `daemon_resume`, `daemon_restore`
 
 ---
 
@@ -358,18 +358,18 @@ Remote command execution, file transfer, PTY management, and CORS proxy via the 
 
 ## Pod Architecture
 
-**Package**: `web/packages/pod/`
+**Package**: `browsermesh-pod` (external npm dependency — no longer vendored under `web/packages/`; consumed via the re-export bridge `web/packages-pod.js`, see [MODULES.md](./MODULES.md#internal-packages))
 **Integration**: `web/clawser-pod.js`, `web/clawser-embed.js`
 
-A Pod is any browser execution context that can execute code, receive messages, and be discovered/addressed. Clawser itself is a pod (`ClawserPod`). Arbitrary pages become pods via Chrome extension injection (`InjectedPod`). Developers embed pods into apps via `EmbeddedPod`.
+A Pod is any browser execution context that can execute code, receive messages, and be discovered/addressed. Clawser itself is a pod (`ClawserPod`). `InjectedPod` is a lightweight subclass meant for Chrome-extension injection or bookmarklet use (page text/structured-data extraction, visual overlay indicator) — the companion browser extension that would use it now lives in a separate repo, `github.com/johnhenry/clawser-browser-control`, and is not built from this repo. Developers embed pods into apps via `EmbeddedPod`.
 
 ### Pod Variants
 
-| Class | File | Use Case |
-|-------|------|----------|
-| `Pod` | `packages/pod/src/pod.mjs` | Base class — identity, discovery, messaging |
+| Class | Source | Use Case |
+|-------|--------|----------|
+| `Pod` | `browsermesh-pod` (`src/pod.mjs`), re-exported via `web/packages-pod.js` | Base class — identity, discovery, messaging |
 | `ClawserPod` | `clawser-pod.js` | Full workspace with mesh networking |
-| `InjectedPod` | `packages/pod/src/injected-pod.mjs` | Lightweight, injected into arbitrary pages |
+| `InjectedPod` | `browsermesh-pod` (`src/injected-pod.mjs`), re-exported via `web/packages-pod.js` | Lightweight, injected into arbitrary pages |
 | `EmbeddedPod` | `clawser-embed.js` | Developer API for building pods into apps |
 
 ### Boot Sequence
@@ -386,7 +386,7 @@ Six phases: Install Runtime (Ed25519 identity generation) → Install Listeners 
 
 ### Extension Injection
 
-The `inject_pod` extension action injects `pod-inject.js` (IIFE bundle) into any tab's MAIN world. The injected pod shows a visual overlay indicator and connects to same-origin pods via BroadcastChannel. Regenerate bundle: `bash web/packages/pod/build.sh`.
+Historically an `inject_pod` extension action injected a `pod-inject.js` IIFE bundle (built via `web/packages/pod/build.sh`) into a tab's MAIN world. That extension code — and its build step — has been extracted out of this repo into `github.com/johnhenry/clawser-browser-control` (published to the Chrome Web Store). Neither `inject_pod`, `pod-inject.js`, nor `build.sh` exist in this repo anymore; `web/clawser-extension-tools.js` now talks to the extension over its own RPC bridge instead.
 
 ---
 
@@ -427,7 +427,7 @@ Per-turn checkpoints track:
 
 Default max history: 20 turns. Supports multi-turn undo and preview.
 
-**Tools**: `undo`, `undo_status`
+**Tools**: `agent_undo`, `agent_redo`, `agent_undo_status`
 
 ---
 
@@ -445,7 +445,7 @@ Forbidden patterns (rejected before execution): `fetch`, `XMLHttpRequest`, `WebS
 
 Each edit increments the version number. Full version history is maintained with rollback support.
 
-**Tools**: `tool_build`, `tool_test`, `tool_list_custom`, `tool_edit`, `tool_remove`
+**Tools**: `tool_build`, `tool_test`, `tool_list_custom`, `tool_edit`, `tool_remove`, `tool_promote`
 
 ---
 

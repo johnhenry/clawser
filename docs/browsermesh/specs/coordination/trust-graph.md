@@ -92,4 +92,16 @@ Default `decayRate` is 0.99. `applyDecay` batch-prunes edges decayed below
 | Time-based decay      | Fully implemented                            |
 | Serialization         | toJSON/fromJSON complete                     |
 | Unit tests            | Yes (`web/test/clawser-mesh-trust.test.mjs`) |
-| App bootstrap wired   | Yes                                          |
+| App bootstrap wired   | No — see note below                          |
+
+**Note**: `ClawserPod.initMesh()` does not construct a `TrustGraph`. It creates
+a `PeerRegistry` (`new PeerRegistry({ localPodId: podId })`, `web/clawser-pod.js`)
+without an injected `trustGraph`, so `PeerRegistry` falls back to its own
+`#createDefaultTrustGraph()` — a minimal duck-typed stub (`addEdge`,
+`removeEdge`, `getTrustLevel`, `isTrusted`, `toJSON` only; no transitive trust,
+scope nuance beyond a single check, reputation, decay, or expiration). The
+fully-featured `TrustGraph` class documented above is only ever instantiated
+in its own module (`clawser-mesh-trust.js`, as the default in `fromJSON`) and
+in tests; it can be wired to production by passing `trustGraph: new
+TrustGraph()` into `PeerRegistry`'s constructor, but nothing in the current
+codebase does so.

@@ -14,8 +14,14 @@ Multiple specs reference helper functions (base64url, timingSafeEqual, CBOR help
 
 URL-safe Base64 encoding/decoding (RFC 4648 §5), used for Pod IDs, public keys, and tokens.
 
+> **Implementation note**: The shipped implementation (`browsermesh-primitives`, re-exported by
+> `packages/browsermesh-core/src/identity.mjs` and `keyring.mjs`) names these functions
+> `encodeBase64url` / `decodeBase64url` (verb-first, matching `encodeMeshMessage`/`decodeMeshMessage`
+> elsewhere in the codebase). `packages/browsermesh-core/src/handshake.mjs` also has a local,
+> differently-implemented pair `toBase64Url` / `fromBase64Url` for connection-token encoding.
+
 ```typescript
-function base64urlEncode(bytes: Uint8Array): string {
+function encodeBase64url(bytes: Uint8Array): string {
   const base64 = btoa(String.fromCharCode(...bytes));
   return base64
     .replace(/\+/g, '-')
@@ -23,7 +29,7 @@ function base64urlEncode(bytes: Uint8Array): string {
     .replace(/=/g, '');
 }
 
-function base64urlDecode(str: string): Uint8Array {
+function decodeBase64url(str: string): Uint8Array {
   // Restore padding
   const padded = str + '='.repeat((4 - str.length % 4) % 4);
   const base64 = padded.replace(/-/g, '+').replace(/_/g, '/');
@@ -250,36 +256,34 @@ function isValidTopic(topic: string): boolean {
 
 Standardized error creation (see [error-handling.md](../core/error-handling.md)):
 
-```typescript
-function createError(
-  code: string,
-  message: string,
-  details?: Record<string, unknown>
-): MeshError {
-  return new MeshError(code, message, details);
-}
+> **Implementation note**: `MeshError` is already implemented in `browsermesh-primitives`
+> (`node_modules/browsermesh-primitives/src/errors.mjs`, re-exported as `MeshError`,
+> `MeshProtocolError`, `MeshCapabilityError`). Its constructor takes `(message, code)` — message
+> first, then a **numeric** code from the `MESH_ERROR` enum (`constants.mjs`), not `(code, message,
+> details)` with a string code. There is no `details` field and no `toJSON()` method on the shipped
+> class, and `createError()` as a standalone factory function does not exist. The signature below
+> reflects the real shape:
 
+```typescript
 class MeshError extends Error {
   constructor(
-    readonly code: string,
     message: string,
-    readonly details?: Record<string, unknown>
+    readonly code: number = MESH_ERROR.UNKNOWN
   ) {
     super(message);
     this.name = 'MeshError';
-  }
-
-  toJSON(): Record<string, unknown> {
-    return {
-      code: this.code,
-      message: this.message,
-      details: this.details,
-    };
   }
 }
 ```
 
 ### Common Error Codes
+
+The table below sketches a generic error taxonomy. The actual `MESH_ERROR` enum in
+`browsermesh-primitives` uses numeric codes with mesh-specific names instead (e.g. `UNKNOWN`,
+`INVALID_FORMAT`, `CAPABILITY_DENIED`, `IDENTITY_INVALID`, `TRUST_INSUFFICIENT`,
+`MESSAGE_EXPIRED`, `RESOURCE_UNAVAILABLE`, `QUORUM_NOT_REACHED`, `ACL_DENIED`, `NAME_TAKEN`,
+`NAME_NOT_FOUND`, `NAME_EXPIRED`, `ROOM_FULL`, `BANNED`, `STREAM_CLOSED`); consult
+`constants.mjs` for the authoritative list.
 
 | Code | Usage |
 |------|-------|

@@ -4,9 +4,12 @@
 > below exist: `clawser-shell-factory.js`, `clawser-terminal-session-store.js`,
 > `clawser-wsh-virtual-terminal-session.js`, `clawser-wsh-virtual-terminal-manager.js`,
 > plus the protocol pieces in `web/packages/wsh/`. The Rust CLI side
-> (`crates/wsh-*`) is also in place. The one item still flagged in
-> `docs/implementation-status.md` is `wsh copy-id`'s transport, which is
-> noted as a stub in `ROADMAP-ARCHIVE.md`.
+> (`crates/wsh-*`) is also in place. The one item flagged as of 2026-05-02
+> in `docs/implementation-status.md` (a dated snapshot, not kept current)
+> was `wsh copy-id`'s transport; that has since shipped too — see
+> `docs/ROADMAP-ARCHIVE.md`, which now documents it as password-authenticated
+> connect + remote `authorized_keys` install via `wsh-client`, no longer a
+> stub.
 
 This backlog defines the clean implementation path for a high-fidelity browser-backed reverse `wsh` terminal in Clawser.
 

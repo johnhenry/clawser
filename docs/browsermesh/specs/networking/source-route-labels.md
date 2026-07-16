@@ -265,3 +265,7 @@ When both `via` and `routeLabel` are present, `routeLabel` takes precedence. Nod
 | Max interface number (Form 2) | 127 |
 | Encoding forms per scheme | 3 |
 | vs. Pod ID array (8 hops) | 256 bytes → 8 bytes (32x reduction) |
+
+## 9. Implementation Status
+
+**Status: Not implemented.** No `RouteLabel` encoding/decoding, form negotiation, or bidirectional label-reversal code exists in `web/` or `packages/`. The real multi-hop router (`MeshRouter` in `web/clawser-peer-routing.js`, see [message-envelope.md](message-envelope.md) Implementation Status for the naming caveat) forwards using plain next-hop pod IDs and a numeric `maxTTL`, not compact route labels.

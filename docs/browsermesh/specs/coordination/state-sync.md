@@ -8,7 +8,7 @@ CRDT-based distributed state synchronization for BrowserMesh.
 
 BrowserMesh examples use ad-hoc state snapshots, and [storage-integration.md](../extensions/storage-integration.md) references CRDTs as a "Better Alternative" for mutable documents. This spec defines:
 
-- CRDT primitives: GCounter, PNCounter, LWWRegister, ORSet, LWWMap
+- CRDT primitives: GCounter, PNCounter, LWWRegister, ORSet, RGA, LWWMap
 - A composable StateDocument container
 - Delta-state synchronization protocol
 - Causal ordering via vector clocks
@@ -20,7 +20,7 @@ BrowserMesh examples use ad-hoc state snapshots, and [storage-integration.md](..
 
 ```typescript
 interface GCounter {
-  type: 'gcounter';
+  type: 'g-counter';
   counts: Map<string, number>;  // podId -> count
 }
 
@@ -35,7 +35,7 @@ function gcounterValue(c: GCounter): number {
 }
 
 function gcounterMerge(a: GCounter, b: GCounter): GCounter {
-  const merged: GCounter = { type: 'gcounter', counts: new Map(a.counts) };
+  const merged: GCounter = { type: 'g-counter', counts: new Map(a.counts) };
   for (const [id, count] of b.counts) {
     merged.counts.set(id, Math.max(merged.counts.get(id) ?? 0, count));
   }
@@ -47,7 +47,7 @@ function gcounterMerge(a: GCounter, b: GCounter): GCounter {
 
 ```typescript
 interface PNCounter {
-  type: 'pncounter';
+  type: 'pn-counter';
   positive: GCounter;
   negative: GCounter;
 }
@@ -134,7 +134,40 @@ function orsetMerge<T>(a: ORSet<T>, b: ORSet<T>): ORSet<T> {
 }
 ```
 
-### 2.5 LWWMap (Last-Writer-Wins Map)
+### 2.5 RGA (Replicated Growable Array)
+
+An ordered sequence CRDT for collaborative lists/text, supporting concurrent insertion and deletion via unique per-node insertion IDs. Deletes are tombstoned rather than physically removed, so causal position is preserved across merges.
+
+```typescript
+interface RGA<T> {
+  type: 'rga';
+  nodes: Array<{ id: string; value: T; deleted: boolean }>;  // id = `${podId}:${seq}`
+  vclock: VectorClock;
+}
+
+function rgaInsertAt<T>(r: RGA<T>, index: number, value: T, podId: string): void {
+  vcIncrement(r.vclock, podId);
+  const id = `${podId}:${r.vclock.get(podId)}`;
+  // Map the logical (visible) index to a physical array position, skipping tombstones,
+  // then splice the new node in at that position.
+}
+
+function rgaDeleteAt<T>(r: RGA<T>, index: number): void {
+  // Tombstone (mark deleted: true) the nth non-deleted node; never physically remove it.
+}
+
+function rgaValue<T>(r: RGA<T>): T[] {
+  return r.nodes.filter(n => !n.deleted).map(n => n.value);
+}
+
+function rgaMerge<T>(a: RGA<T>, b: RGA<T>): RGA<T> {
+  // Union nodes by id (a delete on either side wins), then deterministically
+  // interleave concurrent insertions using id ordering as the tiebreak.
+  return { type: 'rga', nodes: [...a.nodes], vclock: vcMerge(a.vclock, b.vclock) };
+}
+```
+
+### 2.6 LWWMap (Last-Writer-Wins Map)
 
 ```typescript
 interface LWWMap<V> {
@@ -175,7 +208,7 @@ function lwwmapMerge<V>(a: LWWMap<V>, b: LWWMap<V>): LWWMap<V> {
 A `StateDocument` is a composable container that holds multiple named CRDT fields. It is the unit of synchronization.
 
 ```typescript
-type CRDTValue = GCounter | PNCounter | LWWRegister<unknown> | ORSet<unknown> | LWWMap<unknown>;
+type CRDTValue = GCounter | PNCounter | LWWRegister<unknown> | ORSet<unknown> | RGA<unknown> | LWWMap<unknown>;
 
 interface StateDocument {
   id: string;                              // Document identifier
@@ -417,17 +450,20 @@ class StateDocumentManager {
 
   private createCRDT(type: string): CRDTValue {
     switch (type) {
-      case 'gcounter': return { type: 'gcounter', counts: new Map() };
-      case 'pncounter': return {
-        type: 'pncounter',
-        positive: { type: 'gcounter', counts: new Map() },
-        negative: { type: 'gcounter', counts: new Map() },
+      case 'g-counter': return { type: 'g-counter', counts: new Map() };
+      case 'pn-counter': return {
+        type: 'pn-counter',
+        positive: { type: 'g-counter', counts: new Map() },
+        negative: { type: 'g-counter', counts: new Map() },
       };
       case 'lww-register': return {
         type: 'lww-register', value: null, timestamp: 0, podId: '',
       };
       case 'or-set': return {
         type: 'or-set', elements: new Map(), tombstones: new Set(),
+      };
+      case 'rga': return {
+        type: 'rga', nodes: [], vclock: new Map(),
       };
       case 'lww-map': return { type: 'lww-map', entries: new Map() };
       default: throw new Error(`Unknown CRDT type: ${type}`);
@@ -449,7 +485,7 @@ class StateDocumentManager {
 ```typescript
 // Create a shared counter document
 const doc = stateManager.create('room-stats', {
-  messageCount: 'gcounter',
+  messageCount: 'g-counter',
   activeUsers: 'or-set',
   roomTitle: 'lww-register',
 });
@@ -461,7 +497,7 @@ vcIncrement(doc.version, myPodId);
 // Sync with peers
 await syncManager.broadcastDelta('room-stats', [{
   field: 'messageCount',
-  type: 'gcounter',
+  type: 'g-counter',
   mutations: { podId: myPodId, increment: 1 },
 }]);
 ```

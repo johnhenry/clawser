@@ -2,7 +2,7 @@
 
 Peer quality scoring for informed transport selection and routing decisions.
 
-**Related specs**: [transport-probing.md](../networking/transport-probing.md) | [wire-format.md](../core/wire-format.md) | [identity-keys.md](../crypto/identity-keys.md) | [service-model.md](service-model.md) | [presence-protocol.md](presence-protocol.md)
+**Related specs**: [transport-probing.md](../networking/transport-probing.md) | [wire-format.md](../core/wire-format.md) | [identity-keys.md](../crypto/identity-keys.md) | [service-model.md](service-model.md) | [presence-protocol.md](presence-protocol.md) | [trust-graph.md](trust-graph.md)
 
 ## 1. Overview
 
@@ -13,6 +13,12 @@ Transport selection and routing in BrowserMesh are uninformed by peer quality. A
 - Ed25519-signed reputation reports for verifiable peer feedback
 - Integration with transport-probing for preference weighting
 - Local-first storage with opt-in sharing
+
+This is a transport-quality signal (latency/availability/success-rate), distinct
+from [trust-graph.md](trust-graph.md)'s `TrustGraph.getReputation()`, which
+aggregates *trust attestations* (vouching) rather than measured connection
+quality. The two "reputation" concepts are independent and not currently
+cross-fed into one another.
 
 ```mermaid
 graph TD
@@ -221,11 +227,11 @@ class ReputationManager {
     const reportData = {
       peerId,
       event,
-      reporterId: identity.id,
+      reporterId: identity.podId,
       timestamp: Date.now(),
     };
 
-    const signature = await sign(identity.privateKey, encode(reportData));
+    const signature = await identity.sign(encode(reportData));
 
     return {
       t: ReputationMessageType.REPUTATION_REPORT,
@@ -369,7 +375,7 @@ async function verifyReport(
     reporterId: report.p.reporterId,
     timestamp: report.p.timestamp,
   });
-  return verify(publicKey, report.p.signature, data);
+  return verify(publicKey, data, report.p.signature);
 }
 ```
 
@@ -437,3 +443,19 @@ const DEFAULT_REPUTATION_CONFIG: ReputationConfig = {
 | Min report interval | 60 seconds |
 | Max score shift per reporter per hour | 0.1 |
 | New peer weight discount | 50% (< 10 observations) |
+
+## 10. Implementation Status
+
+**Status**: Design only. No `ReputationManager`, `PeerReputation`, or
+`REPUTATION_REQUEST`/`REPUTATION_RESPONSE`/`REPUTATION_REPORT` wire handling
+exists anywhere in `web/` or `packages/`. The 0x53-0x55 type codes are not
+present in the canonical wire-type registry
+(`node_modules/browsermesh-primitives/src/constants.mjs`, which allocates
+0xA0-0xFF and has no 0x50-range "Presence block"); they are only used
+internally and consistently with [presence-protocol.md](presence-protocol.md)'s
+own (also unimplemented) 0x50-0x52 presence codes. The closest real analogue
+is `TransportMetrics` (`packages/browsermesh-core/src/hardening.mjs`), which
+tracks per-transport latency/error/byte counters but has no scoring formula,
+decay, or signed-report protocol.
+
+**Source**: none (no `web/clawser-mesh-reputation.js` or equivalent exists).

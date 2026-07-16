@@ -3,7 +3,7 @@
 Service marketplace for publishing, discovering, and reviewing mesh services.
 
 **Source**: `web/clawser-mesh-marketplace.js`
-**Related specs**: [trust-graph.md](trust-graph.md) | [payment-channels.md](../extensions/payment-channels.md)
+**Related specs**: [trust-graph.md](trust-graph.md) | [payment-channels.md](../extensions/payment-channels.md) | [quota-metering.md](quota-metering.md)
 
 ## 1. Overview
 
@@ -14,16 +14,17 @@ that gates unpublish/update permissions.
 
 ## 2. Wire Codes
 
-Defined locally in the module (not yet in the canonical constants registry):
+Imported from `MESH_TYPE` in the canonical constants registry
+(`browsermesh-primitives/src/constants.mjs`), in the "Extended subsystems" range:
 
 | Name              | Hex    | Description                  |
 |-------------------|--------|------------------------------|
-| LISTING_PUBLISH   | `0x90` | Publish a service listing    |
-| LISTING_QUERY     | `0x91` | Query available listings     |
-| LISTING_RESPONSE  | `0x92` | Response to a listing query  |
-| LISTING_PURCHASE  | `0x93` | Purchase/subscribe to service|
-| REVIEW_SUBMIT     | `0x94` | Submit a review              |
-| REVIEW_QUERY      | `0x95` | Query reviews for a service  |
+| LISTING_PUBLISH   | `0xDF` | Publish a service listing    |
+| LISTING_QUERY     | `0xE0` | Query available listings     |
+| LISTING_RESPONSE  | `0xE1` | Response to a listing query  |
+| LISTING_PURCHASE  | `0xE2` | Purchase/subscribe to service|
+| REVIEW_SUBMIT     | `0xE3` | Submit a review              |
+| REVIEW_QUERY      | `0xE4` | Query reviews for a service  |
 
 ## 3. API Surface
 
@@ -103,4 +104,4 @@ open (the listing carries its own `providerPodId`).
 | Inverted index      | Fully implemented (category, tag, provider, text)  |
 | Serialization       | toJSON/fromJSON complete                           |
 | Unit tests          | Yes (`web/test/clawser-mesh-marketplace.test.mjs`) |
-| App bootstrap wired | No -- not wired to app bootstrap                   |
+| App bootstrap wired | Yes -- `ClawserPod.initMesh()` constructs `Marketplace` (step 14) and exposes it via `pod.meshMarketplace`; propagated into workspace state as `state.meshMarketplace` by `clawser-workspace-init-mesh.js` |

@@ -59,7 +59,7 @@ export default defineConfig({
         },
         {
           label: 'Mesh & networking',
-          items: ['guide/mesh', 'guide/networking', 'guide/pods', 'guide/hardware', 'guide/deployment'],
+          items: ['guide/mesh', 'guide/networking', 'guide/pods', 'guide/multi-device', 'guide/hardware', 'guide/deployment'],
         },
         { label: 'Safety', slug: 'guide/safety' },
         { label: 'Building & extending', slug: 'guide/build' },

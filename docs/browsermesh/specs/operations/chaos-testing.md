@@ -130,7 +130,7 @@ interface ClockSkewFault {
 
 ## 4. Wire Format Messages
 
-Chaos messages use type codes 0xE0-0xE2 in the Chaos (0xE*) block.
+Chaos messages use provisional type codes 0xE0-0xE2 in this spec. These have **not** been reserved in the canonical wire-type registry (`browsermesh-primitives`'s `MESH_TYPE`, see [wire-format.md](../core/wire-format.md) §11.3) — as currently assigned, 0xE0-0xE2 already belong to the marketplace `LISTING_QUERY`/`LISTING_RESPONSE`/`LISTING_PURCHASE` messages. A real allocation must claim unused codes from the registry before implementation.
 
 ```typescript
 enum ChaosMessageType {
@@ -392,11 +392,13 @@ interface AssertionResult {
 Chaos injection requires the `chaos:inject` capability (see [capability-scope-grammar.md](../crypto/capability-scope-grammar.md)):
 
 ```
-chaos:inject            // Inject any fault type
-chaos:inject:partition  // Partition faults only
-chaos:inject:latency    // Latency faults only
-chaos:status            // Read-only fault status
+chaos:inject             // Inject any fault type
+chaos/partition:inject   // Partition faults only
+chaos/latency:inject     // Latency faults only
+chaos:status             // Read-only fault status
 ```
+
+Note: per the scope grammar (see [capability-scope-grammar.md](../crypto/capability-scope-grammar.md) §2-4), a scope has exactly one `:` separating namespace from action; sub-namespaces are expressed with `/`, not a second `:`.
 
 > **Security**: Chaos capabilities must never be granted in production environments. They should only be available in test harnesses and development builds.
 

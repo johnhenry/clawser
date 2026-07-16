@@ -1,5 +1,9 @@
 # Panel Audit — Convergence Pass (2026-05-06)
 
+**Status: resolved as of 2026-07-16** (dated snapshot, not live guidance).
+All five residual items this pass surfaced are confirmed closed in current
+source (also restated as closed in `OUTSTANDING.md`).
+
 > Five-round convergence sweep over the panel/view system after the
 > initial audit (`docs/panel-audit-2026-05-04.md`) flagged "primitives
 > shipped, integration pending" patterns. Each round ran a fresh

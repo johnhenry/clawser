@@ -43,4 +43,5 @@ files:
   - hardware.yaml
   - networking.yaml
   - pods.yaml
+  - multi-device.yaml
   - build.yaml

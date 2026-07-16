@@ -1,5 +1,11 @@
 # Cross-Validation Audit — 2026-05-02
 
+**Status: resolved as of 2026-07-16** (dated snapshot, not live guidance).
+Phase 7 read-direction wiring, A3 write path, and the test-runner rewrite
+are all confirmed present in current source. Largely overlaps
+`docs/doc-audit-2026-05-02.md` (same day, same A3/A6 findings) — candidate
+for archiving one of the two.
+
 Multi-pass triangulation of code, tests, and docs. Each pass cross-references
 a different pair of sources. Findings get fixed inline when contained;
 implementation-shaped items get added to follow-ups, not auto-fixed.

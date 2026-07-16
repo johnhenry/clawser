@@ -618,3 +618,11 @@ const PROBE_DEFAULTS = {
 | Probe message size | 1 KB max |
 | Min re-probe interval | 60 seconds |
 | Max concurrent probe exchanges | 4 |
+
+## Implementation Status
+
+**Status: Not implemented.** `SmartChannel`, `ProbeExchange`, `FallbackChain`, `UpgradeScheduler`, `TransportHistory`, and `detectTransportCapabilities()` do not exist anywhere in `web/` or `packages/` — this spec describes a design that has not been built. Transport selection in the shipped code is comparatively simple: `MeshTransportNegotiator` (`web/clawser-mesh-transport.js`) picks from a small fixed set (`'webrtc' | 'wsh-wt' | 'wsh-ws'`, see [channel-abstraction.md §8](channel-abstraction.md#8-smartchannel-high-level-selection)) via pluggable adapter factories, with no probe/score/upgrade machinery.
+
+**Wire code conflict if implemented as specified.** `PROBE_REQUEST`/`PROBE_RESPONSE`/`PROBE_RESULT` are specified at `0xF0`–`0xF2`, extending `MessageEnvelope` directly (`t: 0xF0`, etc. — see §2). The canonical wire-type registry actually shipped in `browsermesh-primitives` (`node_modules/browsermesh-primitives/src/constants.mjs`, consumed via `web/packages-mesh-primitives.js`) has already assigned that exact range to SWIM failure-detection messages: `SWIM_PING = 0xf0`, `SWIM_PING_REQ = 0xf1`, `SWIM_ACK = 0xf2` (plus `SWIM_MEMBERSHIP = 0xf3`, which would also collide with any future use of `0xF3` here). Building this probe protocol as specified would require a new type-code range; `0xF0`–`0xF2` is not free.
+
+**WebTransport interop note.** The `webtransport` capability probed/scored here (§2–§9) is unrelated to the wsh-server WebTransport cross-implementation gap tracked in `docs/WSH-INTO-CLAWSER.md` (Node `@fails-components/webtransport` client vs. the Rust `wsh-server`'s `wtransport`/`quinn` listener). That gap has since been resolved (13-day self-signed cert validity to satisfy `serverCertificateHashes` pinning, plus a QUIC-stream framing fix in `handle_webtransport()`) and is now covered by a real cross-implementation test (`tools/test/wsh-rust-server.test.mjs`). It does not bear on this spec's (unimplemented) mesh-level transport probing.

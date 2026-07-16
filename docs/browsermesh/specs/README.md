@@ -20,6 +20,7 @@ specs/
 │
 ├── crypto/                  # Cryptographic specifications
 │   ├── identity-keys.md     # Ed25519 identity, HD derivation
+│   ├── identity-keyring.md  # Key hierarchy and identity linking
 │   ├── session-keys.md      # X25519 handshake, session encryption
 │   ├── capability-scope-grammar.md  # Scope string grammar and validation
 │   ├── webauthn-identity.md # Optional hardware-backed identity (WebAuthn)
@@ -94,6 +95,7 @@ specs/
 | 1 | [pod-types.md](core/pod-types.md) | What pods are, capability matrix |
 | 2 | [identity-keys.md](crypto/identity-keys.md) | Ed25519 identity, Pod IDs |
 | 2a | [identity-persistence.md](crypto/identity-persistence.md) | Key storage and at-rest protection |
+| 2b | [identity-keyring.md](crypto/identity-keyring.md) | Key hierarchy and identity linking |
 | 3 | [boot-sequence.md](core/boot-sequence.md) | How pods discover topology |
 | 4 | [wire-format.md](core/wire-format.md) | Message encoding (CBOR) |
 | 5 | [session-keys.md](crypto/session-keys.md) | Secure channel establishment |
@@ -228,6 +230,7 @@ See [spec-index.md](spec-index.md) for per-spec status.
 - **SmartChannel**: Auto-selecting transport wrapper with fallback chain (see [transport-probing.md](networking/transport-probing.md))
 - **LocalChannel**: In-memory PodChannel for testing (see [test-transport.md](operations/test-transport.md))
 - **LockedPodIdentity**: PBKDF2/AES-GCM encrypted identity at rest (see [identity-persistence.md](crypto/identity-persistence.md))
+- **KeyLink**: Directed, optionally signed parent-child link between identities (device/delegate/org/alias/recovery) (see [identity-keyring.md](crypto/identity-keyring.md))
 - **MeshClient**: Client-side API for connecting and messaging (see [client-api.md](reference/client-api.md))
 - **SignalingService**: Pluggable WebRTC signaling transport for pre-connection SDP/ICE exchange (see [signaling-protocol.md](networking/signaling-protocol.md))
 - **ResumableTransfer**: Checkpoint-and-resume protocol for large data transfers (see [resumable-transfer.md](networking/resumable-transfer.md))

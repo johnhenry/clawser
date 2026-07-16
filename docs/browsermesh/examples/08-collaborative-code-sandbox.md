@@ -23,15 +23,15 @@ graph TD
     end
 
     subgraph Exec1["Execution (WorkerPod)"]
-        E1[User A's code<br/>scope: compute<br/>No network / DOM / storage]
+        E1[User A's code<br/>scope: compute:execute<br/>No network / DOM / storage]
     end
 
     subgraph Exec2["Execution (WorkerPod)"]
-        E2[User B's code<br/>scope: compute<br/>No network / DOM / storage]
+        E2[User B's code<br/>scope: compute:execute<br/>No network / DOM / storage]
     end
 
     subgraph Preview["Preview (FramePod)"]
-        P[Sandboxed iframe<br/>scope: render<br/>Renders HTML output]
+        P[Sandboxed iframe<br/>scope: render:html<br/>Renders HTML output]
     end
 
     H <-->|Noise IK| S
@@ -99,11 +99,8 @@ async function executeCode(request: ExecutionRequest): Promise<ExecutionResult> 
   // Grant execution capability
   const token = await capabilityManager.grant(
     `exec/${request.id}`,
-    getPeerPublicKey(execPodId),
-    {
-      scope: buildScopeList(request.capabilities),
-      expires: Date.now() + request.timeout + 5000,  // Auto-expire
-    }
+    buildScopeList(request.capabilities),
+    request.timeout + 5000  // Auto-expire
   );
 
   // Establish session
@@ -264,9 +261,10 @@ async function handleEdit(
   if (!doc) return;
 
   // Verify operation signature
-  const senderKey = peers.get(senderPodId)?.publicKey;
-  if (!senderKey) return;
+  const senderKeyRaw = peers.get(senderPodId)?.publicKey;
+  if (!senderKeyRaw) return;
 
+  const senderKey = await PodKeyStore.importEd25519PublicKey(senderKeyRaw);
   const payload = cbor.encode({
     type: operation.type,
     position: operation.position,
@@ -337,11 +335,8 @@ async function handleCapabilityRequest(
 
     const newToken = await capabilityManager.grant(
       `sandbox/${room.id}`,
-      getPeerPublicKey(requesterId),
-      {
-        scope: ['sandbox:edit', 'sandbox:run', request.requestedScope],
-        expires: Date.now() + 30 * 60 * 1000,  // 30 minute escalation
-      }
+      ['sandbox:edit', 'sandbox:run', request.requestedScope],
+      30 * 60 * 1000  // 30 minute escalation
     );
 
     memberCapabilities.set(requesterId, newToken);

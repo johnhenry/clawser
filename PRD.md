@@ -3,7 +3,7 @@
 ## Product Requirements Document (PRD)
 
 **Version**: 2.0.0
-**Date**: 2026-03-03
+**Date**: 2026-07-14
 **Status**: Implemented
 
 ---
@@ -60,7 +60,7 @@ A micro-operating-system inside the browser whose primary process is an AI agent
 - Multi-tab presence (shared worker coordination)
 - Crash recovery (checkpoint/resume from OPFS + IndexedDB)
 - P2P mesh networking (distributed agent ecosystem)
-- Multi-channel I/O (Discord, Slack, Telegram, IRC, Matrix, Email)
+- Multi-channel I/O (Discord, Slack, Telegram, IRC, Matrix, Email, Relay, Tabwatch)
 - Hardware peripheral access (Serial, Bluetooth, USB)
 - Agent Skills standard (SKILL.md, agentskills.io)
 - Virtual shell with 59+ builtins, pipes, and jq
@@ -74,7 +74,7 @@ A micro-operating-system inside the browser whose primary process is an AI agent
 - A cloud-hosted agent service
 - A browser extension (though extensions can provide MCP tools)
 - A full native OS replacement
-- An npm package (though the kernel, netway, and andbox are)
+- An npm package (though `netway` and `andbox` are; the kernel is publish-ready as `browsermesh-kernel` but not yet published)
 
 ### Success Criteria
 
@@ -86,7 +86,7 @@ A micro-operating-system inside the browser whose primary process is an AI agent
 6. 38+ LLM backends available with zero configuration
 7. Memory footprint under 64MB for core runtime
 8. P2P mesh connects agents across browser instances
-9. 8,800+ tests passing across all subsystems
+9. 9,700+ tests passing across all subsystems
 
 ---
 
@@ -154,9 +154,9 @@ index.html (SPA entry point)
        │    └─ Ops (audit, consensus, scheduler, swarm)
        │
        ├─ Channels (clawser-channel-*.js) — multi-platform I/O
-       │    └─ Discord, Slack, Telegram, IRC, Matrix, Email, Relay
+       │    └─ Discord, Slack, Telegram, IRC, Matrix, Email, Relay, Tabwatch
        │
-       ├─ Kernel (packages/kernel/) — OS-like primitives
+       ├─ Kernel (web/packages/kernel/) — OS-like primitives
        │    ├─ ResourceTable, ByteStream, Clock, RNG
        │    ├─ ServiceRegistry, Tracer, Signal, Caps
        │    └─ Tenant isolation, capability enforcement
@@ -187,7 +187,7 @@ index.html (SPA entry point)
 
 ## 5. Core Modules
 
-### 5.1 Agent Core (`clawser-agent.js` — 3,765 LOC)
+### 5.1 Agent Core (`clawser-agent.js` — 4,164 LOC)
 
 The central agent runtime providing:
 
@@ -258,7 +258,7 @@ Additional tool modules:
 - `clawser-mesh-tools.js` — Mesh networking tools
 - `clawser-netway-tools.js` — Kernel networking tools
 
-### 5.4 Virtual Shell (`clawser-shell.js` + `clawser-shell-builtins.js` — 3,376 LOC)
+### 5.4 Virtual Shell (`clawser-shell.js` + `clawser-shell-builtins.js` — 4,454 LOC)
 
 Full virtual terminal with:
 - **Tokenizer + Parser**: Handles quotes, escapes, pipes, redirects, logic ops (`&&`, `||`, `;`)
@@ -286,7 +286,7 @@ Implements the Agent Skills open standard (agentskills.io):
 - **SkillRegistry**: Activation/deactivation, slash-command invocation (`/skill-name args`)
 - **System Prompt Pipeline**: basePrompt → memories → goals → skillMetadata → activeSkillBodies
 
-### 5.7 Mesh Networking (31 files — 20,000+ LOC)
+### 5.7 Mesh Networking (44 files — 32,000+ LOC)
 
 Full P2P agent ecosystem:
 
@@ -325,23 +325,24 @@ Full P2P agent ecosystem:
 - Swarm intelligence and collective behavior
 - Topology and state visualizations
 
-### 5.8 Channels (`clawser-channel-*.js` — 1,814 LOC + `clawser-channels.js` — 550 LOC)
+### 5.8 Channels (`clawser-channel-*.js` — 2,173 LOC + `clawser-channels.js` — 580 LOC)
 
 Multi-platform communication:
 
 | Channel | Protocol | Features |
 |---------|----------|----------|
 | Discord | WebSocket + REST | Guild/channel selection, message threading |
-| Slack | WebSocket + REST | Workspace/channel selection, app tokens |
+| Slack | WebSocket + REST | Workspace/channel selection, app tokens, Socket Mode |
 | Telegram | Long-polling | Bot API, inline commands |
 | IRC | WebSocket | Server/channel selection, nick management |
 | Matrix | REST | Room management, E2E encryption support |
 | Email | IMAP/SMTP | Inbox monitoring, auto-reply |
 | Relay | Webhook | Custom channel integration |
+| Tabwatch | DOM polling (via extension) | Monitors a browser tab's DOM for new messages using site profiles (Slack, Gmail, Discord) or custom selectors |
 
 Normalized `InboundMessage` format across all channels with allowlist configuration.
 
-### 5.9 Kernel (`packages/kernel/` — 2,862 LOC)
+### 5.9 Kernel (`web/packages/kernel/` — 2,091 LOC)
 
 Browser microkernel providing OS-like primitives:
 - **ResourceTable**: Handle-based resource management (`res_N`)
@@ -364,7 +365,7 @@ Browser microkernel providing OS-like primitives:
 
 **Browser Automation** (`clawser-browser-auto.js` — 917 LOC): Tab management, click/fill/screenshot, accessibility tree traversal, selector strategies
 
-**Routines** (`clawser-routines.js` — 897 LOC): Event-driven automation with cron + event + webhook triggers, guardrails
+**Routines** (`clawser-routines.js` — 1,173 LOC): Event-driven automation with cron + event + webhook triggers, guardrails
 
 **Self-Repair** (`clawser-self-repair.js` — 457 LOC): Stuck detection, recovery strategies (compact, fallback provider, downgrade model, pause), watchdog
 
@@ -374,7 +375,7 @@ Browser microkernel providing OS-like primitives:
 
 **Git Integration** (`clawser-git.js` — 935 LOC): Auto-commit, experiment branching, episodic memory queries
 
-### 5.11 Server System (`clawser-server.js` — 724 LOC)
+### 5.11 Server System (`clawser-server.js` — 839 LOC)
 
 Virtual HTTP servers within the browser:
 - Route storage in IndexedDB
@@ -391,7 +392,7 @@ Virtual HTTP servers within the browser:
 
 **Hardware** (`clawser-hardware.js` — 1,128 LOC): Web Serial API, Bluetooth, USB peripherals with discovery and management
 
-### 5.13 Sandbox System (`clawser-sandbox.js` — 614 LOC)
+### 5.13 Sandbox System (`clawser-sandbox.js` — 748 LOC)
 
 Worker-based tool sandbox:
 - Tier-based isolation (none, worker)
@@ -754,23 +755,24 @@ Three-stage defense:
 ### 12.1 Test Infrastructure
 
 - **Framework**: `node:test` with `node:assert/strict`
-- **Test Files**: 300+ files in `web/test/`
-- **Total Tests**: 8,800+ individual test cases
+- **Test Files**: 359+ files in `web/test/`
+- **Total Tests**: 9,700+ individual test cases
 - **Global Stubs**: `_setup-globals.mjs` provides localStorage, document, navigator, BroadcastChannel
 
 ### 12.2 Test Groups
 
 ```bash
-npm test              # All 253 files
-npm run test:fast     # Core + channels (97 files)
-npm run test:core     # Agent, tools, providers, shell, etc. (89 files)
-npm run test:mesh     # All mesh networking (31 files)
-npm run test:mesh-net     # Peer, transport, relay, gateway, websocket (7 files)
+npm test              # All 359+ files
+npm run test:fast     # Core + channels (~280 files)
+npm run test:core     # Agent, tools, providers, shell, etc. (~270 files)
+npm run test:mesh     # All mesh networking (33 files)
+npm run test:mesh-net     # Peer, transport, relay, gateway, websocket (8 files)
 npm run test:mesh-sync    # Sync, delta-sync, streams, migration (4 files)
 npm run test:mesh-identity # Identity, keyring, trust, ACL, capabilities (6 files)
 npm run test:mesh-apps    # Apps, marketplace, payments, quotas (6 files)
-npm run test:mesh-ops     # Audit, consensus, scheduler, tools, wsh-bridge (8 files)
-npm run test:e2e      # End-to-end scenarios (1 file)
+npm run test:mesh-ops     # Audit, consensus, scheduler, tools, wsh-bridge (9 files)
+npm run test:e2e      # End-to-end scenarios (8 files)
+npm run test:stress   # Concurrency/scale stress suite (run explicitly)
 npm run test:changed  # Only files with git changes
 ```
 
@@ -815,8 +817,8 @@ Key rules:
 | Tools | 10+ | All tool categories, permissions, registry, execution |
 | Shell | 8+ | Tokenizer, parser, builtins, pipes, jq |
 | Skills | 3+ | Parser, storage, registry, activation |
-| Mesh | 31 | All mesh subsystems (identity, transport, sync, apps, ops) |
-| Channels | 8+ | All 7 channel adapters + channel manager |
+| Mesh | 33 | All mesh subsystems (identity, transport, sync, apps, ops) |
+| Channels | 9+ | All 8 channel adapters + channel manager |
 | Kernel | 16 | All 16 kernel modules |
 | UI/Config | 5+ | Config persistence, autonomy presets, state management |
 
@@ -917,7 +919,7 @@ All loaded via CDN (zero npm runtime deps):
 
 ### Phase 6: Mesh & Channels (Completed)
 - P2P mesh networking (31 modules)
-- 7 channel adapters (Discord, Slack, Telegram, IRC, Matrix, Email, Relay)
+- 8 channel adapters (Discord, Slack, Telegram, IRC, Matrix, Email, Relay, Tabwatch)
 - Distributed apps, marketplace, payments
 - Consensus protocol, distributed scheduler
 - Hardware peripheral support (Serial, Bluetooth, USB)
@@ -929,7 +931,7 @@ All loaded via CDN (zero npm runtime deps):
 - Parallel tool execution
 - Session idle timeout
 - Config UI for new settings
-- 8,800+ tests across all subsystems
+- 9,700+ tests across all subsystems
 
 ---
 

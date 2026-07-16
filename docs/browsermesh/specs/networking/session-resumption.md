@@ -555,3 +555,7 @@ flowchart TD
 - The KnownPeerCache MUST be stored securely (encrypted at rest via identity-persistence.md).
 - Challenge nonces MUST be cryptographically random and never reused.
 - Signatures bind to specific nonces, preventing replay attacks.
+
+## 12. Implementation Status
+
+**Status: Not implemented.** No `SessionTicket`, `TicketManager`, or `KnownPeerCache` class exists in `web/` or `packages/`. Every reconnection currently repeats the full handshake described in [session-keys.md](../crypto/session-keys.md); there is no 1-RTT ticket-based or fast-track resumption path yet.

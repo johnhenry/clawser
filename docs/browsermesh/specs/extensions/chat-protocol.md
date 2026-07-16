@@ -123,6 +123,14 @@ interface ChatModerateMessage {
 
 ## 5. CRDT Replication Strategy
 
+This section describes the target replication design. The current
+`ChatRoom` implementation (`packages/browsermesh-apps/src/chat.mjs`) tracks
+membership and presence with plain `Set`/`Map` fields (single-writer, no
+merge semantics) and imports `ORSet`/`LWWMap` from `browsermesh-primitives`
+without yet wiring them in -- see the `_members` field comment ("Simple set
+for membership (ORSet for sync later)"). CRDT-backed cross-peer sync is not
+implemented yet.
+
 ### Membership (ORSet)
 
 Room membership uses an Observed-Remove Set for conflict-free concurrent joins and leaves:

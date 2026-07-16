@@ -1,9 +1,23 @@
 # wterm Integration Plan — Optional Terminal Rendering Layer for Clawser
 
-> **Status:** Shipped. Verified 2026-05-02.
-> Three modules in production: `web/clawser-terminal-adapter.mjs`,
+> **Status:** Partially shipped. Verified 2026-05-02, re-checked 2026-07-16.
+> Three modules exist in production: `web/clawser-terminal-adapter.mjs`,
 > `web/clawser-terminal-adapter-dom.mjs`, `web/clawser-terminal-adapter-wterm.mjs`.
-> `clawser-ui-panels.js` imports `createAdapter` and `detectAdapterType`.
+> `clawser-ui-panels.js` imports `createAdapter` and `detectAdapterType` and uses them
+> inside `resolveAdapterForSession()`/`initTerminalAdapter()`/`terminalAppend()`.
+> **However, `initTerminalAdapter()` is never called from any other module** — grep
+> across `web/` turns up zero call sites, only its own JSDoc example and a code
+> comment in `clawser-reactive-config.mjs`. `state.terminalAdapter` therefore stays
+> `null` at runtime, so `terminalAppend()` always takes its "no adapter" fallback
+> branch (identical to pre-migration direct-DOM rendering) and wterm is never
+> actually activated in the running app today. Separately, the §7.5/§7.6 `onOutput`
+> hook this plan describes for `VirtualTerminalSession`/`VirtualTerminalManager` was
+> never added — `onOutput` does not appear anywhere in
+> `clawser-wsh-virtual-terminal-session.js` or `clawser-wsh-virtual-terminal-manager.js`,
+> and `clawser-wsh-incoming.js`'s `openChannel()` call site passes no such callback —
+> so even a wired-up adapter would have no route to remote WSH PTY output. In short:
+> the adapter interface and both concrete adapters are built and spec-compliant, but
+> the activation wiring in §7.3/§7.5/§7.6 is still only a plan, not shipped code.
 > **Author:** Generated from architecture review.
 > **Date:** 2026-04-29 (plan).
 > **Scope:** Add wterm as an optional renderer alongside the existing custom DOM renderer.
@@ -30,7 +44,7 @@
 
 ## 1. Executive Summary
 
-Clawser has a fully custom terminal stack: `ClawserShell` (tokenizer, parser, 65+ builtins, OPFS filesystem), `VirtualTerminalSession` (PTY/exec emulation), `VirtualTerminalManager` (multi-peer context management), and a custom DOM renderer in `clawser-ui-panels.js` that renders output as styled `<div>` elements.
+Clawser has a fully custom terminal stack: `ClawserShell` (tokenizer, parser, ~30 builtins, OPFS filesystem), `VirtualTerminalSession` (PTY/exec emulation), `VirtualTerminalManager` (multi-peer context management), and a custom DOM renderer in `clawser-ui-panels.js` that renders output as styled `<div>` elements.
 
 This plan adds **wterm** (`@wterm/dom`) as an alternative rendering backend. The custom DOM renderer works well for the local shell (structured HTML output with click-to-fork, agent mode badges, etc.), but falls short for WSH remote PTY sessions and peer terminals that emit raw ANSI escape sequences. wterm handles ANSI natively — colors, cursor positioning, alternate screen buffer, scrollback — because it's a real terminal emulator backed by WASM.
 
@@ -44,7 +58,7 @@ The two renderers coexist behind a shared `TerminalAdapter` interface. The syste
 
 ```
 web/
-├── clawser-shell.js                        # Shell engine: tokenizer, parser, executor, 65+ builtins
+├── clawser-shell.js                        # Shell engine: tokenizer, parser, executor, ~30 builtins
 ├── clawser-terminal-sessions.js            # TerminalSessionManager: CRUD, OPFS persistence, event log
 ├── clawser-terminal-session-store.js       # TerminalSessionStore: event recording, state serialization
 ├── clawser-wsh-virtual-terminal-session.js # VirtualTerminalSession: char-by-char PTY emulation
@@ -1148,6 +1162,13 @@ async switchTo(sessionId) {
 
 ### 7.5 `web/clawser-wsh-virtual-terminal-session.js`
 
+> **Audit note (2026-07-16): not implemented.** `onOutput` does not exist in
+> `web/clawser-wsh-virtual-terminal-session.js` today — the constructor takes no such
+> option and `#sendText()` has no forwarding call. §7.6's `openChannel()` change below
+> is likewise absent, and the one real call site (`clawser-wsh-incoming.js`'s
+> `openChannel()` invocation) passes no `onOutput`. This section is still a plan, not
+> shipped code — see the status note at the top of this document.
+
 **Change:** Add a hook for adapter output. The `#sendText()` method already emits data over WSH channels. For **local** rendering (when the virtual terminal is displayed in the current tab), we need to also write to the adapter.
 
 ```js
@@ -1221,6 +1242,9 @@ async openChannel(participantKey, {
 ```
 
 ### 7.7 `web/clawser-peer-terminal.js`
+
+> **Audit note (2026-07-16): not implemented.** `executeStreaming`/`onChunk` do not
+> appear in `web/clawser-peer-terminal.js`. Same status as §7.5/§7.6 — plan only.
 
 **Change:** Add adapter output hook to `TerminalClient`.
 

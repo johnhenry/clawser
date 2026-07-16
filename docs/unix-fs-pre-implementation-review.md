@@ -3,6 +3,56 @@
 **Date:** 2026-05-01
 **Status:** Final review pass before implementation
 
+> **Post-implementation status note (2026-07-14):** This review predates
+> implementation and was never updated afterward. The design it critiques
+> shipped (Phases 0–9) on 2026-07-04 — see the "Delivery notes" callout at
+> the top of `unix-filesystem-architecture.md` for what was actually built
+> and how it diverged from the design doc. Treat this document as a
+> historical record of pre-implementation concerns, not a live risk
+> register. Based on cross-checking the shipped code in `web/`:
+>
+> - **Resolved as designed:** Two Competing Uptime Sources (Ambiguities
+>   §2) — only `/proc/clawser/uptime` was ever implemented, `/run/clawser/uptime`
+>   was never built, so there's no drift between two sources. `/sys/`
+>   Write Semantics (Ambiguities §3) — `/sys/kernel/trace` is registered
+>   as an explicit `{read, write}` generator in `ProcFileHandler`; no
+>   other `/sys/` path has a write generator, so they correctly stay
+>   read-only. Multi-tab FileWatcher duplicate notifications (Edge Cases
+>   §2) — `ReactiveConfigStore` dedupes by a serialized `lastAppliedKey`
+>   per domain and `FileWatcher.markWrittenByMe()` suppresses
+>   self-triggered reloads. Channel Device Incoming Messages (Ambiguities
+>   §8) — `DeviceFileHandler.deliverToChannel()` now sets
+>   `state.lastReceived`. Workspace Metadata Storage (Current Codebase
+>   Conflicts §3) — `clawser-workspaces.js` now reads/writes
+>   `/etc/clawser/workspaces.json` in OPFS, with localStorage kept only
+>   as a one-time migration source and fallback.
+> - **Still open / only partially addressed:** Checkpoint Storage Backend
+>   (Current Codebase Conflicts §5) — checkpoints are still in
+>   IndexedDB via `CheckpointIndexedDB`, never moved to OPFS. Vault
+>   Storage (Current Codebase Conflicts §6) — `OPFSVaultStorage` still
+>   writes to a legacy root-level `clawser_vault/` OPFS directory, not
+>   `~/.local/share/clawser/vault/` as both docs describe. Config Storage
+>   Model Mismatch (Current Codebase Conflicts §1) — of the 18
+>   localStorage domains this section lists, only 11 have any OPFS
+>   counterpart (`clawser-fs-config.mjs`'s `CONFIG_MAP`), and of those
+>   only 6 (autonomy, identity, security, daemon, terminal, hooks) are
+>   wired reactively through `ReactiveConfigStore`/`FsUiSync`; the rest
+>   (`toolPerms`, `skillsEnabled`, `showDotfiles`, `termSessions`,
+>   `skillHotReload`) still have no file-backed path at all.
+>   `reactiveConfig: false` Chicken-and-Egg (Ambiguities §4) — still
+>   real: toggling it emits a `reactiveConfigToggled` event but nothing
+>   subscribes to that event to flip `FileWatcher.enabled`, so re-enabling
+>   still requires a restart as this doc predicted.
+> - **Rendered moot:** "Clean slate" (Risks §1, Unresolved Questions
+>   §5–7) never shipped — there is no `cleanSlate()` function anywhere in
+>   the codebase. localStorage and IndexedDB were never deleted; the
+>   shipped filesystem layers OPFS files on top of the pre-existing
+>   storage instead of replacing it (see `clawser-fs-config.mjs`'s
+>   dual-write in `writeConfig()`). So the high-risk data-loss scenario
+>   this review warns about did not happen in production — but not
+>   because an export/migration path was built; the destructive step
+>   itself was simply never implemented.
+
 ---
 
 ## Missed Ideas from Conversation

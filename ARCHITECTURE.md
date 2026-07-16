@@ -32,7 +32,7 @@ Clawser is a browser-native AI agent platform built as pure ES modules with no b
 │         │                │                      │               │
 │  ┌──────┴──────┐  ┌──────┴──────┐  ┌───────────┴────────────┐  │
 │  │  Providers  │  │   Tools     │  │       Skills            │  │
-│  │  (38+ LLMs) │  │ (100+ tools)│  │  (agentskills.io)      │  │
+│  │  (38+ LLMs) │  │ (~285 tools)│  │  (agentskills.io)      │  │
 │  └──────┬──────┘  └──────┬──────┘  └───────────┬────────────┘  │
 │         │                │                      │               │
 │  ┌──────┴──────┐  ┌──────┴──────┐  ┌───────────┴────────────┐  │
@@ -137,7 +137,7 @@ Default mapping:
 - `internal`, `read` → `auto` (always allowed)
 - `network`, `write`, `browser` → `approve` (requires user confirmation)
 
-### Tool Categories (100+ tools)
+### Tool Categories (~285 tools)
 
 | Category | Tools |
 |----------|-------|
@@ -237,7 +237,7 @@ Hash-based SPA routing:
 
 ## Shell
 
-**File**: `clawser-shell.js` (1,883 LOC) + `clawser-shell-builtins.js` (~1,492 LOC)
+**File**: `clawser-shell.js` (~2,962 LOC) + `clawser-shell-builtins.js` (~1,492 LOC)
 
 AST-based virtual shell:
 ```
@@ -371,7 +371,7 @@ handleRoute()
   → initWorkspace(wsId)
       → Create ClawserAgent with dependencies
       → agent.init()
-      → Register ~100 tools (browser + feature + skill + gap-fill)
+      → Register ~285 tools (browser + feature + skill + gap-fill)
       → Create shell session + terminal session manager
       → Restore config, memories, conversations (event log → checkpoint fallback)
       → Build provider chain, start daemon/routines
@@ -447,6 +447,10 @@ ai.matey provides the Tier 3 provider system — when `clawser-providers.js` enc
 | `vimble` | esm.sh | Legacy sandboxed JS code execution |
 | `html2canvas` | CDN | Screenshot tool |
 | `fflate` | esm.sh | ZIP import/export for skills |
+
+## Native wsh Companion (Rust, out-of-browser)
+
+`crates/` is a separate Cargo workspace (`wsh-core`, `wsh-client`, `wsh-cli`, `wsh-server`) — not part of the browser app, but the only implementation of two capabilities the browser can't provide itself: native WebTransport/QUIC (`quinn`/`wtransport`) and real PTYs (`portable-pty`). It's an optional companion for reaching a real host shell directly; Clawser's own in-browser `wsh` client (`web/clawser-wsh-*.js`, built on `wsh-upon-star`) works standalone without it. Build with `cargo build --workspace`, test with `cargo test --workspace`. See [docs/WSH-INTO-CLAWSER.md](docs/WSH-INTO-CLAWSER.md) for the full topology and a Node-only alternative (`tools/wsh-server.mjs`) for contributors who don't want a Rust toolchain.
 
 ## Security Model
 

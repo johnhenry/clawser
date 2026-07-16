@@ -4,6 +4,8 @@ BrowserMesh provides the distributed runtime primitives (identity, transport, co
 
 All additions are **optional extensions** — BrowserMesh remains usable without Clawser, and Clawser can run without BrowserMesh, but together they form a complete peer-to-peer operating system.
 
+> **Status update**: All 15 spec files proposed below (§"What's Missing") have since been authored at the file paths listed — `identity-keyring.md`, `remote-access.md`, `trust-graph.md`, `chat-protocol.md`, `file-transfer.md`, `direct-stream.md`, `resource-marketplace.md`, `payment-channels.md`, `quota-metering.md`, `voting-protocol.md`, `swarm-protocol.md`, `app-distribution.md`, `audit-recorder.md`, `name-resolution.md`, and `relay-service.md` all exist in the tree today. Several (`swarm-protocol.md`, `resource-marketplace.md`, `quota-metering.md`, `trust-graph.md`, `remote-access.md`, `voting-protocol.md`) have real, wired implementations under `web/clawser-mesh-*.js` — see each spec's own "Implementation Status" section for what actually shipped. Critically, **the wire type-code allocations proposed in this document were not the ones ultimately implemented** — the canonical registry (`web/packages/mesh-primitives/src/constants.mjs`) uses different, non-contiguous codes (e.g. `resource-marketplace.md` ships `LISTING_PUBLISH=0xDF`…`REVIEW_QUERY=0xE4`, not `RESOURCE_ADVERT=0xA6`…`RESOURCE_RELEASE=0xA9`; `voting-protocol.md`'s `ConsensusManager` ships `CONSENSUS_CLOSE=0xEB`/`CONSENSUS_RESULT=0xEC`, not `PROPOSAL=0xAD`/`VOTE=0xAE`/`PROPOSAL_RESULT=0xAF`; `swarm-protocol.md` ships `SWARM_JOIN=0xC0`…`SWARM_TASK_ASSIGN=0xC3`, not `0xB2`/`0xB3`, and the federation/`FEDERATION_HELLO`/`FEDERATION_YIELD`/instance-yielding concepts in §D2 were never implemented at all — only single-mesh swarm membership was). Treat the "Wire Format" table and per-proposal wire codes below as this proposal's original historical plan, not the shipped protocol — consult each target spec directly for actual codes.
+
 ---
 
 ## What BrowserMesh Already Covers
@@ -18,7 +20,7 @@ All additions are **optional extensions** — BrowserMesh remains usable without
 | CBOR wire format | `wire-format.md` | Stable |
 | Transport negotiation | `link-negotiation.md`, `transport-probing.md` | Stable/Draft |
 | Streaming + backpressure | `streaming-protocol.md` | Draft |
-| CRDT state sync | `state-sync.md` | Draft |
+| CRDT state sync | `state-sync.md` | Partially implemented (CRDT engine ships; wire protocol in the spec doesn't match shipped codes) |
 | Pub/sub messaging | `pubsub-topics.md` | Draft |
 | DHT peer discovery | `dht-routing.md` | Draft |
 | Leader election | `leader-election.md` | Draft |
@@ -193,7 +195,7 @@ Trust scores throughout this proposal use **float values in the range [0.0, 1.0]
 
 **Clawser integration point**: The OS provides a built-in chat application. Rooms appear as "channels" in the OS shell. File sharing in chat uses the OS filesystem's CID-based storage.
 
-**Depends on**: `pubsub-topics.md`, `state-sync.md`, `group-keys.md`, `presence-protocol.md`, `artifact-registry.md`, `remote-access.md` (proposed)
+**Depends on**: `pubsub-topics.md`, `state-sync.md`, `group-keys.md`, `presence-protocol.md`, `artifact-registry.md`, `remote-access.md`
 
 ---
 
@@ -265,7 +267,7 @@ Trust scores throughout this proposal use **float values in the range [0.0, 1.0]
 
 **Clawser integration point**: The OS provides a "Resource Browser" that shows available compute/storage/AI from trusted peers. Applications request resources through the OS scheduler, which queries the marketplace transparently.
 
-**Depends on**: `dht-routing.md`, `compute-offload.md`, `trust-graph.md` (proposed), `wire-format.md`
+**Depends on**: `dht-routing.md`, `compute-offload.md`, `trust-graph.md`, `wire-format.md`
 
 ---
 
@@ -288,7 +290,7 @@ Trust scores throughout this proposal use **float values in the range [0.0, 1.0]
 
 **Clawser integration point**: The OS provides a "Wallet" panel showing balance, transaction history, and active payment channels. Applications request payment authorization through the OS — users approve or deny each transaction.
 
-**Depends on**: `resource-marketplace.md` (proposed), `signed-audit-log.md`, `wire-format.md`
+**Depends on**: `resource-marketplace.md`, `signed-audit-log.md`, `wire-format.md`
 
 ---
 
@@ -309,7 +311,7 @@ Trust scores throughout this proposal use **float values in the range [0.0, 1.0]
 
 **Clawser integration point**: The OS provides a "Usage Dashboard" showing per-user resource consumption, quota utilization, and billing projections. Instance owners manage quotas through the "Users & Permissions" panel.
 
-**Depends on**: `remote-access.md` (proposed), `payment-channels.md` (proposed), `error-handling.md`, `state-sync.md`
+**Depends on**: `remote-access.md`, `payment-channels.md`, `error-handling.md`, `state-sync.md`
 
 ---
 
@@ -336,7 +338,7 @@ Trust scores throughout this proposal use **float values in the range [0.0, 1.0]
 
 **Clawser integration point**: The OS provides a "Governance" panel for viewing active proposals, casting votes, and reviewing past decisions. System-critical changes (e.g., changing the instance owner) require voting by default.
 
-**Depends on**: `state-sync.md`, `trust-graph.md` (proposed), `remote-access.md` (proposed), `signed-audit-log.md`
+**Depends on**: `state-sync.md`, `trust-graph.md`, `remote-access.md`, `signed-audit-log.md`
 
 ---
 
@@ -360,7 +362,7 @@ Trust scores throughout this proposal use **float values in the range [0.0, 1.0]
 
 **Clawser integration point**: The OS provides a "Federation" panel showing connected instances, active swarms, and yielded capabilities. Users can initiate federation from the shell.
 
-**Depends on**: `identity-keyring.md` (proposed), `resource-marketplace.md` (proposed), `voting-protocol.md` (proposed), `state-sync.md`, `presence-protocol.md`
+**Depends on**: `identity-keyring.md`, `resource-marketplace.md`, `voting-protocol.md`, `state-sync.md`, `presence-protocol.md`
 
 ---
 
@@ -387,7 +389,7 @@ Trust scores throughout this proposal use **float values in the range [0.0, 1.0]
 
 **Clawser integration point**: The OS provides an "App Store" (decentralized — just a UI over the pub/sub + DHT discovery). Users install, update, and remove apps through the shell.
 
-**Depends on**: `artifact-registry.md`, `pubsub-topics.md`, `dht-routing.md`, `trust-graph.md` (proposed), `pod-executor.md`
+**Depends on**: `artifact-registry.md`, `pubsub-topics.md`, `dht-routing.md`, `trust-graph.md`, `pod-executor.md`
 
 ---
 
@@ -468,7 +470,7 @@ Trust scores throughout this proposal use **float values in the range [0.0, 1.0]
 
 **Clawser integration point**: The OS detects NAT status on startup. If direct connections fail, it automatically discovers and connects through relays. The "Network" panel shows relay status, bandwidth usage, and allows users to offer their instance as a relay.
 
-**Depends on**: `dht-routing.md`, `session-keys.md`, `trust-graph.md` (proposed), `wire-format.md`
+**Depends on**: `dht-routing.md`, `session-keys.md`, `trust-graph.md`, `wire-format.md`
 
 ---
 

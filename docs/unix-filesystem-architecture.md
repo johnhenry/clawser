@@ -12,17 +12,42 @@
 >   (copy+truncate — OPFS has no atomic rename), check on init and
 >   every 100th append. Agent events stream to
 >   `/var/log/clawser/events.jsonl` through `EventLog.onAppend`.
-> - **`/sys/kernel/trace` (§8.3)** — writable as designed: write `1`/`0`
+> - **`/sys/kernel/trace` (§2.9, §8.2)** — writable as designed: write `1`/`0`
 >   to toggle the kernel Tracer. Other `/sys/` paths remain read-only.
-> - **Multi-tab FileWatcher (§8.1)** — resolved by content-hash dedupe in
+> - **Multi-tab FileWatcher (§3.2, §3.3)** — resolved by content-hash dedupe in
 >   `ReactiveConfigStore` (duplicate detections apply once) plus
 >   content-aware self-write suppression in `FileWatcher.markWrittenByMe`,
 >   rather than leader election.
 > - **Profiles + .env (§5)** — `sourceProfiles()` runs
 >   `/etc/clawser/profile` → `~/.config/clawser/.env` →
 >   `~/.config/clawser/profile`; MOTD is shown on workspace entry.
-> - **UI ↔ file sync (§7)** — bidirectional via `FsUiSync` +
->   `registerDefaultDomains` (all six config domains).
+> - **UI ↔ file sync (§6)** — bidirectional via `FsUiSync` +
+>   `registerDefaultDomains` (all six config domains: autonomy, identity,
+>   security, daemon, terminal, hooks).
+> - **Not shipped as designed — `cleanSlate()` (§12)** — there is no
+>   `cleanSlate()` in the codebase. localStorage (`lsKey`,
+>   `migrateLocalStorageKeys()` in `clawser-state.js`) and IndexedDB
+>   (`CheckpointIndexedDB`) were never deleted; the shipped filesystem
+>   layers OPFS files on top of the existing storage instead of replacing
+>   it. `clawser-fs-config.mjs`'s `writeConfig()` writes to both OPFS and
+>   localStorage "for backward compatibility," and only 11 of the 18
+>   `lsKey` domains have an OPFS `CONFIG_MAP` entry at all (missing:
+>   `toolPerms`, `skillsEnabled`, `showDotfiles`, `termSessions`,
+>   `skillHotReload`). Of those, only 6 (autonomy, identity, security,
+>   daemon/heartbeat, terminal, hooks) are wired reactively through
+>   `ReactiveConfigStore`/`FsUiSync`.
+> - **Not migrated — checkpoints and vault** — `~/.local/share/clawser/checkpoints/`
+>   (§2.4) is aspirational only: checkpoints still live in IndexedDB via
+>   `CheckpointIndexedDB` (`clawser-checkpoint-idb.js`), wired through
+>   `clawser-app.js` and `clawser-background-runner.js`. Likewise
+>   `~/.local/share/clawser/vault/` (§2.4) is aspirational: `OPFSVaultStorage`
+>   (`clawser-vault.js`) still stores encrypted secrets in a legacy
+>   root-level `clawser_vault/` OPFS directory outside the `clawser/`
+>   namespace, not under the per-workspace path this doc describes.
+> - **`/run/clawser/uptime` (§2.6)** — not implemented. Only
+>   `/proc/clawser/uptime` exists (`registerProcGenerators` in
+>   `clawser-proc.js`); there is no writer for the `/run/` counterpart, so
+>   the "two competing uptime sources" scenario never materialized.
 
 ---
 
@@ -461,6 +486,18 @@ The reactivity layer sits between the filesystem and application subsystems. It 
 
 OPFS does not support native file system events, so we use a polling watcher that tracks file modification times.
 
+> **Shipped implementation note:** the code below is the original design
+> sketch. The actual `web/clawser-file-watcher.mjs` matches its shape
+> (same class name, `watch`/`unwatch`/`start`/`stop`/`rescan` methods) but
+> differs in details: default `intervalMs`/`debounceMs` are `3000`/`500`
+> (not `2000`/`300` as shown here and in §6.5 below), the `watch()`
+> callback receives a single `FileChangeEvent` object
+> (`{ path, oldValue, newValue, timestamp }`) instead of `(content, path)`,
+> it adds a `markWrittenByMe(path, content)` method and `getCached(path)`
+> getter (used for multi-tab self-write suppression — see the delivery
+> notes at the top of this doc), and polling is single-flight-guarded so
+> an overlapping `rescan()`/timer tick can't corrupt in-progress state.
+
 **New file: `web/clawser-file-watcher.mjs`**
 
 ```javascript
@@ -602,6 +639,20 @@ export class FileWatcher {
 ### 3.3 ReactiveConfigBus
 
 Connects the `FileWatcher` to subsystems. Registered handlers receive parsed config objects when files change.
+
+> **Shipped implementation note:** the shipped class in
+> `web/clawser-reactive-config.mjs` is named `ReactiveConfigStore`, not
+> `ReactiveConfigBus` as in the sketch below (and in §3.4's
+> `configBus.register(...)` calls). It also adds `subscribe()`/`get()`/
+> `readFromDisk()`/`listDomains()`, dedupes repeated notifications by
+> comparing a serialized `lastAppliedKey` per domain (this is the
+> multi-tab dedupe referenced in the delivery notes at the top of this
+> doc), and its `set()` writes through `withLock()` then calls
+> `watcher.markWrittenByMe()` instead of relying on the bus/watcher
+> emitting a bare `emit('configChanged', ...)`. The six domains actually
+> wired via `registerDefaultDomains()` are `autonomy`, `identity`,
+> `security`, `daemon`, `terminal`, `hooks` — `daemon` corresponds to
+> `~/.config/clawser/daemon.json`/`heartbeat`, not a separate domain name.
 
 **New file: `web/clawser-reactive-config.mjs`**
 
@@ -1236,6 +1287,15 @@ When a user changes a setting from the shell:
 Since OPFS doesn't support native permissions, we implement a virtual permission layer stored as a metadata file.
 
 **Metadata file:** `clawser/permissions.json` (at OPFS root level, outside any workspace)
+
+> **Shipped implementation note:** `web/clawser-permissions.js`'s
+> `PermissionManager` actually persists the manifest at the per-workspace
+> path `~/.config/clawser/permissions.json` (constant `MANIFEST_PATH`),
+> not at the OPFS-root path shown below, and stores modes as `rwx`-style
+> strings (`'r'`, `'rw'`, `'rwx'`) derived from a prefix-based
+> `DEFAULT_RULES` table rather than the flat `{mode, owner}` JSON shown
+> here. `chmod` accepts both numeric (`644`) and symbolic (`+w`/`-w`/`+x`/`-x`)
+> forms — a superset of the numeric-only example in §7.3.
 
 ```json
 {

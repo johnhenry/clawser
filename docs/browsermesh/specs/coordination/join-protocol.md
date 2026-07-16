@@ -265,3 +265,18 @@ The join protocol is invoked after boot completes (see [boot-sequence.md](../cor
 3. Pod sends `JOIN_REQUEST` to the host
 4. Host evaluates admission and responds
 5. On acceptance, pod activates capabilities and joins the presence channel (see [presence-protocol.md](presence-protocol.md))
+
+## Implementation Status
+
+**Status**: Design only — not implemented. There is no admission-control code path
+in `packages/` or `web/`: `JOIN_REQUEST` / `JOIN_ACCEPTED` / `JOIN_REJECTED`,
+`AdmissionPolicy`, `evaluateAdmission`, and `grantJoinCapabilities` do not appear
+anywhere in the source tree. This is distinct from `SWARM_JOIN` (wire code
+`0xC0`, see [swarm-protocol.md](swarm-protocol.md)), which is a real,
+implemented wire message for joining a swarm's member list — it does not carry
+capability grants, attestation, or state snapshots and is not an admission
+protocol. Leader election (§10 above, and
+[leader-election.md](leader-election.md)) is implemented, but its "default
+admission controller" role described here has no corresponding code.
+
+**Source**: None.

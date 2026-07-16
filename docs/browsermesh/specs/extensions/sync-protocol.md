@@ -96,8 +96,8 @@ verifiers agree byte-for-byte. Each item's `payloadHash` is
 
 ### Receiver checks (mandatory order)
 
-1. Version match (`v === 'clawser-deploy-v1'`).
-2. Resolve `source` to an Ed25519 public key from the `did:key:` URI.
+1. Resolve `source` to an Ed25519 public key from the `did:key:` URI.
+2. Version match (`v === 'clawser-deploy-v1'`).
 3. Verify the signature over the input above.
 4. For each `manifest.items[i]`, verify
    `SHA-256(payloads[itemId]) === payloadHash`.

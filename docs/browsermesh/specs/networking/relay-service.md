@@ -10,6 +10,24 @@ Source: `web/clawser-mesh-relay.js`
 
 This module does not define or import wire codes from the canonical registry. Communication with the relay server uses a distinct protocol layer (WebSocket JSON messages) rather than the mesh wire format.
 
+### Real WebSocket Wire Protocol
+
+When `MeshRelayClient.connect()` is called without a `MockRelayServer`, it opens a real `WebSocket` to `relayUrl` and speaks a small JSON message protocol that mirrors the `MockRelayServer` method surface:
+
+| Direction | `type` | Payload | Purpose |
+|-----------|--------|---------|---------|
+| client → server | `register` | `{ fingerprint }` | Sent on socket open |
+| client → server | `unregister` | `{ fingerprint }` | Sent on `disconnect()` |
+| client → server | `announce` | `{ fingerprint, capabilities }` | `announcePresence()` |
+| client → server | `find` | `{ requestId, query }` | `findPeers()`; expects a matching `find_response` |
+| client → server | `signal` | `{ from, to, signal }` | `forwardSignal()` |
+| server → client | `peer_announce` | `{ fingerprint, capabilities }` | Delivered via `onPeerAnnounce()` |
+| server → client | `signal` | `{ from, signal }` | Delivered via `onSignal()` |
+| server → client | `find_response` | `{ requestId, peers }` | Resolves the pending `findPeers()` promise |
+| server → client | `error` | `{ message }` | Delivered via `onError()` |
+
+The client auto-reconnects with exponential backoff (`reconnectDelayMs * 2^attempt`, default base 500ms, up to `maxReconnectAttempts` = 5) unless the disconnect was consumer-initiated (`disconnect()`). `findPeers()` over the real WS path times out after 5 seconds if no `find_response` arrives.
+
 ## API Surface
 
 ### Constants
@@ -99,7 +117,7 @@ Client for connecting to a signaling/relay server. Manages connection lifecycle,
 - `MeshRelayClient` and `MockRelayServer` are fully implemented.
 - `MeshRelayClient` is instantiated in `ClawserPod.initMesh()` when `opts.relayUrl` is supplied. Without a relay URL the client is intentionally absent (workspace runs in fully-local mode). See `web/clawser-pod.js` ~line 449.
 - The pod hooks `relayClient.onPeerAnnounce()` to ingest peers into the `RemoteRuntimeRegistry`.
-- The `connect()` method's real WebSocket transport remains a placeholder at the spec level; production deployments use `clawser-mesh-websocket.js` for the actual socket.
+- `connect()` has two real code paths, not one: passing a `MockRelayServer` uses the in-memory test path; calling it with no argument opens a **real `WebSocket`** to `relayUrl` and runs the register/find/signal protocol described above, including auto-reconnect with exponential backoff. This is a genuine, working implementation — it is not a placeholder, and `clawser-mesh-websocket.js` is an unrelated module (a general-purpose WebSocket transport for `MeshTransport`/`wsh-ws`, not the relay's own socket).
 - All callback-based events (signal, announce, connect, disconnect, error) are implemented with error-swallowing listeners.
 - Test file: `web/test/clawser-mesh-relay.test.mjs`
 
