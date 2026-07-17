@@ -18,5 +18,5 @@
     "browsermesh-sync": ">=0.1.0",
     "browsermesh-discovery": ">=0.1.0"
   },
-  "scripts": { "test": "node --test test/*.test.mjs" }
+  "scripts": { "test": "node --import ./test/_setup-globals.mjs --test test/*.test.mjs" }
 }

@@ -36,19 +36,19 @@ const PEER_NODE_STATES = Object.freeze([
  * are optional and gracefully degrade when absent.
  */
 export class PeerNode {
-  /** @type {import('./clawser-identity-wallet.js').IdentityWallet} */
+  /** @type {import('browsermesh-core').IdentityWallet} */
   #wallet
 
-  /** @type {import('./clawser-peer-registry.js').PeerRegistry} */
+  /** @type {import('./peer-registry.mjs').PeerRegistry} */
   #registry
 
-  /** @type {import('./clawser-mesh-discovery.js').DiscoveryManager|null} */
+  /** @type {import('browsermesh-discovery').DiscoveryManager|null} */
   #discovery
 
-  /** @type {import('./clawser-mesh-transport.js').MeshTransportNegotiator|null} */
+  /** @type {import('browsermesh-transport').MeshTransportNegotiator|null} */
   #transportNeg
 
-  /** @type {import('./clawser-mesh-audit.js').AuditChain|null} */
+  /** @type {import('./audit.mjs').AuditChain|null} */
   #auditChain
 
   /** @type {Map<string, object>} sessionId -> session info */
@@ -63,6 +63,12 @@ export class PeerNode {
   /** @type {Map<string, Set<Function>>} event -> callbacks */
   #listeners = new Map()
 
+  /** @type {Set<Function>} listeners for raw incoming session data
+   *  (cb(pubKey, data, {sessionId, transport})). Used by ClawserPod
+   *  to surface a pod-level message bus on top of per-transport
+   *  inbound bytes. */
+  #dataListeners = new Set()
+
   /** @type {Function|null} bound peer connect listener for cleanup */
   #boundPeerConnect = null
 
@@ -71,11 +77,11 @@ export class PeerNode {
 
   /**
    * @param {object} opts
-   * @param {import('./clawser-identity-wallet.js').IdentityWallet} opts.wallet
-   * @param {import('./clawser-peer-registry.js').PeerRegistry} opts.registry
-   * @param {import('./clawser-mesh-discovery.js').DiscoveryManager} [opts.discovery]
-   * @param {import('./clawser-mesh-transport.js').MeshTransportNegotiator} [opts.transportNegotiator]
-   * @param {import('./clawser-mesh-audit.js').AuditChain} [opts.auditChain]
+   * @param {import('browsermesh-core').IdentityWallet} opts.wallet
+   * @param {import('./peer-registry.mjs').PeerRegistry} opts.registry
+   * @param {import('browsermesh-discovery').DiscoveryManager} [opts.discovery]
+   * @param {import('browsermesh-transport').MeshTransportNegotiator} [opts.transportNegotiator]
+   * @param {import('./audit.mjs').AuditChain} [opts.auditChain]
    * @param {Function} [opts.onLog]
    */
   constructor({ wallet, registry, discovery, transportNegotiator, auditChain, onLog }) {
@@ -244,7 +250,7 @@ export class PeerNode {
   /**
    * The identity wallet.
    *
-   * @returns {import('./clawser-identity-wallet.js').IdentityWallet}
+   * @returns {import('browsermesh-core').IdentityWallet}
    */
   get wallet() {
     return this.#wallet
@@ -257,7 +263,7 @@ export class PeerNode {
   /**
    * The peer registry.
    *
-   * @returns {import('./clawser-peer-registry.js').PeerRegistry}
+   * @returns {import('./peer-registry.mjs').PeerRegistry}
    */
   get registry() {
     return this.#registry
@@ -269,7 +275,7 @@ export class PeerNode {
    * @param {string} pubKey - Peer fingerprint / public key hash
    * @param {string} [label] - Human-readable name
    * @param {string[]} [caps] - Initial capability scopes
-   * @returns {import('./clawser-mesh-peer.js').PeerState}
+   * @returns {import('browsermesh-core').PeerState}
    */
   addPeer(pubKey, label, caps) {
     this.#ensureRunning('addPeer')
@@ -307,7 +313,7 @@ export class PeerNode {
    * @param {object} [filter]
    * @param {string} [filter.status]
    * @param {number} [filter.minTrust]
-   * @returns {import('./clawser-mesh-peer.js').PeerState[]}
+   * @returns {import('browsermesh-core').PeerState[]}
    */
   listPeers(filter) {
     return this.#registry.listPeers(filter)
@@ -372,6 +378,19 @@ export class PeerNode {
     }
     this.#sessions.set(sessionId, session)
 
+    // Wire inbound data fan-out — every connected transport pushes
+    // received bytes to subscribers registered via `onIncomingData`.
+    // This is what backs `ClawserPod.onMessage` so workspace consumers
+    // can route incoming sync/deploy envelopes by `envelope.type`.
+    if (transport && typeof transport.onMessage === 'function') {
+      transport.onMessage((data) => {
+        for (const cb of this.#dataListeners) {
+          try { cb(pubKey, data, { sessionId, transport: transportType }) }
+          catch (err) { this.#onLog('peer-node:data-listener-error', { error: err?.message || String(err) }) }
+        }
+      })
+    }
+
     this.#onLog('peer-node:session:created', { sessionId, pubKey, transport: transportType })
 
     // Log to audit chain
@@ -382,6 +401,70 @@ export class PeerNode {
     })
 
     return { ...session, transportInstance: undefined }
+  }
+
+  /**
+   * Send raw bytes/data to a connected peer via its current transport
+   * session. Looks up the most recently-created active session for the
+   * given pubKey and calls `transport.send(data)`.
+   *
+   * Throws when no active session exists for the peer (caller should
+   * either connect first or surface the error to the user).
+   *
+   * @param {string} pubKey - Peer fingerprint / public key hash
+   * @param {*} data - Wire payload to send. Format is transport-defined;
+   *   typical callers stringify a JSON envelope first.
+   * @returns {Promise<void>} Resolves when the underlying transport
+   *   has accepted the send (transport-defined; some are fire-and-
+   *   forget, others await an ack).
+   *
+   * @example
+   *   await peerNode.sendTo('podid_abc', JSON.stringify({ type: 'ping' }));
+   */
+  async sendTo(pubKey, data) {
+    this.#ensureRunning('sendTo');
+    let session = null;
+    for (const [, s] of this.#sessions) {
+      if (s.pubKey === pubKey && s.state === 'active') {
+        // Prefer the most recently-created active session
+        if (!session || (s.connectedAt || 0) > (session.connectedAt || 0)) session = s;
+      }
+    }
+    if (!session) {
+      throw new Error(`PeerNode.sendTo: no active session for pubKey ${pubKey}`);
+    }
+    if (!session.transportInstance || typeof session.transportInstance.send !== 'function') {
+      throw new Error(`PeerNode.sendTo: session for ${pubKey} has no transport.send`);
+    }
+    return session.transportInstance.send(data);
+  }
+
+  /**
+   * Subscribe to raw incoming data from any session. The callback
+   * receives `(pubKey, data, {sessionId, transport})`. Used by
+   * `ClawserPod.onMessage` to fan an envelope-level dispatch on
+   * top of per-transport bytes. Returns an unsubscribe function.
+   *
+   * @param {(pubKey:string, data:any, meta:{sessionId:string, transport:string}) => void} cb
+   * @returns {() => void}
+   */
+  onIncomingData(cb) {
+    if (typeof cb !== 'function') return () => {}
+    this.#dataListeners.add(cb)
+    return () => this.#dataListeners.delete(cb)
+  }
+
+  /**
+   * Whether the peer has an active session ready for `sendTo`.
+   *
+   * @param {string} pubKey
+   * @returns {boolean}
+   */
+  hasActiveSession(pubKey) {
+    for (const [, s] of this.#sessions) {
+      if (s.pubKey === pubKey && s.state === 'active') return true;
+    }
+    return false;
   }
 
   /**
@@ -469,7 +552,7 @@ export class PeerNode {
    *
    * @param {object} [filter]
    * @param {string[]} [filter.capabilities] - Required capabilities
-   * @returns {Promise<import('./clawser-mesh-discovery.js').DiscoveryRecord[]>}
+   * @returns {Promise<import('browsermesh-discovery').DiscoveryRecord[]>}
    */
   async discover(filter) {
     this.#ensureRunning('discover')
@@ -504,7 +587,7 @@ export class PeerNode {
    * Get all audit entries.
    * Returns an empty array if audit chain is not configured.
    *
-   * @returns {import('./clawser-mesh-audit.js').AuditEntry[]}
+   * @returns {import('./audit.mjs').AuditEntry[]}
    */
   getAuditEntries() {
     if (!this.#auditChain) return []
@@ -598,11 +681,11 @@ export class PeerNode {
    *
    * @param {object} data - Output of toJSON()
    * @param {object} deps - Pre-constructed subsystem instances
-   * @param {import('./clawser-identity-wallet.js').IdentityWallet} deps.wallet
-   * @param {import('./clawser-peer-registry.js').PeerRegistry} deps.registry
-   * @param {import('./clawser-mesh-discovery.js').DiscoveryManager} [deps.discovery]
-   * @param {import('./clawser-mesh-transport.js').MeshTransportNegotiator} [deps.transportNegotiator]
-   * @param {import('./clawser-mesh-audit.js').AuditChain} [deps.auditChain]
+   * @param {import('browsermesh-core').IdentityWallet} deps.wallet
+   * @param {import('./peer-registry.mjs').PeerRegistry} deps.registry
+   * @param {import('browsermesh-discovery').DiscoveryManager} [deps.discovery]
+   * @param {import('browsermesh-transport').MeshTransportNegotiator} [deps.transportNegotiator]
+   * @param {import('./audit.mjs').AuditChain} [deps.auditChain]
    * @param {Function} [deps.onLog]
    * @returns {PeerNode}
    */

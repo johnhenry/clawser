@@ -16,6 +16,7 @@
  */
 
 import { MESH_TYPE } from 'browsermesh-primitives';
+import { silentCatch } from './silent-catch.mjs'
 
 // ---------------------------------------------------------------------------
 // Wire Constants (re-exported from canonical registry)
@@ -565,11 +566,7 @@ export class AppRegistry {
 
     // Stop if active
     if (inst.state !== 'stopped' && inst.state !== 'error') {
-      try {
-        inst.stop();
-      } catch {
-        /* already stopped or transitioning -- ignore */
-      }
+      try { inst.stop(); } catch (e) { silentCatch('clawser-mesh-apps', 'inst.stop', e) }
     }
 
     this.#apps.delete(appId);
@@ -667,11 +664,7 @@ export class AppRegistry {
 
     // Stop if active
     if (inst.state !== 'stopped' && inst.state !== 'installed' && inst.state !== 'error') {
-      try {
-        inst.stop();
-      } catch {
-        /* ignore */
-      }
+      try { inst.stop(); } catch (e) { silentCatch('clawser-mesh-apps', 'inst.stop', e) }
     }
 
     // Create new instance with new manifest, preserving data

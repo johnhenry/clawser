@@ -103,6 +103,14 @@ export class MeshInspector {
         active: !!s.orchestrator,
         peerCount: s.orchestrator?.peerCount ?? 0,
       },
+      connectivity: {
+        active: !!s.webrtcMeshManager,
+        connectionCount: s.webrtcMeshManager?.connectionCount ?? 0,
+        // Synchronous read of the last getAllConnectionStats() call — the
+        // Tracer/health-metrics poller refreshes this, snapshot() can't
+        // await a live RTCPeerConnection.getStats() call.
+        stats: s.webrtcMeshManager?.lastStats ?? [],
+      },
     }
   }
 

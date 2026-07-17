@@ -642,9 +642,9 @@ export class IoTTelemetryTool extends BrowserTool {
 
 /**
  * Register all mesh stream/file tools with a BrowserToolRegistry.
- * @param {import('./clawser-tools.js').BrowserToolRegistry} registry
- * @param {import('./clawser-mesh-streams.js').StreamMultiplexer} [multiplexer]
- * @param {import('./clawser-mesh-files.js').MeshFileTransfer} [fileTransfer]
+ * @param {import('./compat.mjs').BrowserToolRegistry} registry
+ * @param {import('browsermesh-transport').StreamMultiplexer} [multiplexer]
+ * @param {import('browsermesh-sync').MeshFileTransfer} [fileTransfer]
  */
 export function registerMeshTools(registry, multiplexer, fileTransfer) {
   if (multiplexer) meshToolsContext.setMultiplexer(multiplexer);

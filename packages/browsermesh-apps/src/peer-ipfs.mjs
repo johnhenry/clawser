@@ -29,7 +29,7 @@ export const IPFS_DEFAULTS = Object.freeze({
  *
  * When Helia is available and enabled, data is stored in a real IPFS node.
  * Otherwise, data is kept in memory keyed by SHA-256 CID (same format used
- * by ChunkStore in clawser-mesh-files.js).
+ * by ChunkStore in browsermesh-sync).
  */
 export class IPFSStore {
   /** @type {object|null} Helia node instance (lazy-loaded) */

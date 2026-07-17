@@ -12,6 +12,7 @@
  */
 
 import { MESH_TYPE } from 'browsermesh-primitives';
+import { silentCatch } from './silent-catch.mjs'
 
 // ---------------------------------------------------------------------------
 // Wire constants — imported from canonical registry
@@ -455,7 +456,7 @@ export class QuotaEnforcer {
       };
       this.#violations.push(violation);
       if (this.#onViolation) {
-        try { this.#onViolation(violation); } catch { /* swallow listener errors */ }
+        try { this.#onViolation(violation); } catch (e) { silentCatch('clawser-mesh-quotas', 'swallow-listener-errors', e) }
       }
     }
   }

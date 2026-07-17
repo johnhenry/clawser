@@ -1,3 +1,4 @@
+import { silentCatch } from './silent-catch.mjs'
 /**
  * clawser-peer-registry.js -- Unified peer registry with permission management.
  *
@@ -23,13 +24,13 @@
  * never need to manually keep them in sync.
  */
 export class PeerRegistry {
-  /** @type {import('./clawser-mesh-peer.js').MeshPeerManager} */
+  /** @type {import('browsermesh-core').MeshPeerManager} */
   #peerManager
 
-  /** @type {import('./clawser-mesh-trust.js').TrustGraph} */
+  /** @type {import('browsermesh-core').TrustGraph} */
   #trustGraph
 
-  /** @type {import('./clawser-mesh-acl.js').MeshACL} */
+  /** @type {import('browsermesh-core').MeshACL} */
   #acl
 
   /** @type {string} */
@@ -43,9 +44,9 @@ export class PeerRegistry {
   /**
    * @param {object} opts
    * @param {string} opts.localPodId - Owner identity used for ACL and trust edges
-   * @param {import('./clawser-mesh-peer.js').MeshPeerManager} [opts.peerManager]
-   * @param {import('./clawser-mesh-trust.js').TrustGraph} [opts.trustGraph]
-   * @param {import('./clawser-mesh-acl.js').MeshACL} [opts.acl]
+   * @param {import('browsermesh-core').MeshPeerManager} [opts.peerManager]
+   * @param {import('browsermesh-core').TrustGraph} [opts.trustGraph]
+   * @param {import('browsermesh-core').MeshACL} [opts.acl]
    * @param {Function} [opts.onLog] - Logging callback (level, msg)
    */
   constructor({ localPodId, peerManager, trustGraph, acl, onLog }) {
@@ -72,7 +73,7 @@ export class PeerRegistry {
    * @param {string} pubKey - Peer fingerprint / public key hash
    * @param {string} [label] - Human-readable name
    * @param {string[]} [grantedCaps] - Initial capability scopes
-   * @returns {import('./clawser-mesh-peer.js').PeerState}
+   * @returns {import('browsermesh-core').PeerState}
    */
   addPeer(pubKey, label, grantedCaps) {
     const info = {}
@@ -113,7 +114,7 @@ export class PeerRegistry {
    * Get a single peer by public key.
    *
    * @param {string} pubKey
-   * @returns {import('./clawser-mesh-peer.js').PeerState|null}
+   * @returns {import('browsermesh-core').PeerState|null}
    */
   getPeer(pubKey) {
     return this.#peerManager.getPeer(pubKey)
@@ -125,7 +126,7 @@ export class PeerRegistry {
    * @param {object} [filter]
    * @param {string} [filter.status]
    * @param {number} [filter.minTrust]
-   * @returns {import('./clawser-mesh-peer.js').PeerState[]}
+   * @returns {import('browsermesh-core').PeerState[]}
    */
   listPeers(filter) {
     return this.#peerManager.listPeers(filter)
@@ -313,7 +314,7 @@ export class PeerRegistry {
    * @param {object} [opts]
    * @param {string} [opts.transport]
    * @param {string} [opts.endpoint]
-   * @returns {import('./clawser-mesh-peer.js').PeerState}
+   * @returns {import('browsermesh-core').PeerState}
    */
   connect(pubKey, opts) {
     return this.#peerManager.connect(pubKey, opts)
@@ -431,7 +432,7 @@ export class PeerRegistry {
 
     const fire = (event, data) => {
       for (const cb of [...(callbacks[event] || [])]) {
-        try { cb(data) } catch { /* swallow */ }
+        try { cb(data) } catch (e) { silentCatch('clawser-peer-registry', 'swallow', e) }
       }
     }
 
