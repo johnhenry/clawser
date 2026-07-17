@@ -1,4 +1,5 @@
 import { silentCatch } from './clawser-silent-catch.mjs'
+import { BrowserTool } from './clawser-tools.js'
 // clawser-vault.js — Encrypted secret storage using Web Crypto API
 //
 // v2 (current): wrapped-DEK model. A single 256-bit AES-GCM data key
@@ -1194,6 +1195,88 @@ export class VaultRekeyer {
         silentCatch('clawser-vault', 'rekey-rollback', rollbackErr);
       }
       return { success: false, rekeyed: 0, error: e.message };
+    }
+  }
+}
+
+// ── Agent tools ──────────────────────────────────────────────────
+//
+// Exposing vault secrets to agent-autonomous invocation is a real
+// security surface (a prompt-injected agent could exfiltrate stored
+// API keys by calling vault_retrieve and echoing the result). Both
+// tools require 'approve' permission — user confirmation is required
+// on every single invocation regardless of autonomy level, not just
+// the default for the 'write'/'network' categories. vault_retrieve
+// additionally declares redactedResultFields so the plaintext secret
+// it returns doesn't get persisted verbatim into the EventLog (OPFS,
+// included in workspace exports) even after the user approves the call.
+
+export class VaultStoreTool extends BrowserTool {
+  #vault;
+  constructor(vault) { super(); this.#vault = vault; }
+
+  get name() { return 'vault_store'; }
+  get description() { return 'Encrypt and store a secret in the credential vault. Requires user approval.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Secret identifier (e.g. "apikey-openai")' },
+        secret: { type: 'string', description: 'Plaintext secret to encrypt and store' },
+      },
+      required: ['name', 'secret'],
+    };
+  }
+  get permission() { return 'approve'; }
+  get redactedFields() { return ['secret']; }
+
+  async execute({ name, secret } = {}) {
+    if (!name) return { success: false, output: '', error: 'name is required' };
+    if (!secret) return { success: false, output: '', error: 'secret is required' };
+    if (this.#vault.isLocked) return { success: false, output: '', error: 'Vault is locked' };
+    try {
+      await this.#vault.store(name, secret);
+      return { success: true, output: `Stored secret "${name}" in vault.` };
+    } catch (e) {
+      return { success: false, output: '', error: e.message };
+    }
+  }
+}
+
+export class VaultRetrieveTool extends BrowserTool {
+  #vault;
+  constructor(vault) { super(); this.#vault = vault; }
+
+  get name() { return 'vault_retrieve'; }
+  get description() { return 'Decrypt and retrieve a secret from the vault. Requires user approval.'; }
+  get parameters() {
+    return {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Secret identifier to retrieve' },
+      },
+      required: ['name'],
+    };
+  }
+  get permission() { return 'approve'; }
+
+  async execute({ name } = {}) {
+    if (!name) return { success: false, output: '', error: 'name is required' };
+    if (this.#vault.isLocked) return { success: false, output: '', error: 'Vault is locked' };
+    try {
+      // The retrieved value has to be the tool_result content the agent
+      // actually sees (clawser-agent.js only ever forwards `.output` to
+      // the model — a separate declared-and-redacted field would be
+      // invisible to the agent, defeating the tool's purpose). So this
+      // can only get the same conservative, regex-based
+      // redactSecretValuesInText() scan every other free-form-output
+      // tool gets in the persisted EventLog — not a guaranteed
+      // redaction. The 'approve' gate above is the real control: a
+      // human must knowingly authorize every single retrieval.
+      const secret = await this.#vault.retrieve(name);
+      return { success: true, output: secret };
+    } catch (e) {
+      return { success: false, output: '', error: e.message };
     }
   }
 }

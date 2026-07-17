@@ -29,6 +29,7 @@ import { GoalAddTool, GoalUpdateTool, GoalAddArtifactTool, GoalListTool } from '
 import { DaemonStatusTool, DaemonCheckpointTool } from './clawser-daemon.js';
 import { OAuthListTool, OAuthConnectTool, OAuthDisconnectTool, OAuthApiTool } from './clawser-oauth.js';
 import { AuthListProfilesTool, AuthSwitchProfileTool, AuthStatusTool } from './clawser-auth-profiles.js';
+import { VaultStoreTool, VaultRetrieveTool } from './clawser-vault.js';
 import { RoutineCreateTool, RoutineListTool, RoutineDeleteTool, RoutineRunTool, RoutineHistoryTool, RoutineToggleTool, RoutineUpdateTool } from './clawser-routines.js';
 import { SelfRepairStatusTool, SelfRepairConfigureTool } from './clawser-self-repair.js';
 import { UndoTool, UndoStatusTool, RedoTool } from './clawser-undo.js';
@@ -199,6 +200,10 @@ export async function registerAllTools({ activeWsId, configureServerRuntimeResol
   browserTools.register(new AuthListProfilesTool(state.authProfileManager));
   browserTools.register(new AuthSwitchProfileTool(state.authProfileManager));
   browserTools.register(new AuthStatusTool(state.authProfileManager));
+
+  // Vault (2) — both require 'approve' permission
+  browserTools.register(new VaultStoreTool(state.vault));
+  browserTools.register(new VaultRetrieveTool(state.vault));
 
   // Routines (7)
   browserTools.register(new RoutineCreateTool(state.routineEngine));

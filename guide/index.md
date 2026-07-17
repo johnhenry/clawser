@@ -8,8 +8,8 @@ Comprehensive guide to every subsystem.
 
 | Metric | Count |
 |--------|-------|
-| Total features | 593 |
-| ✅ Implemented | 587 |
+| Total features | 594 |
+| ✅ Implemented | 588 |
 | ⚠️ Partial | 2 |
 | 📋 Planned | 4 |
 
@@ -17,7 +17,7 @@ Comprehensive guide to every subsystem.
 
 - [**Getting Started**](./getting-started.md) — Quick start guide — installation, first run, and basic usage. *(3 features)*
 - [**Core**](./core.md) — Agent engine, event log, hooks, autonomy, context, caching, cost, errors, identity *(25 features)*
-- [**Tools**](./tools.md) — Complete reference for ALL registered tools (285+) *(245 features)*
+- [**Tools**](./tools.md) — Complete reference for ALL registered tools (285+) *(246 features)*
 - [**Providers**](./providers.md) — All LLM providers, models, capabilities, and configuration *(22 features)*
 - [**Shell**](./shell.md) — Virtual shell, builtins, parser, pipes, redirects, globs, variables, OPFS, sessions *(74 features)*
 - [**Memory**](./memory.md) — BM25, vector search, embedding backends, categories, dedup, purging, hybrid recall *(13 features)*

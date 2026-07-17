@@ -521,7 +521,8 @@ Complete reference for ALL registered tools (285+)
 
 | Tool | Description | Permission | Status |
 |------|-------------|------------|--------|
-| `Vault Secret Storage (library, not an agent tool)` | SecretVault.store(name, secret) / .retrieve(name) encrypt/decrypt secrets for the credential vault. These are library methods used internally (e.g. by auth profile / API key management UI) — no BrowserTool wraps them as agent-invokable vault_store/vault_retrieve tools. Deliberately or accidentally unwired is a maintainer call, not assumed either way: letting an agent autonomously store/retrieve vault secrets has real security implications (prompt-injection-driven exfiltration risk) that a plain wiring fix shouldn't paper over. | `—` | ✅ Implemented |
+| `vault_store` | Encrypt and store a secret in the credential vault. Requires 'approve' permission — a human must knowingly authorize every single invocation, regardless of autonomy level, since an agent that can autonomously write vault entries could be used to plant or overwrite credentials. The secret argument is declared in redactedFields so it never persists in plaintext to the EventLog (OPFS, included in workspace exports). | `approve` | ✅ Implemented |
+| `vault_retrieve` | Decrypt and retrieve a secret from the vault. Requires 'approve' permission — a human must knowingly authorize every single invocation. The retrieved value is returned as this tool's `output`, which is the only field clawser-agent.js forwards to the model — a separately declared-and-redacted field would be invisible to the agent and useless, so the persisted EventLog only gets the same conservative, regex-based redactSecretValuesInText() scan every free-form-output tool gets (catches recognized API-key/JWT shapes, not generic secrets). The 'approve' gate, not redaction, is the real control here. | `approve` | ✅ Implemented |
 
 ## mcp
 
@@ -4533,21 +4534,35 @@ Test a server route with a sample request.
 
 ---
 
-### Vault Secret Storage (library, not an agent tool)
+### vault_store
 
-**Status:** ✅ Implemented · **Category:** vault · **Since:** v1.5.0
+**Status:** ✅ Implemented · **Category:** vault · **Since:** v2.2.0
 
-SecretVault.store(name, secret) / .retrieve(name) encrypt/decrypt secrets for the credential vault. These are library methods used internally (e.g. by auth profile / API key management UI) — no BrowserTool wraps them as agent-invokable vault_store/vault_retrieve tools. Deliberately or accidentally unwired is a maintainer call, not assumed either way: letting an agent autonomously store/retrieve vault secrets has real security implications (prompt-injection-driven exfiltration risk) that a plain wiring fix shouldn't paper over.
+Encrypt and store a secret in the credential vault. Requires 'approve' permission — a human must knowingly authorize every single invocation, regardless of autonomy level, since an agent that can autonomously write vault entries could be used to plant or overwrite credentials. The secret argument is declared in redactedFields so it never persists in plaintext to the EventLog (OPFS, included in workspace exports).
 
 **Source files:**
 
 - `web/clawser-vault.js`
-- `web/clawser-vault.d.ts`
 
 **API surface:**
 
-- `SecretVault.store`
-- `SecretVault.retrieve`
+- `VaultStoreTool`
+
+---
+
+### vault_retrieve
+
+**Status:** ✅ Implemented · **Category:** vault · **Since:** v2.2.0
+
+Decrypt and retrieve a secret from the vault. Requires 'approve' permission — a human must knowingly authorize every single invocation. The retrieved value is returned as this tool's `output`, which is the only field clawser-agent.js forwards to the model — a separately declared-and-redacted field would be invisible to the agent and useless, so the persisted EventLog only gets the same conservative, regex-based redactSecretValuesInText() scan every free-form-output tool gets (catches recognized API-key/JWT shapes, not generic secrets). The 'approve' gate, not redaction, is the real control here.
+
+**Source files:**
+
+- `web/clawser-vault.js`
+
+**API surface:**
+
+- `VaultRetrieveTool`
 
 ---
 

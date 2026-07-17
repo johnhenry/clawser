@@ -6,6 +6,8 @@ import {
   SecretVault,
   MemoryVaultStorage,
   generateRecoveryCode,
+  VaultStoreTool,
+  VaultRetrieveTool,
 } from '../clawser-vault.js';
 
 describe('generateRecoveryCode', () => {
@@ -138,5 +140,133 @@ describe('OPFSVaultStorage quota guard', () => {
     const vault = new SecretVault(new DeniedStorage());
     assert.equal(await vault.verify('some-passphrase-1!'), false);
     assert.equal(vault.isLocked, true);
+  });
+});
+
+// ── VaultStoreTool / VaultRetrieveTool ───────────────────────────
+//
+// Agent-invokable wrappers around SecretVault.store/retrieve. Both
+// require 'approve' permission — every invocation needs a human to
+// knowingly authorize it, regardless of autonomy level, since a
+// prompt-injected agent could otherwise exfiltrate stored secrets.
+
+describe('VaultStoreTool / VaultRetrieveTool', () => {
+  let vault;
+
+  beforeEach(async () => {
+    vault = new SecretVault(new MemoryVaultStorage());
+    await vault.verify('agent-tool-test-passphrase-1!');
+  });
+
+  it('both tools require approve permission', () => {
+    assert.equal(new VaultStoreTool(vault).permission, 'approve');
+    assert.equal(new VaultRetrieveTool(vault).permission, 'approve');
+  });
+
+  it('VaultStoreTool declares redactedFields for the secret argument', () => {
+    const tool = new VaultStoreTool(vault);
+    assert.deepEqual(tool.redactedFields, ['secret']);
+  });
+
+  it('VaultStoreTool stores a secret retrievable via SecretVault directly', async () => {
+    const tool = new VaultStoreTool(vault);
+    const result = await tool.execute({ name: 'apikey-test', secret: 'sk-abc123' });
+    assert.equal(result.success, true);
+    assert.equal(await vault.retrieve('apikey-test'), 'sk-abc123');
+  });
+
+  it('VaultStoreTool requires name and secret', async () => {
+    const tool = new VaultStoreTool(vault);
+    assert.equal((await tool.execute({ secret: 'x' })).success, false);
+    assert.equal((await tool.execute({ name: 'x' })).success, false);
+    assert.equal((await tool.execute({})).success, false);
+  });
+
+  it('VaultStoreTool fails cleanly when the vault is locked', async () => {
+    vault.lock();
+    const tool = new VaultStoreTool(vault);
+    const result = await tool.execute({ name: 'x', secret: 'y' });
+    assert.equal(result.success, false);
+    assert.match(result.error, /locked/i);
+  });
+
+  it('VaultStoreTool surfaces reserved-name rejection from the vault', async () => {
+    const tool = new VaultStoreTool(vault);
+    const result = await tool.execute({ name: '__vault_meta__', secret: 'x' });
+    assert.equal(result.success, false);
+    assert.match(result.error, /reserved/i);
+  });
+
+  it('VaultRetrieveTool retrieves a secret previously stored via SecretVault directly', async () => {
+    await vault.store('apikey-test', 'sk-abc123');
+    const tool = new VaultRetrieveTool(vault);
+    const result = await tool.execute({ name: 'apikey-test' });
+    assert.equal(result.success, true);
+    assert.equal(result.output, 'sk-abc123');
+  });
+
+  it('a value stored via VaultStoreTool is retrievable via VaultRetrieveTool', async () => {
+    await new VaultStoreTool(vault).execute({ name: 'round-trip', secret: 'hunter2' });
+    const result = await new VaultRetrieveTool(vault).execute({ name: 'round-trip' });
+    assert.equal(result.success, true);
+    assert.equal(result.output, 'hunter2');
+  });
+
+  it('VaultRetrieveTool requires a name', async () => {
+    const tool = new VaultRetrieveTool(vault);
+    const result = await tool.execute({});
+    assert.equal(result.success, false);
+  });
+
+  it('VaultRetrieveTool fails cleanly when the vault is locked', async () => {
+    await vault.store('apikey-test', 'sk-abc123');
+    vault.lock();
+    const tool = new VaultRetrieveTool(vault);
+    const result = await tool.execute({ name: 'apikey-test' });
+    assert.equal(result.success, false);
+    assert.match(result.error, /locked/i);
+  });
+
+  it('VaultRetrieveTool fails cleanly for a secret that was never stored', async () => {
+    const tool = new VaultRetrieveTool(vault);
+    const result = await tool.execute({ name: 'never-stored' });
+    assert.equal(result.success, false);
+    assert.match(result.error, /not found/i);
+  });
+
+  it('VaultRetrieveTool rejects retrieving reserved internal vault keys', async () => {
+    const tool = new VaultRetrieveTool(vault);
+    const result = await tool.execute({ name: '__vault_meta__' });
+    assert.equal(result.success, false);
+    assert.match(result.error, /reserved/i);
+  });
+
+  it("redactArgs fully redacts VaultStoreTool's declared secret field from EventLog args", async () => {
+    const { redactArgs } = await import('../clawser-redaction.mjs');
+    const tool = new VaultStoreTool(vault);
+    const redacted = redactArgs({ name: 'apikey-test', secret: 'sk-abc123' }, tool.redactedFields);
+    assert.equal(redacted.name, 'apikey-test', 'non-secret fields pass through');
+    assert.equal(redacted.secret.redacted, true, 'the declared secret field is replaced with a redaction placeholder');
+    assert.doesNotMatch(JSON.stringify(redacted), /sk-abc123/);
+  });
+
+  it("VaultRetrieveTool's output is NOT fully redactable by field name — only clawser-agent.js's .output content reaches the model, so redactResult() gives the same conservative regex-based protection every free-form-output tool gets, not a guarantee", async () => {
+    const { redactResult } = await import('../clawser-redaction.mjs');
+    await vault.store('generic', 'a plain, non-API-key-shaped secret');
+    const result = await new VaultRetrieveTool(vault).execute({ name: 'generic' });
+    const redacted = redactResult(result, new VaultRetrieveTool(vault).redactedResultFields || []);
+    // Documents the real, current behavior rather than asserting a false
+    // guarantee: a generic secret that doesn't match a recognized
+    // high-confidence shape (API key prefix, JWT, etc.) is NOT scrubbed
+    // from .output. The 'approve' permission gate is the actual control.
+    assert.equal(redacted.output, 'a plain, non-API-key-shaped secret');
+  });
+
+  it("VaultRetrieveTool's output IS scrubbed when the secret matches a recognized high-confidence API key shape", async () => {
+    const { redactResult } = await import('../clawser-redaction.mjs');
+    await vault.store('openai-key', 'sk-' + 'x'.repeat(40));
+    const result = await new VaultRetrieveTool(vault).execute({ name: 'openai-key' });
+    const redacted = redactResult(result);
+    assert.doesNotMatch(redacted.output, /sk-x{40}/);
   });
 });

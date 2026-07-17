@@ -2718,25 +2718,42 @@
 
 # ─── VAULT TOOLS ─────────────────────────────────────────────────────
 
-- name: Vault Secret Storage (library, not an agent tool)
+- name: vault_store
   status: implemented
   description: >
-    SecretVault.store(name, secret) / .retrieve(name) encrypt/decrypt secrets
-    for the credential vault. These are library methods used internally
-    (e.g. by auth profile / API key management UI) — no BrowserTool wraps
-    them as agent-invokable vault_store/vault_retrieve tools. Deliberately
-    or accidentally unwired is a maintainer call, not assumed either way:
-    letting an agent autonomously store/retrieve vault secrets has real
-    security implications (prompt-injection-driven exfiltration risk) that
-    a plain wiring fix shouldn't paper over.
+    Encrypt and store a secret in the credential vault. Requires 'approve'
+    permission — a human must knowingly authorize every single invocation,
+    regardless of autonomy level, since an agent that can autonomously
+    write vault entries could be used to plant or overwrite credentials.
+    The secret argument is declared in redactedFields so it never persists
+    in plaintext to the EventLog (OPFS, included in workspace exports).
   files:
     - web/clawser-vault.js
-    - web/clawser-vault.d.ts
   api:
-    - SecretVault.store
-    - SecretVault.retrieve
+    - VaultStoreTool
   category: vault
-  since: "1.5.0"
+  permission: approve
+  since: "2.2.0"
+
+- name: vault_retrieve
+  status: implemented
+  description: >
+    Decrypt and retrieve a secret from the vault. Requires 'approve'
+    permission — a human must knowingly authorize every single invocation.
+    The retrieved value is returned as this tool's `output`, which is the
+    only field clawser-agent.js forwards to the model — a separately
+    declared-and-redacted field would be invisible to the agent and
+    useless, so the persisted EventLog only gets the same conservative,
+    regex-based redactSecretValuesInText() scan every free-form-output
+    tool gets (catches recognized API-key/JWT shapes, not generic
+    secrets). The 'approve' gate, not redaction, is the real control here.
+  files:
+    - web/clawser-vault.js
+  api:
+    - VaultRetrieveTool
+  category: vault
+  permission: approve
+  since: "2.2.0"
 
 # ─── CORS FETCH TOOL ─────────────────────────────────────────────────
 
