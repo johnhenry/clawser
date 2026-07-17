@@ -265,23 +265,6 @@
   see_also:
     - WSH Remote Shell
 
-- name: WSH Bridge Deprecation
-  status: implemented
-  description: >
-    The legacy Kernel WSH Bridge (clawser-kernel-wsh-bridge.js) is deprecated
-    in favor of direct mesh transport connections via WISP and Server WebSocket
-    emulation. Bridge remains functional but emits deprecation warnings. New
-    code should use mesh-native transports.
-  files:
-    - web/clawser-kernel-wsh-bridge.js
-    - web/clawser-mesh-wsh-bridge.js
-  category: wsh
-  notes: Migration path documented. Bridge will be removed in 3.0.0.
-  since: "2.1.0"
-  see_also:
-    - WISP Transport
-    - Server WebSocket Emulation
-
 - name: Server WebSocket Emulation
   status: implemented
   description: >

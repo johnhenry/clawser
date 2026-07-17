@@ -312,26 +312,6 @@ WISP (WebSocket-based Internet Stream Protocol) transport adapter for WSH. Carri
 
 ---
 
-### WSH Bridge Deprecation
-
-**Status:** ✅ Implemented · **Category:** wsh · **Since:** v2.1.0
-
-The legacy Kernel WSH Bridge (clawser-kernel-wsh-bridge.js) is deprecated in favor of direct mesh transport connections via WISP and Server WebSocket emulation. Bridge remains functional but emits deprecation warnings. New code should use mesh-native transports.
-
-**Source files:**
-
-- `web/clawser-kernel-wsh-bridge.js`
-- `web/clawser-mesh-wsh-bridge.js`
-
-> **Note:** Migration path documented. Bridge will be removed in 3.0.0.
-
-**See also:**
-
-- WISP Transport
-- Server WebSocket Emulation
-
----
-
 ### Server WebSocket Emulation
 
 **Status:** ✅ Implemented · **Category:** transport · **Since:** v2.1.0

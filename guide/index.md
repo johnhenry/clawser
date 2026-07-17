@@ -8,8 +8,8 @@ Comprehensive guide to every subsystem.
 
 | Metric | Count |
 |--------|-------|
-| Total features | 597 |
-| ✅ Implemented | 590 |
+| Total features | 596 |
+| ✅ Implemented | 589 |
 | ⚠️ Partial | 2 |
 | 📋 Planned | 5 |
 
@@ -31,11 +31,11 @@ Comprehensive guide to every subsystem.
 - [**Workspace**](./workspace.md) — Workspaces, persistence, conversations, vault, migration *(22 features)*
 - [**Agents**](./agents.md) — Named agents, delegation, sub-agents, @mentions, import/export *(5 features)*
 - [**Hardware**](./hardware.md) — Serial, Bluetooth, USB, peripheral discovery *(9 features)*
-- [**Networking**](./networking.md) — WSH remote tools, remote access, OAuth, auth profiles, MCP client *(16 features)*
+- [**Networking**](./networking.md) — WSH remote tools, remote access, OAuth, auth profiles, MCP client *(15 features)*
 - [**Pods**](./pods.md) — Pod architecture, ClawserPod, EmbeddedPod, InjectedPod, Chrome extension *(8 features)*
 - [**Multi Device**](./multi-device.md) — Device — Personal device pairing and signed deploy targets *(10 features)*
 - [**Build**](./build.md) — Zero build step, PWA, Docker, CI/CD, browser compat, CDN deps, testing *(14 features)*
 
 ---
 
-*Generated on 2026-07-16 by `docs/generate.mjs`*
+*Generated on 2026-07-17 by `docs/generate.mjs`*
