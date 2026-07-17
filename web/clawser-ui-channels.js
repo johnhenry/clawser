@@ -8,23 +8,78 @@ import { $, esc, state, lsKey } from './clawser-state.js';
 import { CHANNEL_TYPES } from './clawser-channels.js';
 import { getActiveWorkspaceId } from './clawser-workspaces.js';
 import { TabWatcherPlugin, SITE_PROFILES } from './clawser-channel-tabwatch.js';
+import { DiscordPlugin } from './clawser-channel-discord.js';
+import { SlackPlugin } from './clawser-channel-slack.js';
+import { TelegramPlugin } from './clawser-channel-telegram.js';
+import { IrcPlugin } from './clawser-channel-irc.js';
+import { MatrixPlugin } from './clawser-channel-matrix.js';
+import { EmailPlugin } from './clawser-channel-email.js';
+import { ChannelRelay } from './clawser-channel-relay.js';
 
 // ── Channel type → required fields ─────────────────────────────
+//
+// Field keys here feed createChannelPlugin()'s opts, not necessarily the
+// plugin constructor's own option names 1:1 — see the per-type mapping in
+// createChannelPlugin() for where a UI field is renamed or reshaped
+// (e.g. irc's single `channel`, matrix's `homeserver`, email's flat
+// username/password combined into a `credentials` object, webhook's
+// `path`/`bcName` matching ChannelRelay's actual config).
 
 const CHANNEL_FIELDS = {
   telegram:  [{ key: 'botToken', label: 'Bot Token', type: 'password' }, { key: 'chatId', label: 'Chat ID', type: 'text' }],
   discord:   [{ key: 'botToken', label: 'Bot Token', type: 'password' }, { key: 'guildId', label: 'Guild ID', type: 'text' }],
   slack:     [{ key: 'botToken', label: 'Bot Token', type: 'password' }, { key: 'channel', label: 'Channel', type: 'text' }, { key: 'appToken', label: 'App Token (Socket Mode)', type: 'password' }, { key: 'signingSecret', label: 'Signing Secret (webhook only)', type: 'password' }],
-  matrix:    [{ key: 'homeserverUrl', label: 'Homeserver URL', type: 'text' }, { key: 'accessToken', label: 'Access Token', type: 'password' }, { key: 'roomId', label: 'Room ID', type: 'text' }],
+  matrix:    [{ key: 'homeserver', label: 'Homeserver URL', type: 'text' }, { key: 'accessToken', label: 'Access Token', type: 'password' }, { key: 'roomId', label: 'Room ID', type: 'text' }],
   email:     [{ key: 'imapHost', label: 'IMAP Host', type: 'text' }, { key: 'smtpHost', label: 'SMTP Host', type: 'text' }, { key: 'username', label: 'Username', type: 'text' }, { key: 'password', label: 'Password', type: 'password' }],
-  irc:       [{ key: 'server', label: 'Server', type: 'text' }, { key: 'nick', label: 'Nick', type: 'text' }, { key: 'channels', label: 'Channels (comma-sep)', type: 'text' }],
-  webhook:   [{ key: 'webhookUrl', label: 'Webhook URL', type: 'text' }],
+  irc:       [{ key: 'server', label: 'Server', type: 'text' }, { key: 'nick', label: 'Nick', type: 'text' }, { key: 'channel', label: 'Channel (e.g. #general)', type: 'text' }],
+  webhook:   [{ key: 'path', label: 'Webhook Path', type: 'text' }, { key: 'bcName', label: 'Relay Channel Name', type: 'text' }],
 };
 
 const CHANNEL_ICONS = {
   telegram: '📱', discord: '💬', slack: '💼', matrix: '🔗',
   email: '📧', irc: '🖥', webhook: '🔔',
 };
+
+// ── Channel type → plugin class ─────────────────────────────────
+
+const PLUGIN_CLASSES = {
+  telegram: TelegramPlugin,
+  discord: DiscordPlugin,
+  slack: SlackPlugin,
+  matrix: MatrixPlugin,
+  email: EmailPlugin,
+  irc: IrcPlugin,
+  webhook: ChannelRelay,
+};
+
+/**
+ * Construct a real channel plugin instance from a saved channel entry's
+ * config, reshaping UI field names to what each plugin constructor expects.
+ * @param {string} type
+ * @param {object} config - raw config as collected by the channel form
+ * @returns {object|null} plugin instance, or null for an unknown type
+ */
+export function createChannelPlugin(type, config = {}) {
+  const PluginClass = PLUGIN_CLASSES[type];
+  if (!PluginClass) return null;
+
+  switch (type) {
+    case 'matrix':
+      return new MatrixPlugin({ ...config, homeserver: config.homeserver || config.homeserverUrl });
+    case 'email':
+      return new EmailPlugin({
+        ...config,
+        credentials: config.credentials || { user: config.username, pass: config.password },
+      });
+    default:
+      return new PluginClass(config);
+  }
+}
+
+/** Build a stable, unique gateway channel ID for a saved channel entry. */
+function gatewayChannelId(ch) {
+  return `${ch.type}:${ch.name}`;
+}
 
 // ── Persistence helpers ─────────────────────────────────────────
 
@@ -45,16 +100,98 @@ export function saveChannels(channels) {
   localStorage.setItem(channelStorageKey(), JSON.stringify(channels));
 }
 
+// ── Live plugin instances ────────────────────────────────────────
+//
+// ChannelManager (clawser-channels.js) only ever stored config — no
+// platform connection was ever made from it. This map tracks the real,
+// connected plugin instances registered with ChannelGateway, keyed by
+// channel name (the same key ChannelManager/localStorage entries use).
+// Storing {plugin, channelId} (not just the plugin) means stop/stopAll
+// never need to re-derive the gateway channel ID from current storage,
+// which could have drifted (renamed/deleted) since the plugin started.
+
+const _activePlugins = new Map();
+
+/** Get active channel plugin instances (for testing/diagnostics). */
+export function getActiveChannelPlugins() { return _activePlugins; }
+
+/**
+ * Construct, start, and register a channel's real plugin with the
+ * gateway. No-ops if the type has no plugin mapping (shouldn't happen
+ * for anything in CHANNEL_FIELDS) or a plugin is already active for
+ * this channel name.
+ * @param {object} ch - saved channel entry {name, type, config}
+ * @param {import('./clawser-gateway.js').ChannelGateway} gateway
+ */
+async function startChannelPlugin(ch, gateway) {
+  if (!gateway || _activePlugins.has(ch.name)) return;
+
+  const plugin = createChannelPlugin(ch.type, ch.config || {});
+  if (!plugin) return;
+
+  try {
+    await plugin.start();
+  } catch (err) {
+    console.error(`[channels] ${ch.name} (${ch.type}) failed to start:`, err);
+    return;
+  }
+
+  const channelId = gatewayChannelId(ch);
+  _activePlugins.set(ch.name, { plugin, channelId });
+  gateway.register(channelId, plugin, { scope: 'shared' });
+  gateway.start(channelId);
+}
+
+/**
+ * Stop and unregister a channel's active plugin, if any.
+ * @param {string} name - saved channel entry's name
+ * @param {import('./clawser-gateway.js').ChannelGateway} gateway
+ */
+async function stopChannelPlugin(name, gateway) {
+  const entry = _activePlugins.get(name);
+  if (!entry) return;
+
+  try {
+    await entry.plugin.stop();
+  } catch (err) {
+    console.error(`[channels] ${name} failed to stop:`, err);
+  }
+
+  _activePlugins.delete(name);
+  gateway?.unregister(entry.channelId);
+}
+
+/**
+ * Stop and unregister every active channel plugin. Call on workspace
+ * cleanup/switch — the gateway instance itself gets replaced on the next
+ * workspace init, but real network connections (Discord/Slack/etc.
+ * sockets) don't close themselves just because the gateway reference
+ * changed, and _activePlugins is module-level so it outlives any one
+ * workspace's gateway.
+ * @param {import('./clawser-gateway.js').ChannelGateway} [gateway]
+ */
+export async function stopAllChannelPlugins(gateway) {
+  for (const name of [..._activePlugins.keys()]) {
+    await stopChannelPlugin(name, gateway);
+  }
+}
+
 // ── Restore channels on workspace init ──────────────────────────
 
 /**
- * Restore saved channels into the ChannelManager on workspace init.
+ * Restore saved channels into the ChannelManager on workspace init, and
+ * start a real plugin (registered with the gateway) for each enabled one.
  * @param {import('./clawser-channels.js').ChannelManager} channelManager
+ * @param {import('./clawser-gateway.js').ChannelGateway} [gateway]
  */
-export function restoreSavedChannels(channelManager) {
+export function restoreSavedChannels(channelManager, gateway) {
   const saved = loadSavedChannels();
   for (const ch of saved) {
     channelManager.addChannel(ch);
+    if (ch.enabled !== false) {
+      startChannelPlugin(ch, gateway).catch((err) =>
+        console.error(`[channels] ${ch.name} restore-start failed:`, err));
+    }
   }
   return saved.length;
 }
@@ -99,7 +236,7 @@ export function renderChannelPanel() {
 
   // Bind card actions
   panel.querySelectorAll('.channel-toggle-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const name = btn.dataset.name;
       const saved = loadSavedChannels();
       const ch = saved.find(c => c.name === name);
@@ -113,17 +250,23 @@ export function renderChannelPanel() {
             state.channelManager.removeChannel(name);
           }
         }
+        if (ch.enabled) {
+          await startChannelPlugin(ch, state.gateway);
+        } else {
+          await stopChannelPlugin(name, state.gateway);
+        }
         renderChannelPanel();
       }
     });
   });
 
   panel.querySelectorAll('.channel-delete-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const name = btn.dataset.name;
       const saved = loadSavedChannels().filter(c => c.name !== name);
       saveChannels(saved);
       if (state.channelManager) state.channelManager.removeChannel(name);
+      await stopChannelPlugin(name, state.gateway);
       renderChannelPanel();
       updateChannelBadge();
     });
@@ -201,7 +344,7 @@ export function showChannelForm(existing = null) {
     form.innerHTML = '';
   });
 
-  $('channelFormSave').addEventListener('click', () => {
+  $('channelFormSave').addEventListener('click', async () => {
     const name = $('channelFormName').value.trim();
     const type = typeSelect.value;
     if (!name) return;
@@ -229,6 +372,12 @@ export function showChannelForm(existing = null) {
     if (state.channelManager) {
       state.channelManager.addChannel({ name, type, ...config, enabled: true });
     }
+
+    // Editing an active channel: restart with the new config rather than
+    // leaving the old (possibly now-stale, e.g. rotated bot token) plugin
+    // instance running under the same name.
+    await stopChannelPlugin(name, state.gateway);
+    await startChannelPlugin(entry, state.gateway);
 
     form.classList.remove('visible');
     form.innerHTML = '';

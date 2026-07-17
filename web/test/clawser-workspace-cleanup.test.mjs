@@ -88,6 +88,7 @@ function mockPod() {
 function mockGateway() {
   return {
     stop: tracker(),
+    stopAll: tracker(),
   }
 }
 
@@ -228,7 +229,10 @@ describe('cleanupWorkspace', () => {
   it('stops the channel gateway', async () => {
     const s = installFullState()
     await cleanupWorkspace()
-    assert.ok(s.gateway.stop.called(), 'gateway.stop should be called')
+    // stopAll(), not stop() — stop(channelId) requires an argument and is a
+    // no-op when called bare, which was a real bug (channels never actually
+    // stopped on workspace switch until this was fixed).
+    assert.ok(s.gateway.stopAll.called(), 'gateway.stopAll should be called')
   })
 
   it('deactivates all active skills', async () => {
@@ -328,9 +332,9 @@ describe('cleanupWorkspace', () => {
       await cleanupWorkspace()
     })
 
-    it('continues when gateway stop throws', async () => {
+    it('continues when gateway stopAll throws', async () => {
       const gw = mockGateway()
-      gw.stop = () => { throw new Error('gateway boom') }
+      gw.stopAll = () => { throw new Error('gateway boom') }
       installFullState({ gateway: gw })
       await cleanupWorkspace()
     })

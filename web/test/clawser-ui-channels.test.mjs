@@ -53,9 +53,17 @@ import {
   saveChannels,
   restoreSavedChannels,
   updateChannelBadge,
+  createChannelPlugin,
+  getActiveChannelPlugins,
+  stopAllChannelPlugins,
 } from '../clawser-ui-channels.js';
 
 import { ChannelManager } from '../clawser-channels.js';
+import { ChannelGateway } from '../clawser-gateway.js';
+import { MatrixPlugin } from '../clawser-channel-matrix.js';
+import { EmailPlugin } from '../clawser-channel-email.js';
+import { TelegramPlugin } from '../clawser-channel-telegram.js';
+import { ChannelRelay } from '../clawser-channel-relay.js';
 
 // ── loadSavedChannels / saveChannels ────────────────────────────
 
@@ -140,5 +148,155 @@ describe('updateChannelBadge', () => {
     updateChannelBadge();
     const badge = globalThis.document.getElementById('channelCount');
     assert.equal(badge.textContent, '0');
+  });
+});
+
+// ── createChannelPlugin ──────────────────────────────────────────
+//
+// Regression coverage for clawser-browser-control-style drift: these six
+// channel plugins (Discord/Slack/Telegram/IRC/Matrix/Email/Relay) were
+// fully built and tested but never actually instantiated anywhere in the
+// live app — the "Add Channel" UI only ever wrote config into the older
+// ChannelManager, never registered a real plugin with ChannelGateway.
+// These tests cover the field-name reshaping createChannelPlugin() does
+// between the UI's saved config shape and each plugin's real constructor
+// (found while wiring this up: matrix's homeserverUrl vs homeserver,
+// email's flat username/password vs a credentials object).
+
+describe('createChannelPlugin', () => {
+  it('returns null for an unknown type', () => {
+    assert.equal(createChannelPlugin('not-a-real-type', {}), null);
+  });
+
+  it('constructs a plugin for every type in PLUGIN_CLASSES with a pass-through config', () => {
+    const telegram = createChannelPlugin('telegram', { botToken: 'tg-token', chatId: '123' });
+    assert.ok(telegram instanceof TelegramPlugin);
+    assert.equal(telegram.config.botToken, 'tg-token');
+    assert.equal(telegram.config.chatId, '123');
+  });
+
+  it('maps homeserverUrl (the UI field name) to homeserver (the plugin field name) for matrix', () => {
+    const plugin = createChannelPlugin('matrix', {
+      homeserverUrl: 'https://matrix.org',
+      accessToken: 'tok',
+      roomId: '!room:matrix.org',
+    });
+    assert.ok(plugin instanceof MatrixPlugin);
+    assert.equal(plugin.config.homeserver, 'https://matrix.org');
+  });
+
+  it('prefers an already-correct homeserver field over homeserverUrl for matrix', () => {
+    const plugin = createChannelPlugin('matrix', { homeserver: 'https://correct.org', homeserverUrl: 'https://wrong.org' });
+    assert.equal(plugin.config.homeserver, 'https://correct.org');
+  });
+
+  it('combines flat username/password (the UI fields) into a credentials object for email', () => {
+    const plugin = createChannelPlugin('email', {
+      imapHost: 'imap.example.com',
+      smtpHost: 'smtp.example.com',
+      username: 'me@example.com',
+      password: 'hunter2',
+    });
+    assert.ok(plugin instanceof EmailPlugin);
+    assert.deepEqual(plugin.config.credentials, { user: 'me@example.com', pass: 'hunter2' });
+  });
+
+  it('prefers an already-correct credentials object over username/password for email', () => {
+    const plugin = createChannelPlugin('email', {
+      credentials: { accessToken: 'gmail-oauth-token' },
+      username: 'ignored',
+      password: 'ignored',
+    });
+    assert.deepEqual(plugin.config.credentials, { accessToken: 'gmail-oauth-token' });
+  });
+
+  it('constructs a ChannelRelay for the webhook type', () => {
+    const plugin = createChannelPlugin('webhook', { path: '/hook', bcName: 'test-relay' });
+    assert.ok(plugin instanceof ChannelRelay);
+    assert.equal(plugin.config.path, '/hook');
+    assert.equal(plugin.config.bcName, 'test-relay');
+  });
+});
+
+// ── Gateway wiring: restoreSavedChannels / stopAllChannelPlugins ────
+//
+// ChannelRelay is the only one of the six plugins that needs zero network
+// stubbing (BroadcastChannel-only), so it's used here to exercise the
+// real start()/register()/gateway.start() happy path end-to-end without
+// mocking fetch/WebSocket.
+
+describe('channel plugin gateway wiring (webhook/ChannelRelay)', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    for (const k of Object.keys(_elements)) delete _elements[k];
+    getActiveChannelPlugins().clear();
+  });
+
+  it('restoreSavedChannels starts and registers a real plugin with the gateway for each enabled channel', async () => {
+    saveChannels([{ name: 'my-relay', type: 'webhook', config: { bcName: 'ch-test-1' }, enabled: true }]);
+
+    const gateway = new ChannelGateway();
+    const mgr = new ChannelManager();
+    restoreSavedChannels(mgr, gateway);
+    // startChannelPlugin's own plugin.start() is awaited internally but
+    // restoreSavedChannels doesn't await the per-channel promise (so a
+    // slow/hanging channel can't block workspace init) — give the
+    // microtask queue a turn to let it settle before asserting.
+    await new Promise((r) => setTimeout(r, 0));
+
+    assert.equal(getActiveChannelPlugins().size, 1);
+    const entry = getActiveChannelPlugins().get('my-relay');
+    assert.ok(entry.plugin instanceof ChannelRelay);
+    assert.equal(entry.plugin.running, true);
+    assert.equal(entry.channelId, 'webhook:my-relay');
+    assert.equal(gateway.isActive('webhook:my-relay'), true);
+  });
+
+  it('restoreSavedChannels does not start a plugin for a disabled channel', async () => {
+    saveChannels([{ name: 'my-relay', type: 'webhook', config: {}, enabled: false }]);
+
+    const gateway = new ChannelGateway();
+    const mgr = new ChannelManager();
+    restoreSavedChannels(mgr, gateway);
+    await new Promise((r) => setTimeout(r, 0));
+
+    assert.equal(getActiveChannelPlugins().size, 0);
+    assert.equal(gateway.isActive('webhook:my-relay'), false);
+  });
+
+  it('restoreSavedChannels is a no-op for plugin startup when no gateway is passed (back-compat)', async () => {
+    saveChannels([{ name: 'my-relay', type: 'webhook', config: {}, enabled: true }]);
+
+    const mgr = new ChannelManager();
+    const count = restoreSavedChannels(mgr);
+    await new Promise((r) => setTimeout(r, 0));
+
+    assert.equal(count, 1);
+    assert.equal(mgr.channelCount, 1);
+    assert.equal(getActiveChannelPlugins().size, 0, 'no gateway means no plugin should be started');
+  });
+
+  it('stopAllChannelPlugins stops and unregisters every active plugin', async () => {
+    saveChannels([
+      { name: 'relay-a', type: 'webhook', config: { bcName: 'ch-test-a' }, enabled: true },
+      { name: 'relay-b', type: 'webhook', config: { bcName: 'ch-test-b' }, enabled: true },
+    ]);
+
+    const gateway = new ChannelGateway();
+    const mgr = new ChannelManager();
+    restoreSavedChannels(mgr, gateway);
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(getActiveChannelPlugins().size, 2);
+
+    await stopAllChannelPlugins(gateway);
+
+    assert.equal(getActiveChannelPlugins().size, 0);
+    assert.equal(gateway.isActive('webhook:relay-a'), false);
+    assert.equal(gateway.isActive('webhook:relay-b'), false);
+  });
+
+  it('stopAllChannelPlugins is safe to call with no active plugins', async () => {
+    await assert.doesNotReject(() => stopAllChannelPlugins(new ChannelGateway()));
+    await assert.doesNotReject(() => stopAllChannelPlugins(undefined));
   });
 });

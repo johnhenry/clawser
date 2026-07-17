@@ -28,7 +28,7 @@ export { refreshFiles, mountLocalFolder, renderMountList } from './clawser-ui-fi
 export { renderMemoryResults, doMemorySearch } from './clawser-ui-memory.js';
 export { renderGoals, toggleGoalExpand } from './clawser-ui-goals.js';
 export { renderMarketplace } from './clawser-ui-marketplace.js';
-export { renderChannelPanel, updateChannelBadge, initChannelPanelListeners, restoreSavedChannels, renderTabWatcherSection } from './clawser-ui-channels.js';
+export { renderChannelPanel, updateChannelBadge, initChannelPanelListeners, uninstallChannelPanelListeners, restoreSavedChannels, stopAllChannelPlugins, renderTabWatcherSection } from './clawser-ui-channels.js';
 export { renderSwarmPanel, initSwarmListeners } from './clawser-ui-swarms.js';
 export { renderTransferPanel, initTransferListeners } from './clawser-ui-transfers.js';
 export { renderMeshPanel, initMeshListeners } from './clawser-ui-mesh.js';

@@ -17,7 +17,7 @@ import { loadConversations } from './clawser-conversations.js';
 import { saveConfig, applyRestoredConfig, rebuildProviderDropdown, setupProviders } from './clawser-accounts.js';
 import { updateRouteHash, PANELS, resetRenderedPanels, isPanelRendered } from './clawser-router.js';
 import { setStatus, addMsg, addErrorMsg, addToolCall, addInlineToolCall, updateInlineToolCall, addEvent, updateState, updateCostDisplay, replaySessionHistory, replayFromEvents, updateConvNameDisplay, persistActiveConversation, renderToolCalls, resetChatUI } from './clawser-ui-chat.js';
-import { renderGoals, renderToolRegistry, renderSkills, applySecuritySettings, renderSecuritySection, renderAutonomySection, renderIdentitySection, renderRoutingSection, renderAuthProfilesSection, renderSelfRepairSection, updateCacheStats, renderLimitsSection, renderSandboxSection, renderHeartbeatSection, renderHooksSection, renderTerminalSection, updateCostMeter, updateAutonomyBadge, updateDaemonBadge, refreshDashboard, renderOAuthSection, renderTerminalSessionBar, replayTerminalSession, initAgentPicker, updateAgentLabel, restoreSavedChannels, updateChannelBadge, initSharedWorkerFromConfig } from './clawser-ui-panels.js';
+import { renderGoals, renderToolRegistry, renderSkills, applySecuritySettings, renderSecuritySection, renderAutonomySection, renderIdentitySection, renderRoutingSection, renderAuthProfilesSection, renderSelfRepairSection, updateCacheStats, renderLimitsSection, renderSandboxSection, renderHeartbeatSection, renderHooksSection, renderTerminalSection, updateCostMeter, updateAutonomyBadge, updateDaemonBadge, refreshDashboard, renderOAuthSection, renderTerminalSessionBar, replayTerminalSession, initAgentPicker, updateAgentLabel, restoreSavedChannels, updateChannelBadge, stopAllChannelPlugins, uninstallChannelPanelListeners, initSharedWorkerFromConfig } from './clawser-ui-panels.js';
 import { TerminalSessionManager } from './clawser-terminal-sessions.js';
 import { notifyWorkspaceReady } from './clawser-extension-routine-bridge.js';
 
@@ -335,9 +335,13 @@ export async function cleanupWorkspace() {
     try { await state.pod.shutdown(); } catch (e) { silentCatch('clawser-workspace-lifecycle', 'state.pod.shutdown', e) }
   }
 
-  // Stop channel gateway
+  // Stop real channel plugins (Discord/Slack/etc. sockets — these don't
+  // close themselves just because the gateway reference is about to be
+  // replaced) and every channel registered with the gateway.
+  try { await stopAllChannelPlugins(state.gateway); } catch (e) { silentCatch('clawser-workspace-lifecycle', 'stopAllChannelPlugins', e) }
+  uninstallChannelPanelListeners();
   if (state.gateway) {
-    try { state.gateway.stop(); } catch (e) { silentCatch('clawser-workspace-lifecycle', 'state.gateway.stop', e) }
+    try { state.gateway.stopAll(); } catch (e) { silentCatch('clawser-workspace-lifecycle', 'state.gateway.stopAll', e) }
   }
 
   // Stop skill hot-reload
@@ -487,7 +491,7 @@ export async function switchWorkspace(newId, convId) {
   } catch (e) { console.warn('[clawser] skill hot-reload switch failed', e); }
 
   state.marketplace = new SkillMarketplace();
-  restoreSavedChannels(state.channelManager);
+  restoreSavedChannels(state.channelManager, state.gateway);
   updateChannelBadge();
   // Update gateway tenant ID so subsequent ingests are attributed to the
   // new workspace's kernel tenant. Falls back to null when kernel is absent.
@@ -871,12 +875,13 @@ export async function initWorkspace(wsId, convId) {
     // Init marketplace
     state.marketplace = new SkillMarketplace();
 
-    // Restore saved channels
-    restoreSavedChannels(state.channelManager);
-    updateChannelBadge();
-
     // ── Channel Gateway ──
     state.gateway = createChannelGateway(wsId, _kernelIntegration);
+
+    // Restore saved channels — must run after state.gateway exists so
+    // each enabled channel's real plugin can register with it.
+    restoreSavedChannels(state.channelManager, state.gateway);
+    updateChannelBadge();
 
     // Wire gateway to WSH incoming sessions
     try {
