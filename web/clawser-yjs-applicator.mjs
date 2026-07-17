@@ -27,7 +27,7 @@
  * pod-routed transport.
  */
 
-import { YjsAdapter } from './clawser-peer-collab.js';
+import { YjsAdapter } from 'browsermesh-sync';
 
 /**
  * Adapter registry + sync-engine bridge.

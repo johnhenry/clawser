@@ -24,7 +24,7 @@ import { notifyWorkspaceReady } from './clawser-extension-routine-bridge.js';
 import { ClawserAgent } from './clawser-agent.js';
 import { createDefaultRegistry, WorkspaceFs } from './clawser-tools.js';
 
-import { SkillMarketplace } from './clawser-marketplace.js';
+import { SkillMarketplace } from 'browsermesh-apps';
 import { createConfiguredShell } from './clawser-shell-factory.js';
 import { SkillHotReloader } from './clawser-skill-hot-reload.js';
 

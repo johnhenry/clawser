@@ -49,7 +49,7 @@ Feature modules extend the core agent with specialized capabilities. Each module
 
 ## Internal Packages
 
-`web/packages/kernel/` is the only package still vendored locally under `web/packages/` (own README, `package.json`, `src/`, `test/`). The pod/andbox/wsh/netway/mesh-primitives packages were migrated to published npm packages (devDependencies) and are consumed through thin re-export bridge files at the top of `web/` — e.g. `import { Pod } from './packages-pod.js'` — so internal modules keep a stable import path even though the source now lives in `node_modules/`, not this repo.
+`web/packages/kernel/` and `web/packages/browsermesh-{core,discovery,sync,transport,apps}/` are vendored locally under `web/packages/` (own `package.json` + `src/`; kernel also carries README/`test/`). The pod/andbox/wsh/netway/mesh-primitives packages, by contrast, were migrated to published npm packages (devDependencies) and are consumed through thin re-export bridge files at the top of `web/` — e.g. `import { Pod } from './packages-pod.js'` — so internal modules keep a stable import path even though the source now lives in `node_modules/`, not this repo.
 
 | Package | npm name | Bridge file | Description |
 |---------|----------|-------------|-------------|
@@ -61,7 +61,11 @@ Feature modules extend the core agent with specialized capabilities. Each module
 | **mesh-primitives** | `browsermesh-primitives` (external) | `web/packages-mesh-primitives.js` | Mesh wire format, identity, capability tokens, trust graph, CRDTs |
 | **ai-matey-middleware-andbox** | `ai-matey-middleware-andbox` (external) | none — not currently imported anywhere in `web/` | ai.matey middleware for LLM code extraction → andbox execution (present as a devDependency but dormant/unwired) |
 
-Separately, the repo-root `packages/*` directory (npm workspaces) holds genuinely local monorepo source unrelated to the bridges above: `browsermesh-core`, `browsermesh-transport`, `browsermesh-apps`, `browsermesh-discovery`, `browsermesh-sync`, and `clawser-embed`. These back the mesh subsystem (`clawser-mesh-*.js`) directly via normal npm workspace symlinks, not the `web/packages-*.js` bridge pattern.
+Separately, the repo-root `packages/*` directory (npm workspaces) holds the canonical, npm-publishable source for `browsermesh-core`, `browsermesh-transport`, `browsermesh-apps`, `browsermesh-discovery`, `browsermesh-sync`, and `clawser-embed`. Node-side consumers (the `node:test` suite, `npm run test:mesh*`) resolve these via normal npm workspace symlinks in `node_modules/`.
+
+The browser can't reach the repo root — both deploy targets (GitHub Pages, Cloudflare Workers) ship only `web/` as the site root, and `web/index.html`'s import map originally pointed `browsermesh-*` at `../packages/...`, which 404s in every real deployment (and in any local static server rooted at `web/`). Following the kernel precedent, `web/packages/browsermesh-{core,discovery,sync,transport,apps}/src/` holds a **committed copy** of each package's `src/` (no `test/`), and the import map points there via `./packages/browsermesh-*/src/index.mjs`. This is a second, manually-synced copy of the source — there is no automated sync between `packages/browsermesh-*` and `web/packages/browsermesh-*`. When editing one of these packages, re-copy `src/*.mjs` (and `package.json` if it changed) into the matching `web/packages/browsermesh-*/src/` directory as part of the same change.
+
+The original `web/clawser-mesh-*.js` / `web/clawser-peer-*.js` files these packages were extracted from still exist as duplicates; only a handful of `web/*.js` consumers (`clawser-pod.js`, `clawser-workspace-init-mesh.js`, `clawser-app.js`, `clawser-workspace-lifecycle.js`, `clawser-server-services.js`, `clawser-yjs-applicator.mjs`) have been rewired to import from the `browsermesh-*` packages instead; the rest of the internal mesh subsystem still imports the original `web/clawser-mesh-*.js` files directly.
 
 ## Module Lifecycle
 

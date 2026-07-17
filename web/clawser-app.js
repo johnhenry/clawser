@@ -31,7 +31,7 @@ import { SkillRegistry, SkillRegistryClient } from './clawser-skills.js';
 import { MountableFs } from './clawser-mount.js';
 import { SecretVault, OPFSVaultStorage, MemoryVaultStorage } from './clawser-vault.js';
 import { NullCheckpointIDB } from './clawser-disposable.js';
-import { IdentityManager } from './clawser-identity.js';
+import { IdentityManager } from 'browsermesh-core';
 import { IntentRouter } from './clawser-intent.js';
 import { InputSanitizer, ToolCallValidator, SafetyPipeline } from './clawser-safety.js';
 import { ProviderHealth, ModelRouter } from './clawser-fallback.js';

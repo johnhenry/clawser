@@ -16,19 +16,18 @@ import { isPanelRendered } from './clawser-router.js';
 import { renderMeshPanel, initMeshListeners } from './clawser-ui-mesh.js';
 import { addMsg, addErrorMsg } from './clawser-ui-chat.js';
 import { buildMeshController } from './clawser-mesh-controller.mjs';
-import { bridgePeerAgent } from './clawser-peer-agent.js';
+import { bridgePeerAgent } from 'browsermesh-apps';
 import { ChannelGateway } from './clawser-gateway.js';
 import { ClawserPod } from './clawser-pod.js';
-import { registerMeshTools } from './clawser-mesh-tools.js';
+import { registerMeshTools } from 'browsermesh-apps';
 import { PresenceService, presenceChangeMessage } from './clawser-presence.mjs';
 import { evaluateAlertRules, recordMetricSample } from './clawser-mesh-alert-rules.mjs';
 import { installMultiDeviceWiring, uninstallMultiDeviceWiring } from './clawser-multi-device.mjs';
 import { SkillStorage } from './clawser-skills.js';
 import { writeConfig as writeFsConfig } from './clawser-fs-config.mjs';
 import { approvalModalPrompt } from './clawser-approval-modal.mjs';
-import { registerMeshPeerTools } from './clawser-mesh-peer-tools.js';
-import { registerIdentityTools } from './clawser-mesh-identity-tools.js';
-import { createMeshctlTools } from './clawser-mesh-orchestrator.js';
+import { registerMeshPeerTools, registerIdentityTools } from 'browsermesh-core';
+import { createMeshctlTools } from 'browsermesh-apps';
 import { getServerManager, setServerRuntimeServiceResolver } from './clawser-server.js';
 import { bindServerManagerServices } from './clawser-server-services.js';
 import { listReverseExposureRegistrations } from './clawser-wsh-tools.js';
@@ -44,7 +43,7 @@ import {
   renderRemoteRuntimePanel,
   updatePeerBadge,
 } from './clawser-ui-remote.js'
-import { CollabManager } from './clawser-peer-collab-bridge.js';
+import { CollabManager } from 'browsermesh-sync';
 import { silentCatch } from './clawser-silent-catch.mjs'
 
 // ── Module-level state ───────────────────────────────────────────

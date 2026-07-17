@@ -2,7 +2,7 @@
  * ServerManager <-> mesh service advertising bridge.
  */
 
-import { SERVICE_TYPES } from './clawser-peer-services.js'
+import { SERVICE_TYPES } from 'browsermesh-apps'
 
 function routeServiceName(route) {
   return `server:${route.id}`

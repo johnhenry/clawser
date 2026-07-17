@@ -5,63 +5,93 @@
 
 import { silentCatch } from './clawser-silent-catch.mjs'
 import { Pod } from './packages-pod.js'
-import { MeshIdentityManager } from './clawser-mesh-identity.js'
-import { IdentityWallet } from './clawser-identity-wallet.js'
-import { PeerRegistry } from './clawser-peer-registry.js'
-import { PeerNode } from './clawser-peer-node.js'
-import { SwarmCoordinator, SwimMembership } from './clawser-mesh-swarm.js'
-import { DiscoveryManager, DiscoveryRecord, RelayStrategy, PexStrategy, ServiceDirectory } from './clawser-mesh-discovery.js'
-import { MeshTransportNegotiator } from './clawser-mesh-transport.js'
-import { AuditChain } from './clawser-mesh-audit.js'
-import { StreamMultiplexer } from './clawser-mesh-streams.js'
-import { MeshFileTransfer } from './clawser-mesh-files.js'
-import { MeshSyncEngine } from './clawser-mesh-sync.js'
-import { ResourceRegistry } from './clawser-mesh-resources.js'
-import { Marketplace } from './clawser-mesh-marketplace.js'
-import { QuotaManager, QuotaEnforcer } from './clawser-mesh-quotas.js'
-import { PaymentRouter } from './clawser-mesh-payments.js'
-import { ConsensusManager, CONSENSUS_PROPOSE, CONSENSUS_VOTE, CONSENSUS_CLOSE, CONSENSUS_RESULT } from './clawser-mesh-consensus.js'
-import { MeshRelayClient } from './clawser-mesh-relay.js'
-import { MeshNameResolver } from './clawser-mesh-naming.js'
-import { AppRegistry, AppStore } from './clawser-mesh-apps.js'
-import { MeshOrchestrator } from './clawser-mesh-orchestrator.js'
-import { ServiceAdvertiser, ServiceBrowser } from './clawser-peer-services.js'
-// Track 1: Transport adapters
-import { WebSocketTransport, TransportFactory } from './clawser-mesh-websocket.js'
-import { WebRTCTransportAdapter, WebRTCAdapterFactory } from './clawser-mesh-webrtc.js'
-import { WebTransportBridge, WebTransportAdapterFactory } from './clawser-mesh-webtransport.js'
-// Track 2: Security & Auth
-import { HandshakeCoordinator, SignalingClient } from './clawser-mesh-handshake.js'
-import { MeshACL } from './clawser-mesh-acl.js'
-import { CapabilityValidator } from './clawser-mesh-capabilities.js'
-import { CrossOriginBridge } from './clawser-mesh-cross-origin.js'
-import { VerificationQuorum } from './clawser-peer-verification.js'
-import { EncryptedBlobStore } from './clawser-peer-encrypted-store.js'
-// Track 3: Communication & Files
-import { MeshChat } from './clawser-mesh-chat.js'
-import { GatewayNode, GatewayDiscovery } from './clawser-mesh-gateway.js'
-import { TorrentManager } from './clawser-peer-torrent.js'
-import { IPFSStore } from './clawser-peer-ipfs.js'
-// Track 4: Compute
-import { FederatedCompute } from './clawser-peer-compute.js'
-import { AgentSwarmCoordinator } from './clawser-peer-agent-swarm.js'
-import { MeshScheduler } from './clawser-mesh-scheduler.js'
-// Track 5: Ops & Resilience
-import { HealthMonitor } from './clawser-peer-health.js'
-import { MeshInspector } from './clawser-mesh-devtools.js'
-import { MigrationEngine, MIGRATION_INIT, MIGRATION_CHECKPOINT, MIGRATION_TRANSFER, MIGRATION_ACTIVATE } from './clawser-mesh-migration.js'
-import { SessionManager } from './clawser-peer-session.js'
-import { TimestampAuthority } from './clawser-peer-timestamp.js'
-import { StealthAgent } from './clawser-mesh-stealth.js'
-import { MeshRouter } from './clawser-peer-routing.js'
-import { MeshFetchRouter } from './clawser-mesh-sw-routing.js'
-import { MeshWshBridge } from './clawser-mesh-wsh-bridge.js'
-import { SyncCoordinator } from './clawser-mesh-delta-sync.js'
-import { AgentMemorySync } from './clawser-peer-memory-sync.js'
-import { EscrowManager } from './clawser-peer-escrow.js'
-import { DhtNode } from './clawser-mesh-dht.js'
-import { CreditLedger, PAYMENT_OPEN, PAYMENT_UPDATE, PAYMENT_CLOSE, ESCROW_CREATE } from './clawser-mesh-payments.js'
-import { GroupKeyManager } from './clawser-mesh-group-keys.js'
+import {
+  MeshIdentityManager,
+  IdentityWallet,
+  HandshakeCoordinator,
+  SignalingClient,
+  MeshACL,
+  CapabilityValidator,
+  GroupKeyManager,
+} from 'browsermesh-core'
+import {
+  SwarmCoordinator,
+  SwimMembership,
+  DiscoveryManager,
+  DiscoveryRecord,
+  RelayStrategy,
+  PexStrategy,
+  ServiceDirectory,
+  MeshNameResolver,
+  StealthAgent,
+  MeshFetchRouter,
+  DhtNode,
+} from 'browsermesh-discovery'
+import {
+  MeshTransportNegotiator,
+  StreamMultiplexer,
+  MeshRelayClient,
+  WebSocketTransport,
+  TransportFactory,
+  WebRTCTransportAdapter,
+  WebRTCAdapterFactory,
+  WebTransportBridge,
+  WebTransportAdapterFactory,
+  CrossOriginBridge,
+  GatewayNode,
+  GatewayDiscovery,
+  MeshWshBridge,
+} from 'browsermesh-transport'
+import {
+  MeshFileTransfer,
+  MeshSyncEngine,
+  MigrationEngine,
+  MIGRATION_INIT,
+  MIGRATION_CHECKPOINT,
+  MIGRATION_TRANSFER,
+  MIGRATION_ACTIVATE,
+  SyncCoordinator,
+  AgentMemorySync,
+} from 'browsermesh-sync'
+import {
+  PeerRegistry,
+  PeerNode,
+  AuditChain,
+  ResourceRegistry,
+  Marketplace,
+  QuotaManager,
+  QuotaEnforcer,
+  PaymentRouter,
+  ConsensusManager,
+  CONSENSUS_PROPOSE,
+  CONSENSUS_VOTE,
+  CONSENSUS_CLOSE,
+  CONSENSUS_RESULT,
+  AppRegistry,
+  AppStore,
+  MeshOrchestrator,
+  ServiceAdvertiser,
+  ServiceBrowser,
+  VerificationQuorum,
+  EncryptedBlobStore,
+  MeshChat,
+  TorrentManager,
+  IPFSStore,
+  FederatedCompute,
+  AgentSwarmCoordinator,
+  MeshScheduler,
+  HealthMonitor,
+  MeshInspector,
+  SessionManager,
+  TimestampAuthority,
+  MeshRouter,
+  EscrowManager,
+  CreditLedger,
+  PAYMENT_OPEN,
+  PAYMENT_UPDATE,
+  PAYMENT_CLOSE,
+  ESCROW_CREATE,
+} from 'browsermesh-apps'
 import { RemoteRuntimeRegistry } from './clawser-remote-runtime-registry.js'
 import { RemoteSessionBroker } from './clawser-remote-session-broker.js'
 import { RemoteRuntimePolicyAdapter } from './clawser-remote-runtime-policy.js'
