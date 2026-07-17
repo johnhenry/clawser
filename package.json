@@ -48,6 +48,8 @@
     "browsermesh-primitives": "^0.1.0",
     "fflate": "^0.8.2",
     "js-yaml": "^4.1.1",
+    "raijin-consensus": "^0.0.3",
+    "raijin-core": "^0.0.1",
     "vitest": "^4.0.18",
     "ws": "^8.21.0",
     "wsh-upon-star": "^0.1.1",

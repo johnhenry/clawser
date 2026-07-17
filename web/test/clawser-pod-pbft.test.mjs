@@ -123,9 +123,7 @@ describe('ClawserPod PBFT wiring', () => {
     })
   })
 
-  it('pbftConsensus remains null when raijin-consensus import fails', async () => {
-    // enablePBFT is true but raijin-consensus is not installed,
-    // so the dynamic import should fail and pbftConsensus stays null
+  it('pbftConsensus is constructed from raijin-consensus when enablePBFT is set', async () => {
     pod = new ClawserPod()
     const g = makeGlobal()
     await pod.boot({ globalThis: g, discoveryTimeout: 50, handshakeTimeout: 50 })
@@ -133,13 +131,35 @@ describe('ClawserPod PBFT wiring', () => {
     const logs = []
     await pod.initMesh({
       enablePBFT: true,
+      pbftValidators: ['validator-a', 'validator-b', 'validator-c'],
+      onLog: (level, msg) => logs.push({ level, msg }),
+    })
+
+    assert.ok(pod.pbftConsensus, 'pbftConsensus should be non-null when raijin-consensus is installed')
+    assert.equal(pod.pbftConsensus.constructor.name, 'PBFTConsensus')
+    // No fallback warning should have been logged on the happy path
+    const warnLog = logs.find(l => l.level === 'warn' && l.msg.includes('PBFT'))
+    assert.equal(warnLog, undefined, 'should not log a PBFT-unavailable warning when raijin-consensus is installed')
+  })
+
+  it('pbftConsensus stays null when the raijin-consensus construction path throws', async () => {
+    // Force the try block to fail past the dynamic import (which now
+    // succeeds) by passing a validator set entry that ValidatorSet.add
+    // rejects, exercising the catch/fallback branch with a real error.
+    pod = new ClawserPod()
+    const g = makeGlobal()
+    await pod.boot({ globalThis: g, discoveryTimeout: 50, handshakeTimeout: 50 })
+
+    const logs = []
+    await pod.initMesh({
+      enablePBFT: true,
+      pbftValidators: [null],
       onLog: (level, msg) => logs.push({ level, msg }),
     })
 
     assert.equal(pod.pbftConsensus, null,
-      'pbftConsensus should be null when raijin-consensus is not installed')
-    // Should have logged a warning
+      'pbftConsensus should stay null when construction throws')
     const warnLog = logs.find(l => l.level === 'warn' && l.msg.includes('PBFT'))
-    assert.ok(warnLog, 'should log a warning about PBFT being unavailable')
+    assert.ok(warnLog, 'should log a warning when PBFT construction fails')
   })
 })

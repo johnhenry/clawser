@@ -182,10 +182,14 @@
 - name: PBFT Consensus
   status: implemented
   description: >
-    Practical Byzantine Fault Tolerance consensus implementation for strongly
-    consistent mesh operations.
+    Practical Byzantine Fault Tolerance consensus (pre-prepare/prepare/commit,
+    3f+1 validator quorum) for strongly consistent mesh operations, opt-in via
+    ClawserPod.initMesh({ enablePBFT: true }). Backed by the raijin-consensus
+    npm package. web/clawser-mesh-consensus.js's ConsensusManager is a
+    separate, simpler majority/super-majority/weighted voting mechanism —
+    not PBFT — used where sub-second finality isn't required.
   files:
-    - web/clawser-mesh-consensus.js
+    - web/clawser-pod.js
   api:
     - pbftConsensus
   category: consensus

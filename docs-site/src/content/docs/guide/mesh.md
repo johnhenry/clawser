@@ -237,11 +237,11 @@ Distributed consensus protocol for mesh-wide decisions. Supports simple majority
 
 **Status:** ✅ Implemented · **Category:** consensus · **Since:** v2.0.0
 
-Practical Byzantine Fault Tolerance consensus implementation for strongly consistent mesh operations.
+Practical Byzantine Fault Tolerance consensus (pre-prepare/prepare/commit, 3f+1 validator quorum) for strongly consistent mesh operations, opt-in via ClawserPod.initMesh({ enablePBFT: true }). Backed by the raijin-consensus npm package. web/clawser-mesh-consensus.js's ConsensusManager is a separate, simpler majority/super-majority/weighted voting mechanism — not PBFT — used where sub-second finality isn't required.
 
 **Source files:**
 
-- `web/clawser-mesh-consensus.js`
+- `web/clawser-pod.js`
 
 **API surface:**
 
