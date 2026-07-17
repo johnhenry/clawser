@@ -10,7 +10,7 @@ WSH remote tools, remote access, OAuth, auth profiles, MCP client
 
 **Status:** ✅ Implemented · **Category:** wsh · **Since:** v1.5.0
 
-Web Shell Hosting protocol for remote server access. Provides SSH-like functionality over WebSocket with command execution, PTY sessions, file transfer, and MCP bridging. 11 agent tools for comprehensive remote management.
+Web Shell Hosting protocol for remote server access. Provides SSH-like functionality over WebSocket with command execution, PTY sessions, file transfer, and MCP bridging. 27 agent tools for comprehensive remote management (grown well beyond the original 11 as guest sharing, session linking, copilot attach, rate control, and policy tools were added).
 
 **Source files:**
 
@@ -31,10 +31,27 @@ Web Shell Hosting protocol for remote server access. Provides SSH-like functiona
 - `WshSessionsTool`
 - `WshMcpCallTool`
 - `WshFetchTool`
+- `WshSuspendSessionTool`
+- `WshRestartPtyTool`
+- `WshMetricsTool`
+- `WshGuestInviteTool`
+- `WshGuestRevokeTool`
+- `WshShareSessionTool`
+- `WshShareRevokeTool`
+- `WshCompressTool`
+- `WshRateControlTool`
+- `WshLinkSessionTool`
+- `WshUnlinkSessionTool`
+- `WshCopilotAttachTool`
+- `WshCopilotDetachTool`
+- `WshFileOpTool`
+- `WshPolicyEvalTool`
+- `WshPolicyUpdateTool`
+- `WshGpuProbeTool`
 - `registerWshTools`
 - `getWshConnections`
 
-> **Note:** 11 tools: wsh_connect, wsh_exec, wsh_pty_open, wsh_pty_write, wsh_upload, wsh_download, wsh_disconnect, wsh_sessions, wsh_mcp_call, wsh_fetch, plus wsh_compress and wsh_file_op.
+> **Note:** 27 tools: wsh_connect, wsh_exec, wsh_pty_open, wsh_pty_write, wsh_upload, wsh_download, wsh_disconnect, wsh_sessions, wsh_mcp_call, wsh_fetch, wsh_suspend_session, wsh_restart_pty, wsh_metrics, wsh_guest_invite, wsh_guest_revoke, wsh_share_session, wsh_share_revoke, wsh_compress, wsh_rate_control, wsh_link_session, wsh_unlink_session, wsh_copilot_attach, wsh_copilot_detach, wsh_file_op, wsh_policy_eval, wsh_policy_update, wsh_gpu_probe.
 
 **See also:**
 
@@ -218,7 +235,7 @@ Model Context Protocol client for connecting to external MCP servers. McpClient 
 
 **Status:** ✅ Implemented · **Category:** network · **Since:** v2.0.0
 
-CORS-aware fetch utility via the Chrome extension. Bypasses same-origin restrictions for approved requests.
+CORS-aware fetch utility via the Chrome extension. Bypasses same-origin restrictions for approved requests. Deprecated in favor of direct WSH transport: corsFetchFallback automatically routes through WSH when a connection is available, and the ext_cors_fetch tool emits a runtime deprecation warning when invoked while WSH transport is available.
 
 **Source files:**
 
@@ -227,7 +244,7 @@ CORS-aware fetch utility via the Chrome extension. Bypasses same-origin restrict
 
 **API surface:**
 
-- `corsFetch`
+- `corsFetchFallback`
 - `ext_cors_fetch`
 
 ---
@@ -286,7 +303,7 @@ QR code generation for sharing pairing codes and connection URLs.
 
 **API surface:**
 
-- `generateQR`
+- `encodeQR`
 
 ---
 
@@ -311,7 +328,6 @@ WISP (WebSocket-based Internet Stream Protocol) transport adapter for WSH. Carri
 **See also:**
 
 - WSH Remote Shell
-
 
 ---
 
@@ -355,6 +371,8 @@ Five production-hardening primitives that compose with existing MeshTransport wi
 - `CIRCUIT_STATES`
 
 > **Note:** Additive layer — existing mesh code unchanged. Circuit breaker states: closed, open, half-open.
+
+---
 
 ---
 

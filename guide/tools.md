@@ -6,69 +6,69 @@ Complete reference for ALL registered tools (285+)
 
 | Tool | Description | Permission | Status |
 |------|-------------|------------|--------|
-| `fetch` | HTTP/HTTPS requests with configurable domain allowlist. Returns status, headers, and body text (truncated at 50K chars). | `network` | ✅ Implemented |
-| `web_search` | Search the web using DuckDuckGo HTML lite endpoint. No API key required. | `network` | ✅ Implemented |
+| `browser_fetch` | HTTP/HTTPS requests with configurable domain allowlist. Returns status, headers, and body text (truncated at 50K chars). | `network` | ✅ Implemented |
+| `browser_web_search` | Search the web using DuckDuckGo HTML lite endpoint. No API key required. | `network` | ✅ Implemented |
 
 ## dom
 
 | Tool | Description | Permission | Status |
 |------|-------------|------------|--------|
-| `dom_query` | Query DOM elements using CSS selectors. Returns text content, attributes, and structure. | `browser` | ✅ Implemented |
-| `dom_modify` | Modify DOM elements — setText, setHTML, setAttribute, setStyle, addClass, removeClass, remove, insertHTML. Sanitizes HTML to block scripts, iframes, and event handlers. | `browser` | ✅ Implemented |
+| `browser_dom_query` | Query DOM elements using CSS selectors. Returns text content, attributes, and structure. | `browser` | ✅ Implemented |
+| `browser_dom_modify` | Modify DOM elements — setText, setHTML, setAttribute, setStyle, addClass, removeClass, remove, insertHTML. Sanitizes HTML to block scripts, iframes, and event handlers. | `browser` | ✅ Implemented |
 
 ## filesystem
 
 | Tool | Description | Permission | Status |
 |------|-------------|------------|--------|
-| `fs_read` | Read a file from the Origin Private File System (OPFS). Max read size 50MB. | `read` | ✅ Implemented |
-| `fs_write` | Write a file to OPFS. Creates parent directories as needed. Max 10MB default. | `write` | ✅ Implemented |
-| `fs_list` | List files and directories in OPFS. | `read` | ✅ Implemented |
-| `fs_delete` | Delete a file or directory from OPFS with optional recursive flag. | `write` | ✅ Implemented |
-| `fs_mkdir` | Create a directory in OPFS. Creates parent directories as needed. | `write` | ✅ Implemented |
+| `browser_fs_read` | Read a file from the Origin Private File System (OPFS). Max read size 50MB. | `read` | ✅ Implemented |
+| `browser_fs_write` | Write a file to OPFS. Creates parent directories as needed. Max 10MB default. | `write` | ✅ Implemented |
+| `browser_fs_list` | List files and directories in OPFS. | `read` | ✅ Implemented |
+| `browser_fs_delete` | Delete a file or directory from OPFS with optional recursive flag. | `write` | ✅ Implemented |
+| `browser_fs_mkdir` | Create a directory in OPFS. Creates parent directories as needed. | `write` | ✅ Implemented |
 
 ## storage
 
 | Tool | Description | Permission | Status |
 |------|-------------|------------|--------|
-| `storage_get` | Read a value from localStorage by key. Blocks access to clawser_* internal keys. | `read` | ✅ Implemented |
-| `storage_set` | Write a value to localStorage. Blocks writing to clawser_* internal keys. | `write` | ✅ Implemented |
-| `storage_delete` | Delete a localStorage key. Blocks deletion of clawser_* internal keys. | `write` | ✅ Implemented |
-| `storage_list` | List all keys in localStorage with value lengths. Hides clawser_* internal keys. | `read` | ✅ Implemented |
+| `browser_storage_get` | Read a value from localStorage by key. Blocks access to clawser_* internal keys. | `read` | ✅ Implemented |
+| `browser_storage_set` | Write a value to localStorage. Blocks writing to clawser_* internal keys. | `write` | ✅ Implemented |
+| `browser_storage_delete` | Delete a localStorage key. Blocks deletion of clawser_* internal keys. | `write` | ✅ Implemented |
+| `browser_storage_list` | List all keys in localStorage with value lengths. Hides clawser_* internal keys. | `read` | ✅ Implemented |
 
 ## clipboard
 
 | Tool | Description | Permission | Status |
 |------|-------------|------------|--------|
-| `clipboard_read` | Read text from the system clipboard. | `browser` | ✅ Implemented |
-| `clipboard_write` | Write text to the system clipboard. | `browser` | ✅ Implemented |
+| `browser_clipboard_read` | Read text from the system clipboard. | `browser` | ✅ Implemented |
+| `browser_clipboard_write` | Write text to the system clipboard. | `browser` | ✅ Implemented |
 
 ## navigation
 
 | Tool | Description | Permission | Status |
 |------|-------------|------------|--------|
-| `navigate` | Open a URL in a new browser tab or the current page. Only allows http/https protocols. | `browser` | ✅ Implemented |
-| `notify` | Show a browser notification with title, body, and optional icon. | `browser` | ✅ Implemented |
+| `browser_navigate` | Open a URL in a new browser tab or the current page. Only allows http/https protocols. | `browser` | ✅ Implemented |
+| `browser_notify` | Show a browser notification with title, body, and optional icon. | `browser` | ✅ Implemented |
 
 ## code
 
 | Tool | Description | Permission | Status |
 |------|-------------|------------|--------|
-| `eval_js` | Evaluate JavaScript in the page global scope via indirect eval. Requires explicit user confirmation. | `approve` | ✅ Implemented |
+| `browser_eval_js` | Evaluate JavaScript in the page global scope via indirect eval. Requires explicit user confirmation. | `approve` | ✅ Implemented |
 
 ## media
 
 | Tool | Description | Permission | Status |
 |------|-------------|------------|--------|
-| `screenshot` | Capture a screenshot as a data URL (PNG). Lazy-loads html2canvas from CDN. | `browser` | ✅ Implemented |
-| `screen_info` | Get current page info — URL, title, viewport size, scroll position, and visible text summary. | `read` | ✅ Implemented |
+| `browser_screenshot` | Capture a screenshot as a data URL (PNG). Lazy-loads html2canvas from CDN. | `browser` | ✅ Implemented |
+| `browser_screen_info` | Get current page info — URL, title, viewport size, scroll position, and visible text summary. | `read` | ✅ Implemented |
 
 ## memory
 
 | Tool | Description | Permission | Status |
 |------|-------------|------------|--------|
-| `memory_store` | Store a memory for later recall. Categories — core, learned, user, context. | `internal` | ✅ Implemented |
-| `memory_recall` | Search stored memories by keyword query. Returns top results via hybrid BM25 + vector search. | `internal` | ✅ Implemented |
-| `memory_forget` | Delete a stored memory by ID. | `internal` | ✅ Implemented |
+| `agent_memory_store` | Store a memory for later recall. Categories — core, learned, user, context. | `internal` | ✅ Implemented |
+| `agent_memory_recall` | Search stored memories by keyword query. Returns top results via hybrid BM25 + vector search. | `internal` | ✅ Implemented |
+| `agent_memory_forget` | Delete a stored memory by ID. | `internal` | ✅ Implemented |
 
 ## goals
 
@@ -106,9 +106,9 @@ Complete reference for ALL registered tools (285+)
 
 | Tool | Description | Permission | Status |
 |------|-------------|------------|--------|
-| `ask_user_question` | Ask the user one or more questions with predefined options. Max 4 questions, 2-4 options each. | `auto` | ✅ Implemented |
-| `switch_agent` | Switch to a different named agent configuration. Omit agent param to list available agents. | `approve` | ✅ Implemented |
-| `consult_agent` | Send a message to another agent and get their response without switching. | `approve` | ✅ Implemented |
+| `browser_ask_user` | Ask the user one or more questions with predefined options. Max 4 questions, 2-4 options each. | `auto` | ✅ Implemented |
+| `agent_switch` | Switch to a different named agent configuration. Omit agent param to list available agents. | `approve` | ✅ Implemented |
+| `agent_consult` | Send a message to another agent and get their response without switching. | `approve` | ✅ Implemented |
 | `delegate` | Spawn an isolated sub-agent for a focused sub-task. Sub-agent has own conversation history but shares parent provider and tools. Max depth 2, max concurrency 3. | `approve` | ✅ Implemented |
 
 ## channels
@@ -185,7 +185,6 @@ Complete reference for ALL registered tools (285+)
 | `daemon_pause` | Pause the daemon loop. | `approve` | ✅ Implemented |
 | `daemon_resume` | Resume daemon from paused state. | `approve` | ✅ Implemented |
 | `daemon_restore` | Restore daemon from a stored checkpoint. | `approve` | ✅ Implemented |
-| `cross_tab_tool_bridge` | Bridge tool execution across browser tabs via BroadcastChannel. | `—` | ✅ Implemented |
 
 ## auth
 
@@ -385,9 +384,9 @@ Complete reference for ALL registered tools (285+)
 | `mesh_file_accept` | Accept an incoming file transfer. | `—` | ✅ Implemented |
 | `mesh_file_list` | List pending and completed file transfers. | `—` | ✅ Implemented |
 | `mesh_file_cancel` | Cancel an in-progress file transfer. | `—` | ✅ Implemented |
-| `mesh_torrent_seed` | Seed a file for torrent-like distribution. | `—` | ✅ Implemented |
-| `mesh_ipfs_store` | Store content to the mesh IPFS layer. | `—` | ✅ Implemented |
-| `mesh_ipfs_retrieve` | Retrieve content from the mesh IPFS layer. | `—` | ✅ Implemented |
+| `torrent_seed` | Seed a file for torrent-like distribution. | `—` | ✅ Implemented |
+| `ipfs_store` | Store content to the mesh IPFS layer. | `—` | ✅ Implemented |
+| `ipfs_retrieve` | Retrieve content from the mesh IPFS layer. | `—` | ✅ Implemented |
 
 ## mesh-chat
 
@@ -443,9 +442,9 @@ Complete reference for ALL registered tools (285+)
 
 | Tool | Description | Permission | Status |
 |------|-------------|------------|--------|
-| `mesh_escrow_create` | Create an escrow arrangement between peers. | `—` | ✅ Implemented |
-| `mesh_escrow_list` | List escrow arrangements. | `—` | ✅ Implemented |
-| `mesh_escrow_release` | Release funds from escrow. | `—` | ✅ Implemented |
+| `escrow_create` | Create an escrow arrangement between peers. | `—` | ✅ Implemented |
+| `escrow_list` | List escrow arrangements. | `—` | ✅ Implemented |
+| `escrow_release` | Release funds from escrow. | `—` | ✅ Implemented |
 
 ## mesh-routing
 
@@ -458,14 +457,14 @@ Complete reference for ALL registered tools (285+)
 
 | Tool | Description | Permission | Status |
 |------|-------------|------------|--------|
-| `mesh_stealth_save` | Save a stealth identity for anonymous mesh participation. | `—` | ✅ Implemented |
-| `mesh_stealth_restore` | Restore a previously saved stealth identity. | `—` | ✅ Implemented |
+| `stealth_save` | Save a stealth identity for anonymous mesh participation. | `—` | ✅ Implemented |
+| `stealth_restore` | Restore a previously saved stealth identity. | `—` | ✅ Implemented |
 
 ## mesh-sync
 
 | Tool | Description | Permission | Status |
 |------|-------------|------------|--------|
-| `mesh_delta_sync_status` | Get delta sync status for CRDT documents. | `—` | ✅ Implemented |
+| `delta_sync_status` | Get delta sync status for CRDT documents. | `—` | ✅ Implemented |
 
 ## mesh-acl
 
@@ -520,8 +519,7 @@ Complete reference for ALL registered tools (285+)
 
 | Tool | Description | Permission | Status |
 |------|-------------|------------|--------|
-| `vault_store` | Encrypt and store a secret in the credential vault. | `—` | ✅ Implemented |
-| `vault_retrieve` | Decrypt and retrieve a secret from the vault. | `—` | ✅ Implemented |
+| `Vault Secret Storage (library, not an agent tool)` | SecretVault.store(name, secret) / .retrieve(name) encrypt/decrypt secrets for the credential vault. These are library methods used internally (e.g. by auth profile / API key management UI) — no BrowserTool wraps them as agent-invokable vault_store/vault_retrieve tools. Deliberately or accidentally unwired is a maintainer call, not assumed either way: letting an agent autonomously store/retrieve vault secrets has real security implications (prompt-injection-driven exfiltration risk) that a plain wiring fix shouldn't paper over. | `—` | ✅ Implemented |
 
 ## mcp
 
@@ -533,7 +531,7 @@ Complete reference for ALL registered tools (285+)
 
 ## Detailed Reference
 
-### fetch
+### browser_fetch
 
 **Status:** ✅ Implemented · **Category:** network · **Since:** v1.0.0
 
@@ -546,13 +544,13 @@ HTTP/HTTPS requests with configurable domain allowlist. Returns status, headers,
 
 **API surface:**
 
-- `fetch`
+- `browser_fetch`
 
 > **Note:** Parameters: url (required), method (GET/POST/PUT/DELETE/PATCH), headers (object), body (string). Enforces domain allowlist.
 
 ---
 
-### web_search
+### browser_web_search
 
 **Status:** ✅ Implemented · **Category:** network · **Since:** v1.0.0
 
@@ -564,13 +562,13 @@ Search the web using DuckDuckGo HTML lite endpoint. No API key required.
 
 **API surface:**
 
-- `web_search`
+- `browser_web_search`
 
 > **Note:** Parameters: query (required), max_results (number). Uses DuckDuckGo lite.
 
 ---
 
-### dom_query
+### browser_dom_query
 
 **Status:** ✅ Implemented · **Category:** dom · **Since:** v1.0.0
 
@@ -582,13 +580,13 @@ Query DOM elements using CSS selectors. Returns text content, attributes, and st
 
 **API surface:**
 
-- `dom_query`
+- `browser_dom_query`
 
 > **Note:** Parameters: selector (required), limit (default 10), include_html (boolean).
 
 ---
 
-### dom_modify
+### browser_dom_modify
 
 **Status:** ✅ Implemented · **Category:** dom · **Since:** v1.0.0
 
@@ -600,13 +598,13 @@ Modify DOM elements — setText, setHTML, setAttribute, setStyle, addClass, remo
 
 **API surface:**
 
-- `dom_modify`
+- `browser_dom_modify`
 
 > **Note:** Uses native Sanitizer API when available. XSS prevention built in.
 
 ---
 
-### fs_read
+### browser_fs_read
 
 **Status:** ✅ Implemented · **Category:** filesystem · **Since:** v1.0.0
 
@@ -618,13 +616,13 @@ Read a file from the Origin Private File System (OPFS). Max read size 50MB.
 
 **API surface:**
 
-- `fs_read`
+- `browser_fs_read`
 
 > **Note:** Parameters: path (required), encoding (utf8/base64, default utf8).
 
 ---
 
-### fs_write
+### browser_fs_write
 
 **Status:** ✅ Implemented · **Category:** filesystem · **Since:** v1.0.0
 
@@ -636,13 +634,13 @@ Write a file to OPFS. Creates parent directories as needed. Max 10MB default.
 
 **API surface:**
 
-- `fs_write`
+- `browser_fs_write`
 
 > **Note:** Parameters: path (required), content (required), encoding. Checks storage quota — warns at 80%, blocks at 95%.
 
 ---
 
-### fs_list
+### browser_fs_list
 
 **Status:** ✅ Implemented · **Category:** filesystem · **Since:** v1.0.0
 
@@ -654,13 +652,13 @@ List files and directories in OPFS.
 
 **API surface:**
 
-- `fs_list`
+- `browser_fs_list`
 
 > **Note:** Parameters: path (default /), recursive (boolean).
 
 ---
 
-### fs_delete
+### browser_fs_delete
 
 **Status:** ✅ Implemented · **Category:** filesystem · **Since:** v1.0.0
 
@@ -672,13 +670,13 @@ Delete a file or directory from OPFS with optional recursive flag.
 
 **API surface:**
 
-- `fs_delete`
+- `browser_fs_delete`
 
 > **Note:** Parameters: path (required), recursive (boolean).
 
 ---
 
-### fs_mkdir
+### browser_fs_mkdir
 
 **Status:** ✅ Implemented · **Category:** filesystem · **Since:** v1.0.0
 
@@ -690,11 +688,11 @@ Create a directory in OPFS. Creates parent directories as needed.
 
 **API surface:**
 
-- `fs_mkdir`
+- `browser_fs_mkdir`
 
 ---
 
-### storage_get
+### browser_storage_get
 
 **Status:** ✅ Implemented · **Category:** storage · **Since:** v1.0.0
 
@@ -706,11 +704,11 @@ Read a value from localStorage by key. Blocks access to clawser_* internal keys.
 
 **API surface:**
 
-- `storage_get`
+- `browser_storage_get`
 
 ---
 
-### storage_set
+### browser_storage_set
 
 **Status:** ✅ Implemented · **Category:** storage · **Since:** v1.0.0
 
@@ -722,11 +720,11 @@ Write a value to localStorage. Blocks writing to clawser_* internal keys.
 
 **API surface:**
 
-- `storage_set`
+- `browser_storage_set`
 
 ---
 
-### storage_delete
+### browser_storage_delete
 
 **Status:** ✅ Implemented · **Category:** storage · **Since:** v1.0.0
 
@@ -738,11 +736,11 @@ Delete a localStorage key. Blocks deletion of clawser_* internal keys.
 
 **API surface:**
 
-- `storage_delete`
+- `browser_storage_delete`
 
 ---
 
-### storage_list
+### browser_storage_list
 
 **Status:** ✅ Implemented · **Category:** storage · **Since:** v1.0.0
 
@@ -754,11 +752,11 @@ List all keys in localStorage with value lengths. Hides clawser_* internal keys.
 
 **API surface:**
 
-- `storage_list`
+- `browser_storage_list`
 
 ---
 
-### clipboard_read
+### browser_clipboard_read
 
 **Status:** ✅ Implemented · **Category:** clipboard · **Since:** v1.0.0
 
@@ -770,13 +768,13 @@ Read text from the system clipboard.
 
 **API surface:**
 
-- `clipboard_read`
+- `browser_clipboard_read`
 
 > **Note:** Requires browser permission grant.
 
 ---
 
-### clipboard_write
+### browser_clipboard_write
 
 **Status:** ✅ Implemented · **Category:** clipboard · **Since:** v1.0.0
 
@@ -788,11 +786,11 @@ Write text to the system clipboard.
 
 **API surface:**
 
-- `clipboard_write`
+- `browser_clipboard_write`
 
 ---
 
-### navigate
+### browser_navigate
 
 **Status:** ✅ Implemented · **Category:** navigation · **Since:** v1.0.0
 
@@ -804,11 +802,11 @@ Open a URL in a new browser tab or the current page. Only allows http/https prot
 
 **API surface:**
 
-- `navigate`
+- `browser_navigate`
 
 ---
 
-### notify
+### browser_notify
 
 **Status:** ✅ Implemented · **Category:** navigation · **Since:** v1.0.0
 
@@ -820,11 +818,11 @@ Show a browser notification with title, body, and optional icon.
 
 **API surface:**
 
-- `notify`
+- `browser_notify`
 
 ---
 
-### eval_js
+### browser_eval_js
 
 **Status:** ✅ Implemented · **Category:** code · **Since:** v1.0.0
 
@@ -836,13 +834,13 @@ Evaluate JavaScript in the page global scope via indirect eval. Requires explici
 
 **API surface:**
 
-- `eval_js`
+- `browser_eval_js`
 
 > **Note:** Permission level approve — always requires user confirmation.
 
 ---
 
-### screenshot
+### browser_screenshot
 
 **Status:** ✅ Implemented · **Category:** media · **Since:** v1.0.0
 
@@ -854,11 +852,11 @@ Capture a screenshot as a data URL (PNG). Lazy-loads html2canvas from CDN.
 
 **API surface:**
 
-- `screenshot`
+- `browser_screenshot`
 
 ---
 
-### screen_info
+### browser_screen_info
 
 **Status:** ✅ Implemented · **Category:** media · **Since:** v1.0.0
 
@@ -870,11 +868,11 @@ Get current page info — URL, title, viewport size, scroll position, and visibl
 
 **API surface:**
 
-- `screen_info`
+- `browser_screen_info`
 
 ---
 
-### memory_store
+### agent_memory_store
 
 **Status:** ✅ Implemented · **Category:** memory · **Since:** v1.0.0
 
@@ -886,13 +884,13 @@ Store a memory for later recall. Categories — core, learned, user, context.
 
 **API surface:**
 
-- `memory_store`
+- `agent_memory_store`
 
 > **Note:** Parameters: key (required), content (required), category (core/learned/user/context).
 
 ---
 
-### memory_recall
+### agent_memory_recall
 
 **Status:** ✅ Implemented · **Category:** memory · **Since:** v1.0.0
 
@@ -904,13 +902,13 @@ Search stored memories by keyword query. Returns top results via hybrid BM25 + v
 
 **API surface:**
 
-- `memory_recall`
+- `agent_memory_recall`
 
 > **Note:** Parameters: query (required), limit (default 10), category (optional filter).
 
 ---
 
-### memory_forget
+### agent_memory_forget
 
 **Status:** ✅ Implemented · **Category:** memory · **Since:** v1.0.0
 
@@ -922,7 +920,7 @@ Delete a stored memory by ID.
 
 **API surface:**
 
-- `memory_forget`
+- `agent_memory_forget`
 
 ---
 
@@ -1201,7 +1199,7 @@ List all installed skills with activation status.
 
 ---
 
-### ask_user_question
+### browser_ask_user
 
 **Status:** ✅ Implemented · **Category:** agent · **Since:** v1.0.0
 
@@ -1213,11 +1211,11 @@ Ask the user one or more questions with predefined options. Max 4 questions, 2-4
 
 **API surface:**
 
-- `ask_user_question`
+- `browser_ask_user`
 
 ---
 
-### switch_agent
+### agent_switch
 
 **Status:** ✅ Implemented · **Category:** agent · **Since:** v1.0.0
 
@@ -1229,13 +1227,13 @@ Switch to a different named agent configuration. Omit agent param to list availa
 
 **API surface:**
 
-- `switch_agent`
+- `agent_switch`
 
 > **Note:** Permission level approve.
 
 ---
 
-### consult_agent
+### agent_consult
 
 **Status:** ✅ Implemented · **Category:** agent · **Since:** v1.0.0
 
@@ -1247,7 +1245,7 @@ Send a message to another agent and get their response without switching.
 
 **API surface:**
 
-- `consult_agent`
+- `agent_consult`
 
 ---
 
@@ -3940,7 +3938,7 @@ Get health status of mesh peers.
 
 ---
 
-### mesh_escrow_create
+### escrow_create
 
 **Status:** ✅ Implemented · **Category:** mesh-payments · **Since:** v2.0.0
 
@@ -3952,11 +3950,11 @@ Create an escrow arrangement between peers.
 
 **API surface:**
 
-- `mesh_escrow_create`
+- `escrow_create`
 
 ---
 
-### mesh_escrow_list
+### escrow_list
 
 **Status:** ✅ Implemented · **Category:** mesh-payments · **Since:** v2.0.0
 
@@ -3968,11 +3966,11 @@ List escrow arrangements.
 
 **API surface:**
 
-- `mesh_escrow_list`
+- `escrow_list`
 
 ---
 
-### mesh_escrow_release
+### escrow_release
 
 **Status:** ✅ Implemented · **Category:** mesh-payments · **Since:** v2.0.0
 
@@ -3984,7 +3982,7 @@ Release funds from escrow.
 
 **API surface:**
 
-- `mesh_escrow_release`
+- `escrow_release`
 
 ---
 
@@ -4036,7 +4034,7 @@ Get a cryptographic timestamp proof from the mesh authority.
 
 ---
 
-### mesh_stealth_save
+### stealth_save
 
 **Status:** ✅ Implemented · **Category:** mesh-privacy · **Since:** v2.0.0
 
@@ -4048,11 +4046,11 @@ Save a stealth identity for anonymous mesh participation.
 
 **API surface:**
 
-- `mesh_stealth_save`
+- `stealth_save`
 
 ---
 
-### mesh_stealth_restore
+### stealth_restore
 
 **Status:** ✅ Implemented · **Category:** mesh-privacy · **Since:** v2.0.0
 
@@ -4064,11 +4062,11 @@ Restore a previously saved stealth identity.
 
 **API surface:**
 
-- `mesh_stealth_restore`
+- `stealth_restore`
 
 ---
 
-### mesh_delta_sync_status
+### delta_sync_status
 
 **Status:** ✅ Implemented · **Category:** mesh-sync · **Since:** v2.0.0
 
@@ -4080,7 +4078,7 @@ Get delta sync status for CRDT documents.
 
 **API surface:**
 
-- `mesh_delta_sync_status`
+- `delta_sync_status`
 
 ---
 
@@ -4100,7 +4098,7 @@ Get mesh gateway node status.
 
 ---
 
-### mesh_torrent_seed
+### torrent_seed
 
 **Status:** ✅ Implemented · **Category:** mesh-files · **Since:** v2.0.0
 
@@ -4112,11 +4110,11 @@ Seed a file for torrent-like distribution.
 
 **API surface:**
 
-- `mesh_torrent_seed`
+- `torrent_seed`
 
 ---
 
-### mesh_ipfs_store
+### ipfs_store
 
 **Status:** ✅ Implemented · **Category:** mesh-files · **Since:** v2.0.0
 
@@ -4128,11 +4126,11 @@ Store content to the mesh IPFS layer.
 
 **API surface:**
 
-- `mesh_ipfs_store`
+- `ipfs_store`
 
 ---
 
-### mesh_ipfs_retrieve
+### ipfs_retrieve
 
 **Status:** ✅ Implemented · **Category:** mesh-files · **Since:** v2.0.0
 
@@ -4144,7 +4142,7 @@ Retrieve content from the mesh IPFS layer.
 
 **API surface:**
 
-- `mesh_ipfs_retrieve`
+- `ipfs_retrieve`
 
 ---
 
@@ -4204,7 +4202,7 @@ Get mesh cluster status.
 
 **Source files:**
 
-- `web/clawser-mesh-peer-tools.js`
+- `web/clawser-mesh-orchestrator.js`
 
 **API surface:**
 
@@ -4220,7 +4218,7 @@ List pods in the mesh cluster.
 
 **Source files:**
 
-- `web/clawser-mesh-peer-tools.js`
+- `web/clawser-mesh-orchestrator.js`
 
 **API surface:**
 
@@ -4236,7 +4234,7 @@ Mesh compute operations.
 
 **Source files:**
 
-- `web/clawser-mesh-peer-tools.js`
+- `web/clawser-mesh-orchestrator.js`
 
 **API surface:**
 
@@ -4252,7 +4250,7 @@ Deploy a service to the mesh cluster.
 
 **Source files:**
 
-- `web/clawser-mesh-peer-tools.js`
+- `web/clawser-mesh-orchestrator.js`
 
 **API surface:**
 
@@ -4268,7 +4266,7 @@ Execute a command in a mesh pod.
 
 **Source files:**
 
-- `web/clawser-mesh-peer-tools.js`
+- `web/clawser-mesh-orchestrator.js`
 
 **API surface:**
 
@@ -4284,7 +4282,7 @@ Expose a service on the mesh.
 
 **Source files:**
 
-- `web/clawser-mesh-peer-tools.js`
+- `web/clawser-mesh-orchestrator.js`
 
 **API surface:**
 
@@ -4300,7 +4298,7 @@ Show resource usage across mesh peers.
 
 **Source files:**
 
-- `web/clawser-mesh-peer-tools.js`
+- `web/clawser-mesh-orchestrator.js`
 
 **API surface:**
 
@@ -4316,7 +4314,7 @@ Drain a mesh node for maintenance.
 
 **Source files:**
 
-- `web/clawser-mesh-peer-tools.js`
+- `web/clawser-mesh-orchestrator.js`
 
 **API surface:**
 
@@ -4412,7 +4410,7 @@ Register a virtual server with route definitions.
 
 **Source files:**
 
-- `web/clawser-server.js`
+- `web/clawser-server-tools.js`
 - `web/clawser-server.d.ts`
 
 **API surface:**
@@ -4429,7 +4427,7 @@ List all registered virtual servers.
 
 **Source files:**
 
-- `web/clawser-server.js`
+- `web/clawser-server-tools.js`
 
 **API surface:**
 
@@ -4445,7 +4443,7 @@ Start a virtual server.
 
 **Source files:**
 
-- `web/clawser-server.js`
+- `web/clawser-server-tools.js`
 
 **API surface:**
 
@@ -4461,7 +4459,7 @@ Stop a running virtual server.
 
 **Source files:**
 
-- `web/clawser-server.js`
+- `web/clawser-server-tools.js`
 
 **API surface:**
 
@@ -4477,7 +4475,7 @@ Update a virtual server configuration.
 
 **Source files:**
 
-- `web/clawser-server.js`
+- `web/clawser-server-tools.js`
 
 **API surface:**
 
@@ -4493,7 +4491,7 @@ Unregister a virtual server.
 
 **Source files:**
 
-- `web/clawser-server.js`
+- `web/clawser-server-tools.js`
 
 **API surface:**
 
@@ -4509,7 +4507,7 @@ Get server access and error logs.
 
 **Source files:**
 
-- `web/clawser-server.js`
+- `web/clawser-server-tools.js`
 
 **API surface:**
 
@@ -4525,7 +4523,7 @@ Test a server route with a sample request.
 
 **Source files:**
 
-- `web/clawser-server.js`
+- `web/clawser-server-tools.js`
 
 **API surface:**
 
@@ -4533,11 +4531,11 @@ Test a server route with a sample request.
 
 ---
 
-### vault_store
+### Vault Secret Storage (library, not an agent tool)
 
 **Status:** ✅ Implemented · **Category:** vault · **Since:** v1.5.0
 
-Encrypt and store a secret in the credential vault.
+SecretVault.store(name, secret) / .retrieve(name) encrypt/decrypt secrets for the credential vault. These are library methods used internally (e.g. by auth profile / API key management UI) — no BrowserTool wraps them as agent-invokable vault_store/vault_retrieve tools. Deliberately or accidentally unwired is a maintainer call, not assumed either way: letting an agent autonomously store/retrieve vault secrets has real security implications (prompt-injection-driven exfiltration risk) that a plain wiring fix shouldn't paper over.
 
 **Source files:**
 
@@ -4546,23 +4544,8 @@ Encrypt and store a secret in the credential vault.
 
 **API surface:**
 
-- `vault_store`
-
----
-
-### vault_retrieve
-
-**Status:** ✅ Implemented · **Category:** vault · **Since:** v1.5.0
-
-Decrypt and retrieve a secret from the vault.
-
-**Source files:**
-
-- `web/clawser-vault.js`
-
-**API surface:**
-
-- `vault_retrieve`
+- `SecretVault.store`
+- `SecretVault.retrieve`
 
 ---
 
@@ -4579,22 +4562,6 @@ CORS-aware HTTP fetch via the Chrome extension (bypasses same-origin).
 **API surface:**
 
 - `ext_cors_fetch`
-
----
-
-### cross_tab_tool_bridge
-
-**Status:** ✅ Implemented · **Category:** daemon · **Since:** v2.0.0
-
-Bridge tool execution across browser tabs via BroadcastChannel.
-
-**Source files:**
-
-- `web/clawser-daemon.js`
-
-**API surface:**
-
-- `cross_tab_tool_bridge`
 
 ---
 

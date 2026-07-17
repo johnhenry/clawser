@@ -656,11 +656,12 @@
     fork, rename, replay, and export (script, markdown, JSON). Session state persisted
     per-workspace via terminal session store.
   files:
-    - web/clawser-shell.js
     - web/clawser-terminal-session-store.js
-    - web/clawser-item-bar.js
+    - web/clawser-ui-panels.js
   api:
-    - terminalSessions
+    - TerminalSessionStore
+    - serializeTerminalSessionEvents
+    - parseTerminalSessionEvents
     - renderTerminalSessionBar
     - replayTerminalSession
   category: sessions

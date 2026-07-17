@@ -96,7 +96,7 @@
     - web/clawser-checkpoint-idb.js
     - web/clawser-terminal-session-store.js
   api:
-    - CheckpointIDB
+    - CheckpointIndexedDB
     - TerminalSessionStore
   category: persistence
   since: "1.5.0"
@@ -186,8 +186,8 @@
     - web/clawser-fs-bootstrap.mjs
   api:
     - GLOBAL_DIRS
-    - PER_WS_DIRS
-    - DEFAULT_FILES
+    - WORKSPACE_DIRS
+    - DEFAULT_CONFIGS
     - bootstrapFilesystem
   category: filesystem
   notes: >
@@ -265,7 +265,8 @@
     - web/clawser-permissions.js
   api:
     - PermissionManager
-    - checkPermission
+    - checkWrite
+    - checkRead
     - setPermission
   category: filesystem
   notes: >

@@ -159,7 +159,7 @@
   files:
     - web/clawser-mesh-delta-sync.js
   api:
-    - DeltaSync
+    - SyncCoordinator
   category: sync
   since: "2.0.0"
 
@@ -217,7 +217,7 @@
   files:
     - web/clawser-mesh-naming.js
   api:
-    - NameResolver
+    - MeshNameResolver
   category: discovery
   since: "2.0.0"
 
@@ -358,7 +358,7 @@
     - web/clawser-mesh-files.js
     - web/clawser-peer-files.js
   api:
-    - FileTransfer
+    - MeshFileTransfer
   category: files
   since: "2.0.0"
 
@@ -417,7 +417,13 @@
   files:
     - web/clawser-mesh-visualizations.js
   api:
-    - MeshVisualization
+    - TrustGraphLayout
+    - TrustHeatmap
+    - TopologySnapshot
+    - TopologyLayout
+    - TopologyDiff
+    - TopologyBroadcaster
+    - VisualizationExporter
   category: ui
   since: "2.0.0"
 
@@ -429,7 +435,7 @@
   files:
     - web/clawser-mesh-devtools.js
   api:
-    - MeshDevtools
+    - MeshInspector
   category: dev
   since: "2.0.0"
 
@@ -451,7 +457,8 @@
   files:
     - web/clawser-mesh-sw-routing.js
   api:
-    - SWRouter
+    - MeshFetchRouter
+    - parseMeshRequest
   category: transport
   since: "2.0.0"
 
@@ -495,7 +502,7 @@
     Federated computation framework for distributing compute jobs across
     mesh peers while preserving data locality.
   files:
-    - web/clawser-mesh-peer-tools.js
+    - web/clawser-peer-compute.js
   api:
     - FederatedCompute
   category: compute
@@ -507,7 +514,7 @@
     Multi-agent swarm coordination across mesh peers. Creates and manages
     collaborative agent swarms for distributed task execution.
   files:
-    - web/clawser-mesh-peer-tools.js
+    - web/clawser-peer-agent-swarm.js
   api:
     - AgentSwarmCoordinator
   category: orchestration

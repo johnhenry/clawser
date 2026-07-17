@@ -101,7 +101,7 @@ Server-side registry implementation for hosting a skill registry. Supports publi
 
 **API surface:**
 
-- `SkillRegistryServer`
+- `SkillsRegistryServer`
 
 ---
 
@@ -187,6 +187,7 @@ Implements the agentskills.io open standard for portable agent skills. Skills de
 
 - `web/clawser-skills.js`
 - `web/clawser-skills.d.ts`
+- `web/types.d.ts`
 
 **API surface:**
 
@@ -208,7 +209,7 @@ Browser-based marketplace UI for discovering, previewing, and installing skills 
 
 **API surface:**
 
-- `marketplace`
+- `SkillMarketplace`
 
 ---
 

@@ -175,9 +175,11 @@
   files:
     - web/clawser-memory.js
     - web/clawser-memory.d.ts
+    - web/clawser-agent.js
+    - web/clawser-agent.d.ts
   api:
     - SemanticMemory.hygiene
-    - memoryHygiene
+    - ClawserAgent.memoryHygiene
   category: maintenance
   notes: "Options: maxAge (ms), maxEntries (count)."
   since: "1.0.0"

@@ -299,6 +299,7 @@ Five-level permission hierarchy for tools: internal (agent-only), read (safe rea
 
 - `BrowserToolRegistry`
 - `ToolPermissionLevel`
+- `TOOL_PERMISSION_LEVELS`
 
 > **Note:** Levels: auto (always), approve (user confirms), denied (blocked).
 

@@ -152,7 +152,7 @@ Service Worker-based heartbeat for detecting tab liveness and coordinating daemo
 
 **API surface:**
 
-- `SWHeartbeat`
+- `SwHeartbeat`
 
 ---
 
@@ -168,7 +168,7 @@ Background task execution engine. Runs agent tasks in the background with progre
 
 **API surface:**
 
-- `BackgroundRunner`
+- `BackgroundSchedulerRunner`
 
 ---
 
@@ -190,22 +190,6 @@ Five agent tools for daemon management: daemon_status, daemon_checkpoint, daemon
 - `DaemonPauseTool`
 - `DaemonResumeTool`
 - `DaemonRestoreTool`
-
----
-
-### Cross-Tab Tool Bridge
-
-**Status:** ✅ Implemented · **Category:** multi-tab · **Since:** v2.0.0
-
-Bridges tool execution across browser tabs via BroadcastChannel. Allows one tab to invoke tools registered in another tab.
-
-**Source files:**
-
-- `web/clawser-daemon.js`
-
-**API surface:**
-
-- `cross_tab_tool_bridge`
 
 ---
 

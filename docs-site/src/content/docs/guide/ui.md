@@ -15,11 +15,13 @@ Streaming chat with markdown rendering, code highlighting, collapsible tool call
 **Source files:**
 
 - `web/clawser-ui-chat.js`
-- `web/clawser-ui.js`
 
 **API surface:**
 
-- `renderChat`
+- `addMsg`
+- `createStreamingMsg`
+- `appendToStreamingMsg`
+- `finalizeStreamingMsg`
 
 ![Chat Interface](../docs/screenshots/panel-chat.png)
 
@@ -324,8 +326,10 @@ Visual representation of mesh topology, peer connections, and network state.
 **API surface:**
 
 - `renderMeshPanel`
-- `renderPeerList`
-- `renderSwarmVisualization`
+- `renderConnectionPanel`
+- `renderPeerStats`
+- `renderSwarmPanel`
+- `renderSwarmStats`
 
 ---
 
@@ -341,7 +345,10 @@ Remote pairing and session management UI. Generate pairing codes, view active se
 
 **API surface:**
 
-- `renderRemotePanel`
+- `renderRemoteTerminal`
+- `renderRemoteFiles`
+- `renderRemoteServiceList`
+- `renderRemoteRuntimePanel`
 
 ---
 
@@ -357,7 +364,7 @@ Virtual server management UI. Add, configure, start/stop, and test servers.
 
 **API surface:**
 
-- `renderServersPanel`
+- `initServerPanel`
 
 ---
 
@@ -373,7 +380,7 @@ File transfer management UI showing active and completed peer-to-peer transfers.
 
 **API surface:**
 
-- `renderTransfersPanel`
+- `renderTransferPanel`
 
 ---
 
@@ -389,7 +396,7 @@ Channel configuration and monitoring UI. Add/remove channels, view status and me
 
 **API surface:**
 
-- `renderChannelsPanel`
+- `renderChannelPanel`
 
 ---
 
@@ -405,7 +412,9 @@ Usage and cost visualization charts. Daily cost trends, per-model breakdown, and
 
 **API surface:**
 
-- `renderCostCharts`
+- `renderBarChart`
+- `renderTimeSeriesChart`
+- `renderCostBreakdown`
 
 ---
 
@@ -437,7 +446,9 @@ File drop zone for uploading files to OPFS via drag-and-drop.
 
 **API surface:**
 
-- `renderDropZone`
+- `extractHandles`
+- `mountPathForHandle`
+- `DropHandler`
 
 ---
 
@@ -566,7 +577,9 @@ Tab-based view management for organizing UI content into switchable panes.
 
 **API surface:**
 
-- `TabViews`
+- `TabViewManager`
+- `parseTabViewHash`
+- `buildTabViewUrl`
 
 ---
 

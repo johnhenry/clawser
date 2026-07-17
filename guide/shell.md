@@ -903,13 +903,14 @@ First-class terminal session management. Multiple named sessions with history, f
 
 **Source files:**
 
-- `web/clawser-shell.js`
 - `web/clawser-terminal-session-store.js`
-- `web/clawser-item-bar.js`
+- `web/clawser-ui-panels.js`
 
 **API surface:**
 
-- `terminalSessions`
+- `TerminalSessionStore`
+- `serializeTerminalSessionEvents`
+- `parseTerminalSessionEvents`
 - `renderTerminalSessionBar`
 - `replayTerminalSession`
 

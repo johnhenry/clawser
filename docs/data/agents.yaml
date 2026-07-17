@@ -61,8 +61,8 @@
   files:
     - web/clawser-tools.js
   api:
-    - switch_agent
-    - consult_agent
+    - agent_switch
+    - agent_consult
   category: switching
   since: "1.0.0"
 

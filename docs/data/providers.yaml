@@ -274,6 +274,7 @@
     or URL references.
   files:
     - web/clawser-providers.js
+    - web/types.d.ts
   api:
     - ChatMessage
   category: multimodal

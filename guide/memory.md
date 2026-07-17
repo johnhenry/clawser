@@ -219,11 +219,13 @@ Cleanup operations for memory maintenance. Removes expired entries based on max 
 
 - `web/clawser-memory.js`
 - `web/clawser-memory.d.ts`
+- `web/clawser-agent.js`
+- `web/clawser-agent.d.ts`
 
 **API surface:**
 
 - `SemanticMemory.hygiene`
-- `memoryHygiene`
+- `ClawserAgent.memoryHygiene`
 
 > **Note:** Options: maxAge (ms), maxEntries (count).
 

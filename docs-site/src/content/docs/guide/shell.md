@@ -124,7 +124,7 @@ Each workspace gets a stable `/home/<name>` directory in the shell view, derived
 **See also:**
 
 - OPFS Filesystem
-- [Workspace: /proc Virtual Filesystem](/docs/guide/workspace/)
+- [Workspace: /proc Virtual Filesystem](./workspace.md)
 
 ---
 
@@ -905,13 +905,14 @@ First-class terminal session management. Multiple named sessions with history, f
 
 **Source files:**
 
-- `web/clawser-shell.js`
 - `web/clawser-terminal-session-store.js`
-- `web/clawser-item-bar.js`
+- `web/clawser-ui-panels.js`
 
 **API surface:**
 
-- `terminalSessions`
+- `TerminalSessionStore`
+- `serializeTerminalSessionEvents`
+- `parseTerminalSessionEvents`
 - `renderTerminalSessionBar`
 - `replayTerminalSession`
 

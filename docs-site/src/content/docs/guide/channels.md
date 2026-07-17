@@ -103,15 +103,16 @@ All inbound messages from any channel are normalized to the InboundMessage forma
 
 **Status:** ✅ Implemented · **Category:** adapter · **Since:** v1.0.0
 
-Discord bot integration via WebSocket gateway. Supports text channels in guilds. Requires Discord bot token. Fully self-contained — no server needed, the browser tab connects directly to Discord's Gateway.
+Discord bot integration via WebSocket gateway. Supports text channels in guilds. Requires Discord bot token. Fully self-contained — no server needed, the browser tab connects directly to Discord's Gateway. Add via the Channels panel (type "discord") — this constructs a real DiscordPlugin and registers it with ChannelGateway, not just a config-only entry.
 
 **Source files:**
 
 - `web/clawser-channel-discord.js`
+- `web/clawser-ui-channels.js`
 
 **API surface:**
 
-- `DiscordChannel`
+- `DiscordPlugin`
 
 > **Note:** Default gateway intents (33281 = GUILDS + GUILD_MESSAGES + MESSAGE_CONTENT) do NOT include DIRECT_MESSAGES, so DMs are not received out of the box. Pass a custom `intents` bitmask (opts.intents, with the DIRECT_MESSAGES bit added) to receive DMs.
 
@@ -125,15 +126,16 @@ Discord bot integration via WebSocket gateway. Supports text channels in guilds.
 
 **Status:** ✅ Implemented · **Category:** adapter · **Since:** v1.0.0
 
-Slack integration via Socket Mode (WebSocket, self-contained — same pattern as Discord's Gateway) when an appToken is configured, or the classic Events API webhook for deployments that run their own relay. Outbound sends via the Web API (chat.postMessage).
+Slack integration via Socket Mode (WebSocket, self-contained — same pattern as Discord's Gateway) when an appToken is configured, or the classic Events API webhook for deployments that run their own relay. Outbound sends via the Web API (chat.postMessage). Add via the Channels panel (type "slack") — this constructs a real SlackPlugin and registers it with ChannelGateway, not just a config-only entry.
 
 **Source files:**
 
 - `web/clawser-channel-slack.js`
+- `web/clawser-ui-channels.js`
 
 **API surface:**
 
-- `SlackChannel`
+- `SlackPlugin`
 
 > **Note:** Fully self-contained via Socket Mode — no server needed, the browser tab connects directly to Slack using an app-level token (xapp-...). The webhook path (handleEvent()) still works for anyone who'd rather run their own relay/server instead.
 
@@ -147,15 +149,16 @@ Slack integration via Socket Mode (WebSocket, self-contained — same pattern as
 
 **Status:** ✅ Implemented · **Category:** adapter · **Since:** v1.0.0
 
-Telegram bot integration via long-polling. Supports text messages only — `createInboundMessage()` hardcodes `attachments: []` and there is no image or inline-keyboard support (inbound or outbound). Fully self-contained — no server needed.
+Telegram bot integration via long-polling. Supports text messages only — `createInboundMessage()` hardcodes `attachments: []` and there is no image or inline-keyboard support (inbound or outbound). Fully self-contained — no server needed. Add via the Channels panel (type "telegram") — this constructs a real TelegramPlugin and registers it with ChannelGateway, not just a config-only entry.
 
 **Source files:**
 
 - `web/clawser-channel-telegram.js`
+- `web/clawser-ui-channels.js`
 
 **API surface:**
 
-- `TelegramChannel`
+- `TelegramPlugin`
 
 > **Note:** Requires bot token from BotFather. Images/attachments and inline keyboards are not implemented; tracked as a gap, not a documentation omission.
 
@@ -167,19 +170,20 @@ Telegram bot integration via long-polling. Supports text messages only — `crea
 
 ### Email Channel
 
-**Status:** 📋 Planned · **Category:** adapter · **Since:** v2.0.0
+**Status:** ✅ Implemented · **Category:** adapter · **Since:** v2.0.0
 
-IMAP/SMTP email channel for receiving and sending email as the agent. Will support HTML and plain text formatting with subject/body separation.
+IMAP polling (via a wsh-based fetch proxy) + SMTP/Gmail API send. Normalizes inbound messages via createInboundMessage(). Add via the Channels panel (type "email") — the form's flat username/password fields are combined into a credentials object at construction time (EmailPlugin's real constructor shape).
 
 **Source files:**
 
 - `web/clawser-channel-email.js`
+- `web/clawser-ui-channels.js`
 
 **API surface:**
 
-- `EmailChannel`
+- `EmailPlugin`
 
-> **Note:** Planned for next release cycle.
+> **Note:** Was fully built and tested (15 tests) but never actually instantiated anywhere in the app until it was wired into the Channels panel's start/stop flow.
 
 ---
 
@@ -187,15 +191,16 @@ IMAP/SMTP email channel for receiving and sending email as the agent. Will suppo
 
 **Status:** ✅ Implemented · **Category:** adapter · **Since:** v1.0.0
 
-IRC client integration with channel and private message support. Connects to IRC servers via WebSocket bridge.
+IRC client integration with channel and private message support. Connects to IRC servers via WebSocket bridge. Add via the Channels panel (type "irc") — this constructs a real IrcPlugin and registers it with ChannelGateway, not just a config-only entry. Supports a single channel per configured connection (IrcPlugin.config.channel), not multiple.
 
 **Source files:**
 
 - `web/clawser-channel-irc.js`
+- `web/clawser-ui-channels.js`
 
 **API surface:**
 
-- `IRCChannel`
+- `IrcPlugin`
 
 > **Note:** Bring your own server: the `server` field must be a `wss://` URL for a WebSocket-to-IRC gateway, not a raw IRC address — browsers can't open plain TCP sockets. Point it at a public WS-IRC bridge (e.g. the kind IRC web clients use) or run your own.
 
@@ -205,15 +210,16 @@ IRC client integration with channel and private message support. Connects to IRC
 
 **Status:** ✅ Implemented · **Category:** adapter · **Since:** v1.0.0
 
-Matrix protocol integration for decentralized chat. Supports encrypted rooms via Olm. Connects to any Matrix homeserver.
+Matrix protocol integration for decentralized chat. Supports encrypted rooms via Olm. Connects to any Matrix homeserver. Add via the Channels panel (type "matrix") — the form's homeserverUrl field is mapped to MatrixPlugin's real constructor field (homeserver) at construction time.
 
 **Source files:**
 
 - `web/clawser-channel-matrix.js`
+- `web/clawser-ui-channels.js`
 
 **API surface:**
 
-- `MatrixChannel`
+- `MatrixPlugin`
 
 > **Note:** Bring your own homeserver: works directly from the browser via the Matrix client-server API's long-poll /sync — no bridge needed, unlike IRC. Point homeserverUrl at any Matrix homeserver you have an account (and access token) on, self-hosted or matrix.org.
 
@@ -223,15 +229,16 @@ Matrix protocol integration for decentralized chat. Supports encrypted rooms via
 
 **Status:** ✅ Implemented · **Category:** adapter · **Since:** v1.5.0
 
-Generic relay channel for bridging messages between Clawser instances or external systems via WebSocket.
+Virtual webhook server route + BroadcastChannel relay for bridging messages between Clawser instances or external systems. Add via the Channels panel (type "webhook") — this constructs a real ChannelRelay and registers it with ChannelGateway. The cross-tab BroadcastChannel relay half works standalone once registered; the virtual-server webhook-receiving half (handleWebhook()) still needs to be wired to the app's virtual server routing (clawser-server.js) separately.
 
 **Source files:**
 
 - `web/clawser-channel-relay.js`
+- `web/clawser-ui-channels.js`
 
 **API surface:**
 
-- `RelayChannel`
+- `ChannelRelay`
 
 ---
 
@@ -247,7 +254,7 @@ Browser tab monitoring channel. Watches for changes in specified browser tabs an
 
 **API surface:**
 
-- `TabWatchChannel`
+- `TabWatcherPlugin`
 
 ---
 

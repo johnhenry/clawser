@@ -209,7 +209,7 @@ Efficient delta-based synchronization that only transmits changes rather than fu
 
 **API surface:**
 
-- `DeltaSync`
+- `SyncCoordinator`
 
 ---
 
@@ -279,7 +279,7 @@ Name resolution service for the mesh. Maps human-readable names to peer identiti
 
 **API surface:**
 
-- `NameResolver`
+- `MeshNameResolver`
 
 ---
 
@@ -464,7 +464,7 @@ File sharing between mesh peers with transfer offer/accept/cancel protocol.
 
 **API surface:**
 
-- `FileTransfer`
+- `MeshFileTransfer`
 
 ---
 
@@ -544,7 +544,13 @@ Visual representations of mesh topology, peer connections, and data flow.
 
 **API surface:**
 
-- `MeshVisualization`
+- `TrustGraphLayout`
+- `TrustHeatmap`
+- `TopologySnapshot`
+- `TopologyLayout`
+- `TopologyDiff`
+- `TopologyBroadcaster`
+- `VisualizationExporter`
 
 ---
 
@@ -560,7 +566,7 @@ Developer tools for inspecting and debugging mesh state, connections, and messag
 
 **API surface:**
 
-- `MeshDevtools`
+- `MeshInspector`
 
 ---
 
@@ -592,7 +598,8 @@ Service Worker routing integration for mesh requests.
 
 **API surface:**
 
-- `SWRouter`
+- `MeshFetchRouter`
+- `parseMeshRequest`
 
 ---
 
@@ -652,7 +659,7 @@ Federated computation framework for distributing compute jobs across mesh peers 
 
 **Source files:**
 
-- `web/clawser-mesh-peer-tools.js`
+- `web/clawser-peer-compute.js`
 
 **API surface:**
 
@@ -668,7 +675,7 @@ Multi-agent swarm coordination across mesh peers. Creates and manages collaborat
 
 **Source files:**
 
-- `web/clawser-mesh-peer-tools.js`
+- `web/clawser-peer-agent-swarm.js`
 
 **API surface:**
 

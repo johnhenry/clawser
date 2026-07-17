@@ -175,7 +175,7 @@ Pre-configured autonomy profiles that bundle level, rate limits, cost caps, and 
 
 **API surface:**
 
-- `autonomyPresets`
+- `AutonomyPresetManager`
 
 **See also:**
 
@@ -649,10 +649,10 @@ Export terminal sessions in three formats: Markdown (readable), HTML (self-conta
 
 **API surface:**
 
-- `exportSessionMarkdown`
-- `exportSessionHTML`
-- `exportSessionJSON`
-- `SECRET_PATTERNS`
+- `exportSessionAsMarkdown`
+- `exportSessionAsHTML`
+- `exportSessionAsJSON`
+- `sanitizeEvents`
 
 > **Note:** Sanitizes Anthropic, OpenAI, GitHub, Slack, and AWS credentials.
 
@@ -715,7 +715,10 @@ Mount v86 guest filesystem into the clawser virtual filesystem at /mnt/guest/. S
 
 - `mountGuest`
 - `umountGuest`
-- `GuestFsAdapter`
+- `createGuestFsAdapter`
+- `listGuestMounts`
+- `isGuestMount`
+- `autoMountGuest`
 
 > **Note:** Phase 9 of Unix filesystem architecture. Requires a running v86 guest.
 

@@ -118,7 +118,7 @@
     - web/clawser-sw-heartbeat.js
     - web/sw.js
   api:
-    - SWHeartbeat
+    - SwHeartbeat
   category: heartbeat
   since: "1.5.0"
 
@@ -130,7 +130,7 @@
   files:
     - web/clawser-background-runner.js
   api:
-    - BackgroundRunner
+    - BackgroundSchedulerRunner
   category: execution
   since: "1.5.0"
 
@@ -150,18 +150,6 @@
     - DaemonRestoreTool
   category: tools
   since: "1.5.0"
-
-- name: Cross-Tab Tool Bridge
-  status: implemented
-  description: >
-    Bridges tool execution across browser tabs via BroadcastChannel. Allows
-    one tab to invoke tools registered in another tab.
-  files:
-    - web/clawser-daemon.js
-  api:
-    - cross_tab_tool_bridge
-  category: multi-tab
-  since: "2.0.0"
 
 - name: Wake Lock
   status: partial

@@ -170,16 +170,16 @@
     - Kernel
     - ServiceRegistry
     - ResourceTable
-    - ByteStream
     - Clock
     - RNG
     - Logger
     - Tracer
-    - Signal
-    - Caps
-    - Env
+    - SignalController
+    - CapsBuilder
+    - Environment
     - Stdio
-    - MessagePort
+    - KernelMessagePort
+    - ChaosEngine
   category: kernel
   notes: 16 ES modules providing microkernel services. Tenant isolation and capability enforcement.
   since: "2.0.0"
@@ -187,13 +187,22 @@
 - name: Raijin Bridge
   status: implemented
   description: >
-    Integration bridge with the Raijin framework for state management
-    and WSH adapter functionality.
+    Bridge between raijin PBFT consensus (see PBFT Consensus in mesh.yaml)
+    and Clawser's mesh wire format — pod ID key mapping, PBFT payload
+    encode/decode, a mesh-transport adapter for raijin-consensus, a
+    consensus-backed credit ledger, and a WSH session-key mapping/transport
+    adapter for PBFT over WSH.
   files:
     - web/clawser-raijin-bridge.js
     - web/clawser-raijin-state-view.js
     - web/clawser-raijin-wsh-adapter.js
   api:
-    - RaijinBridge
+    - PodKeyMapping
+    - ClawserTransportAdapter
+    - encodePBFTPayload
+    - decodePBFTPayload
+    - ConsensusBackedLedger
+    - SessionKeyMapping
+    - WshPBFTTransport
   category: integration
   since: "2.0.0"

@@ -262,6 +262,7 @@
   api:
     - BrowserToolRegistry
     - ToolPermissionLevel
+    - TOOL_PERMISSION_LEVELS
   category: permissions
   notes: "Levels: auto (always), approve (user confirms), denied (blocked)."
   since: "1.0.0"

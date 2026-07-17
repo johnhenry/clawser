@@ -72,8 +72,8 @@ Switch between named agent configurations at runtime. Applies the agent's system
 
 **API surface:**
 
-- `switch_agent`
-- `consult_agent`
+- `agent_switch`
+- `agent_consult`
 
 ---
 

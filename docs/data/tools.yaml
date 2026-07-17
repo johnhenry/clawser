@@ -3,26 +3,26 @@
 
 # ─── NETWORK TOOLS ───────────────────────────────────────────────────
 
-- name: fetch
+- name: browser_fetch
   status: implemented
   description: HTTP/HTTPS requests with configurable domain allowlist. Returns status, headers, and body text (truncated at 50K chars).
   files:
     - web/clawser-tools.js
     - web/clawser-tools.d.ts
   api:
-    - fetch
+    - browser_fetch
   category: network
   permission: network
   notes: "Parameters: url (required), method (GET/POST/PUT/DELETE/PATCH), headers (object), body (string). Enforces domain allowlist."
   since: "1.0.0"
 
-- name: web_search
+- name: browser_web_search
   status: implemented
   description: Search the web using DuckDuckGo HTML lite endpoint. No API key required.
   files:
     - web/clawser-tools.js
   api:
-    - web_search
+    - browser_web_search
   category: network
   permission: network
   notes: "Parameters: query (required), max_results (number). Uses DuckDuckGo lite."
@@ -30,19 +30,19 @@
 
 # ─── DOM TOOLS ────────────────────────────────────────────────────────
 
-- name: dom_query
+- name: browser_dom_query
   status: implemented
   description: Query DOM elements using CSS selectors. Returns text content, attributes, and structure.
   files:
     - web/clawser-tools.js
   api:
-    - dom_query
+    - browser_dom_query
   category: dom
   permission: browser
   notes: "Parameters: selector (required), limit (default 10), include_html (boolean)."
   since: "1.0.0"
 
-- name: dom_modify
+- name: browser_dom_modify
   status: implemented
   description: >
     Modify DOM elements — setText, setHTML, setAttribute, setStyle, addClass, removeClass,
@@ -50,7 +50,7 @@
   files:
     - web/clawser-tools.js
   api:
-    - dom_modify
+    - browser_dom_modify
   category: dom
   permission: browser
   notes: Uses native Sanitizer API when available. XSS prevention built in.
@@ -58,169 +58,169 @@
 
 # ─── FILESYSTEM TOOLS ────────────────────────────────────────────────
 
-- name: fs_read
+- name: browser_fs_read
   status: implemented
   description: Read a file from the Origin Private File System (OPFS). Max read size 50MB.
   files:
     - web/clawser-tools.js
   api:
-    - fs_read
+    - browser_fs_read
   category: filesystem
   permission: read
   notes: "Parameters: path (required), encoding (utf8/base64, default utf8)."
   since: "1.0.0"
 
-- name: fs_write
+- name: browser_fs_write
   status: implemented
   description: Write a file to OPFS. Creates parent directories as needed. Max 10MB default.
   files:
     - web/clawser-tools.js
   api:
-    - fs_write
+    - browser_fs_write
   category: filesystem
   permission: write
   notes: "Parameters: path (required), content (required), encoding. Checks storage quota — warns at 80%, blocks at 95%."
   since: "1.0.0"
 
-- name: fs_list
+- name: browser_fs_list
   status: implemented
   description: List files and directories in OPFS.
   files:
     - web/clawser-tools.js
   api:
-    - fs_list
+    - browser_fs_list
   category: filesystem
   permission: read
   notes: "Parameters: path (default /), recursive (boolean)."
   since: "1.0.0"
 
-- name: fs_delete
+- name: browser_fs_delete
   status: implemented
   description: Delete a file or directory from OPFS with optional recursive flag.
   files:
     - web/clawser-tools.js
   api:
-    - fs_delete
+    - browser_fs_delete
   category: filesystem
   permission: write
   notes: "Parameters: path (required), recursive (boolean)."
   since: "1.0.0"
 
-- name: fs_mkdir
+- name: browser_fs_mkdir
   status: implemented
   description: Create a directory in OPFS. Creates parent directories as needed.
   files:
     - web/clawser-tools.js
   api:
-    - fs_mkdir
+    - browser_fs_mkdir
   category: filesystem
   permission: write
   since: "1.0.0"
 
 # ─── STORAGE TOOLS ───────────────────────────────────────────────────
 
-- name: storage_get
+- name: browser_storage_get
   status: implemented
   description: Read a value from localStorage by key. Blocks access to clawser_* internal keys.
   files:
     - web/clawser-tools.js
   api:
-    - storage_get
+    - browser_storage_get
   category: storage
   permission: read
   since: "1.0.0"
 
-- name: storage_set
+- name: browser_storage_set
   status: implemented
   description: Write a value to localStorage. Blocks writing to clawser_* internal keys.
   files:
     - web/clawser-tools.js
   api:
-    - storage_set
+    - browser_storage_set
   category: storage
   permission: write
   since: "1.0.0"
 
-- name: storage_delete
+- name: browser_storage_delete
   status: implemented
   description: Delete a localStorage key. Blocks deletion of clawser_* internal keys.
   files:
     - web/clawser-tools.js
   api:
-    - storage_delete
+    - browser_storage_delete
   category: storage
   permission: write
   since: "1.0.0"
 
-- name: storage_list
+- name: browser_storage_list
   status: implemented
   description: List all keys in localStorage with value lengths. Hides clawser_* internal keys.
   files:
     - web/clawser-tools.js
   api:
-    - storage_list
+    - browser_storage_list
   category: storage
   permission: read
   since: "1.0.0"
 
 # ─── CLIPBOARD TOOLS ─────────────────────────────────────────────────
 
-- name: clipboard_read
+- name: browser_clipboard_read
   status: implemented
   description: Read text from the system clipboard.
   files:
     - web/clawser-tools.js
   api:
-    - clipboard_read
+    - browser_clipboard_read
   category: clipboard
   permission: browser
   notes: Requires browser permission grant.
   since: "1.0.0"
 
-- name: clipboard_write
+- name: browser_clipboard_write
   status: implemented
   description: Write text to the system clipboard.
   files:
     - web/clawser-tools.js
   api:
-    - clipboard_write
+    - browser_clipboard_write
   category: clipboard
   permission: browser
   since: "1.0.0"
 
 # ─── NAVIGATION TOOLS ────────────────────────────────────────────────
 
-- name: navigate
+- name: browser_navigate
   status: implemented
   description: Open a URL in a new browser tab or the current page. Only allows http/https protocols.
   files:
     - web/clawser-tools.js
   api:
-    - navigate
+    - browser_navigate
   category: navigation
   permission: browser
   since: "1.0.0"
 
-- name: notify
+- name: browser_notify
   status: implemented
   description: Show a browser notification with title, body, and optional icon.
   files:
     - web/clawser-tools.js
   api:
-    - notify
+    - browser_notify
   category: navigation
   permission: browser
   since: "1.0.0"
 
 # ─── CODE EXECUTION TOOLS ────────────────────────────────────────────
 
-- name: eval_js
+- name: browser_eval_js
   status: implemented
   description: Evaluate JavaScript in the page global scope via indirect eval. Requires explicit user confirmation.
   files:
     - web/clawser-tools.js
   api:
-    - eval_js
+    - browser_eval_js
   category: code
   permission: approve
   notes: Permission level approve — always requires user confirmation.
@@ -228,61 +228,61 @@
 
 # ─── MEDIA/SCREEN TOOLS ──────────────────────────────────────────────
 
-- name: screenshot
+- name: browser_screenshot
   status: implemented
   description: Capture a screenshot as a data URL (PNG). Lazy-loads html2canvas from CDN.
   files:
     - web/clawser-tools.js
   api:
-    - screenshot
+    - browser_screenshot
   category: media
   permission: browser
   since: "1.0.0"
 
-- name: screen_info
+- name: browser_screen_info
   status: implemented
   description: Get current page info — URL, title, viewport size, scroll position, and visible text summary.
   files:
     - web/clawser-tools.js
   api:
-    - screen_info
+    - browser_screen_info
   category: media
   permission: read
   since: "1.0.0"
 
 # ─── MEMORY TOOLS ────────────────────────────────────────────────────
 
-- name: memory_store
+- name: agent_memory_store
   status: implemented
   description: Store a memory for later recall. Categories — core, learned, user, context.
   files:
     - web/clawser-tools.js
   api:
-    - memory_store
+    - agent_memory_store
   category: memory
   permission: internal
   notes: "Parameters: key (required), content (required), category (core/learned/user/context)."
   since: "1.0.0"
 
-- name: memory_recall
+- name: agent_memory_recall
   status: implemented
   description: Search stored memories by keyword query. Returns top results via hybrid BM25 + vector search.
   files:
     - web/clawser-tools.js
   api:
-    - memory_recall
+    - agent_memory_recall
   category: memory
   permission: internal
   notes: "Parameters: query (required), limit (default 10), category (optional filter)."
   since: "1.0.0"
 
-- name: memory_forget
+- name: agent_memory_forget
   status: implemented
   description: Delete a stored memory by ID.
   files:
     - web/clawser-tools.js
   api:
-    - memory_forget
+    - agent_memory_forget
   category: memory
   permission: internal
   since: "1.0.0"
@@ -484,36 +484,36 @@
 
 # ─── AGENT TOOLS ─────────────────────────────────────────────────────
 
-- name: ask_user_question
+- name: browser_ask_user
   status: implemented
   description: Ask the user one or more questions with predefined options. Max 4 questions, 2-4 options each.
   files:
     - web/clawser-tools.js
   api:
-    - ask_user_question
+    - browser_ask_user
   category: agent
   permission: auto
   since: "1.0.0"
 
-- name: switch_agent
+- name: agent_switch
   status: implemented
   description: Switch to a different named agent configuration. Omit agent param to list available agents.
   files:
     - web/clawser-tools.js
   api:
-    - switch_agent
+    - agent_switch
   category: agent
   permission: approve
   notes: Permission level approve.
   since: "1.0.0"
 
-- name: consult_agent
+- name: agent_consult
   status: implemented
   description: Send a message to another agent and get their response without switching.
   files:
     - web/clawser-tools.js
   api:
-    - consult_agent
+    - agent_consult
   category: agent
   permission: approve
   since: "1.0.0"
@@ -2337,33 +2337,33 @@
   category: mesh-ops
   since: "2.0.0"
 
-- name: mesh_escrow_create
+- name: escrow_create
   status: implemented
   description: Create an escrow arrangement between peers.
   files:
     - web/clawser-mesh-peer-tools.js
   api:
-    - mesh_escrow_create
+    - escrow_create
   category: mesh-payments
   since: "2.0.0"
 
-- name: mesh_escrow_list
+- name: escrow_list
   status: implemented
   description: List escrow arrangements.
   files:
     - web/clawser-mesh-peer-tools.js
   api:
-    - mesh_escrow_list
+    - escrow_list
   category: mesh-payments
   since: "2.0.0"
 
-- name: mesh_escrow_release
+- name: escrow_release
   status: implemented
   description: Release funds from escrow.
   files:
     - web/clawser-mesh-peer-tools.js
   api:
-    - mesh_escrow_release
+    - escrow_release
   category: mesh-payments
   since: "2.0.0"
 
@@ -2397,33 +2397,33 @@
   category: mesh-ops
   since: "2.0.0"
 
-- name: mesh_stealth_save
+- name: stealth_save
   status: implemented
   description: Save a stealth identity for anonymous mesh participation.
   files:
     - web/clawser-mesh-peer-tools.js
   api:
-    - mesh_stealth_save
+    - stealth_save
   category: mesh-privacy
   since: "2.0.0"
 
-- name: mesh_stealth_restore
+- name: stealth_restore
   status: implemented
   description: Restore a previously saved stealth identity.
   files:
     - web/clawser-mesh-peer-tools.js
   api:
-    - mesh_stealth_restore
+    - stealth_restore
   category: mesh-privacy
   since: "2.0.0"
 
-- name: mesh_delta_sync_status
+- name: delta_sync_status
   status: implemented
   description: Get delta sync status for CRDT documents.
   files:
     - web/clawser-mesh-peer-tools.js
   api:
-    - mesh_delta_sync_status
+    - delta_sync_status
   category: mesh-sync
   since: "2.0.0"
 
@@ -2437,33 +2437,33 @@
   category: mesh-ops
   since: "2.0.0"
 
-- name: mesh_torrent_seed
+- name: torrent_seed
   status: implemented
   description: Seed a file for torrent-like distribution.
   files:
     - web/clawser-mesh-peer-tools.js
   api:
-    - mesh_torrent_seed
+    - torrent_seed
   category: mesh-files
   since: "2.0.0"
 
-- name: mesh_ipfs_store
+- name: ipfs_store
   status: implemented
   description: Store content to the mesh IPFS layer.
   files:
     - web/clawser-mesh-peer-tools.js
   api:
-    - mesh_ipfs_store
+    - ipfs_store
   category: mesh-files
   since: "2.0.0"
 
-- name: mesh_ipfs_retrieve
+- name: ipfs_retrieve
   status: implemented
   description: Retrieve content from the mesh IPFS layer.
   files:
     - web/clawser-mesh-peer-tools.js
   api:
-    - mesh_ipfs_retrieve
+    - ipfs_retrieve
   category: mesh-files
   since: "2.0.0"
 
@@ -2503,7 +2503,7 @@
   status: implemented
   description: Get mesh cluster status.
   files:
-    - web/clawser-mesh-peer-tools.js
+    - web/clawser-mesh-orchestrator.js
   api:
     - meshctl_status
   category: meshctl
@@ -2513,7 +2513,7 @@
   status: implemented
   description: List pods in the mesh cluster.
   files:
-    - web/clawser-mesh-peer-tools.js
+    - web/clawser-mesh-orchestrator.js
   api:
     - meshctl_pods
   category: meshctl
@@ -2523,7 +2523,7 @@
   status: implemented
   description: Mesh compute operations.
   files:
-    - web/clawser-mesh-peer-tools.js
+    - web/clawser-mesh-orchestrator.js
   api:
     - meshctl_compute
   category: meshctl
@@ -2533,7 +2533,7 @@
   status: implemented
   description: Deploy a service to the mesh cluster.
   files:
-    - web/clawser-mesh-peer-tools.js
+    - web/clawser-mesh-orchestrator.js
   api:
     - meshctl_deploy
   category: meshctl
@@ -2543,7 +2543,7 @@
   status: implemented
   description: Execute a command in a mesh pod.
   files:
-    - web/clawser-mesh-peer-tools.js
+    - web/clawser-mesh-orchestrator.js
   api:
     - meshctl_exec
   category: meshctl
@@ -2553,7 +2553,7 @@
   status: implemented
   description: Expose a service on the mesh.
   files:
-    - web/clawser-mesh-peer-tools.js
+    - web/clawser-mesh-orchestrator.js
   api:
     - meshctl_expose
   category: meshctl
@@ -2563,7 +2563,7 @@
   status: implemented
   description: Show resource usage across mesh peers.
   files:
-    - web/clawser-mesh-peer-tools.js
+    - web/clawser-mesh-orchestrator.js
   api:
     - meshctl_top
   category: meshctl
@@ -2573,7 +2573,7 @@
   status: implemented
   description: Drain a mesh node for maintenance.
   files:
-    - web/clawser-mesh-peer-tools.js
+    - web/clawser-mesh-orchestrator.js
   api:
     - meshctl_drain
   category: meshctl
@@ -2639,7 +2639,7 @@
   status: implemented
   description: Register a virtual server with route definitions.
   files:
-    - web/clawser-server.js
+    - web/clawser-server-tools.js
     - web/clawser-server.d.ts
   api:
     - server_add
@@ -2650,7 +2650,7 @@
   status: implemented
   description: List all registered virtual servers.
   files:
-    - web/clawser-server.js
+    - web/clawser-server-tools.js
   api:
     - server_list
   category: server
@@ -2660,7 +2660,7 @@
   status: implemented
   description: Start a virtual server.
   files:
-    - web/clawser-server.js
+    - web/clawser-server-tools.js
   api:
     - server_start
   category: server
@@ -2670,7 +2670,7 @@
   status: implemented
   description: Stop a running virtual server.
   files:
-    - web/clawser-server.js
+    - web/clawser-server-tools.js
   api:
     - server_stop
   category: server
@@ -2680,7 +2680,7 @@
   status: implemented
   description: Update a virtual server configuration.
   files:
-    - web/clawser-server.js
+    - web/clawser-server-tools.js
   api:
     - server_update
   category: server
@@ -2690,7 +2690,7 @@
   status: implemented
   description: Unregister a virtual server.
   files:
-    - web/clawser-server.js
+    - web/clawser-server-tools.js
   api:
     - server_remove
   category: server
@@ -2700,7 +2700,7 @@
   status: implemented
   description: Get server access and error logs.
   files:
-    - web/clawser-server.js
+    - web/clawser-server-tools.js
   api:
     - server_logs
   category: server
@@ -2710,7 +2710,7 @@
   status: implemented
   description: Test a server route with a sample request.
   files:
-    - web/clawser-server.js
+    - web/clawser-server-tools.js
   api:
     - server_test
   category: server
@@ -2718,24 +2718,23 @@
 
 # ─── VAULT TOOLS ─────────────────────────────────────────────────────
 
-- name: vault_store
+- name: Vault Secret Storage (library, not an agent tool)
   status: implemented
-  description: Encrypt and store a secret in the credential vault.
+  description: >
+    SecretVault.store(name, secret) / .retrieve(name) encrypt/decrypt secrets
+    for the credential vault. These are library methods used internally
+    (e.g. by auth profile / API key management UI) — no BrowserTool wraps
+    them as agent-invokable vault_store/vault_retrieve tools. Deliberately
+    or accidentally unwired is a maintainer call, not assumed either way:
+    letting an agent autonomously store/retrieve vault secrets has real
+    security implications (prompt-injection-driven exfiltration risk) that
+    a plain wiring fix shouldn't paper over.
   files:
     - web/clawser-vault.js
     - web/clawser-vault.d.ts
   api:
-    - vault_store
-  category: vault
-  since: "1.5.0"
-
-- name: vault_retrieve
-  status: implemented
-  description: Decrypt and retrieve a secret from the vault.
-  files:
-    - web/clawser-vault.js
-  api:
-    - vault_retrieve
+    - SecretVault.store
+    - SecretVault.retrieve
   category: vault
   since: "1.5.0"
 
@@ -2749,18 +2748,6 @@
   api:
     - ext_cors_fetch
   category: extension
-  since: "2.0.0"
-
-# ─── CROSS-TAB TOOL ──────────────────────────────────────────────────
-
-- name: cross_tab_tool_bridge
-  status: implemented
-  description: Bridge tool execution across browser tabs via BroadcastChannel.
-  files:
-    - web/clawser-daemon.js
-  api:
-    - cross_tab_tool_bridge
-  category: daemon
   since: "2.0.0"
 
 # ─── MCP TOOLS (DYNAMIC) ─────────────────────────────────────────────

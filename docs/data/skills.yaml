@@ -78,7 +78,7 @@
   files:
     - web/clawser-skills-registry-server.js
   api:
-    - SkillRegistryServer
+    - SkillsRegistryServer
   category: remote-registry
   since: "1.5.0"
 
@@ -149,6 +149,7 @@
   files:
     - web/clawser-skills.js
     - web/clawser-skills.d.ts
+    - web/types.d.ts
   api:
     - SkillManifest
   category: standard
@@ -163,6 +164,6 @@
   files:
     - web/clawser-marketplace.js
   api:
-    - marketplace
+    - SkillMarketplace
   category: marketplace
   since: "1.5.0"

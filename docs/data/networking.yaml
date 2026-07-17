@@ -6,7 +6,9 @@
   description: >
     Web Shell Hosting protocol for remote server access. Provides SSH-like functionality
     over WebSocket with command execution, PTY sessions, file transfer, and MCP bridging.
-    11 agent tools for comprehensive remote management.
+    27 agent tools for comprehensive remote management (grown well beyond the
+    original 11 as guest sharing, session linking, copilot attach, rate
+    control, and policy tools were added).
   files:
     - web/clawser-wsh-tools.js
     - web/clawser-wsh-tools.d.ts
@@ -23,13 +25,34 @@
     - WshSessionsTool
     - WshMcpCallTool
     - WshFetchTool
+    - WshSuspendSessionTool
+    - WshRestartPtyTool
+    - WshMetricsTool
+    - WshGuestInviteTool
+    - WshGuestRevokeTool
+    - WshShareSessionTool
+    - WshShareRevokeTool
+    - WshCompressTool
+    - WshRateControlTool
+    - WshLinkSessionTool
+    - WshUnlinkSessionTool
+    - WshCopilotAttachTool
+    - WshCopilotDetachTool
+    - WshFileOpTool
+    - WshPolicyEvalTool
+    - WshPolicyUpdateTool
+    - WshGpuProbeTool
     - registerWshTools
     - getWshConnections
   category: wsh
   notes: >
-    11 tools: wsh_connect, wsh_exec, wsh_pty_open, wsh_pty_write, wsh_upload,
-    wsh_download, wsh_disconnect, wsh_sessions, wsh_mcp_call, wsh_fetch, plus
-    wsh_compress and wsh_file_op.
+    27 tools: wsh_connect, wsh_exec, wsh_pty_open, wsh_pty_write, wsh_upload,
+    wsh_download, wsh_disconnect, wsh_sessions, wsh_mcp_call, wsh_fetch,
+    wsh_suspend_session, wsh_restart_pty, wsh_metrics, wsh_guest_invite,
+    wsh_guest_revoke, wsh_share_session, wsh_share_revoke, wsh_compress,
+    wsh_rate_control, wsh_link_session, wsh_unlink_session,
+    wsh_copilot_attach, wsh_copilot_detach, wsh_file_op, wsh_policy_eval,
+    wsh_policy_update, wsh_gpu_probe.
   since: "1.5.0"
   see_also:
     - WSH Incoming
@@ -187,12 +210,15 @@
   status: implemented
   description: >
     CORS-aware fetch utility via the Chrome extension. Bypasses same-origin
-    restrictions for approved requests.
+    restrictions for approved requests. Deprecated in favor of direct WSH
+    transport: corsFetchFallback automatically routes through WSH when a
+    connection is available, and the ext_cors_fetch tool emits a runtime
+    deprecation warning when invoked while WSH transport is available.
   files:
     - web/clawser-cors-fetch.js
     - web/clawser-cors-fetch-util.js
   api:
-    - corsFetch
+    - corsFetchFallback
     - ext_cors_fetch
   category: network
   since: "2.0.0"
@@ -238,7 +264,7 @@
   files:
     - web/clawser-qr.js
   api:
-    - generateQR
+    - encodeQR
   category: utility
   since: "1.5.0"
 

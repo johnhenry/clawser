@@ -118,7 +118,7 @@ Tertiary persistence for checkpoint indexing, server route definitions, and term
 
 **API surface:**
 
-- `CheckpointIDB`
+- `CheckpointIndexedDB`
 - `TerminalSessionStore`
 
 ---
@@ -223,8 +223,8 @@ Ten-phase Unix filesystem architecture (Phases 0–9) layered on top of OPFS. Ca
 **API surface:**
 
 - `GLOBAL_DIRS`
-- `PER_WS_DIRS`
-- `DEFAULT_FILES`
+- `WORKSPACE_DIRS`
+- `DEFAULT_CONFIGS`
 - `bootstrapFilesystem`
 
 > **Note:** Phase 0 (OPFS adapter rewrite), Phase 1 (filesystem layout + bootstrap), Phase 2 (config file reactivity), Phase 3 (/proc and /run), Phase 4 (chmod support), Phase 5 (device files), Phase 6 (shell profile + .env loading), Phase 7 (UI ↔ file sync via FsUiSync), Phase 8 (kernel filesystem integration), Phase 9 (v86 guest mount points).
@@ -305,7 +305,8 @@ Virtual Unix-like permission system for the clawser filesystem. Stores owner-mod
 **API surface:**
 
 - `PermissionManager`
-- `checkPermission`
+- `checkWrite`
+- `checkRead`
 - `setPermission`
 
 > **Note:** Phase 4 of Unix filesystem architecture. Numeric modes simplified to owner-only (e.g. 644 → rw-).

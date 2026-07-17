@@ -385,6 +385,7 @@ Support for multimodal input (images + text) when using providers that support v
 **Source files:**
 
 - `web/clawser-providers.js`
+- `web/types.d.ts`
 
 **API surface:**
 

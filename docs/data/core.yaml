@@ -161,7 +161,7 @@
   files:
     - web/clawser-autonomy-presets.js
   api:
-    - autonomyPresets
+    - AutonomyPresetManager
   category: autonomy
   since: "1.5.0"
   see_also:
@@ -570,10 +570,10 @@
   files:
     - web/clawser-session-export.js
   api:
-    - exportSessionMarkdown
-    - exportSessionHTML
-    - exportSessionJSON
-    - SECRET_PATTERNS
+    - exportSessionAsMarkdown
+    - exportSessionAsHTML
+    - exportSessionAsJSON
+    - sanitizeEvents
   category: sessions
   notes: Sanitizes Anthropic, OpenAI, GitHub, Slack, and AWS credentials.
   since: "2.1.0"
@@ -626,7 +626,10 @@
   api:
     - mountGuest
     - umountGuest
-    - GuestFsAdapter
+    - createGuestFsAdapter
+    - listGuestMounts
+    - isGuestMount
+    - autoMountGuest
   category: mount
   notes: >
     Phase 9 of Unix filesystem architecture. Requires a running v86 guest.

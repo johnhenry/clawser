@@ -190,16 +190,16 @@ Microkernel package (packages-kernel) providing foundational services: ResourceT
 - `Kernel`
 - `ServiceRegistry`
 - `ResourceTable`
-- `ByteStream`
 - `Clock`
 - `RNG`
 - `Logger`
 - `Tracer`
-- `Signal`
-- `Caps`
-- `Env`
+- `SignalController`
+- `CapsBuilder`
+- `Environment`
 - `Stdio`
-- `MessagePort`
+- `KernelMessagePort`
+- `ChaosEngine`
 
 > **Note:** 16 ES modules providing microkernel services. Tenant isolation and capability enforcement.
 
@@ -209,7 +209,7 @@ Microkernel package (packages-kernel) providing foundational services: ResourceT
 
 **Status:** ✅ Implemented · **Category:** integration · **Since:** v2.0.0
 
-Integration bridge with the Raijin framework for state management and WSH adapter functionality.
+Bridge between raijin PBFT consensus (see PBFT Consensus in mesh.yaml) and Clawser's mesh wire format — pod ID key mapping, PBFT payload encode/decode, a mesh-transport adapter for raijin-consensus, a consensus-backed credit ledger, and a WSH session-key mapping/transport adapter for PBFT over WSH.
 
 **Source files:**
 
@@ -219,7 +219,13 @@ Integration bridge with the Raijin framework for state management and WSH adapte
 
 **API surface:**
 
-- `RaijinBridge`
+- `PodKeyMapping`
+- `ClawserTransportAdapter`
+- `encodePBFTPayload`
+- `decodePBFTPayload`
+- `ConsensusBackedLedger`
+- `SessionKeyMapping`
+- `WshPBFTTransport`
 
 ---
 
