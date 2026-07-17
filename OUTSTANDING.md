@@ -52,15 +52,18 @@
 >   flagging the pattern in case it's worth loosening timeouts or
 >   dropping concurrency for these two files specifically.
 >
-> **Tracked, not fixed:** `packages/browsermesh-{core,apps,discovery,sync,transport}`
-> (~9K LOC) are wired into `web/index.html`'s import map but **nothing
-> under `web/` imports any of them**, and none have a `test/` directory
-> despite `package.json` declaring a test script. Investigated: it's a
-> 2026-04-30 snapshot extraction of mesh modules that kept evolving live
-> in `web/` afterward (last touched 2026-07-04) — a stale fork, not
-> current WIP. Left as-is per decision; see
+> **Resolved 2026-07-17:** `packages/browsermesh-{core,apps,discovery,sync,transport}`
+> were re-extracted from the *current* `web/clawser-mesh-*.js` state (not
+> the stale 2026-04-30 snapshot), given real `test/` suites (3769 tests),
+> and the 6 genuine external `web/` consumers were rewired to import from
+> the packages. The browser import map's `../packages/...` path never
+> actually resolved in any real deploy target (GitHub Pages/Cloudflare
+> both ship only `web/`) — fixed by vendoring a browser-reachable copy
+> under `web/packages/browsermesh-*/`, mirroring the existing
+> `web/packages/kernel/` precedent. All 5 packages are now published to
+> npm (`browsermesh-{core,discovery,sync,transport,apps}@0.1.0`). See
 > [johnhenry/clawser#3](https://github.com/johnhenry/clawser/issues/3)
-> for the full writeup and the finish-it-properly-or-delete options.
+> (closed) for the full writeup.
 >
 > Last updated 2026-07-05 ("finish everything off" comprehensive pass).
 > **9,732 tests passing, 0 failing — full suite (`npm test`, all groups
@@ -585,8 +588,8 @@ below.
 
 ### Ecosystem (Batch 3)
 
-- [x] **5.1** Publish npm embed package — **scaffolded, publish blocked on
-      npm auth.** New `packages/clawser-embed/` wraps `EmbeddedPod` (its
+- [x] **5.1** Publish npm embed package — **published 2026-07-17**, live as
+      `clawser-embed@0.1.1` on npm. `packages/clawser-embed/` wraps `EmbeddedPod` (its
       only dependency, `Pod`, resolves to the already-published
       `browsermesh-pod` package). `npm pack --dry-run` produces a clean
       4-file tarball; verified with a real smoke import (constructs
@@ -625,7 +628,16 @@ below.
       walkthroughs (Matrix: any homeserver via long-poll `/sync`, no bridge
       needed; IRC: the `server` field must be a `wss://` WebSocket-to-IRC
       bridge URL, not a raw IRC address).
-- [ ] **5.4** Chrome Web Store extension publication — code in `clawser-browser-control` repo
+- [x] **5.4** Chrome Web Store extension publication — **done**, code lives in
+      `clawser-browser-control` (sibling repo). Live at
+      https://chromewebstore.google.com/detail/clawser-browser-control/dljchbfodafekojicopaboiegophjcbc,
+      releases automated via `publish.yml` on tag push. That repo has its
+      own open follow-up issue
+      ([#14](https://github.com/johnhenry/clawser-browser-control/issues/14))
+      for 5 smaller post-publish gaps (dead extension bridge, upstream
+      `browsermesh-pod` stub, no Firefox packaging path, always-on content
+      script heartbeat, untested offscreen document) — tracked there, not
+      a blocker on this checkbox.
 - [x] **5.5** Verify IPFS Helia CDN URL freshness — Closed in the 2026-05-03
       quick-wins pass. Bumped `helia@6.0.21` → `helia@6.1.4` in
       `web/clawser-peer-ipfs.js` and `packages/browsermesh-apps/src/peer-ipfs.mjs`;
@@ -633,11 +645,10 @@ below.
       docs is current. No other IPFS gateway URLs in the codebase.
 - [ ] **5.6** Verify IoT bridge with real hardware
 - [ ] **F4** iOS Safari compatibility audit
-- [x] **G2** Kernel extraction to standalone npm — publish-ready (see 5.1
-      above for the details: renamed `kernel` → `browsermesh-kernel` to
-      fix a real name collision, added README/LICENSE, verified with
-      `npm pack --dry-run` + a real smoke import). Blocked only on
-      `npm login`.
+- [x] **G2** Kernel extraction to standalone npm — **published 2026-07-17**,
+      live as `browsermesh-kernel@0.1.0` on npm (see 5.1 above for the
+      details: renamed `kernel` → `browsermesh-kernel` to fix a real name
+      collision, added README/LICENSE).
 - [ ] **G3** Kernel tenants from ServerPod (Node)
 - [x] **G4** v86 guest UI + auto-mount activation — Closed in the Batch C
       pass. "Guest VM" collapsible section in the Config panel (Boot/

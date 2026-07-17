@@ -44,7 +44,7 @@
     "ai-matey-middleware-andbox": "^0.1.0",
     "andbox": "^0.1.0",
     "browsermesh-netway": "^0.1.0",
-    "browsermesh-pod": "^0.1.0",
+    "browsermesh-pod": "^0.2.1",
     "browsermesh-primitives": "^0.1.0",
     "fflate": "^0.8.2",
     "js-yaml": "^4.1.1",
