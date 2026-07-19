@@ -606,6 +606,11 @@ export async function initWorkspace(wsId, convId) {
       })(),
     });
 
+    // index.html seeds #messages with a static "Initializing agent..." placeholder
+    // so the chat pane isn't blank while scripts are still loading. Clear it here,
+    // the moment JS takes over rendering, so the dynamic message below doesn't
+    // just get appended after it (which used to show the line twice).
+    resetChatUI();
     addMsg('system', 'Initializing agent...');
     const rc = state.agent.init({});
     if (rc !== 0) throw new Error(`agent.init returned ${rc}`);
